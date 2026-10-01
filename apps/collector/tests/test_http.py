@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import gzip
+import tracemalloc
+import zlib
+
 import httpx
 import pytest
 import respx
@@ -191,4 +195,186 @@ async def test_before_send_runs_after_the_rate_limit_grant_and_can_stop_the_call
         assert route.call_count == 1
     assert httpmod.SendCancelled in httpmod.NOT_SENT_ERRORS and httpmod.HostNotAllowed in httpmod.NOT_SENT_ERRORS
     assert httpx.ReadTimeout not in httpmod.NOT_SENT_ERRORS  # 보낸 뒤의 실패는 보낸 것으로 센다
+    await c.aclose()
+
+
+GZ_URL = "https://api.rainviewer.com/public/weather-maps.json"
+
+
+async def _serving(body: bytes, encoding: str) -> HttpClient:
+    """Content-Encoding 이 붙은 본문을 받은 그대로(stream) 주는 클라이언트. respx 는 가짜 응답을 미리 읽어(풀어) 두므로 여기에 맞지 않는다 —
+    httpx.MockTransport 로 전송 계층에서 준다."""
+    c = _client()
+    old = c._client
+    c._client = httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda _req: httpx.Response(200, stream=httpx.ByteStream(body), headers={"content-encoding": encoding})
+        ),
+        headers=old.headers,
+        follow_redirects=False,
+    )
+    await old.aclose()
+    return c
+
+
+def _raw_deflate(data: bytes) -> bytes:
+    z = zlib.compressobj(wbits=-zlib.MAX_WBITS)
+    return z.compress(data) + z.flush()
+
+
+@pytest.mark.parametrize(
+    ("encoding", "pack"),
+    [
+        ("gzip", gzip.compress),
+        ("deflate", zlib.compress),
+        ("deflate", _raw_deflate),
+        ("GZIP", gzip.compress),
+        ("identity", bytes),
+    ],
+)
+async def test_compressed_bodies_are_decoded_as_before(encoding, pack):
+    body = b'{"host":"https://tilecache.rainviewer.com","radar":{}}' * 500
+    c = await _serving(pack(body), encoding)
+    assert (await c.get(GZ_URL)).body == body
+    await c.aclose()
+
+
+async def test_a_small_compressed_body_that_expands_past_the_cap_is_refused_while_inflating(monkeypatch):
+    """보안 검토 L-7(2026-10-01): 크기 상한을 압축을 푼 청크마다 쟀다 — httpx 는 받은 청크(최대 64 KiB)를 한 번에 풀어, 작은 압축 본문 하나가
+    수십 MiB 로 다 펼쳐진 뒤에야 ResponseTooLarge 였다(공급자 8 연결이면 수집기 512 MiB 한도까지). 이제 푸는 동안 상한 + 1 바이트에서 멈춘다."""
+    cap = 1 << 20
+    monkeypatch.setattr(httpmod.settings, "http_max_bytes", cap)
+    bomb = gzip.compress(b"\0" * (32 << 20))  # 32 MiB → 약 32 KiB(한 청크)
+    assert len(bomb) < 64 << 10
+    c = await _serving(bomb, "gzip")
+    tracemalloc.start()
+    try:
+        with pytest.raises(ResponseTooLarge, match="gzip"):
+            await c.get(GZ_URL)
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert peak < 4 * cap, f"peak {peak} B while refusing a body capped at {cap} B"
+    await c.aclose()
+
+
+@pytest.mark.parametrize(
+    ("encoding", "body"),
+    [("gzip", b"not gzip at all"), ("deflate", b"not deflate"), ("gzip, gzip", gzip.compress(gzip.compress(b"{}")))],
+)
+async def test_a_corrupt_or_stacked_compressed_body_is_a_decoding_error(encoding, body):
+    c = await _serving(body, encoding)
+    with pytest.raises(httpx.DecodingError):
+        await c.get(GZ_URL)
+    await c.aclose()
+
+
+async def test_the_client_asks_only_for_the_encodings_it_inflates_within_the_cap():
+    c = HttpClient()
+    assert c._client.headers["accept-encoding"] == "gzip, deflate"
+    await c.aclose()
+
+
+@pytest.mark.parametrize(
+    ("error", "outcome"),
+    [
+        (Throttled("opendata.adsb.fi", "no slot within 4.0 s"), "throttled"),
+        (httpx.PoolTimeout("pool full"), "not_sent"),
+        (httpx.ProxyError("proxy refused"), "not_sent"),
+        (HostNotAllowed("evil.example"), "not_sent"),
+        (httpmod.SendCancelled("api.adsb.lol"), "not_sent"),
+        (httpx.InvalidURL("bad url"), "not_sent"),
+        (httpx.UnsupportedProtocol("ftp"), "not_sent"),
+        (httpx.ConnectError("refused"), "failed_before_send"),
+        (httpx.ConnectTimeout("connect"), "failed_before_send"),
+        (httpx.ReadTimeout("read"), "sent"),
+        (httpmod.RequestTimedOut("api.adsb.lol: no complete response within 30 s"), "sent"),
+        (ProviderHttpError(503, "down"), "sent"),
+        (ValueError("unexpected shape"), "sent"),
+    ],
+    ids=lambda v: v if isinstance(v, str) else type(v).__name__,
+)
+def test_one_send_classifier_for_every_job(error, outcome):
+    """R-65 · F7(PLAN C3): '보내지 않음' 판정이 작업마다 달랐다(풀 대기 초과를 공급자 실패로 세고 예산을 돌려주지 않았다 · 기상 작업은 속도 상한을
+    공급자 실패로 적었다). 한 곳에서 가른다 — throttled · not_sent(우리 쪽 까닭)는 공급자 실패가 아니고, failed_before_send(연결 실패 · 토큰)는
+    공급자 실패지만 예산은 돌려준다. sent 만 예산을 쓴다."""
+    from wakeline_collector.http import classify_send
+
+    assert classify_send(error) == outcome
+
+
+@pytest.mark.parametrize("status", [301, 302, 303, 307, 308])
+async def test_a_redirect_is_an_http_error_that_names_only_the_target_host(status):
+    """F11(collector-review · PLAN C6): 리다이렉트는 따라가지 않는다(follow_redirects=False — 허용 호스트). 전에는 3xx 를 성공 응답으로 돌려줘 해석기가
+    'JSON 아님' · '모양 이상'으로 적었고 운영 last_error 가 까닭(HTTP 302)을 숨겼다. 이제 'HTTP 3xx' 오류 — Location 은 호스트만 싣는다(경로 · 쿼리는 싣지 않는다)."""
+    c = _client()
+    with respx.mock:
+        respx.get(GZ_URL).mock(
+            return_value=httpx.Response(
+                status, headers={"Location": "https://portal.example/moved/notice?page=FAKE-1"}, text="moved"
+            )
+        )
+        with pytest.raises(ProviderHttpError) as ei:
+            await c.get(GZ_URL)
+    assert ei.value.status == status and ei.value.body_head == "redirect to portal.example — not followed"
+    assert "notice" not in str(ei.value) and "FAKE-1" not in str(ei.value)
+    await c.aclose()
+
+
+async def test_a_redirect_without_a_location_says_so():
+    c = _client()
+    with respx.mock:
+        respx.get(GZ_URL).mock(return_value=httpx.Response(302))
+        with pytest.raises(ProviderHttpError) as ei:
+            await c.get(GZ_URL)
+    assert ei.value.body_head == "redirect to (no Location) — not followed"
+    from wakeline_collector.errors import describe_error
+
+    assert describe_error(ei.value) == "HTTP 302 Found — redirect to (no Location) — not followed"  # 운영 last_error · 실행 기록
+    await c.aclose()
+
+
+@pytest.mark.parametrize(
+    "location",
+    ["/portal/maint.do?authKey=FAKE-KEY&page=1", "maint.do?serviceKey=FAKE-KEY", "?authKey=FAKE-KEY"],
+    ids=["absolute path", "relative path", "query only"],
+)
+async def test_a_relative_redirect_names_the_request_host_and_never_the_path_or_query(location):
+    """CTO 리뷰 2026-10: 상대 Location(같은 호스트 — RFC 9110 은 요청 URI 에 맞춰 푼다)은 urlparse(...).hostname 이 None 이라
+    'redirect to (no Location)' 으로 적혀 Location 이 있었다는 것을 숨겼다. 이제 요청 호스트와 '상대 Location' — 경로 · 쿼리(키)는 여전히 싣지 않는다."""
+    c = _client()
+    with respx.mock:
+        respx.get(GZ_URL).mock(return_value=httpx.Response(302, headers={"Location": location}))
+        with pytest.raises(ProviderHttpError) as ei:
+            await c.get(GZ_URL)
+    assert ei.value.body_head == "redirect to api.rainviewer.com (relative Location — same host) — not followed"
+    from wakeline_collector.errors import describe_error
+
+    shown = describe_error(ei.value)
+    assert shown == "HTTP 302 Found — redirect to api.rainviewer.com (relative Location — same host) — not followed"
+    assert not any(x in shown or x in str(ei.value) for x in ("maint", "portal", "FAKE-KEY", "authKey", "serviceKey", "?"))
+    await c.aclose()
+
+
+async def test_a_protocol_relative_redirect_names_its_own_host():
+    """'//host/…' 는 상대 참조지만 호스트가 있다 — 그 호스트를 싣는다(같은 호스트라고 하지 않는다)."""
+    c = _client()
+    with respx.mock:
+        respx.get(GZ_URL).mock(
+            return_value=httpx.Response(302, headers={"Location": "//portal.example/maint.do?authKey=FAKE-KEY"})
+        )
+        with pytest.raises(ProviderHttpError) as ei:
+            await c.get(GZ_URL)
+    assert ei.value.body_head == "redirect to portal.example — not followed"
+    await c.aclose()
+
+
+async def test_a_location_with_a_scheme_but_no_host_is_not_called_relative_or_missing():
+    """'https:///…' 는 상대 참조가 아니다(스킴이 있다) — 같은 호스트라고도, Location 이 없다고도 하지 않는다. 경로 · 쿼리는 싣지 않는다."""
+    c = _client()
+    with respx.mock:
+        respx.get(GZ_URL).mock(return_value=httpx.Response(302, headers={"Location": "https:///maint.do?authKey=FAKE-KEY"}))
+        with pytest.raises(ProviderHttpError) as ei:
+            await c.get(GZ_URL)
+    assert ei.value.body_head == "redirect to (Location without a host) — not followed"
     await c.aclose()

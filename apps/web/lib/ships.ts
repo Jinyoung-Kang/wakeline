@@ -314,8 +314,26 @@ export function shipFeatures(ships: Iterable<ShipLite>, selected: string | null,
   return { type: "FeatureCollection", features };
 }
 
-/** 관측 시각(seen_at)이 더 새로운 쪽. 같거나 비교할 수 없으면 앞의 것 */
-function newerLite<T extends ShipLite>(a: T | null, b: T | null): T | null {
+/**
+ * 선택 선박의 가장 최근 위치: WS ship_selected(같은 MMSI 일 때) → 지도 목록 사본. 구역별 AIS 공백을 가를 때 쓴다(계약 v4 §D). 모르면 null
+ */
+export function selectedShipPos(mmsi: string | null, selected: { mmsi: string; state: Pick<ShipLite, "lat" | "lon"> | null } | null,
+  listed: ReadonlyMap<string, Pick<ShipLite, "lat" | "lon">>): { lat: number; lon: number } | null {
+  if (!mmsi) return null;
+  const p = (selected && selected.mmsi === mmsi ? selected.state : null) ?? listed.get(mmsi) ?? null;
+  return p ? { lat: p.lat, lon: p.lon } : null;
+}
+
+/** 선택 선박 항적 점 툴팁의 선박 이름: WS 상태의 이름 → WS 정적 이름 → 지도 목록 사본의 이름 → "MMSI …" */
+export function selectedShipLabel(mmsi: string | null, selected: { mmsi: string; state: Pick<ShipLite, "name"> | null; static: { name?: string | null } | null } | null,
+  listed: ReadonlyMap<string, Pick<ShipLite, "name">>): string | null {
+  if (!mmsi) return null;
+  const s = selected && selected.mmsi === mmsi ? selected : null;
+  return s?.state?.name ?? s?.static?.name ?? listed.get(mmsi)?.name ?? `MMSI ${mmsi}`;
+}
+
+/** 관측 시각(seen_at)이 더 새로운 쪽. 같거나 비교할 수 없으면 앞의 것(선택 선박 표시 · 선박 카드) */
+export function newerLite<T extends ShipLite>(a: T | null, b: T | null): T | null {
   if (!a || !b) return a ?? b;
   const ta = a.seen_at ? Date.parse(a.seen_at) : NaN, tb = b.seen_at ? Date.parse(b.seen_at) : NaN;
   return !Number.isNaN(tb) && (Number.isNaN(ta) || tb > ta) ? b : a;
@@ -1143,13 +1161,28 @@ function observedSpan(o: ShipsChipObserved): string {
  */
 export interface ShipsChipObserved { cells: number; covered: "full" | "partial" | "since_api_start"; since: string; to: string; stale: boolean }
 
+/**
+ * 화면 낭독기에 알릴 선박 칩의 상태(PLAN §5 결정 3 · web-review B7) — 모드(개별 · 격자 · 수신 대기 · 0척과 그 까닭)와 경고(전송 상한 · AIS 공백)가
+ * 바뀔 때만 글자가 바뀐다. 수(척 · 칸)는 넣지 않는다: 선박 메시지(10 s 이상 간격)마다 수가 바뀌어 다시 읽혔다. 자세한 수는 보이는 칩과 그 title.
+ */
+export function shipsChipStatus(v: ShipsChipInput, ctx: { bbox: readonly [number, number, number, number] | null; ais: ShipsChipAis }, warn: boolean, gap: boolean): string {
+  if (v.mode === "off") return "";
+  const why = v.mode !== "waiting" && (v.mode === "points" ? v.count : v.total) === 0 ? zeroShipsReason(ctx.ais, ctx.bbox) : null;
+  const head = v.mode === "waiting" ? (ctx.ais?.state === "disabled" ? AIS_OFF_TEXT : "선박 수신 대기")
+    : why ? (why === "off" ? AIS_OFF_TEXT : ZERO_SHIPS[why].text)
+    : v.mode === "points" ? "선박 개별 표시(AIS)" : "선박 격자로 묶어 표시";
+  return `${head}${warn ? " · 전송 상한" : ""}${gap ? " · AIS 공백 중" : ""}`;
+}
+
+const AIS_OFF_TEXT = "선박 없음 · AIS 꺼짐(키 없음)";
+
 function chipBody(
   v: ShipsChipInput,
   ctx: { zoom: number | null; bbox: readonly [number, number, number, number] | null; ais: ShipsChipAis; filter?: ShipsChipFilter | null },
 ): { text: string; title: string; warn: boolean } | null {
   if (v.mode === "off") return null;
   const aisOff = ctx.ais?.state === "disabled";
-  const aisOffText = "선박 없음 · AIS 꺼짐(키 없음)";
+  const aisOffText = AIS_OFF_TEXT;
   if (v.mode === "waiting") return { text: aisOff ? aisOffText : "선박 수신 대기", title: SHIPS_RULE_TEXT, warn: false };
   const inView = v.mode === "points" ? v.count : v.total;
   if (inView === 0) {

@@ -149,6 +149,15 @@ describe("contract v5 amendment numbers are unique", () => {
     // 레인 bbox(2026-10-01): 격자 기하는 bbox 타일 먼저(ADR-023 개정) — 19차 · §G28
     expect(heading(28)).toMatch(/^## G\. 19차 개정\(2026-10-01 · 레인 bbox /);
     expect(amendment(28)).toContain("격자 기하는 bbox 타일 먼저");
-    expect(amendment(29)).toBe("");
+    // 레인 web(CTO 리뷰 cto-2026-10, 2026-10-01): 수집기 루프 지연 · 원천 보관 실패를 /ops/pipeline 에(§G29), /ops/providers 의 error(§G30) — 20차
+    expect(heading(29)).toMatch(/^## G\. 20차 개정\(2026-10-01 · CTO 리뷰 cto-2026-10 · 레인 web /);
+    expect(amendment(29)).toContain("수집기 이벤트 루프 지연 · 원천 보관 실패를 `/ops/pipeline` 의 collector 묶음에");
+    expect(heading(30)).toMatch(/^## G\. 20차 개정\(/); // 같은 개정의 두 번째 항목
+    expect(amendment(30)).toContain("자동 전환 기록을 읽지 못함");
+    // CTO 리뷰 cto-2026-10 최종 검토(2026-10-01): /ops/dlq 의 error(전부터 api 가 싣던 것 — 계약에 없었다) — 21차 · §G31
+    expect(heading(31)).toMatch(/^## G\. 21차 개정\(2026-10-01 · CTO 리뷰 cto-2026-10 최종 검토 · 레인 web /);
+    expect(amendment(31)).toContain("`GET /api/v1/ops/dlq` 의 `error` — DLQ 를 읽지 못함");
+    expect(amendment(31)).toContain("스키마 검증 실패 메시지(DLQ)를 읽지 못함");
+    expect(amendment(32)).toBe("");
   });
 });

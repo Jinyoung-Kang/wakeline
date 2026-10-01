@@ -1,6 +1,8 @@
 package dev.wakeline.ops;
 
-import dev.wakeline.config.AppProperties;
+import dev.wakeline.platform.config.AppProperties;
+import dev.wakeline.settings.RegionSettings;
+import dev.wakeline.settings.SettingsService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
@@ -78,7 +80,7 @@ public class StartupMirror {
     private void seedOnce() {
         if (seeded) return;
         try {
-            var changed = settings.seedFromEnv(props.regionCenter(), props.regionRadiusNm(), audit);
+            var changed = settings.seedFromEnv(props.regionCenter(), props.regionRadiusNm(), audit::recordSystem);
             if (!changed.isEmpty()) log.info("runtime settings aligned with .env: {}", changed);
             seeded = true;
         } catch (RuntimeException e) {

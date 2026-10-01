@@ -1,6 +1,6 @@
 package dev.wakeline.ws;
 
-import dev.wakeline.persist.SingleFlight;
+import dev.wakeline.platform.support.SingleFlight;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;

@@ -3,12 +3,10 @@ package dev.wakeline.ws;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonRawValue;
-import dev.wakeline.domain.AircraftState;
-import dev.wakeline.domain.Alert;
-import dev.wakeline.domain.DestinationInfo;
-import dev.wakeline.domain.ShipState;
-import dev.wakeline.domain.ShipStatic;
-import dev.wakeline.engine.PredictionAvailability;
+import dev.wakeline.aircraft.web.AircraftJson;
+import dev.wakeline.weather.core.Alert;
+import dev.wakeline.ships.core.DestinationInfo;
+import dev.wakeline.weather.core.PredictionAvailability;
 import dev.wakeline.portcalls.PortCallsInfo;
 import dev.wakeline.route.RouteInfo;
 
@@ -24,9 +22,6 @@ import java.util.Map;
 public final class WsMessages {
     private WsMessages() {}
 
-    /** 항공기 인코딩(계약 §1). LITE: 줌 > 5. WORLD: 줌 ≤ 5(좌표 소수 3자리, vrate·quality 제외). FULL: 선택 항공기·REST 상세. */
-    public enum Encoding { LITE, WORLD, FULL }
-
     public record Welcome(String type, String sessionId, Instant serverTime, long snapshotVersion, Map<String, Object> limits) {
         public static Welcome of(String sid, long v, double maxBbox, int diffS, int resyncS, int resyncWorldS, int maxMsgs, int msgWindowS, int helloTimeoutS) {
             Map<String, Object> limits = new LinkedHashMap<>();
@@ -41,17 +36,8 @@ public final class WsMessages {
         }
     }
 
-    /**
-     * 피드(스코프) 하나의 출처·지연. lag_s = now − fetched_at(수집 이력이 없으면 null), stale = 지연이 임계(지역 60 s · 전세계 300 s)를
-     * 넘었거나 수집 이력이 없음. provider 가 없으면 null.
-     */
-    public record Source(String provider, Instant fetchedAt, Double lagS, boolean stale) {}
-
-    /** global 은 전세계 피드가 없으면 null(키는 남긴다). */
-    public record Sources(Source region, @JsonInclude(JsonInclude.Include.ALWAYS) Source global) {}
-
     /** aircraft 는 이미 직렬화된 JSON 배열(항공기별 인코딩을 버전마다 한 번만 만들어 이어 붙인다, PERF-8). */
-    public record SnapshotMsg(String type, int seq, long v, Instant ts, Sources sources, long sigmetsVersion,
+    public record SnapshotMsg(String type, int seq, long v, Instant ts, AircraftJson.Sources sources, long sigmetsVersion,
                               @JsonRawValue String aircraft) {}
 
     /** upsert 는 이미 직렬화된 JSON 배열. 비어 있는 diff 는 보내지 않는다(seq 틈이 생기지 않게). */
@@ -108,21 +94,12 @@ public final class WsMessages {
      */
     public record ShipsGridMsg(String type, Instant ts, double cellDeg, @JsonRawValue String cells, Boolean capped) {}
 
-    /** ship_selected.static_source(계약 v5 §G17): api 메모리(ShipStore — 선박 스트림에서 받은 정적 정보). */
-    public static final String STATIC_LIVE = "live";
-    /** 메모리에 없어 DB ship 표의 마지막 저장 정적 보고를 실었다(static_updated_at = 저장 행의 updated_at). */
-    public static final String STATIC_STORED = "stored";
-    /** 메모리에도 DB 에도 정적 보고가 없다(static null). */
-    public static final String STATIC_NONE = "none";
-    /** 메모리에 없고 DB 를 읽지 못했다(시간 초과 · 연결 없음 — 저장돼 있는지 모름, static null). */
-    public static final String STATIC_STORED_UNAVAILABLE = "stored_unavailable";
-
     /**
      * 선택 선박: state(ShipState 전체)·static(ShipStatic 전체) — 각각 없으면 null(키는 남긴다). 이미 직렬화된 JSON.
-     * static_source(계약 v5 §G17): static 의 출처 — live · stored · none · stored_unavailable({@link #STATIC_LIVE} 등). null 은 저장 정적 보고를 읽는 쪽이
+     * static_source(계약 v5 §G17): static 의 출처 — live · stored · none · stored_unavailable({@link dev.wakeline.ships.web.ShipJson#STATIC_LIVE} 등). null 은 저장 정적 보고를 읽는 쪽이
      * 연결되지 않은 구성(시험)에서 메모리에 없을 때뿐이다(키는 남긴다). static_updated_at: stored 일 때만 저장 행(ship)의 updated_at — DB 에 기록된 수신
      * 시각(= static.updated_at): 내용이 바뀔 때와 수집기 재시작 · 선박이 수집기 메모리에서 빠졌다(30분 무수신 · 상한) 다시 잡힐 때 새로 기록되므로 첫 수신도
-     * 마지막 수신도 아니다({@link dev.wakeline.persist.StoredStaticReader}). 저장 행은 받은 필드만 덮으므로(계약 v5 §G19) 이 시각은 마지막으로 저장한 보고의
+     * 마지막 수신도 아니다({@link dev.wakeline.ships.data.StoredStaticReader}). 저장 행은 받은 필드만 덮으므로(계약 v5 §G19) 이 시각은 마지막으로 저장한 보고의
      * 것이고, 그 보고가 싣지 않은 static 필드는 그보다 앞서 저장된 보고의 값이다. 그 밖에는 null(키는 남긴다).
      * destination_info(계약 v4 §B): 보고된 목적지의 결정적 풀이 — 목적지를 모르면 null(키는 남긴다).
      * port_calls(ADR-022 개정): 호출부호로 DB 색인에서 찾은 한국 항만 입출항(해양수산부 PORT-MIS — 수집기가 색인한다) — 늘 객체(상태로 말한다). null 은 읽는 쪽이
@@ -135,119 +112,4 @@ public final class WsMessages {
                                   @JsonInclude(JsonInclude.Include.ALWAYS) @JsonProperty("static_updated_at") String staticUpdatedAt,
                                   @JsonInclude(JsonInclude.Include.ALWAYS) @JsonProperty("destination_info") DestinationInfo destinationInfo,
                                   @JsonInclude(JsonInclude.Include.ALWAYS) @JsonProperty("port_calls") PortCallsInfo portCalls) {}
-
-    /**
-     * ShipLite(계약 v2 §B3): mmsi, lat, lon, sog_kn, cog_deg, heading_deg, ship_type, name, seen_at, position_source, nav_status.
-     * 값이 없으면 키를 뺀다(모름 — 0 이나 빈 문자열로 채우지 않는다). ship_type·name 은 정적 정보가 있을 때만.
-     */
-    public static Map<String, Object> encodeShipLite(ShipState s, ShipStatic st) {
-        Map<String, Object> m = new LinkedHashMap<>(16);
-        m.put("mmsi", s.mmsi());
-        m.put("lat", s.lat());
-        m.put("lon", s.lon());
-        put(m, "sog_kn", s.sogKn());
-        put(m, "cog_deg", s.cogDeg());
-        put(m, "heading_deg", s.headingDeg());
-        if (st != null) {
-            put(m, "ship_type", st.shipType());
-            put(m, "name", st.name());
-        }
-        put(m, "seen_at", s.seenAt() == null ? null : s.seenAt().toString());
-        put(m, "position_source", s.positionSource());
-        put(m, "nav_status", s.navStatus());
-        return m;
-    }
-
-    /** ShipState 전체(ship_selected.state · REST 상세). */
-    public static Map<String, Object> encodeShipState(ShipState s) {
-        Map<String, Object> m = new LinkedHashMap<>(16);
-        m.put("mmsi", s.mmsi());
-        m.put("lat", s.lat());
-        m.put("lon", s.lon());
-        put(m, "sog_kn", s.sogKn());
-        put(m, "cog_deg", s.cogDeg());
-        put(m, "heading_deg", s.headingDeg());
-        put(m, "nav_status", s.navStatus());
-        put(m, "rot", s.rot());
-        put(m, "position_source", s.positionSource());
-        put(m, "seen_at", s.seenAt() == null ? null : s.seenAt().toString());
-        put(m, "provider", s.provider());
-        put(m, "msg_type", s.msgType());
-        put(m, "class", s.shipClass());
-        return m;
-    }
-
-    /** ShipStatic 전체(ship_selected.static · REST 상세). 모든 값은 선박이 보낸 보고값. */
-    public static Map<String, Object> encodeShipStatic(ShipStatic s) {
-        Map<String, Object> m = new LinkedHashMap<>(24);
-        m.put("mmsi", s.mmsi());
-        put(m, "name", s.name());
-        put(m, "call_sign", s.callSign());
-        put(m, "imo", s.imo());
-        put(m, "ship_type", s.shipType());
-        put(m, "dim_a", s.dimA());
-        put(m, "dim_b", s.dimB());
-        put(m, "dim_c", s.dimC());
-        put(m, "dim_d", s.dimD());
-        put(m, "draught_m", s.draughtM());
-        put(m, "destination", s.destination());
-        put(m, "eta_month", s.etaMonth());
-        put(m, "eta_day", s.etaDay());
-        put(m, "eta_hour", s.etaHour());
-        put(m, "eta_minute", s.etaMinute());
-        put(m, "updated_at", s.updatedAt() == null ? null : s.updatedAt().toString());
-        put(m, "provider", s.provider());
-        return m;
-    }
-
-    /**
-     * 항공기 하나를 인코딩한다. null 인 값은 넣지 않는다(모르는 값을 0·false 로 채우지 않는다).
-     * seen_at·fetched_at 은 ISO-8601(UTC) 문자열.
-     */
-    public static Map<String, Object> encode(AircraftState a, Encoding enc) {
-        Map<String, Object> m = new LinkedHashMap<>(enc == Encoding.FULL ? 24 : 16);
-        m.put("hex", a.hex());
-        put(m, "callsign", a.callsign());
-        if (enc == Encoding.WORLD) {
-            m.put("lat", round3(a.lat()));
-            m.put("lon", round3(a.lon()));
-        } else {
-            m.put("lat", a.lat());
-            m.put("lon", a.lon());
-        }
-        put(m, "alt_ft", a.altFt());
-        put(m, "gs_kt", a.gsKt());
-        put(m, "track_deg", a.trackDeg());
-        if (enc != Encoding.WORLD) put(m, "vrate_fpm", a.vrateFpm());
-        m.put("on_ground", a.onGround());
-        put(m, "squawk", a.squawk());
-        put(m, "seen_at", a.seenAt() == null ? null : a.seenAt().toString());
-        put(m, "provider", a.provider());
-        if (enc != Encoding.WORLD) m.put("quality", a.quality());
-        if (enc == Encoding.FULL) {
-            put(m, "registration", a.registration());
-            put(m, "type_code", a.typeCode());
-            put(m, "category", a.category());
-            put(m, "fetched_at", a.fetchedAt() == null ? null : a.fetchedAt().toString());
-        }
-        return m;
-    }
-
-    /** 이전 시그니처 호환(REST 가 쓴다): detail "full" → FULL, world → WORLD, 그 밖 → LITE. */
-    public static Map<String, Object> encode(AircraftState a, String detail, boolean world) {
-        return encode(a, encodingFor(detail, world));
-    }
-
-    public static Encoding encodingFor(String detail, boolean world) {
-        if (world) return Encoding.WORLD;
-        return "full".equals(detail) ? Encoding.FULL : Encoding.LITE;
-    }
-
-    private static void put(Map<String, Object> m, String k, Object v) {
-        if (v != null) m.put(k, v);
-    }
-
-    static double round3(double v) {
-        return Math.round(v * 1000) / 1000.0;
-    }
 }

@@ -54,7 +54,7 @@ class ScheduledJobContextTest {
 
     @Test
     void aWarningInsideAScheduledMethodCarriesTheJobName_andTheMdcIsRestoredAfterwards() throws Exception {
-        var job = new RetentionJob(logback.getLogger("dev.wakeline.persist.MaintenanceJobs"));
+        var job = new RetentionJob(logback.getLogger("dev.wakeline.history.MaintenanceJobs"));
         new ScheduledMethodRunnable(job, RetentionJob.class.getMethod("dropOldPartitions"), null, () -> observations).run();
         JsonNode e = lastEntry();
         assertThat(e.path("message").asString()).isEqualTo("retention track_point_1m failed: timeout");
@@ -69,7 +69,7 @@ class ScheduledJobContextTest {
     @Test
     void anOuterJobNameComesBackAfterANestedOne() throws Exception {
         MDC.put(ScheduledJobContext.MDC_JOB, "Outer.run");
-        var job = new RetentionJob(logback.getLogger("dev.wakeline.persist.MaintenanceJobs"));
+        var job = new RetentionJob(logback.getLogger("dev.wakeline.history.MaintenanceJobs"));
         new ScheduledMethodRunnable(job, RetentionJob.class.getMethod("dropOldPartitions"), null, () -> observations).run();
         assertThat(lastEntry().path("context").path("job").asString()).isEqualTo("RetentionJob.dropOldPartitions");
         assertThat(MDC.get(ScheduledJobContext.MDC_JOB)).isEqualTo("Outer.run");
@@ -78,7 +78,7 @@ class ScheduledJobContextTest {
     @Test
     void withoutAnObservationRegistryNothingIsAdded() throws Exception {
         // 관측이 꺼진 설정(NOOP)에서는 처리기가 불리지 않는다 — 항목은 그대로 실린다
-        var job = new RetentionJob(logback.getLogger("dev.wakeline.persist.MaintenanceJobs"));
+        var job = new RetentionJob(logback.getLogger("dev.wakeline.history.MaintenanceJobs"));
         new ScheduledMethodRunnable(job, RetentionJob.class.getMethod("dropOldPartitions"), null, () -> ObservationRegistry.NOOP).run();
         assertThat(lastEntry().path("context").has("job")).isFalse();
     }

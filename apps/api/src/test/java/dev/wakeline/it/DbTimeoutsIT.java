@@ -2,12 +2,16 @@ package dev.wakeline.it;
 
 import dev.wakeline.DbTestSupport;
 import dev.wakeline.ops.OpsUserService;
+import dev.wakeline.platform.data.PublicReadGate;
+import dev.wakeline.platform.web.Problem;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIf;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
+import org.springframework.jdbc.core.simple.JdbcClient;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -32,6 +36,7 @@ class DbTimeoutsIT extends IntegrationTest {
     private static final Pattern ELAPSED = Pattern.compile("elapsed_ms=(\\d+)");
 
     @Autowired OpsUserService users;
+    @Autowired MeterRegistry meters;
 
     @Test
     void apiConnectionsCarryStatementAndLockTimeouts() {
@@ -103,6 +108,57 @@ class DbTimeoutsIT extends IntegrationTest {
             assertThat(out.getAll()).doesNotContain("unhandled error request_id=" + r.header("X-Request-Id"));
         }
         assertThat(b.get("/api/v1/ops/runs?limit=5&resolved=show").status()).isEqualTo(200);
+    }
+
+    /**
+     * D6(리뷰 cto-2026-10 · api-review §3 B9 — docs/PERF.md §13): 느린 공개 조회가 공유 풀(12)을 모두 잡지 못한다. 공개 조회는 공개 조회 격벽
+     * (PublicReadGate — 허가 6)을 지나야 연결을 빌리고, 넘치는 것은 연결을 빌리지 않은 채 503 + Retry-After 로 끝난다(문장 상한과 같은 답).
+     * 그래서 공개 조회가 아닌 문장(기록기 · 운영 · 정기 작업과 같은 길 — 앱의 JdbcClient)은 바로 연결을 얻는다.
+     * 예전: 잠금에 걸린 재생 20개가 풀 12개를 모두 잡아, 그 문장은 3 s 상한이 공개 조회를 끊을 때까지(약 2.5 s) 기다렸다.
+     */
+    @Test
+    void slowPublicReadsLeaveSharedPoolConnectionsForTheWriters(CapturedOutput out) throws Exception {
+        String at = Instant.now().minusSeconds(300).truncatedTo(ChronoUnit.SECONDS).toString();
+        String path = "/api/v1/replay?at=" + at + "&bbox=124,33,132,39";
+        JdbcClient admin = admin();
+        String stuck = "SELECT count(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query LIKE '%wakeline replay.radar_frame%'";
+        java.util.Queue<Res> results = new java.util.concurrent.ConcurrentLinkedQueue<>();
+        java.util.List<Thread> requests = new java.util.ArrayList<>();
+        long probeMs;
+        long maxStuck = 0;
+        try (Connection c = DriverManager.getConnection(DbTestSupport.jdbcUrl(ItStack.DB), "postgres", DbTestSupport.ROOT_PW);
+             Statement s = c.createStatement()) {
+            c.setAutoCommit(false);
+            s.execute("LOCK TABLE radar_frame IN ACCESS EXCLUSIVE MODE"); // 재생의 레이더 조회가 이 잠금을 기다린다(3 s 상한까지 연결을 잡는다)
+            Thread releaser = Thread.ofVirtual().start(() -> {
+                try { Thread.sleep(15_000); c.rollback(); } catch (Exception ignored) { }
+            });
+            for (int i = 0; i < 20; i++) requests.add(Thread.ofVirtual().start(() -> results.add(get(path))));
+            long deadline = System.currentTimeMillis() + 2_000;
+            while (System.currentTimeMillis() < deadline && maxStuck < PublicReadGate.DEFAULT_PERMITS) {
+                maxStuck = Math.max(maxStuck, admin.sql(stuck).query(Long.class).single());
+                Thread.sleep(20);
+            }
+            Thread.sleep(300); // 더 잡을 수 있었다면 이 사이에 잡는다
+            maxStuck = Math.max(maxStuck, admin.sql(stuck).query(Long.class).single());
+            long t0 = System.nanoTime();
+            assertThat(db.sql("SELECT 1").query(Integer.class).single()).isEqualTo(1); // 공개 조회가 아닌 문장 — 기록기와 같은 길
+            probeMs = (System.nanoTime() - t0) / 1_000_000;
+            for (Thread t : requests) t.join(15_000);
+            releaser.interrupt();
+            c.rollback();
+        }
+        assertThat(probeMs).as("a non-public statement gets a shared-pool connection while the public reads are stuck").isLessThan(1_000L);
+        assertThat(maxStuck).as("public reads holding a shared-pool connection while stuck on the lock").isEqualTo(PublicReadGate.DEFAULT_PERMITS);
+        assertThat(results).hasSize(20).allSatisfy(r -> {
+            assertProblem(r, 503, "UNAVAILABLE", "/api/v1/replay");
+            assertThat(r.header("Retry-After")).isEqualTo(String.valueOf(Problem.UNAVAILABLE_RETRY_AFTER_S));
+        });
+        // 격벽이 돌려보낸 것: 연결을 빌리지 않았다 — 원인 메시지가 말한다(풀 대기 초과 · 문장 취소와 구별된다)
+        long rejected = results.stream().filter(r -> warnLine(out, r.header("X-Request-Id")).contains("public read limit reached")).count();
+        assertThat(rejected).isEqualTo(20 - PublicReadGate.DEFAULT_PERMITS);
+        assertThat(meters.find("wakeline_db_public_reads_rejected_total").counter().count()).isGreaterThanOrEqualTo(rejected);
+        assertThat(get(path).status()).as("the same read works once the lock is gone").isEqualTo(200);
     }
 
     /** 이 요청의 503 WARN 한 줄(요청 id 로 고른다). */

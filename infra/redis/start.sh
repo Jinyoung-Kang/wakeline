@@ -44,7 +44,11 @@
 #   세션 키 이름이 곧 세션 ID 라서 SCAN·RANDOMKEY 와 같은 이유로 막는다. 서비스 클라이언트는 클라이언트 측 캐시를 쓰지 않는다.
 #
 # 비밀번호는 compose 파일·명령행(docker inspect 의 Cmd)에 쓰지 않고 이 컨테이너의 환경변수로만 받는다.
-# redis-server 는 기동 직후 프로세스 제목을 바꿔(set-proc-title) argv 가 ps 에 남지 않는다.
+# redis-server 의 argv 에도 두지 않는다(S7 · L-3 — 프로세스 제목을 바꾸기(set-proc-title) 전 기동 순간에 ps · /proc/<pid>/cmdline 에 보였다):
+#   사용자는 소유자 전용(0600) ACL 파일에 SHA-256 해시(#<64자>)로만 적고 redis-server 에는 --aclfile 경로만 넘긴다.
+#   평문은 셸 변수 → printf(셸 내장) → sha256sum 의 stdin 으로만 지나가고 파일·로그에도 남지 않는다. 해시는 늘 16진수 64자라
+#   비밀번호에 공백·줄바꿈이 있어도 ACL 파일의 규칙이 되지 않는다. 파일은 ${TMPDIR:-/tmp}(compose: tmpfs — 컨테이너가 멈추면 사라진다)에 둔다.
+#   requirepass 는 ACL 파일과 함께 쓰면 무시되므로 관리용 default 도 이 파일에 둔다(requirepass 가 만들던 것과 같은 권한 ~* &* +@all).
 # 공식 엔트리포인트를 거치지 않는다: 이 컨테이너는 처음부터 redis(999) 사용자로 돌므로 권한 강하가 필요 없고,
 # 이미지에 들어 있는 모듈(검색·JSON·시계열·블룸)은 Wakeline 가 쓰지 않으므로 싣지 않는다(공격 면 축소).
 set -eu
@@ -84,16 +88,27 @@ AIS_KEYS='~wakeline:ships ~wakeline:ais:* %R~wakeline:settings %W~wakeline:logs'
 AIS_CMDS='+xadd +hset +hget +hgetall'
 
 umask 0077
-# shellcheck disable=SC2086 # 규칙 문자열은 의도적으로 단어 분리한다(글롭은 set -f 로 꺼 두었다)
-if [ -n "${REDIS_AIS_PASSWORD:-}" ]; then
-  set -- --user wakeline_ais on ">$REDIS_AIS_PASSWORD" $AIS_KEYS $PRODUCER_BASE $AIS_CMDS "$@"
-else
-  echo "start.sh: REDIS_AIS_PASSWORD 가 비어 있어 wakeline_ais 사용자를 만들지 않습니다(선박 수신 불가)" >&2
-fi
-# shellcheck disable=SC2086
-exec redis-server "${REDIS_CONF:-/etc/redis/redis.conf}" \
-  --requirepass "$REDIS_PASSWORD" \
-  --user wakeline_api on ">$REDIS_API_PASSWORD" $API_KEYS $COMMON \
-  --user wakeline_collector on ">$REDIS_COLLECTOR_PASSWORD" $COLLECTOR_KEYS $PRODUCER_BASE $COLLECTOR_CMDS \
-    "$COLLECTOR_SEL_SET" "$COLLECTOR_SEL_DEL" "$COLLECTOR_SEL_EXPIRE" "$COLLECTOR_SEL_TRAFFIC_NEG" \
-  "$@"
+fail() { echo "start.sh: $*" >&2; exit 1; }
+sha256_rule() { # sha256_rule <비밀번호> → ACL 해시 규칙 '#<SHA-256 소문자 16진수 64자>'. 함수 인자는 프로세스 argv 가 아니다
+  h="$(printf '%s' "$1" | sha256sum)" || return 1
+  h="${h%% *}"
+  case "$h" in *[!0-9a-f]*) return 1 ;; esac
+  [ "${#h}" -eq 64 ] && printf '#%s' "$h"
+}
+ADMIN_PW_RULE="$(sha256_rule "$REDIS_PASSWORD")" || fail "REDIS_PASSWORD 해시를 만들지 못했습니다(sha256sum)"
+API_PW_RULE="$(sha256_rule "$REDIS_API_PASSWORD")" || fail "REDIS_API_PASSWORD 해시를 만들지 못했습니다(sha256sum)"
+COLLECTOR_PW_RULE="$(sha256_rule "$REDIS_COLLECTOR_PASSWORD")" || fail "REDIS_COLLECTOR_PASSWORD 해시를 만들지 못했습니다(sha256sum)"
+ACL_FILE="$(mktemp "${TMPDIR:-/tmp}/wakeline-users.acl.XXXXXX")" || fail "ACL 파일을 만들지 못했습니다 — ${TMPDIR:-/tmp} 에 쓸 수 있어야 합니다(compose: tmpfs /tmp)"
+# 한 줄 = 사용자 하나(ACL SETUSER 와 같은 규칙, 셀렉터 괄호는 공백을 품은 채 그대로). 규칙 문자열의 * 는 따옴표 안이라 펼쳐지지 않는다
+{
+  printf '%s\n' "user default on $ADMIN_PW_RULE ~* &* +@all"
+  printf '%s\n' "user wakeline_api on $API_PW_RULE $API_KEYS $COMMON"
+  printf '%s\n' "user wakeline_collector on $COLLECTOR_PW_RULE $COLLECTOR_KEYS $PRODUCER_BASE $COLLECTOR_CMDS $COLLECTOR_SEL_SET $COLLECTOR_SEL_DEL $COLLECTOR_SEL_EXPIRE $COLLECTOR_SEL_TRAFFIC_NEG"
+  if [ -n "${REDIS_AIS_PASSWORD:-}" ]; then
+    AIS_PW_RULE="$(sha256_rule "$REDIS_AIS_PASSWORD")" || fail "REDIS_AIS_PASSWORD 해시를 만들지 못했습니다(sha256sum)"
+    printf '%s\n' "user wakeline_ais on $AIS_PW_RULE $AIS_KEYS $PRODUCER_BASE $AIS_CMDS"
+  else
+    echo "start.sh: REDIS_AIS_PASSWORD 가 비어 있어 wakeline_ais 사용자를 만들지 않습니다(선박 수신 불가)" >&2
+  fi
+} > "$ACL_FILE"
+exec redis-server "${REDIS_CONF:-/etc/redis/redis.conf}" --aclfile "$ACL_FILE" "$@"

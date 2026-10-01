@@ -41,10 +41,15 @@ function clockFor(periodMs: number): Clock {
 }
 
 const serverSnapshot = () => 0;
+const noSubscribe = () => () => {};
 
-export function useNow(periodMs = 1000): number {
+/**
+ * active = false: 시계를 구독하지 않는다(주기마다 다시 그리지 않는다) — 렌더할 때는 그 주기 시계의 마지막 값을 읽는다(다른 구독자가 돌리고 있으면 지금 값,
+ * 아무도 없으면 멈춘 값 · 처음이면 0). 보일 때만 시계가 필요한 자리(상단 검색의 결과 — web-review §4 P5)가 쓴다.
+ */
+export function useNow(periodMs = 1000, active = true): number {
   const c = clockFor(periodMs);
-  return useSyncExternalStore(c.subscribe, c.read, serverSnapshot);
+  return useSyncExternalStore(active ? c.subscribe : noSubscribe, c.read, serverSnapshot);
 }
 
 /**
@@ -67,8 +72,8 @@ export function useElapsedSince(key: string | null, nowMs: number): number | nul
  * 서버 기준 현재 시각(ms) — 서버가 준 절대 시각(seen_at·eta_at·valid_to·fetched_at)과 비교할 때는 이것을 쓴다(WS-3 · DH-1).
  * 첫 렌더(0)는 0 그대로(호출부는 "아직 모름"으로 다룬다).
  */
-export function useServerNow(periodMs = 1000): number {
-  const now = useNow(periodMs);
+export function useServerNow(periodMs = 1000, active = true): number {
+  const now = useNow(periodMs, active);
   return now ? serverNowMs(now) : 0;
 }
 

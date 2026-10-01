@@ -86,11 +86,11 @@ from wakeline_collector.portcalls import (
     PortCallApiError,
     PortCallParseError,
     PortCallRow,
-    kst_date,
 )
 from wakeline_collector.providers.data_go_kr import MOF_HOUR_WINDOW, MOF_HOURLY_CAP
 from wakeline_collector.providers.portmis import NUM_OF_ROWS, PORTMIS_WAIT_S, PageFetch
 from wakeline_collector.ratelimit import Throttled
+from wakeline_collector.timeutil import kst_date
 
 log = logging.getLogger("job.portcalls_index")
 

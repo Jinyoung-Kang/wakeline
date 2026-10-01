@@ -155,7 +155,8 @@ describe("dashboard cards: every time has the full KST instant on hover (no UTC 
   it("ship card: the reception-gap list (the footer promises the full KST instant on hover)", async () => {
     const NOW = Date.parse("2026-09-29T01:00:00Z");
     at("2026-09-29T01:00:00Z");
-    const { parseShipDetail, ShipCardView } = await import("@/components/ShipCard");
+    const { ShipCardView } = await import("@/components/ShipCard");
+    const { parseShipDetail } = await import("@/lib/ship-card");
     const detail = parseShipDetail("431011305", {
       state: null, static: { name: "SYN BRAVO", ship_type: 70, eta_month: 9, eta_day: 30, eta_hour: 20, eta_minute: 5 },
       first_recorded_at: "2026-09-20T01:02:03Z", last_position_at: "2026-09-28T23:00:00Z", last_seen_at: "2026-09-28T23:05:00Z", meta: {},
@@ -262,7 +263,8 @@ describe("the hover promise is stated only where it holds", () => {
     expect(t).not.toContain("원본 UTC");
   });
   it("ship card footer: KST, the full KST instant on hover", async () => {
-    const { parseShipDetail, ShipCardView } = await import("@/components/ShipCard");
+    const { ShipCardView } = await import("@/components/ShipCard");
+    const { parseShipDetail } = await import("@/lib/ship-card");
     const html = renderToStaticMarkup(createElement(ShipCardView, { mmsi: "431011305", detail: parseShipDetail("431011305", { state: null, static: null, meta: {} }), error: null, now: 0 }));
     expect(html).toContain("시각은 KST — 이 카드의 시각에 마우스를 올리면 연도 · ms 까지의 같은 순간(KST).");
   });

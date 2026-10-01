@@ -1,8 +1,8 @@
 package dev.wakeline.ops;
 
-import dev.wakeline.config.AppProperties;
-import dev.wakeline.config.ClientIp;
-import dev.wakeline.config.RequestIdFilter;
+import dev.wakeline.platform.config.AppProperties;
+import dev.wakeline.platform.web.ClientIp;
+import dev.wakeline.platform.web.RequestIdFilter;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;

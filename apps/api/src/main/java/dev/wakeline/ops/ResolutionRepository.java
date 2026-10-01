@@ -1,6 +1,6 @@
 package dev.wakeline.ops;
 
-import dev.wakeline.persist.Sql;
+import dev.wakeline.platform.data.Sql;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;

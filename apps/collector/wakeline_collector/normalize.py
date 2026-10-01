@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 import math
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -23,6 +24,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from wakeline_collector.models import AircraftState
+from wakeline_collector.quality import AircraftGate, GateResult, Quarantine
 
 log = logging.getLogger("normalize")
 
@@ -277,3 +279,38 @@ def from_opensky(vec: list[Any], fetched_at: datetime) -> AircraftState | None:
     """normalize_opensky 의 편의형: 격리 사유 없이 상태 또는 None."""
     r = normalize_opensky(vec, fetched_at)
     return r if isinstance(r, AircraftState) else None
+
+
+def gate_records(records: list[AircraftState | Rejected], gate: AircraftGate, now: datetime) -> GateResult:
+    """정규화 결과 → 품질 게이트. 정규화에서 이미 거른 레코드(Rejected)는 그 사유로 격리에 싣는다."""
+    states = [r for r in records if isinstance(r, AircraftState)]
+    pre = [Quarantine(r.rule, r.hex, r.detail) for r in records if isinstance(r, Rejected)]
+    return gate.apply(states, 0, now, pre=pre)
+
+
+def readsb_batch(
+    data: dict[str, Any],
+    provider: str,
+    fetched_at: datetime,
+    gate: AircraftGate,
+    *,
+    keep: Callable[[str | None], bool] | None = None,
+) -> tuple[list[AircraftState | Rejected], GateResult, set[str]]:
+    """readsb 응답 하나 → (정규화 결과, 게이트 결과, keep 을 지난 레코드의 hex) — aircraft(관심 지역) · demand(focus · hot)가 함께 쓴다.
+    같은 관측은 어느 작업이 받아도 같은 seen_at 이다(readsb_reference_time). keep(hex — 앞뒤 공백을 지운 소문자, 없으면 None)이 False 인 레코드는
+    보지 않는다(요청하지 않은 항공기). 게이트의 '지금'은 정규화를 마친 뒤의 시각이다(전과 같다)."""
+    ref = readsb_reference_time(data, fetched_at)
+    records: list[AircraftState | Rejected] = []
+    seen: set[str] = set()
+    for ac in data.get("ac") or []:
+        if not isinstance(ac, dict):
+            continue
+        if keep is not None:
+            raw_hex = ac.get("hex")
+            h = raw_hex.strip().lower() if isinstance(raw_hex, str) else None
+            if not keep(h):
+                continue
+            if h:
+                seen.add(h)
+        records.append(normalize_readsb(ac, provider, fetched_at, ref))
+    return records, gate_records(records, gate, datetime.now(UTC)), seen

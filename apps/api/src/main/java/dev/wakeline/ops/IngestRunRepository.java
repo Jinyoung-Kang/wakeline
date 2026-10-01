@@ -1,6 +1,6 @@
 package dev.wakeline.ops;
 
-import dev.wakeline.persist.Sql;
+import dev.wakeline.platform.data.Sql;
 import org.springframework.jdbc.core.simple.JdbcClient;
 
 import java.time.Instant;
@@ -12,7 +12,10 @@ import java.util.Map;
  * 수집 실행 기록(ingest_run) 읽기 — 운영 RUNS(GET /api/v1/ops/runs). 운영 조회라 문장 상한은 연결 설정(statement_timeout 30 s)이다.
  * <p>목록 필터는 주어진 것만 문장에 둔다(R-15 — {@code (:x IS NULL OR col = :x)} 한 문장은 몇 번 실행된 뒤의 일반 계획에서 인덱스를 쓰지 못한다):
  * job 이 있으면 ingest_run_job(job, started_at DESC), since 만 있으면 ingest_run_started 로 범위를 좁힌다.
+ * 운영 컨트롤러만 쓰므로 그와 같은 프로필의 빈이다(예전에는 컨트롤러가 직접 만들었다 — ADR-028: 컨트롤러는 JdbcClient 를 갖지 않는다).
  */
+@org.springframework.context.annotation.Profile("!cli & !migrate")
+@org.springframework.stereotype.Repository
 public class IngestRunRepository {
     private final JdbcClient db;
 

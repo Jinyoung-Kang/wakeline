@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import unittest
@@ -35,6 +36,22 @@ class BackupRestoreTest(unittest.TestCase):
     def test_backups_never_reach_git(self):
         r = subprocess.run(["git", "check-ignore", "-q", "backups/wakeline-20260101T000000Z.dump"], cwd=ROOT)
         self.assertEqual(r.returncode, 0, "backups/ 는 .gitignore 대상")
+
+
+class GitIgnoreScopeTest(unittest.TestCase):
+    """.gitignore 의 넓은 규칙(data/ · raw/ …)이 소스를 가리지 않는다. 가려진 디렉터리에 새로 만든 파일은 git status 에도 나오지 않아 커밋에서
+    조용히 빠진다 — 2026-10 리뷰 작업에서 api 패키지 platform.data · weather.data 의 새 클래스(DbErrors · KrRadarReader 등)가 그렇게 빠졌다.
+    추적 중인 파일이 무시 규칙에 걸리면 그 디렉터리의 새 파일도 걸린다(git ls-files -ci)."""
+
+    def test_no_tracked_file_matches_an_ignore_rule(self):
+        r = subprocess.run(["git", "ls-files", "-ci", "--exclude-standard"], cwd=ROOT, capture_output=True, text=True, check=True)
+        self.assertEqual(r.stdout.splitlines(), [], "추적 중인데 .gitignore 에 걸리는 파일 — 그 디렉터리의 새 파일은 커밋에서 빠진다")
+
+    def test_java_packages_named_data_are_not_ignored(self):
+        for probe in ("apps/api/src/main/java/dev/wakeline/platform/data/Probe.java", "apps/api/src/test/java/dev/wakeline/weather/data/ProbeTest.java"):
+            with self.subTest(path=probe):
+                r = subprocess.run(["git", "check-ignore", "--no-index", "-q", probe], cwd=ROOT)
+                self.assertEqual(r.returncode, 1, f"{probe} 가 .gitignore 에 걸린다")
 
     def test_backup_tool_writes_owner_only_and_uses_local_socket(self):
         t = (ROOT / "tools" / "db-backup.sh").read_text()
@@ -184,6 +201,36 @@ if __name__ == "__main__":
     unittest.main()
 
 
+class PrintHelperTest(unittest.TestCase):
+    """I-8: `make print-<변수>` 는 허용 목록의 고정 설정만 출력한다. make 는 환경변수도 변수로 읽으므로, 아무 이름이나 받으면
+    셸 · CI 에 export 된 비밀값(REDIS_PASSWORD · 토큰 …)을 그대로 찍는다."""
+
+    PROBE = "probe-value-not-a-real-secret"
+
+    def make_print(self, var: str, extra_env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+        env = {**os.environ, **(extra_env or {})}
+        return subprocess.run(["make", "-s", "--no-print-directory", f"print-{var}"], cwd=ROOT, env=env, capture_output=True, text=True)
+
+    def test_environment_and_other_make_variables_do_not_print(self):
+        for var in ("WAKELINE_PRINT_PROBE", "REDIS_PASSWORD", "COMPOSE", "PATH"):
+            with self.subTest(var=var):
+                r = self.make_print(var, {"WAKELINE_PRINT_PROBE": self.PROBE, "REDIS_PASSWORD": self.PROBE})
+                self.assertNotEqual(r.returncode, 0, "허용 목록 밖의 이름은 실패")
+                self.assertNotIn(self.PROBE, r.stdout + r.stderr)
+
+    def test_every_print_use_is_allow_listed_and_works(self):
+        files = [ROOT / ".github" / "workflows" / "ci.yml", *(ROOT / "tools").glob("*.sh"), *(ROOT / "infra" / "tests").glob("*.py"),
+                 *(ROOT / "perf").glob("*.sh")]
+        used = {v for f in files if f != Path(__file__).resolve() for v in re.findall(r"(?<![-\w])print-([A-Za-z0-9_]+)", f.read_text())}
+        self.assertEqual(used, {"K6_IMAGE", "ISO_ENV"}, "쓰는 곳(CI · 보안 게이트 · 정책 시험)")
+        for var in sorted(used):
+            with self.subTest(var=var):
+                r = self.make_print(var)
+                self.assertEqual(r.returncode, 0, r.stderr)
+                self.assertTrue(r.stdout.strip())
+        self.assertRegex(self.make_print("K6_IMAGE").stdout.strip(), r"^grafana/k6:[\w.-]+@sha256:[0-9a-f]{64}$")
+
+
 class PortableShellTest(unittest.TestCase):
     """시험·도구 셸 스크립트는 macOS(BSD)와 Linux(GNU, CI) 모두에서 같은 값을 내야 한다."""
 
@@ -228,3 +275,30 @@ class ReadmeFactsTest(unittest.TestCase):
         audit = ROOT / "docs/audit"
         latest = max([1] + [int(m.group(1)) for p in audit.glob("change-contract-v*.md") if (m := re.match(r"change-contract-v(\d+)\.md", p.name))])
         self.assertIn(f"변경 계약 v1–v{latest}", self.readme)
+
+
+class CollectorPostgresTest(unittest.TestCase):
+    """collector-review F2(PLAN C7): 수집기의 실 PostgreSQL 대조 시험(tests/test_db_pg_integration.py)이 어디서도 돌지 않았다. 버리는 컨테이너
+    시험(collector_pg_test.sh)이 make test-collector-db · make infra-docker-test 에 묶여 있고, 건너뛰면 실패하고, 운영과 같은 db 이미지 · api 의
+    Flyway 마이그레이션을 migrator 계정으로 쓰며, 비밀번호를 argv 에 두지 않는다."""
+
+    def test_wired_into_make(self):
+        self.assertIn("bash infra/tests/collector_pg_test.sh", recipe("test-collector-db"))
+        self.assertIn("bash infra/tests/collector_pg_test.sh", recipe("infra-docker-test"))
+        self.assertRegex(MAKEFILE, r"(?m)^\.PHONY:.*\btest-collector-db\b")
+
+    def test_script_runs_the_real_tests_against_the_api_schema(self):
+        t = (ROOT / "infra" / "tests" / "collector_pg_test.sh").read_text()
+        self.assertIn("tests/test_db_pg_integration.py", t)
+        self.assertRegex(t, r"grep -q[^\n]*skipped", "건너뛴 시험이 있으면 실패")
+        self.assertIn("infra/compose.yml", t, "compose 의 db 이미지")
+        self.assertIn("apps/api/src/main/resources/db/migration", t)
+        self.assertIn("-U wakeline_migrator", t, "api --migrate 와 같은 계정")
+        self.assertIn("--single-transaction", t, "Flyway 처럼 파일마다 한 트랜잭션")
+        self.assertIn("ON_ERROR_STOP=1", t)
+        self.assertIn("wakeline_collector:", t, "시험은 수집기 계정으로")
+        self.assertIn("trap cleanup EXIT", t)
+        for n, line in enumerate(t.splitlines(), 1):
+            if not line.lstrip().startswith("#"):
+                with self.subTest(line=n):
+                    self.assertNotRegex(line, r"-e\s+[A-Za-z_]*PASSWORD[A-Za-z_]*=", "비밀번호 값은 환경으로(-e NAME)")

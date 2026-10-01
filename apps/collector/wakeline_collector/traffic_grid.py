@@ -20,16 +20,16 @@ import math
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import orjson
 
 from wakeline_collector.marine_grid import CELL_DEG, GRID_ID_RE, Cell
+from wakeline_collector.timeutil import KST
 
 __all__ = ["CELL_DEG", "GRID_ID_RE", "KST", "KomsaApiError", "KomsaSnapshot", "TrafficItem", "build_payload", "parse_komsa"]
 
-KST = timezone(timedelta(hours=9))
 VMTC_MAX = 100_000  # 칸 하나의 척수 상한(형식 검사 — 확인한 최대 102)
 REG_DT_FORMAT = "%Y-%m-%d %H:%M:%S"
 _XML_TAG = re.compile(rb"<(returnReasonCode|returnAuthMsg|errMsg)>([^<]{0,120})</\1>")

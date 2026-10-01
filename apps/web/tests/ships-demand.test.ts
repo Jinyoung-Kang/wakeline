@@ -672,7 +672,9 @@ describe("ShipCard / ShipPanel / MapChips / AircraftCard demand chip (server ren
     const html = chips(null);
     expect(html).toContain('data-mode="grid"');
     expect(html).toContain("선박 1.2k척 · 2° 격자 3칸으로 묶음");
-    expect(chips(null, false)).toBe("");
+    // 선박 레이어도 수요 칩도 없으면 보이는 것이 없다 — 칸에는 빈 알림 영역 둘만(첫 상태도 읽히게 먼저 둔다 — tests/map-chips-a11y)
+    expect(chips(null, false).replace(/<[^>]*>/g, "")).toBe("");
+    expect(chips(null, false)).not.toMatch(/ships-chip"|demand-map-chip/);
     const demand = parseDemand({ focus: { hex: "71c123", state: "active", interval_s: 5 }, hot: { radius_nm: 100, state: "active", interval_s: 30 } }, 0);
     setData({ demand, conn: "open", lastRxAt: -1 }); // 서버 렌더의 시계는 0 → 1 ms 전 수신 = 실시간
     expect(chips("71c123")).toContain("집중 추적 5초");

@@ -48,7 +48,7 @@ class OpsPipelineControllerTest {
     OpsPipelineController controller(StreamMetrics metrics) {
         StaticListableBeanFactory beans = new StaticListableBeanFactory();
         if (metrics != null) beans.addBean("streamMetrics", metrics);
-        return new OpsPipelineController(redis(), new SimpleMeterRegistry(), beans.getBeanProvider(StreamConsumer.class),
+        return new OpsPipelineController(new PipelineSignals(redis()), new SimpleMeterRegistry(), beans.getBeanProvider(StreamConsumer.class),
                 beans.getBeanProvider(StreamMetrics.class), () -> NOW);
     }
 
@@ -185,6 +185,75 @@ class OpsPipelineControllerTest {
         assertThat(a.queueLimit()).isNull();
         assertThat(a.reconnectQuickWindowS()).isNull();
         assertThat(a.loopWarnEveryS()).isNull();
+    }
+
+    /**
+     * 수집기 heartbeat 의 이벤트 루프 지연(collector-review D0 — ais 와 같은 이름 · 같은 고른 값)과 원천 보관 실패(F6 — raw_unsaved · raw_purge_failed,
+     * 기동 뒤 누계). 수집기는 loop_lag_max_s 를 소수 3자리로 싣는다(수십 ms 를 본다 — docs/PERF.md §12).
+     */
+    static void putCollectorLoopAndRaw(Map<Object, Object> h) {
+        h.put("loop_lag_max_s", "0.021");
+        h.put("loop_stalls_total", "2");
+        h.put("loop_tick_s", "0.1");
+        h.put("diag_window_s", "60");
+        h.put("loop_stall_s", "1");
+        h.put("loop_warn_s", "5");
+        h.put("loop_warn_every_s", "60");
+        h.put("raw_unsaved", "3");
+        h.put("raw_purge_failed", "0");
+    }
+
+    @Test
+    void passesThroughTheCollectorLoopLagAndRawArchiveCountersWhileTheHeartbeatIsFresh() {
+        collector.put("region_at", NOW.minusSeconds(5).toString());
+        putCollectorLoopAndRaw(collector);
+        OpsPipelineController.CollectorSignals c = controller(metrics()).pipeline().collector();
+        assertThat(c.loopLagMaxS()).isEqualTo(0.021);
+        assertThat(c.loopStallsTotal()).isEqualTo(2L);
+        assertThat(c.loopTickS()).isEqualTo(0.1);
+        assertThat(c.diagWindowS()).isEqualTo(60.0);
+        assertThat(c.loopStallS()).isEqualTo(1.0);
+        assertThat(c.loopWarnS()).isEqualTo(5.0);
+        assertThat(c.loopWarnEveryS()).isEqualTo(60.0);
+        assertThat(c.rawUnsaved()).isEqualTo(3L);
+        assertThat(c.rawPurgeFailed()).isEqualTo(0L);
+    }
+
+    @Test
+    void emptyMalformedOrStaleCollectorLoopAndRawFieldsAreUnknown() {
+        collector.put("region_at", NOW.minusSeconds(5).toString());
+        putCollectorLoopAndRaw(collector);
+        // 표본 전(빈 값) · 형식이 틀림 · 음수 · 지수 표기는 모름 — 0 으로 채우지 않는다
+        collector.put("loop_lag_max_s", "");
+        collector.put("loop_stalls_total", "2.5");
+        collector.put("loop_tick_s", "1e-1");
+        collector.put("loop_stall_s", "-1");
+        collector.put("raw_unsaved", "many");
+        collector.remove("raw_purge_failed"); // 이 필드를 쓰기 전의 수집기
+        OpsPipelineController.CollectorSignals c = controller(metrics()).pipeline().collector();
+        assertThat(c.loopLagMaxS()).isNull();
+        assertThat(c.loopStallsTotal()).isNull();
+        assertThat(c.loopTickS()).isNull();
+        assertThat(c.loopStallS()).isNull();
+        assertThat(c.rawUnsaved()).isNull();
+        assertThat(c.rawPurgeFailed()).isNull();
+        assertThat(c.diagWindowS()).isEqualTo(60.0);
+        assertThat(c.loopWarnS()).isEqualTo(5.0);
+
+        // 멈춘 수집기의 마지막 값은 지금 값이 아니다(나이는 그대로)
+        putCollectorLoopAndRaw(collector);
+        collector.put("region_at", NOW.minusSeconds(600).toString());
+        c = controller(metrics()).pipeline().collector();
+        assertThat(c.heartbeatAgeS()).isEqualTo(600.0);
+        assertThat(c.loopLagMaxS()).isNull();
+        assertThat(c.loopStallsTotal()).isNull();
+        assertThat(c.loopTickS()).isNull();
+        assertThat(c.diagWindowS()).isNull();
+        assertThat(c.loopStallS()).isNull();
+        assertThat(c.loopWarnS()).isNull();
+        assertThat(c.loopWarnEveryS()).isNull();
+        assertThat(c.rawUnsaved()).isNull();
+        assertThat(c.rawPurgeFailed()).isNull();
     }
 
     @Test

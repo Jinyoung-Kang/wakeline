@@ -1,6 +1,7 @@
 package dev.wakeline.ws;
 
-import dev.wakeline.domain.AircraftState;
+import dev.wakeline.aircraft.web.AircraftJson;
+import dev.wakeline.aircraft.core.AircraftState;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -22,7 +23,7 @@ final class AircraftJsonCache {
     private record Entry(AircraftState state, String json) {}
 
     private final ObjectMapper json;
-    private final Map<WsMessages.Encoding, ConcurrentHashMap<String, Entry>> maps = new EnumMap<>(WsMessages.Encoding.class);
+    private final Map<AircraftJson.Encoding, ConcurrentHashMap<String, Entry>> maps = new EnumMap<>(AircraftJson.Encoding.class);
     /** 적중률(R-53): 조각을 다시 쓴 횟수(hit)와 새로 직렬화한 횟수(miss). */
     private final Counter hit;
     private final Counter miss;
@@ -31,12 +32,12 @@ final class AircraftJsonCache {
 
     AircraftJsonCache(ObjectMapper json, MeterRegistry meters) {
         this.json = json;
-        for (WsMessages.Encoding e : WsMessages.Encoding.values()) maps.put(e, new ConcurrentHashMap<>());
+        for (AircraftJson.Encoding e : AircraftJson.Encoding.values()) maps.put(e, new ConcurrentHashMap<>());
         this.hit = Counter.builder("wakeline_cache_requests_total").tag("cache", "aircraft_json").tag("result", "hit").register(meters);
         this.miss = Counter.builder("wakeline_cache_requests_total").tag("cache", "aircraft_json").tag("result", "miss").register(meters);
     }
 
-    String get(AircraftState a, WsMessages.Encoding enc) {
+    String get(AircraftState a, AircraftJson.Encoding enc) {
         ConcurrentHashMap<String, Entry> m = maps.get(enc);
         Entry e = m.get(a.hex());
         if (e != null && (e.state == a || e.state.equals(a))) {
@@ -44,7 +45,7 @@ final class AircraftJsonCache {
             return e.json;
         }
         miss.increment();
-        String s = json.writeValueAsString(WsMessages.encode(a, enc));
+        String s = json.writeValueAsString(AircraftJson.encode(a, enc));
         m.put(a.hex(), new Entry(a, s));
         return s;
     }
@@ -56,5 +57,5 @@ final class AircraftJsonCache {
         }
     }
 
-    int size(WsMessages.Encoding enc) { return maps.get(enc).size(); }
+    int size(AircraftJson.Encoding enc) { return maps.get(enc).size(); }
 }

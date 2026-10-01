@@ -1,13 +1,15 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
-import { apiGet } from "@/lib/api";
+import { useMemo } from "react";
+import { aircraftDetail } from "@/lib/endpoints/aircraft";
+import { useApiResource } from "@/lib/use-api-resource";
 import { aircraftStates, useServerData } from "@/lib/store";
 import { useUi } from "@/lib/ui-store";
 import { useElapsedSince, useNow, useServerNow } from "@/lib/clock";
 import { focusChip } from "@/lib/demand";
 import { isRxFresh } from "@/lib/ws-protocol";
 import { predict, seenAtMs } from "@/lib/interpolate";
-import type { AircraftState, Alert, PredictionReason } from "@/lib/types";
+import { EMERGENCY_SQUAWKS, newerState, qualityLabel, REASON_LABEL } from "@/lib/aircraft-card";
+import type { AircraftState } from "@/lib/types";
 import { fmtAltGndDual, fmtBool, fmtDuration, fmtGsDual, fmtNum, fmtVrateDual } from "@/lib/format";
 import {
   EARTH_RADIUS_KM, fmtAirline, fmtAirportCodes, fmtAirportPlace, fmtRouteKm, parseRoute, ROUTE_ATTRIBUTION_TAIL, ROUTE_CAVEAT, ROUTE_SOURCE_URL,
@@ -18,39 +20,8 @@ import { DemandBadge } from "./MapChips";
 import { RequestIdOf } from "./logs/ErrorNote";
 import { KstTime } from "./KstTime";
 
-interface Detail {
-  hex: string;
-  state: AircraftState | null;
-  static: { registration?: string | null; type_code?: string | null; category?: string | null; first_seen?: string | null; last_seen?: string | null } | null;
-  active_alerts?: Alert[];
-  inside_sigmets?: string[];
-  emergency?: boolean;
-  meta?: { provider?: string | null; fetched_at?: string | null; lag_s?: number | null; stale?: boolean; db_unavailable?: boolean };
-  /** 계약 v4 §A — 검증 전 값(parseRoute) */
-  route?: unknown;
-}
-
 /** 등록 정보(static)·SIGMET 포함 여부 등 REST 상세 갱신 주기. 위치·속도는 WS selected 스트림이 실시간으로 준다. */
 const DETAIL_REFRESH_MS = 30_000;
-const EMERGENCY_SQUAWKS: ReadonlySet<string> = new Set(["7500", "7600", "7700"]);
-const REASON_LABEL: Record<PredictionReason, string> = {
-  turning: "선회 중(최근 트랙 변화 > 15°)", slow: "저속", on_ground: "지상", no_track: "속도/방위 없음", stale: "수신 지연",
-};
-
-/** 관측 시각(seen_at)이 더 새로운 상태. 같거나 비교할 수 없으면 앞의 것(REST full). */
-function newerState(a: AircraftState | null, b: AircraftState | null): AircraftState | null {
-  if (!a || !b) return a ?? b;
-  const ta = seenAtMs(a.seen_at), tb = seenAtMs(b.seen_at);
-  return tb != null && (ta == null || tb > ta) ? b : a;
-}
-
-function qualityLabel(q: number | null | undefined) {
-  if (q == null) return "—";
-  if (q === 0) return "0 · 통과";
-  if (q === 1) return "1 · 경고(속도/방위 없음 → 보간 안 함)";
-  return String(q);
-}
-
 function AirportLine({ a }: { a: RouteAirport }) {
   return (
     <span className="flex flex-col items-end">
@@ -161,9 +132,11 @@ export function RouteSection({ route, pos, callsign, pendingForS = null }: { rou
  * 경과·stale·외삽은 서버 기준 시각으로 — 지도(워커)·툴팁과 같은 기준(WS-3 · DH-1). 지상이면 고도 대신 GND(DH-3).
  */
 export function AircraftCard({ hex }: { hex: string }) {
-  const [detail, setDetail] = useState<Detail | null>(null);
-  const [error, setError] = useState<{ hex: string; msg: string; error?: unknown } | null>(null);
-  const [refresh, setRefresh] = useState(0);
+  /**
+   * REST 상세 — 항공기마다의 결과, 30 s 마다 다시 받기(lib/use-api-resource): 요청이 떠 있으면 그 주기는 건너뛴다 — 전에는 주기마다 앞 요청의 답을 버리고
+   * 새로 보내 30 s 보다 느린 상세는 끝내 보이지 않았다(web-review B9). 탭이 보일 때만, 다시 보이면 곧바로(PLAN §5 결정 2). 실패하면 마지막으로 받은 값을 둔다
+   */
+  const res = useApiResource(hex, (signal) => aircraftDetail(hex, { signal }), { refreshMs: DETAIL_REFRESH_MS });
   const select = useUi((s) => s.select);
   const selected = useServerData((x) => (x.selected && x.selected.hex === hex ? x.selected : null));
   const alertsMap = useServerData((x) => x.alerts);
@@ -172,20 +145,9 @@ export function AircraftCard({ hex }: { hex: string }) {
   const demand = useServerData((x) => x.demand);
   const conn = useServerData((x) => x.conn);
   const lastRxAt = useServerData((x) => x.lastRxAt);
-  useEffect(() => {
-    const t = setInterval(() => setRefresh((n) => n + 1), DETAIL_REFRESH_MS);
-    return () => clearInterval(t);
-  }, [hex]);
-  useEffect(() => {
-    let live = true;
-    apiGet<Detail>(`/api/v1/aircraft/${encodeURIComponent(hex)}`)
-      .then((x) => { if (live) { setDetail(x); setError(null); } })
-      .catch((e: Error) => { if (live) setError({ hex, msg: String(e.message), error: e }); });
-    return () => { live = false; };
-  }, [hex, refresh]);
-  // 다른 항공기로 바뀐 직후 이전 응답을 보여주지 않는다
-  const d = detail && detail.hex?.toLowerCase() === hex.toLowerCase() ? detail : null;
-  const err = error && error.hex === hex ? error.msg : null;
+  // 응답의 hex 가 이 카드의 것일 때만(다른 항공기의 응답을 보여주지 않는다)
+  const d = res.data && res.data.hex?.toLowerCase() === hex.toLowerCase() ? res.data : null;
+  const err = res.error != null ? String((res.error as Error).message) : null;
   // 상태: WS selected(변할 때마다 오는 full 상태)가 있으면 그것. selected.state=null 이면 스냅샷에 더 이상 없다.
   // 아직 selected 가 없으면 REST 상세와 지도 스냅샷 사본 중 관측 시각이 더 새로운 것.
   const s: AircraftState | null = selected ? selected.state : newerState(d?.state ?? null, aircraftStates.get(hex) ?? null);
@@ -239,7 +201,7 @@ export function AircraftCard({ hex }: { hex: string }) {
           : <span className="text-fg-3" data-testid="demand-chip-none">{live ? "집중 추적 상태 수신 전" : "연결이 실시간이 아님 — 집중 추적 상태 모름"}</span>}
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto px-2 py-1 text-[12px]">
-        {err ? <div className="text-[11px] text-bad" data-testid="aircraft-detail-error">상세(REST) 조회 실패 — 마지막으로 받은 값만 표시 ({err}<RequestIdOf error={error?.error} />)</div> : null}
+        {err ? <div className="text-[11px] text-bad" data-testid="aircraft-detail-error">상세(REST) 조회 실패 — 마지막으로 받은 값만 표시 ({err}<RequestIdOf error={res.error} />)</div> : null}
         {d?.meta?.db_unavailable ? <div className="text-[11px] text-warn">등록 정보 DB 일시 사용 불가 — 등록번호·기종은 “—”</div> : null}
         {rows.map(([k, val]) => (
           <div key={k} className="flex justify-between gap-2 border-b border-line py-1"><span className="shrink-0 text-fg-3">{k}</span><span className="text-right">{val}</span></div>

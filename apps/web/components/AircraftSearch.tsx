@@ -1,18 +1,16 @@
 "use client";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
-import { ApiError, apiGet } from "@/lib/api";
+import { aircraftDetail } from "@/lib/endpoints/aircraft";
 import { useServerNow } from "@/lib/clock";
 import { fmtKst, fmtKstTitle } from "@/lib/time";
 import { saveLayers } from "@/lib/prefs";
 import {
-  isTypingTarget, moveActive, normalizeQuery, normalizeShipQuery, parseSearchResponse, parseShipSearchResponse, SHIP_SEARCH_DB_NOTE, SHIP_SEARCH_LIMIT, shipChoice, shipRowFromHit,
-  shipSearchDbUnavailable,
+  isTypingTarget, moveActive, normalizeQuery, normalizeShipQuery, searchAircraft, searchFailText, searchShips, SHIP_SEARCH_DB_NOTE, shipChoice, shipRows as rowsOf,
   type SearchHit, type ShipHit,
 } from "@/lib/search";
-import { sortShipRows, type ShipSort, type ShipSortKey } from "@/lib/ships";
-import { aircraftStates, shipStates } from "@/lib/store";
+import type { ShipSort, ShipSortKey } from "@/lib/ships";
+import { aircraftStates, serverNowMs, shipStates } from "@/lib/store";
 import { useUi } from "@/lib/ui-store";
-import type { AircraftState } from "@/lib/types";
 import { ShipTablePart } from "./DashboardParts";
 import { AltStack } from "./UnitStack";
 import { RequestIdOf } from "./logs/ErrorNote";
@@ -32,19 +30,8 @@ type GroupState = "idle" | "loading" | "done" | "error";
 export interface SearchGroup<T> { hits: T[]; state: GroupState; msg: string; note?: string; error?: unknown }
 const IDLE = { hits: [], state: "idle" as const, msg: "" };
 
-/** 검색 실패 문구(묶음마다) — 404 는 서버가 아직 그 검색을 지원하지 않는 경우(구 api) */
-function failText(what: string, e: unknown): string {
-  if (e instanceof ApiError && e.status === 429) return "요청이 많아 잠시 제한됨 — 잠시 후 다시";
-  if (e instanceof ApiError && e.status === 404) return `${what} 검색을 쓸 수 없음(HTTP 404 — 서버가 지원하지 않음)`;
-  if (e instanceof ApiError && e.status === 400) return `${what} 검색어 형식이 맞지 않음(HTTP 400)`;
-  return `${what} 검색 실패 (${(e as Error).message})`;
-}
-
-/** 선박 검색 결과의 표시 순서: 정렬을 고르기 전에는 서버 순서(실시간 먼저), 고르면 표 규칙(lib/ships sortShipRows) */
-function shipRows(hits: ShipHit[], sort: ShipSort | null, now: number) {
-  const rows = hits.map((h) => shipRowFromHit(h, shipStates.get(h.mmsi)));
-  return sort ? sortShipRows(rows, sort, now) : rows;
-}
+/** 선박 검색 결과의 표시 순서(lib/search shipRows — 항해 상태는 지도 목록 사본에서) */
+const shipRows = (hits: ShipHit[], sort: ShipSort | null, now: number) => rowsOf(hits, sort, now, shipStates);
 
 /**
  * 상단 통합 검색(GAP-12 · 계약 v5 §B3): 항공기(호출부호·hex·등록번호 접두사 2–10자)와 선박(선명·호출부호 앞부분 · MMSI · IMO, 2–40자)을 함께 찾는다.
@@ -66,9 +53,11 @@ export function AircraftSearch() {
   const select = useUi((s) => s.select);
   const selectShip = useUi((s) => s.selectShip);
   const requestFlyTo = useUi((s) => s.requestFlyTo);
-  const now = useServerNow(1000);
   const qa = normalizeQuery(text);
   const qs = normalizeShipQuery(text);
+  const showList = open && (qa != null || qs != null);
+  // 1 s 시계(결과의 선박 경과)는 결과를 보일 때만 구독한다 — 닫혀 있으면 머리 줄을 1 s 마다 다시 그리지 않는다(web-review §4 P5, docs/PERF.md §11)
+  const now = useServerNow(1000, showList);
 
   // "/" 단축키 — 입력 중이 아닐 때만
   useEffect(() => {
@@ -90,33 +79,36 @@ export function AircraftSearch() {
       setActive(-1);
       if (qa) {
         setAircraft((g) => ({ ...g, state: "loading" }));
-        apiGet<unknown>(`/api/v1/aircraft/search?q=${encodeURIComponent(qa)}`, { signal: ctl.signal })
-          .then((body) => { const h = parseSearchResponse(body); setAircraft({ hits: h, state: "done", msg: h.length ? `${h.length}건` : "일치하는 항공기 없음" }); })
-          .catch((e: unknown) => { if (!ctl.signal.aborted) setAircraft({ hits: [], state: "error", msg: failText("항공기", e), error: e }); });
+        searchAircraft(qa, { signal: ctl.signal })
+          .then((h) => { setAircraft({ hits: h, state: "done", msg: h.length ? `${h.length}건` : "일치하는 항공기 없음" }); })
+          .catch((e: unknown) => { if (!ctl.signal.aborted) setAircraft({ hits: [], state: "error", msg: searchFailText("항공기", e), error: e }); });
       } else setAircraft(IDLE);
       if (qs) {
         setShips((g) => ({ ...g, state: "loading" }));
-        apiGet<unknown>(`/api/v1/ships/search?q=${encodeURIComponent(qs)}&limit=${SHIP_SEARCH_LIMIT}`, { signal: ctl.signal })
-          .then((body) => {
-            const h = parseShipSearchResponse(body);
-            setShips({ hits: h, state: "done", msg: h.length ? `${h.length}건` : "일치하는 선박 없음", note: shipSearchDbUnavailable(body) ? SHIP_SEARCH_DB_NOTE : undefined });
+        searchShips(qs, { signal: ctl.signal })
+          .then(({ hits: h, dbUnavailable }) => {
+            setShips({ hits: h, state: "done", msg: h.length ? `${h.length}건` : "일치하는 선박 없음", note: dbUnavailable ? SHIP_SEARCH_DB_NOTE : undefined });
           })
-          .catch((e: unknown) => { if (!ctl.signal.aborted) setShips({ hits: [], state: "error", msg: failText("선박", e), error: e }); });
+          .catch((e: unknown) => { if (!ctl.signal.aborted) setShips({ hits: [], state: "error", msg: searchFailText("선박", e), error: e }); });
       } else setShips(IDLE);
     }, DEBOUNCE_MS);
     return () => { clearTimeout(t); ctl.abort(); };
   }, [qa, qs]);
 
+  /** 선택 번호(항공기 · 선박 공통) — 항공기 상세를 기다리는 동안 다른 것을 고르면 늦게 온 답은 지도를 옮기지도 문구를 덮지도 않는다(web-review B3) */
+  const choice = useRef(0);
   const chooseAircraft = useCallback(async (h: SearchHit) => {
+    const my = ++choice.current;
     setOpen(false);
     select(h.hex);
     let pos: [number, number] | null = h.live && h.lon != null && h.lat != null ? [h.lon, h.lat] : null;
     if (!pos) { const s = aircraftStates.get(h.hex); if (s) pos = [s.lon, s.lat]; }
     if (!pos) {
       try {
-        const d = await apiGet<{ state: AircraftState | null }>(`/api/v1/aircraft/${encodeURIComponent(h.hex)}`);
+        const d = await aircraftDetail(h.hex);
         if (d.state && Number.isFinite(d.state.lat) && Number.isFinite(d.state.lon)) pos = [d.state.lon, d.state.lat];
       } catch { /* 위치 모름 */ }
+      if (my !== choice.current) return; // 기다리는 사이 다른 것을 골랐다
     }
     const name = h.callsign ?? h.hex;
     if (pos) { requestFlyTo(pos[0], pos[1], 8); setMsg(`${name} 선택 — 지도 이동`); }
@@ -124,17 +116,19 @@ export function AircraftSearch() {
   }, [select, requestFlyTo]);
 
   const chooseShip = useCallback((h: ShipHit) => {
+    choice.current++;
     setOpen(false);
     // 선박 레이어가 꺼져 있으면 켠다 — 선택 표시·항적은 선박 레이어에 그린다(설정은 이 브라우저에 저장)
     const ui = useUi.getState();
     if (!ui.layers.ships) { ui.toggleLayer("ships"); saveLayers(useUi.getState().layers); }
     selectShip(h.mmsi);
     const listed = shipStates.get(h.mmsi);
-    const c = shipChoice(h, listed ? { lat: listed.lat, lon: listed.lon } : null, now);
+    // 고른 순간의 서버 기준 시각 — 결과가 닫혀 있으면 시계를 구독하지 않으므로 마지막 렌더의 값이 오래됐을 수 있다(전에는 마지막 1 s 틱)
+    const c = shipChoice(h, listed ? { lat: listed.lat, lon: listed.lon } : null, serverNowMs(Date.now()));
     // 줌 9: 줌 7 이상이면 서버가 개별 선박을 보낸다(화면 안 5,000척 이하 — 계약 v4 §C)
     if (c.fly) requestFlyTo(c.fly[0], c.fly[1], 9);
     setMsg(c.message);
-  }, [selectShip, requestFlyTo, now]);
+  }, [selectShip, requestFlyTo]);
 
   // 선박 표 조각(ShipTablePart)이 아직 오지 않았거나 받지 못했으면 선박 listbox · option 이 DOM 에 없다 — 그동안 선박 줄은 키보드 이동 · Enter ·
   // aria-controls · aria-activedescendant 에 넣지 않는다(보이지 않는 줄을 고르거나 없는 id 를 가리키지 않게 — 리뷰 2026-09-30). 받으면 다시 그린다.
@@ -164,7 +158,6 @@ export function AircraftSearch() {
   };
 
   const onShipSort = (k: ShipSortKey) => setShipSort((cur) => (cur?.key === k ? { key: k, dir: cur.dir === "asc" ? "desc" : "asc" } : { key: k, dir: k === "age" || k === "sog" ? "desc" : "asc" }));
-  const showList = open && (qa != null || qs != null);
   const activeId = showList && active >= 0 && active < total ? optionId(uid, active < aircraft.hits.length ? `a-${aircraft.hits[active].hex}` : `s-${navRows[active - aircraft.hits.length].mmsi}`) : undefined;
   // 팝업 = 두 listbox(항공기 · 선박 — 묶음 제목이 이름). 선박 listbox 는 결과가 있고 선박 표 조각을 받았을 때만 있다(없는 id 를 가리키지 않게)
   const lists = searchListIds(uid);

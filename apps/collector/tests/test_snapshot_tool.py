@@ -18,7 +18,8 @@ async def test_snapshot_writes_every_fixture(tmp_path, monkeypatch):
         respx.get(url__regex=r"https://opendata\.adsb\.fi/.*").mock(return_value=httpx.Response(200, json={"ac": []}))
         respx.get(url__regex=r"https://aviationweather\.gov/.*").mock(return_value=httpx.Response(200, json=[]))
         respx.get(url__regex=r"https://api\.rainviewer\.com/.*").mock(
-            return_value=httpx.Response(200, json={"host": "h", "radar": {"past": []}})
+            # 타일 host 는 공급자가 검사한다(보안 검토 L-6) — 실제 응답의 host
+            return_value=httpx.Response(200, json={"host": "https://tilecache.rainviewer.com", "radar": {"past": []}})
         )
         await snapshot.main()
     assert sorted(p.name for p in tmp_path.iterdir()) == sorted(

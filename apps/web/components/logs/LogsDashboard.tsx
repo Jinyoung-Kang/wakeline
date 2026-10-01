@@ -1,16 +1,16 @@
 "use client";
 import Link from "next/link";
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
-import { apiGet, apiSend } from "@/lib/api";
+import { logItem, logsPage } from "@/lib/endpoints/logs";
+import { opsSession, signOutRequest } from "@/lib/endpoints/ops";
 import { copyText, downloadText } from "@/lib/copy";
 import { fmtKstClock, fmtTimeTitle } from "@/lib/time";
 import {
-  appendLogPage, applyPending, DEFAULT_LOG_FILTER, entryKey, firstLine, groupText, LOG_LEVELS, LOG_PERIOD_LABEL, LOG_PERIODS, LOG_Q_MAX,
-  LOG_SCAN_MAX, LOG_SERVICES, LOG_STREAM_KEEP, LOG_STREAM_KEY, LOG_STREAM_NODE, logGroupsUrl, logItemUrl, logsFileName, logsNdjson, logsText, logsUrl, logText, LOGS_PAGE, LOGS_PAGE_MAX,
-  parseLogEntry, parseLogGroups, parseLogPage, parseLogsHash, pendingEntries, validRid, withGroupResolutions,
-  type LogEntry, type LogFilter, type LogGroup, type LogPage, type LogPeriod, type LogStreamName,
+  DEFAULT_LOG_FILTER, entryKey, initialLogsState, firstLine, groupText, LOG_LEVELS, LOG_PERIOD_LABEL, LOG_PERIODS, LOG_Q_MAX, LOG_SCAN_MAX, LOG_SERVICES,
+  LOG_STREAM_KEEP, LOG_STREAM_KEY, LOG_STREAM_NODE, logsFileName, logsNdjson, logsText, logText, LOGS_PAGE_MAX, parseLogsHash,
+  validRid, withGroupResolutions, type LogEntry, type LogFilter, type LogGroup, type LogPage, type LogPeriod, type LogStreamName,
 } from "@/lib/logs";
-import { classifyOpsError, isAuthMiss, OPS_SESSION_PATH, SESSION_EXPIRED_NOTE, signOut } from "@/lib/ops";
+import { classifyOpsError, isAuthMiss, SESSION_EXPIRED_NOTE, signOut } from "@/lib/ops";
 import { hiddenText, RESOLUTION_STATE_TEXT, type ResolutionState } from "@/lib/resolutions";
 import { AisGapsTable } from "./AisGapsTable";
 import { ErrorNote } from "./ErrorNote";
@@ -19,15 +19,12 @@ import { LogGroupsTable } from "./LogGroupsTable";
 import { KstTime } from "../KstTime";
 import { ResolveConfirm, useResolveSlot, type ResolveResult } from "../ResolveConfirm";
 import { revokeLogGroup } from "./logGroupTargets";
+import { useLogFeed, type LogView } from "./useLogFeed";
 
 type Tab = "logs" | "gaps";
-type View = "list" | "groups";
-type Groups = ReturnType<typeof parseLogGroups>;
-/** 자동 새로고침(§C7) — 새 항목은 단추로만 반영한다 */
-const REFRESH_MS = 15_000;
+type View = LogView;
 const PERIODS = Object.keys(LOG_PERIODS) as LogPeriod[];
 const LEVEL_BADGE: Record<string, string> = { ERROR: "badge bad", WARN: "badge warn" };
-const NO_PENDING = { items: [] as LogEntry[], more: false };
 const n = (v: number) => v.toLocaleString("en-US");
 /** 목록 줄의 DOM id — 표(grid)의 aria-activedescendant 가 가리킨다. 항목 키(stream:id — 같은 id 가 두 스트림에 있을 수 있다, §G2)에서 ':' 만 바꾼다 */
 const rowDomId = (key: string) => `log-row-${key.replace(":", "-")}`;
@@ -35,7 +32,6 @@ const n0 = (v: number) => v.toLocaleString("en-US");
 /** 두 스트림의 보관 안내(§G2) */
 const KEEP_TEXT = `서버 로그 ${LOG_STREAM_KEY.server} 는 최근 약 ${n0(LOG_STREAM_KEEP.server)}건 · 브라우저 오류 ${LOG_STREAM_KEY.client} 는 최근 약 ${n0(LOG_STREAM_KEEP.client)}건만 보관`;
 /** 묶음 목록이 바뀌었는지(지문 · 건수 · 마지막 항목 · 해결) */
-const groupsSig = (g: Groups | null) => (g ? g.groups.map((x) => `${x.fp}:${x.count}:${x.last_id}:${x.resolved?.id ?? ""}`).join("|") : "");
 /** "해결 처리로 숨김 N건"의 뜻(ADR-024) */
 const HIDDEN_TITLE = "해결 처리(운영자가 지문 묶음을 'upto 까지 해결'로 적음)로 이 보기에서 뺀 항목 수 — 훑은 범위에서 다른 필터에 맞은 것만. "
   + "지우지 않음: '해결된 항목 보기'로 다시 보고, upto 뒤의 재발은 다시 보인다(ADR-024). — = api 가 수를 주지 않음";
@@ -50,12 +46,8 @@ function HiddenLine({ show, hidden, pages, state }: { show: boolean; hidden: num
   </>;
 }
 
-/** 첫 필터: /logs#rid=… 는 시각을 모르므로 가장 긴 기간(7 d)으로, #fp=… 는 그 묶음만. #id=…(&stream=…) 는 그 항목의 상세를 연다 */
-function initialState(): { filter: LogFilter; openId: string | null; openStream: LogStreamName | null } {
-  const h = parseLogsHash(typeof window !== "undefined" ? window.location?.hash ?? "" : "");
-  const filter: LogFilter = { ...DEFAULT_LOG_FILTER, ...(h.rid ? { rid: h.rid, period: "7d" as const } : {}), ...(h.fp ? { fp: h.fp } : {}) };
-  return { filter, openId: h.id ?? null, openStream: h.stream ?? null };
-}
+/** 첫 필터 · 열 항목 — 주소의 #rid= · #fp= · #id=(lib/logs initialLogsState) */
+const initialState = () => initialLogsState(typeof window !== "undefined" ? window.location?.hash ?? "" : "");
 
 /**
  * 시스템 로그 화면(계약 v5 §C7): 필터(서비스 여러 개 · 수준 · 기간 · 글자 · 요청 id) · 보기(목록 / 지문 묶음) · 상세 · 복사 · 내려받기 · AIS 수신 공백 탭.
@@ -73,111 +65,41 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
   const [draftQ, setDraftQ] = useState(init.filter.q);
   const [draftRid, setDraftRid] = useState(init.filter.rid);
   const [ridError, setRidError] = useState<string | null>(null);
-  /** at = 이 목록을 요청한 시각(기간의 기준 — "더 보기"도 같은 기준) */
-  const [page, setPage] = useState<(LogPage & { at: number }) | null>(null);
-  const [pending, setPending] = useState(NO_PENDING);
-  const [groups, setGroups] = useState<Groups | null>(null);
-  const [freshGroups, setFreshGroups] = useState<Groups | null>(null);
   /** 고른 줄의 항목 키(entryKey — stream:id) */
   const [selId, setSelId] = useState<string | null>(null);
   const [detail, setDetail] = useState<LogEntry | null>(null);
   const [detailMiss, setDetailMiss] = useState<{ id: string; error: unknown } | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [err, setErr] = useState<unknown>(null);
-  const [lastOk, setLastOk] = useState<number | null>(null);
   const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null);
   /** 목록 줄의 되돌리기 확인(해결된 항목이 보일 때 — 그 줄 아래, 한 번에 하나) */
   const rowResolve = useResolveSlot();
-  /** 목록·묶음을 새로 불러올 때마다 올린다 — 늦게 온 이전 필터의 응답(또는 그 사이의 자동 확인)을 버린다 */
-  const loadSeq = useRef(0);
   const rowEls = useRef(new Map<string, HTMLTableRowElement>());
-
-  /** ops 호출 실패: 문구로 보이고, 401/404 면 세션을 확인해 만료일 때만 로그인으로 */
-  const fail = useCallback((e: unknown) => {
-    setErr(e);
-    if (!isAuthMiss(e)) return;
-    void classifyOpsError(e, () => apiGet(OPS_SESSION_PATH)).then((k) => { if (k === "expired") onLeave(SESSION_EXPIRED_NOTE); });
-  }, [onLeave]);
+  /** 목록을 새로 받으면 고른 줄은 그 목록에 있을 때만 남는다 */
+  const keepSelection = useCallback((p: LogPage) => setSelId((s) => (s && p.items.some((e) => entryKey(e) === s) ? s : null)), []);
+  /** 목록 · 묶음 · 새 항목 대기열 · 더 보기 · 15 s 자동 확인 · 마지막 성공 시각 · 오류(./useLogFeed) */
+  const { page, pending, groups, setGroups, freshGroups, loading, moreCursor, err, lastOk, fail, load, loadMore, showPending, showFreshGroups } =
+    useLogFeed(view, filter, { active: tab === "logs", onLeave, onList: keepSelection });
   /** 상세의 조회 · 해결 쓰기가 401/404 일 때 — 세션 확인만(문구는 부른 쪽이 보인다). 만료면 로그인으로 */
   const authMiss = useCallback(async (e: unknown) => {
-    const k = await classifyOpsError(e, () => apiGet(OPS_SESSION_PATH));
+    const k = await classifyOpsError(e, () => opsSession());
     if (k === "expired") onLeave(SESSION_EXPIRED_NOTE);
     return k;
   }, [onLeave]);
 
-  const load = useCallback(async (v: View, f: LogFilter) => {
-    const my = ++loadSeq.current;
-    const at = Date.now();
-    setLoading(true);
-    try {
-      if (v === "list") {
-        const p = parseLogPage(await apiGet<unknown>(logsUrl(f, at)));
-        if (my !== loadSeq.current) return;
-        setPage({ ...p, at });
-        setPending(NO_PENDING);
-        setSelId((s) => (s && p.items.some((e) => entryKey(e) === s) ? s : null));
-      } else {
-        const g = parseLogGroups(await apiGet<unknown>(logGroupsUrl(f, at)));
-        if (my !== loadSeq.current) return;
-        setGroups(g);
-        setFreshGroups(null);
-      }
-      setErr(null);
-      setLastOk(Date.now());
-    } catch (e) {
-      if (my === loadSeq.current) fail(e);
-    } finally {
-      if (my === loadSeq.current) setLoading(false);
-    }
-  }, [fail]);
-
-  // 필터·보기가 바뀌면 다시 불러온다(첫 요청은 다음 틱 — 개발 모드 이중 실행에서 한 번만)
-  useEffect(() => {
-    if (tab !== "logs") return;
-    const t = setTimeout(() => void load(view, filter), 0);
-    return () => clearTimeout(t);
-  }, [tab, view, filter, load]);
-
-  /** 자동 확인: 첫 쪽을 다시 받아 보이는 맨 위보다 새 항목만 대기열에(목록은 그대로). 묶음 보기는 바뀌었는지만 */
-  const poll = useCallback(async () => {
-    const my = loadSeq.current;
-    try {
-      if (view === "list") {
-        const p = parseLogPage(await apiGet<unknown>(logsUrl(filter, Date.now())));
-        if (my !== loadSeq.current) return;
-        if (!page?.items.length) {
-          // 보이는 줄이 없으면 움직일 것도 없다 — 바로 보인다
-          setPage({ ...p, at: Date.now() });
-          setPending(NO_PENDING);
-        } else {
-          setPending(pendingEntries(page.items, p.items, LOGS_PAGE));
-        }
-      } else {
-        const g = parseLogGroups(await apiGet<unknown>(logGroupsUrl(filter, Date.now())));
-        if (my !== loadSeq.current) return;
-        setFreshGroups(groupsSig(g) !== groupsSig(groups) ? g : null);
-      }
-      setErr(null);
-      setLastOk(Date.now());
-    } catch (e) {
-      if (my === loadSeq.current) fail(e);
-    }
-  }, [view, filter, page, groups, fail]);
-  useEffect(() => {
-    if (tab !== "logs") return;
-    const t = setInterval(() => void poll(), REFRESH_MS);
-    return () => clearInterval(t);
-  }, [tab, poll]);
-
+  /**
+   * 상세 열기 번호 — #id= 링크 · 줄 · 닫기마다 오른다. 먼저 누른 #id= 항목의 늦은 답이 나중에 연 상세를 덮지 않게(마지막 것만 — web-review B14,
+   * 해결 뒤 다시 읽기의 rereadSeq 와 같은 규칙)
+   */
+  const openSeq = useRef(0);
   const openById = useCallback(async (id: string, stream: LogStreamName | null = null) => {
+    const my = ++openSeq.current;
     setDetailMiss(null);
     try {
-      const v = await apiGet<unknown>(logItemUrl(id, stream));
-      const raw = typeof v === "object" && v !== null && "item" in v ? (v as { item: unknown }).item : v;
-      const e = parseLogEntry(raw);
+      const e = await logItem(id, stream);
+      if (my !== openSeq.current) return;
       if (e) setDetail(e);
       else setDetailMiss({ id, error: new Error("항목 형식이 스키마와 맞지 않음") });
     } catch (e) {
+      if (my !== openSeq.current) return;
       setDetailMiss({ id, error: e });
       if (isAuthMiss(e)) authMiss(e);
     }
@@ -226,26 +148,10 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
   };
   /** 묶음 전체: 그 지문의 항목(기간·서비스·수준 같게, 최대 200건)을 받아 묶음 머리와 함께 */
   const copyGroup = (g: LogGroup) => copy(`묶음 ${g.fp}`, async () => {
-    const p = parseLogPage(await apiGet<unknown>(logsUrl({ ...filter, q: "", rid: "", fp: g.fp }, Date.now(), { limit: LOGS_PAGE_MAX })));
+    const p = await logsPage({ ...filter, q: "", rid: "", fp: g.fp }, Date.now(), { limit: LOGS_PAGE_MAX });
     const truncated = p.nextCursor != null || p.scanTruncated === true || (g.count != null && p.items.length < g.count);
     return groupText(g, p.items, { truncated });
   });
-  const showPending = () => {
-    if (pending.more) { void load("list", filter); return; } // 새 항목이 한 쪽을 넘음 — 사이가 비지 않게 처음부터
-    setPage((p) => (p ? { ...p, items: applyPending(p.items, pending.items) } : p));
-    setPending(NO_PENDING);
-  };
-  const loadMore = async () => {
-    if (!page?.nextCursor) return;
-    const my = loadSeq.current;
-    try {
-      const p = parseLogPage(await apiGet<unknown>(logsUrl(filter, page.at, { cursor: page.nextCursor })));
-      if (my !== loadSeq.current) return;
-      setPage((prev) => (prev ? { ...appendLogPage(prev, p), at: prev.at } : prev));
-    } catch (e) {
-      fail(e);
-    }
-  };
   /** 목록 표(grid)에 초점이 있을 때만 — 다른 요소(단추 · 입력)에서 올라온 키는 그 요소의 것이다 */
   const onKey = (e: React.KeyboardEvent) => {
     if (e.target !== e.currentTarget) return;
@@ -256,8 +162,7 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
       setSelId(entryKey(items[i]));
     } else if (e.key === "Enter" && selIdx >= 0) {
       e.preventDefault();
-      setDetail(items[selIdx]);
-      setDetailMiss(null);
+      openEntry(items[selIdx]);
     } else if (e.key === "c" || e.key === "C") {
       const it = selIdx >= 0 ? items[selIdx] : detail;
       if (it) { e.preventDefault(); void copy("항목 텍스트", logText(it)); }
@@ -282,9 +187,9 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
     setTab("logs"); setView("list"); setDraftRid(rid); setRidError(null);
     setFilter((f) => ({ ...f, rid, period: "7d" }));
   }, []);
-  const openEntry = useCallback((e: LogEntry) => { setDetail(e); setDetailMiss(null); }, []);
-  const closeDetail = useCallback(() => { setDetail(null); setDetailMiss(null); }, []);
-  const logout = () => { void signOut(() => apiSend("DELETE", OPS_SESSION_PATH), onLeave); };
+  const openEntry = useCallback((e: LogEntry) => { openSeq.current++; setDetail(e); setDetailMiss(null); }, []);
+  const closeDetail = useCallback(() => { openSeq.current++; setDetail(null); setDetailMiss(null); }, []);
+  const logout = () => { void signOut(() => signOutRequest(), onLeave); };
 
   /** 열린 상세 — 해결 쓰기 뒤 다시 읽을 항목(콜백이 상세가 바뀔 때마다 새로 만들어지지 않게 ref) */
   const detailRef = useRef<LogEntry | null>(null);
@@ -312,10 +217,8 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
     void load(shown.current.view, shown.current.filter);
     if (open) {
       const my = ++rereadSeq.current;
-      void apiGet<unknown>(logItemUrl(open.id, open.stream)).then((v) => {
+      void logItem(open.id, open.stream).then((x) => {
         if (my !== rereadSeq.current) return;
-        const raw = typeof v === "object" && v !== null && "item" in v ? (v as { item: unknown }).item : v;
-        const x = parseLogEntry(raw);
         if (x) setDetail((d) => (d && entryKey(d) === entryKey(open) ? x : d));
       }, () => {
         if (my !== rereadSeq.current) return;
@@ -323,7 +226,7 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
         if (r.op === "revoke" && r.complete) setDetail((d) => (d && entryKey(d) === entryKey(open) ? { ...d, resolved: null } : d));
       });
     }
-  }, [load]);
+  }, [load, setGroups]);
 
   return (
     <div className="flex h-full flex-col" data-testid="logs-dashboard">
@@ -413,7 +316,7 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
             {groups?.scanTruncated ? <span className="text-warn">스캔 상한({n(LOG_SCAN_MAX)}건 — 두 스트림 합)에서 잘림 — 묶음·건수가 기간의 일부만</span> : null}
             {groups?.invalid ? <span className="text-warn">형식 오류 묶음 {groups.invalid}개 건너뜀</span> : null}
             {groups ? <HiddenLine show={filter.resolved === "show"} hidden={groups.hiddenResolved} pages={1} state={groups.resolutionState} /> : null}
-            {freshGroups ? <button type="button" className="btn border-accent! text-accent!" data-testid="logs-new" onClick={() => { setGroups(freshGroups); setFreshGroups(null); }}>묶음에 새 항목 — 반영</button> : null}
+            {freshGroups ? <button type="button" className="btn border-accent! text-accent!" data-testid="logs-new" onClick={showFreshGroups}>묶음에 새 항목 — 반영</button> : null}
             <span className="text-fg-3">묶음 보기는 서비스·수준·기간만 적용(글자 검색·요청 id·지문 제외)</span>
           </>}
           <span role="status" aria-live="polite" data-testid="logs-note" className={note?.ok === false ? "text-bad" : "text-ok"}>{note?.text ?? ""}</span>
@@ -477,7 +380,8 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
                 </div>
               ) : null}
               {page?.nextCursor ? (
-                <button type="button" className="btn m-2" onClick={() => void loadMore()} title={`cursor ${page.nextCursor}`}>이전 항목 더 보기</button>
+                <button type="button" className="btn m-2" onClick={() => void loadMore()} title={`cursor ${page.nextCursor}`}
+                  disabled={moreCursor === page.nextCursor} aria-busy={moreCursor === page.nextCursor || undefined}>이전 항목 더 보기</button>
               ) : page && items.length ? <div className="p-2 text-[11px] text-fg-3">끝 — 다음 커서 없음</div> : null}
             </> : groups ? (
               groups.groups.length ? (

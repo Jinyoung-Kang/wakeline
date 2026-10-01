@@ -29,7 +29,8 @@ import orjson
 
 from wakeline_collector.config import settings
 from wakeline_collector.masking import mask
-from wakeline_collector.portcalls import Coverage, PortCallRow, kst_date, merge_day
+from wakeline_collector.portcalls import Coverage, PortCallRow, merge_day
+from wakeline_collector.timeutil import kst_date
 
 log = logging.getLogger("db")
 
@@ -177,23 +178,38 @@ async def _create_pool() -> asyncpg.Pool:
         user="wakeline_collector",
         password=settings.db_collector_password,
         min_size=1,
-        max_size=2,  # writer 1 + 생존 확인 1
+        # 동시에 연결을 쓰는 곳: writer 1(쓰기와 그 뒤 생존 확인 SELECT 1 은 차례로 — 한 번에 하나) + 직접 읽기 · 트랜잭션 2 — 입출항 색인 작업(범위 읽기 ·
+        # 하루 트랜잭션, 차례로)과 격자 기하 읽기(marine_grid4). 전에는 2(writer 1 + 생존 확인 1)라, 느린 DB 에서 두 직접 사용자가 연결 둘을 쥐면 쓰기 실패
+        # 뒤 생존 확인이 연결을 얻지 못해 응답하는 DB 를 '닿지 않음'(db_ok=0)으로 적었다(F10 — test_db_writer 확인 시험). 직접 사용자를 더하면 늘린다
+        max_size=3,
         timeout=5,  # 연결 수립 상한(기본 60 s)
         command_timeout=OP_TIMEOUT_S,
         server_settings={"application_name": "wakeline-collector", "timezone": "UTC"},
     )
 
 
+def _masked(v: Any) -> Any:
+    """품질 사례 detail 의 글자 값을 모두(중첩 포함) masking.mask 로 가린다 — 키 · 숫자 · null 은 그대로, 넘긴 값은 바꾸지 않는다."""
+    if isinstance(v, str):
+        return mask(v, None)
+    if isinstance(v, dict):
+        return {k: _masked(x) for k, x in v.items()}
+    if isinstance(v, list | tuple):
+        return [_masked(x) for x in v]
+    return v
+
+
 def quality_rows(
     events: list[tuple[str, str | None, dict[str, Any]]],
 ) -> tuple[list[tuple[str, str | None, str]], dict[str, int]]:
-    """규칙별 대표 사례 최대 20건만 개별 저장, 나머지는 건수로 집계(운영 화면은 규칙별 건수 + 최근 사례)."""
+    """규칙별 대표 사례 최대 20건만 개별 저장, 나머지는 건수로 집계(운영 화면은 규칙별 건수 + 최근 사례).
+    저장하는 사례의 detail 은 error_text 처럼 가린다(보안 검토 L-2 — 공급자 응답 앞부분 · 예외 글자가 /ops '상세(원문)' 칸에 그대로 보였다)."""
     per_rule: dict[str, int] = {}
     rows: list[tuple[str, str | None, str]] = []
     for rule, hex_, detail in events:
         per_rule[rule] = per_rule.get(rule, 0) + 1
         if per_rule[rule] <= QUALITY_SAMPLES_PER_RULE:
-            rows.append((rule, hex_, orjson.dumps(detail).decode()))
+            rows.append((rule, hex_, orjson.dumps(_masked(detail)).decode()))
     return rows, per_rule
 
 

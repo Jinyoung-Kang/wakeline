@@ -1,6 +1,6 @@
 package dev.wakeline.it;
 
-import dev.wakeline.ws.WsHub;
+import dev.wakeline.status.StatusService;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIf;
@@ -23,7 +23,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class RadarKrIT extends IntegrationTest {
     static final String PNG_1X1 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
 
-    @Autowired WsHub hub;
+    @Autowired StatusService status;
     @Autowired MeterRegistry meters;
 
     static Map<String, String> meta(String now, String live) {
@@ -39,7 +39,7 @@ class RadarKrIT extends IntegrationTest {
         String now = Instant.now().toString(), live = "202609281210";
         try {
             ItStack.hset(ItStack.collector(), "wakeline:radar_kr:meta", meta(now, live));
-            await("status cache refreshed", Duration.ofSeconds(10), () -> hub.status().get("radar_kr") instanceof Map<?, ?> m && live.equals(m.get("latest_tm")));
+            await("status cache refreshed", Duration.ofSeconds(10), () -> status.cachedPublicStatus().get("radar_kr") instanceof Map<?, ?> m && live.equals(m.get("latest_tm")));
             JsonNode kr = get("/api/v1/status").json().path("radar_kr");
             List<String> keys = new ArrayList<>();
             kr.propertyNames().forEach(keys::add);
@@ -54,7 +54,7 @@ class RadarKrIT extends IntegrationTest {
 
             // 틀린 값은 모름(키 없음)
             ItStack.hset(ItStack.collector(), "wakeline:radar_kr:meta", Map.of("available", "yes", "latest_tm", "12:10", "fetched_at", "yesterday", "status", "OK!"));
-            await("status cache refreshed", Duration.ofSeconds(10), () -> hub.status().get("radar_kr") instanceof Map<?, ?> m && !m.containsKey("latest_tm"));
+            await("status cache refreshed", Duration.ofSeconds(10), () -> status.cachedPublicStatus().get("radar_kr") instanceof Map<?, ?> m && !m.containsKey("latest_tm"));
             JsonNode bad = get("/api/v1/status").json().path("radar_kr");
             assertThat(bad.has("available")).isFalse();
             assertThat(bad.has("fetched_at")).isFalse();
@@ -135,7 +135,7 @@ class RadarKrIT extends IntegrationTest {
             Res after = get("/api/v1/radar/kr", headers("If-None-Match", r.header("ETag")));
             assertThat(after.status()).as("same frames, newer streak — not 304").isEqualTo(200);
             assertThat(after.json().path("missing").path("tms").asInt()).isEqualTo(20);
-            await("status cache refreshed", Duration.ofSeconds(10), () -> hub.status().get("radar_kr") instanceof Map<?, ?> k
+            await("status cache refreshed", Duration.ofSeconds(10), () -> status.cachedPublicStatus().get("radar_kr") instanceof Map<?, ?> k
                     && k.get("missing") instanceof Map<?, ?> mm && Integer.valueOf(20).equals(mm.get("tms")));
             JsonNode st = get("/api/v1/status").json().path("radar_kr").path("missing");
             assertThat(st.path("since_tm").asString()).isEqualTo("202609300815");

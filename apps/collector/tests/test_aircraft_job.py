@@ -11,13 +11,14 @@ from types import SimpleNamespace
 
 import httpx
 import orjson
+import pytest
 import respx
 from fakes import FakeRedis, make_ctx
 
 from wakeline_collector import fallback
 from wakeline_collector.config import Settings
 from wakeline_collector.fallback import ProviderChain
-from wakeline_collector.http import HttpClient
+from wakeline_collector.http import HostNotAllowed, HttpClient
 from wakeline_collector.jobs.aircraft import AircraftJob, next_utc_midnight
 from wakeline_collector.main import build_limits
 from wakeline_collector.models import BudgetInfo, ProviderResult
@@ -386,7 +387,9 @@ def test_region_feed_stale_limit_matches_the_api():
 
     from wakeline_collector.jobs import aircraft as mod
 
-    java = (Path(__file__).resolve().parents[3] / "apps/api/src/main/java/dev/wakeline/engine/EngineService.java").read_text()
+    java = (
+        Path(__file__).resolve().parents[3] / "apps/api/src/main/java/dev/wakeline/weather/core/EngineService.java"
+    ).read_text()
     m = re.search(r"REGION_FEED_STALE_S\s*=\s*(\d+);", java)
     assert m and int(m.group(1)) == mod.REGION_FEED_STALE_S
 
@@ -1010,3 +1013,68 @@ async def test_the_no_provider_warning_says_none_when_nothing_failed_since_the_l
     await job.run_once()
     gap = [w for w in _warnings(caplog) if "no provider available" in w]
     assert len(gap) == 1 and gap[0].endswith("; last error: none since the last success or start")
+
+
+class RaisingReadsb(FakeReadsb):
+    def __init__(self, name: str, exc: Exception):
+        super().__init__(name)
+        self.exc = exc
+
+    async def fetch_region(self, lat, lon, radius):
+        self.calls += 1
+        raise self.exc
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [httpx.PoolTimeout("pool full"), httpx.ProxyError("proxy refused"), HostNotAllowed("evil.example")],
+    ids=lambda e: type(e).__name__,
+)
+async def test_a_call_not_sent_for_a_local_reason_gives_the_unit_back_and_is_not_a_provider_failure(exc):
+    """R-65 · F7: 연결 풀 대기 초과(풀 8) · 프록시 · 허용 호스트 아님은 공급자에게 닿지도 않았다 — 전에는 예산을 쓰고 공급자 실패(3번이면 10분 쉼)로 셌다."""
+    r = FakeRedis()
+    ctx = make_ctx(r, limits={"adsb_fi": 100})
+    runs = _spy_runs(ctx)
+    chain = ProviderChain("region", {"adsb_fi": RaisingReadsb("adsb_fi", exc)}, ctx.status)
+    job = AircraftJob("region", chain, ctx)
+    for _ in range(3):
+        await job.run_once()
+    assert (await ctx.budget.usage("adsb_fi"))[0] == 0
+    h = await r.hgetall("wakeline:provider:adsb_fi")
+    assert "last_error" not in h and "consecutive_failures" not in h
+    assert chain._fails.get("adsb_fi", 0) == 0 and "adsb_fi" not in chain._down_until
+    assert [x["status"] for x in runs] == ["error"] * 3 and all(x["error_text"].startswith("not sent — ") for x in runs)
+
+
+async def test_an_unreachable_provider_gives_the_unit_back_and_still_counts_toward_the_three_strike_rule():
+    """연결 실패는 보내지 않았지만(예산을 돌려준다) 공급자에 닿지 못한 것이다 — 폴백이 그대로 일한다(3번이면 쉰다)."""
+    r = FakeRedis()
+    ctx = make_ctx(r, limits={"adsb_fi": 100})
+    chain = ProviderChain("region", {"adsb_fi": RaisingReadsb("adsb_fi", httpx.ConnectError("refused"))}, ctx.status)
+    job = AircraftJob("region", chain, ctx)
+    for _ in range(3):
+        await job.run_once()
+    assert (await ctx.budget.usage("adsb_fi"))[0] == 0
+    assert "adsb_fi" in chain._down_until
+    assert (await r.hgetall("wakeline:provider:adsb_fi"))["consecutive_failures"] == "3"
+
+
+async def test_an_opensky_token_failure_gives_the_four_credits_back_and_is_a_provider_failure():
+    """F7: 토큰을 받지 못하면 상태 조회(4크레딧)는 보내지 않았다 — 전에는 그 4크레딧을 쓴 것으로 남겼다. 토큰 실패는 OpenSky 의 실패다(상태 해시)."""
+    from wakeline_collector.providers.opensky import TOKEN_URL
+
+    r = FakeRedis()
+    ctx = make_ctx(r, limits={"opensky": 2880})
+    runs = _spy_runs(ctx)
+    http = HttpClient(RateLimiter(100, 100))
+    osky = OpenSkyProvider(http, "FAKE-id", "FAKE-client")
+    job = AircraftJob("global", ProviderChain("global", {"opensky": osky}, ctx.status), ctx)
+    with respx.mock:
+        respx.post(TOKEN_URL).mock(return_value=httpx.Response(503, text="auth down"))
+        await job.run_once()
+    await http.aclose()
+    assert (await ctx.budget.usage("opensky"))[0] == 0
+    h = await r.hgetall("wakeline:provider:opensky")
+    assert h["consecutive_failures"] == "1" and "opensky token request failed" in h["last_error"]
+    assert h["last_http_status"] == "503"
+    assert [(x["status"], x["http_status"]) for x in runs] == [("error", 503)]

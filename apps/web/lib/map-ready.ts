@@ -6,6 +6,7 @@
  */
 import type * as maplibregl from "maplibre-gl";
 import { useSyncExternalStore } from "react";
+import { describeThrown, reportClientError } from "./errorReport";
 import type { Tip } from "./tooltip";
 
 let current: maplibregl.Map | null = null;
@@ -39,7 +40,16 @@ export function onReady(map: maplibregl.Map, key: string, fn: () => void): void 
   if (!queue) {
     const q = new Map<string, () => void>();
     deferredDraws.set(map, q);
-    map.once("load", () => { deferredDraws.delete(map); for (const f of q.values()) f(); });
+    // 그리기마다 따로 실행한다 — 하나가 던져도 뒤의 것(호버 · 클릭 연결 'pointer', 항공기 · 공항 그리기)을 건너뛰지 않는다(리뷰 2026-10-01).
+    map.once("load", () => {
+      deferredDraws.delete(map);
+      for (const [k, f] of q) {
+        try { f(); } catch (e) {
+          const d = describeThrown(e);
+          reportClientError({ message: `map draw '${k}' failed: ${d.message}`, stack: d.stack, component: "lib/map-ready" });
+        }
+      }
+    });
     queue = q;
   }
   queue.delete(key);

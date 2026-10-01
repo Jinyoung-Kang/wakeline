@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import gzip
+from pathlib import Path
 
 import httpx
 import orjson
@@ -19,6 +20,7 @@ from wakeline_collector.providers.rainviewer import RainViewerProvider
 from wakeline_collector.providers.readsb import AdsbFiDemandProvider, adsb_fi, adsb_lol, validate_hexes, validate_point
 from wakeline_collector.ratelimit import RateLimiter
 
+ROOT = Path(__file__).resolve().parents[3]
 AC = {"ac": [{"hex": "abcdef", "lat": 1, "lon": 2, "seen_pos": 1}], "msg": "No error", "now": 1, "total": 1}
 
 
@@ -153,6 +155,51 @@ async def test_rainviewer_shape(http):
         respx.get(RV_URL).mock(return_value=httpx.Response(200, json={"radar": {}}))
         with pytest.raises(ValueError):
             await p.frames()
+
+
+RV_OK = orjson.loads((ROOT / "fixtures" / "rainviewer_weather_maps.json").read_bytes())
+
+
+def _rv(host: object = "https://tilecache.rainviewer.com", path: object = "/v2/radar/08cf9db57b5d") -> dict:
+    return {
+        "version": "2.0",
+        "generated": 1,
+        "host": host,
+        "radar": {"past": [{"time": 1790487000, "path": path}], "nowcast": []},
+    }
+
+
+async def test_rainviewer_real_response_shape_passes_the_tile_checks(http):
+    with respx.mock:
+        respx.get(RV_URL).mock(return_value=httpx.Response(200, json=RV_OK))
+        assert (await RainViewerProvider(http).frames()).data == RV_OK
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        _rv(host="https://evil.example"),
+        _rv(host="http://tilecache.rainviewer.com"),
+        _rv(host="https://tilecache.rainviewer.com.evil.example"),
+        _rv(host="https://tilecache.rainviewer.com/"),
+        _rv(host="https://user@tilecache.rainviewer.com"),
+        _rv(host=None),
+        _rv(path="/v2/radar/../../x"),
+        _rv(path="/v2/radar/08cf9db57b5d?x=1"),
+        _rv(path="/v2/radar/08CF9DB57B5D"),
+        _rv(path="//evil.example/v2/radar/08cf9db57b5d"),
+        _rv(path="/v2/radar/"),
+        _rv(path="/v2/radar/08cf9db57b5d\n"),
+        _rv(path=1790487000),
+    ],
+)
+async def test_rainviewer_tile_host_and_paths_outside_the_allow_list_are_refused(http, data):
+    """보안 검토 L-6(2026-10-01): 공급자가 준 타일 host · path 를 검사 없이 api · 브라우저까지 넘겼다(CSP 가 유일한 방어). host 는 정확히
+    https://tilecache.rainviewer.com, path 는 /v2/radar/<소문자 16진수>(실제 응답 fixtures/rainviewer_weather_maps.json 의 모양)만 받는다."""
+    with respx.mock:
+        respx.get(RV_URL).mock(return_value=httpx.Response(200, json=data))
+        with pytest.raises(ValueError, match="rainviewer tile"):
+            await RainViewerProvider(http).frames()
 
 
 async def test_kma_list_and_binary(http):

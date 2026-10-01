@@ -11,7 +11,9 @@ RUN --mount=type=cache,target=/root/.gradle ./gradlew --no-daemon -q bootJar -x 
 
 FROM eclipse-temurin:25-jre@sha256:8da0490fa9a3c26867012019565948eef0ee69438f5c75ac28146967bae984b5
 WORKDIR /app
-RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/* \
+# apt-get upgrade: 기반 이미지(다이제스트 고정)가 나온 뒤 고쳐진 Ubuntu 보안 갱신까지 — db 이미지와 같은 방식, Trivy 게이트가 결과를 본다
+# (2026-10-01 최종 검증: libssl3t64 등 고칠 수 있는 HIGH 3 — 같은 기반의 새 다이제스트는 아직 없었다).
+RUN apt-get update && apt-get install -y --no-install-recommends curl && apt-get upgrade -y --no-install-recommends && rm -rf /var/lib/apt/lists/* \
  && groupadd -r app && useradd -r -g app app
 COPY --from=build /src/build/libs/wakeline-api.jar /app/app.jar
 COPY --from=build /src/src/main/resources/schemas /app/schemas

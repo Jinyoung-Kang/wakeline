@@ -5,7 +5,7 @@
 - **clsgn(호출부호) 파라미터는 거르지 않는다**(배포 뒤 확인 — docs/review/evidence/public-data-apis-2026-09-29.txt 마지막 절). 그래서 선택한 선박마다
   묻지 않고, 항만청 · KST 날짜 하루씩 모든 신고를 받아 색인한다(jobs/portcalls_index). api 가 AIS 호출부호로 색인을 찾는다.
 - 읽는 필드는 실제 응답으로 확인한 이름뿐이다(fixtures/portmis_info5_busan_V7A3884.xml — 전체 기록 · portmis_info5_empty.xml — 빈 응답).
-  모르는 요소는 무시하고, 없는 요소는 None. 문자열은 제어·서식 문자를 지우고 공백을 하나로 모은 뒤 길이를 자른다(route.clean_text). 코드는 모양만 검사한다.
+  모르는 요소는 무시하고, 없는 요소는 None. 문자열은 제어·서식 문자를 지우고 공백을 하나로 모은 뒤 길이를 자른다(textutil.clean_text). 코드는 모양만 검사한다.
 - 예외 메시지는 고정 문구 + 공급자가 준 resultCode·resultMsg(가린 뒤 · 자른 것) 또는 뜻밖의 XML 의 뿌리 이름·글(가린 뒤 · 자른 것)이다.
 - 호출부호 정규화(normalize_call_sign)는 api(PortCallReader.normalizeCallSign)와 같은 규칙이다 — 언어 간 벡터 schemas/vectors/call-sign-cases.v1.json.
 """
@@ -13,12 +13,13 @@
 from __future__ import annotations
 
 import re
-import xml.etree.ElementTree as ET  # noqa: S405 — DOCTYPE·ENTITY 가 있는 문서는 파싱 전에 거절한다(아래 _refuse_dtd)
+import xml.etree.ElementTree as ET  # noqa: S405 — DOCTYPE·ENTITY 가 있는 문서는 파싱 전에 거절한다(아래 _xml_text)
 from dataclasses import dataclass, fields
-from datetime import UTC, date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 
 from wakeline_collector.masking import mask
-from wakeline_collector.route import clean_text
+from wakeline_collector.textutil import clean_text
+from wakeline_collector.timeutil import kst_date
 
 SOURCE = "해양수산부 선박운항정보(PORT-MIS)"
 WINDOW_DAYS = 30  # 색인이 늘 덮으려는 창: 오늘(KST) − 30일 ~ 오늘
@@ -45,8 +46,6 @@ PORT_AUTHORITIES: tuple[tuple[str, str], ...] = (
     ("810", "마산"),
     ("820", "울산"),
 )
-
-KST = timedelta(hours=9)  # 한국 표준시는 UTC+9 고정(일광 절약 시간 없음)
 
 
 class PortCallParseError(ValueError):
@@ -79,7 +78,7 @@ def _iso(dt: datetime | None) -> str | None:
     return None if dt is None else dt.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
-_DTD_RE = re.compile(rb"<!(?:DOCTYPE|ENTITY)", re.IGNORECASE)
+_DTD_RE = re.compile(r"<!(?:DOCTYPE|ENTITY)", re.IGNORECASE)
 
 
 def _local(tag: str) -> str:
@@ -123,10 +122,22 @@ def _time(v: str | None) -> datetime | None:
     return dt.astimezone(UTC) if dt.tzinfo is not None else None
 
 
-def _refuse_dtd(body: bytes) -> None:
-    """DOCTYPE·ENTITY 선언이 있는 문서는 읽지 않는다(엔티티 확장 · 외부 참조 — 확인한 응답에는 없다)."""
-    if _DTD_RE.search(body):
+def _xml_text(body: bytes) -> str:
+    """해석할 글자. DOCTYPE·ENTITY 선언이 있는 문서는 읽지 않는다(엔티티 확장 · 외부 참조 — 확인한 응답에는 없다).
+
+    거절은 **해석할 글자 그대로** 본다(보안 검토 L-1 2026-10-01 — 예전에는 원본 바이트를 훑어 UTF-16 본문의 DTD 가 expat 까지 갔고 내부 엔티티가
+    펼쳐졌다): 확인한 응답(fixtures/portmis_info5_*.xml)은 UTF-8 이므로 엄격한 UTF-8 로 풀리지 않거나 NUL 이 있으면 거절하고, 푼 글자 전체에서
+    DOCTYPE · ENTITY 를 찾은 뒤 그 글자(str)를 해석한다 — ElementTree 는 str 을 선언과 상관없이 UTF-8 로 넘기므로 훑은 것과 해석하는 것이 같다
+    (marine_grid._collection 과 같은 방식)."""
+    try:
+        text = body.decode("utf-8")
+    except UnicodeDecodeError as e:
+        raise PortCallParseError(f"response is not UTF-8 (byte {e.start}) — refused before parsing") from None
+    if "\x00" in text:
+        raise PortCallParseError("NUL in response (UTF-16?) — refused before parsing")
+    if _DTD_RE.search(text):
         raise PortCallParseError("DOCTYPE/ENTITY refused")
+    return text
 
 
 def _leaf_text(root: ET.Element) -> str:
@@ -149,12 +160,6 @@ ENTRY, EXIT = "입항", "출항"
 _TIME_TAG = {ENTRY: "etryptDt", EXIT: "tkoffDt"}  # 종류마다 시각 필드가 다르다(확인한 그대로 — 출항 detail 에는 etryptDt 가 없다)
 _KEY_PART_RE = re.compile(r"^[0-9A-Za-z]{1,16}$")  # 입항년도 · 입항횟수 — 모양만(실제 예 "2026" · "005")
 _SHORT_CODE_RE = re.compile(r"^[A-Z0-9]{1,10}$")  # 국적 코드 · 선종 코드(실제 예 "MH" · "14")
-KST_TZ = timezone(KST)
-
-
-def kst_date(at: datetime) -> date:
-    """이 순간의 KST 날짜(UTC+9 고정)."""
-    return at.astimezone(KST_TZ).date()
 
 
 @dataclass(frozen=True)
@@ -318,10 +323,10 @@ def parse_index_page(body: bytes, port_authority: str, day: date) -> IndexPage:
 
 
 def _checked_body(body: bytes) -> tuple[ET.Element | None, int]:
-    """공통 검사: DTD 거절 · XML · 뿌리 response · resultCode "00" · totalCount 숫자. (body 요소, totalCount)."""
-    _refuse_dtd(body)
+    """공통 검사: UTF-8 · DTD 거절 · XML · 뿌리 response · resultCode "00" · totalCount 숫자. (body 요소, totalCount)."""
+    text = _xml_text(body)
     try:
-        root = ET.fromstring(body)  # noqa: S314 — DTD 는 위에서 거절했다(expat ≥ 2.4 의 확장 폭탄 방어도 있다)
+        root = ET.fromstring(text)  # noqa: S314 — UTF-8 · DOCTYPE·ENTITY 는 위에서 거절했다(_xml_text — 해석하는 글자 그대로)
     except ET.ParseError:
         raise PortCallParseError("response is not XML") from None
     if _local(root.tag) != "response":

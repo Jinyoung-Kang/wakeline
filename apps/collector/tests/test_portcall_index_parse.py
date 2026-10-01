@@ -364,3 +364,51 @@ def test_doctype_and_entities_are_refused_before_parsing():
     bomb = b'<?xml version="1.0"?><!DOCTYPE r [<!ENTITY a "aaaa">]><response>&a;</response>'
     with pytest.raises(PortCallParseError, match="DOCTYPE"):
         parse_index_page(bomb, "020", DAY)
+
+
+def _never_parsed(monkeypatch):
+    from wakeline_collector import portcalls
+
+    def boom(*_a, **_k):
+        raise AssertionError("the XML parser was reached")
+
+    monkeypatch.setattr(portcalls.ET, "fromstring", boom)
+
+
+def test_a_utf16_body_is_refused_before_parsing_so_its_dtd_never_reaches_expat(monkeypatch):
+    """보안 검토 L-1(2026-10-01): DOCTYPE · ENTITY 거절이 원본 바이트만 훑어 UTF-16 본문('<\\0!\\0E\\0N…')은 지나갔고 expat 가 내부 엔티티를
+    펼쳤다(WFS 쪽 marine_grid 는 이미 고쳤다). 확인한 응답(fixtures/portmis_info5_*.xml)은 UTF-8 이다 — UTF-8 이 아니거나 NUL 이 있으면 해석하지 않는다."""
+    doc = (
+        '<?xml version="1.0" encoding="UTF-16"?><!DOCTYPE r [<!ENTITY a "AAAA"><!ENTITY b "&a;&a;&a;&a;">]>'
+        "<response><header><resultCode>00</resultCode><resultMsg>&b;</resultMsg></header>"
+        "<body><totalCount>0</totalCount></body></response>"
+    )
+    _never_parsed(monkeypatch)
+    for body in (doc.encode("utf-16"), doc.encode("utf-16-le"), doc.encode("utf-16-be"), empty_bytes().decode().encode("utf-16")):
+        with pytest.raises(PortCallParseError, match="not UTF-8|NUL"):
+            parse_index_page(body, "020", DAY)
+
+
+def test_a_body_that_is_not_utf8_or_carries_nul_is_refused_before_parsing(monkeypatch):
+    _never_parsed(monkeypatch)
+    euc_kr = empty_bytes().decode().replace("NORMAL_SERVICE", "정상").encode("euc-kr")
+    with pytest.raises(PortCallParseError, match="not UTF-8"):
+        parse_index_page(euc_kr, "020", DAY)
+    with pytest.raises(PortCallParseError, match="NUL"):
+        parse_index_page(empty_bytes().replace(b"<header>", b"<header>\0"), "020", DAY)
+
+
+def test_a_doctype_anywhere_in_the_decoded_text_is_refused(monkeypatch):
+    head, rest = empty_bytes().decode().split("?>", 1)
+    _never_parsed(monkeypatch)
+    for decl in ('<!DOCTYPE r SYSTEM "http://127.0.0.1:9/evil.dtd">', "<!doctype r>", '<!ENTITY a "x">'):
+        body = f"{head}?><!--{'x' * 5000}-->{decl}{rest}".encode()
+        with pytest.raises(PortCallParseError, match="DOCTYPE"):
+            parse_index_page(body, "020", DAY)
+
+
+def test_the_real_utf8_responses_still_parse_and_a_utf8_bom_is_fine():
+    assert parse_index_page(empty_bytes(), "020", DAY).total == 0
+    assert parse_index_page(b"\xef\xbb\xbf" + empty_bytes(), "020", DAY).total == 0
+    full = parse_index_page(full_record_bytes(), "020", DAY)
+    assert full.total > 0 and full.rows

@@ -1,6 +1,11 @@
-/** 같은 출처(edge) REST 호출. 브라우저는 API 주소·키를 모른다. */
+/**
+ * 같은 출처(edge) REST 호출. 브라우저는 API 주소·키를 모른다.
+ * 부른 쪽의 머리는 형식(객체 · Headers · 배열)과 상관없이 보낸다 — 객체 펼치기는 Headers 인스턴스의 값을 말없이 버렸다(web-review B16). 기본 Accept 는 정하지 않았을 때만.
+ */
 export async function apiGet<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(path, { ...init, headers: { Accept: "application/json, application/geo+json, application/problem+json", ...(init?.headers ?? {}) }, credentials: "same-origin" });
+  const headers = new Headers(init?.headers);
+  if (!headers.has("Accept")) headers.set("Accept", "application/json, application/geo+json, application/problem+json");
+  const res = await fetch(path, { ...init, headers, credentials: "same-origin" });
   if (!res.ok) throw await apiError(res);
   return (await res.json()) as T;
 }

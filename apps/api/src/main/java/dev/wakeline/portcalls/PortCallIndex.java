@@ -1,8 +1,7 @@
 package dev.wakeline.portcalls;
 
-import dev.wakeline.persist.ReadPool;
-import dev.wakeline.persist.Sql;
-import dev.wakeline.persist.TrackRepository;
+import dev.wakeline.platform.data.ReadPool;
+import dev.wakeline.platform.data.Sql;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
@@ -37,7 +36,7 @@ public class PortCallIndex implements PortCallReader.Source {
     public List<Coverage> coverage() {
         return Sql.publicRead(db, "portcalls.coverage", "SELECT prt_ag_cd, covered_from, covered_to, refreshed_at, hole_days FROM port_call_coverage")
                 .query((rs, n) -> new Coverage(rs.getString("prt_ag_cd"), date(rs.getObject("covered_from")), date(rs.getObject("covered_to")),
-                        TrackRepository.toInstant(rs.getObject("refreshed_at")), dates(rs.getArray("hole_days"))))
+                        Sql.toInstant(rs.getObject("refreshed_at")), dates(rs.getArray("hole_days"))))
                 .list();
     }
 
@@ -78,8 +77,8 @@ public class PortCallIndex implements PortCallReader.Source {
         return new Row(str(r, "prt_ag_cd"), str(r, "prt_ag_nm"), str(r, "clsgn"), date(r.get("listed_date")), str(r, "vssl_nm"), str(r, "nationality_nm"),
                 str(r, "kind_nm"), str(r, "purpose_nm"), str(r, "first_port_cd"), str(r, "first_port_nm"), str(r, "prev_port_cd"), str(r, "prev_port_nm"),
                 str(r, "next_port_cd"), str(r, "next_port_nm"), str(r, "dest_port_cd"), str(r, "dest_port_nm"),
-                TrackRepository.toInstant(r.get("entry_at")), str(r, "entry_revision"), TrackRepository.toInstant(r.get("exit_at")), str(r, "exit_revision"),
-                str(r, "berth"), TrackRepository.toInstant(r.get("fetched_at")));
+                Sql.toInstant(r.get("entry_at")), str(r, "entry_revision"), Sql.toInstant(r.get("exit_at")), str(r, "exit_revision"),
+                str(r, "berth"), Sql.toInstant(r.get("fetched_at")));
     }
 
     private static String str(Map<String, Object> r, String k) {

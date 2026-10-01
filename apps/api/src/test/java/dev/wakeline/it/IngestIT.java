@@ -1,11 +1,11 @@
 package dev.wakeline.it;
 
-import dev.wakeline.domain.Alert;
-import dev.wakeline.engine.EngineService;
-import dev.wakeline.ingest.RadarStore;
+import dev.wakeline.weather.core.Alert;
+import dev.wakeline.weather.core.EngineService;
+import dev.wakeline.weather.core.RadarStore;
 import dev.wakeline.ingest.SchemaValidator;
-import dev.wakeline.ingest.SigmetStore;
-import dev.wakeline.ingest.SnapshotStore;
+import dev.wakeline.weather.core.SigmetStore;
+import dev.wakeline.aircraft.core.SnapshotStore;
 import dev.wakeline.ingest.StreamConsumer;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.junit.jupiter.api.Test;
@@ -353,9 +353,9 @@ class IngestIT extends IntegrationTest {
         assertThat(sigmets.state().fetchedAt()).isEqualTo(f3);
         Map<String, Object> rowA = db.sql("SELECT withdrawn_at, first_seen FROM sigmet WHERE id = :id").param("id", a).query().singleRow();
         Map<String, Object> rowB = db.sql("SELECT withdrawn_at, first_seen FROM sigmet WHERE id = :id").param("id", b).query().singleRow();
-        assertThat(dev.wakeline.persist.TrackRepository.toInstant(rowA.get("withdrawn_at"))).isEqualTo(f3);
-        assertThat(dev.wakeline.persist.TrackRepository.toInstant(rowA.get("first_seen"))).isEqualTo(f1);
-        assertThat(dev.wakeline.persist.TrackRepository.toInstant(rowB.get("first_seen"))).isEqualTo(f2);
+        assertThat(dev.wakeline.platform.data.Sql.toInstant(rowA.get("withdrawn_at"))).isEqualTo(f3);
+        assertThat(dev.wakeline.platform.data.Sql.toInstant(rowA.get("first_seen"))).isEqualTo(f1);
+        assertThat(dev.wakeline.platform.data.Sql.toInstant(rowB.get("first_seen"))).isEqualTo(f2);
         assertThat(rowB.get("withdrawn_at")).isNull();
     }
 
@@ -392,6 +392,6 @@ class IngestIT extends IntegrationTest {
     @Test
     void contextUsesTheListenerIsolatingMulticaster() {
         assertThat(context.getBean(org.springframework.context.support.AbstractApplicationContext.APPLICATION_EVENT_MULTICASTER_BEAN_NAME))
-                .isInstanceOf(dev.wakeline.config.PipelineEventMulticaster.class);
+                .isInstanceOf(dev.wakeline.platform.config.PipelineEventMulticaster.class);
     }
 }

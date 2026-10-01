@@ -114,8 +114,9 @@ describe("contract v5 run statuses: every non-ok status the collector records ha
     for (const m of jobs.matchAll(/status="([a-z_]+)"(?: if [^\n]* else "([a-z_]+)")?/g)) for (const v of [m[1], m[2]]) if (v) written.add(v);
     for (const m of jobs.matchAll(/_Stop\(\s*"([a-z_]+)"/g)) written.add(m[1]);
     for (const m of jobs.matchAll(/self\._(?:fail_pa|record)\(u, started, "([a-z_]+)"/g)) written.add(m[1]);
-    // return "x", …  는 kma_radar(_outcome · _try_reserve)의 실행 상태만 — traffic_grid 의 fill_state()("filling" · "idle" · …)는 heartbeat 값이지 실행 상태가 아니다
-    for (const m of src("jobs/kma_radar.py").matchAll(/return "([a-z_]+)", (?:f?"|None)/g)) written.add(m[1]);
+    // return "x", …  는 기상청 레이더의 실행 상태만 — kma_radar(_try_reserve) · kma_rules(outcome — 1322f6dc 에서 옮겨졌다). traffic_grid 의
+    // fill_state()("filling" · "idle" · …)는 heartbeat 값이지 실행 상태가 아니다
+    for (const m of [src("jobs/kma_radar.py"), src("kma_rules.py")].join("\n").matchAll(/return "([a-z_]+)", (?:f?"|None)/g)) written.add(m[1]);
     // disabled(_Stop scope "off")는 실행 기록을 남기지 않는다(portcalls_index _stopped 가 먼저 돌아간다)
     expect(src("jobs/portcalls_index.py")).toMatch(/if s\.scope == "off":\s*\n\s*await self\._set_state\(STATE_OPERATOR_OFF, now\)\s*\n\s*return IDLE_S/);
     written.delete("disabled");

@@ -69,7 +69,8 @@ class OpsPipelineIT extends IntegrationTest {
             ItStack.admin().delete(AIS);
             JsonNode none = b.get("/api/v1/ops/pipeline").json();
             for (String f : new String[]{"publish_dropped", "db_dropped", "db_pending", "stream_budget_trims", "stream_retention_s", "stream_budget_bytes",
-                    "heartbeat_age_s", "log_sent", "log_dropped"})
+                    "heartbeat_age_s", "log_sent", "log_dropped", "loop_lag_max_s", "loop_stalls_total", "loop_tick_s", "diag_window_s", "loop_stall_s",
+                    "loop_warn_s", "loop_warn_every_s", "raw_unsaved", "raw_purge_failed"})
                 assertThat(none.path("collector").has(f) && none.path("collector").get(f).isNull()).as("collector." + f).isTrue();
             for (String f : new String[]{"dropped_total", "quarantined_total", "stream_budget_trims", "stream_retention_s", "stream_budget_bytes",
                     "log_sent", "log_dropped", "reconnects_quick_total", "loop_lag_max_s", "loop_stalls_total", "queue_wait_max_s", "ws_queue_max",
@@ -95,6 +96,9 @@ class OpsPipelineIT extends IntegrationTest {
             ItStack.hset(col, COLLECTOR, Map.of("region_at", now.toString(), "publish_dropped", "3", "db_dropped", "2", "db_pending", "7",
                     "db_failures", "1", "stream_budget_trims", "5", "log_sent", "12", "log_dropped", "1", "stream_retention_s", "9000",
                     "stream_budget_bytes", "67108864"));
+            // 수집기 이벤트 루프 지연(D0 — ais 와 같은 이름, 최댓값은 소수 3자리) · 고른 값 · 원천 보관 실패(F6) — JSON 이름 그대로
+            ItStack.hset(col, COLLECTOR, Map.of("loop_lag_max_s", "0.021", "loop_stalls_total", "2", "loop_tick_s", "0.1", "diag_window_s", "60",
+                    "loop_stall_s", "1", "loop_warn_s", "5", "loop_warn_every_s", "60", "raw_unsaved", "3", "raw_purge_failed", "4"));
             ItStack.hset(ais, AIS, Map.of("updated_at", now.toString(), "dropped_total", "4", "quarantined_total", "1", "stream_budget_trims", "2",
                     "log_sent", "9", "log_dropped", "0", "stream_retention_s", "9000", "stream_budget_bytes", "33554432"));
             // ais 수신 진단(ADR-014 부록 C): 최근 창 최댓값(초는 소수) · 고른 상한 · 누적 수 — JSON 이름 그대로
@@ -139,6 +143,16 @@ class OpsPipelineIT extends IntegrationTest {
             assertThat(fresh.path("collector").path("log_dropped").asLong()).isEqualTo(1);
             assertThat(fresh.path("ais").path("log_sent").asLong()).isEqualTo(9);
             assertThat(fresh.path("ais").path("log_dropped").asLong()).isEqualTo(0);
+            JsonNode fc = fresh.path("collector");
+            assertThat(fc.path("loop_lag_max_s").asDouble()).isEqualTo(0.021);
+            assertThat(fc.path("loop_stalls_total").asLong()).isEqualTo(2);
+            assertThat(fc.path("loop_tick_s").asDouble()).isEqualTo(0.1);
+            assertThat(fc.path("diag_window_s").asDouble()).isEqualTo(60.0);
+            assertThat(fc.path("loop_stall_s").asDouble()).isEqualTo(1.0);
+            assertThat(fc.path("loop_warn_s").asDouble()).isEqualTo(5.0);
+            assertThat(fc.path("loop_warn_every_s").asDouble()).isEqualTo(60.0);
+            assertThat(fc.path("raw_unsaved").asLong()).isEqualTo(3);
+            assertThat(fc.path("raw_purge_failed").asLong()).isEqualTo(4);
 
             // 형식이 틀린 값은 모름
             col.opsForHash().put(COLLECTOR, "db_pending", "-1");
@@ -177,6 +191,9 @@ class OpsPipelineIT extends IntegrationTest {
                 assertThat(stale.path("collector").get(f).isNull()).as("stale collector." + f).isTrue();
                 assertThat(stale.path("ais").get(f).isNull()).as("stale ais." + f).isTrue();
             }
+            for (String f : new String[]{"loop_lag_max_s", "loop_stalls_total", "loop_tick_s", "diag_window_s", "loop_stall_s", "loop_warn_s",
+                    "loop_warn_every_s", "raw_unsaved", "raw_purge_failed"})
+                assertThat(stale.path("collector").get(f).isNull()).as("stale collector." + f).isTrue();
 
             // api 자신의 지표(이 프로세스 기동 뒤 누계)
             long dropped = fresh.path("api").path("track_queue_dropped").asLong();

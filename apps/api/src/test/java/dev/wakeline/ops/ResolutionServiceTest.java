@@ -1,6 +1,6 @@
 package dev.wakeline.ops;
 
-import dev.wakeline.config.Problem;
+import dev.wakeline.platform.web.Problem;
 import org.junit.jupiter.api.Test;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;

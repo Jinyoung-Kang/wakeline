@@ -65,6 +65,8 @@ beforeAll(async () => {
   ({ createRoot } = await import("react-dom/client"));
   ({ MapView } = await import("@/components/MapView"));
   globalThis.fetch = (async (url: string, init?: RequestInit) => {
+    // 이 시험은 연안 교통량만 본다 — 지도의 다른 조회(기상청 레이더 · 감시 공항 — lib/etag-poller)는 끝나지 않는다(apiGet 대역과 같게)
+    if (url !== TRAFFIC_URL) return new Promise<Response>(() => {});
     calls.push({ url, inm: (init?.headers as Record<string, string> | undefined)?.["If-None-Match"] });
     return answer();
   }) as typeof fetch;

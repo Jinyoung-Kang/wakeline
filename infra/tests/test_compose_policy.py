@@ -93,12 +93,12 @@ class ComposePolicyTest(unittest.TestCase):
         cls._tmp.cleanup()
 
     @classmethod
-    def _config(cls, extra: dict[str, str], project: str | None = None) -> dict:
+    def _config(cls, extra: dict[str, str], project: str | None = None, env_file: Path | None = None) -> dict:
         # 호스트 셸의 값이 해석 결과에 섞이지 않게(시험은 임시 .env + 명시한 값만 본다)
-        drop = ("WAKELINE_", "REDIS_", "DB_", "COMPOSE_", "OPENSKY_", "KMA_", "AIS_", "aisstream")
+        drop = ("WAKELINE_", "REDIS_", "DB_", "COMPOSE_", "OPENSKY_", "KMA_", "AIS_", "aisstream", "EXTRA_ALLOWED_ORIGINS")
         env = {k: v for k, v in os.environ.items() if not k.startswith(drop)}
         env.update(extra)
-        cmd = ["docker", "compose"] + (["-p", project] if project else []) + ["-f", str(COMPOSE), "--env-file", str(cls.env_file), "config", "--format", "json"]
+        cmd = ["docker", "compose"] + (["-p", project] if project else []) + ["-f", str(COMPOSE), "--env-file", str(env_file or cls.env_file), "config", "--format", "json"]
         r = subprocess.run(cmd, capture_output=True, text=True, env=env)
         if r.returncode != 0:
             raise AssertionError(f"docker compose config failed: {r.stderr}")
@@ -254,6 +254,14 @@ class ComposePolicyTest(unittest.TestCase):
         self.assertTrue(mounts["/etc/redis/redis.conf"]["read_only"])
         self.assertEqual(mounts["/data"]["type"], "volume")
 
+    def test_redis_acl_file_lives_on_tmpfs(self):
+        """S7: start.sh 는 ACL 파일(해시만, 0600)을 /tmp 에 쓴다 — 루트 FS 는 read-only 라 tmpfs 가 있어야 기동하고,
+        데이터 볼륨(/data — AOF, 백업 대상이 될 수 있다)에는 두지 않는다. 컨테이너가 멈추면 사라진다."""
+        for cfg in (self.dev, self.iso):
+            r = self.svc("redis", cfg)
+            self.assertTrue(r.get("read_only"))
+            self.assertTrue([t for t in r.get("tmpfs", []) if t.split(":", 1)[0] == "/tmp"], "redis 에 tmpfs /tmp")
+
     # --- R-90 · R-06: api 설정값이 .env 에서 실제로 전달된다(application.yml 기본값만 있고 compose 가 넘기지 않으면 바꿀 방법이 없다) ---
     def test_api_cookie_secure_and_alert_retention_pass_through(self):
         env = self.svc("api")["environment"]
@@ -306,6 +314,20 @@ class ComposePolicyTest(unittest.TestCase):
         self.assertEqual(self.svc("api")["environment"]["WAKELINE_ALLOWED_ORIGINS"], "http://localhost:8700,http://127.0.0.1:8700")
         self.assertEqual(self.svc("api", self.iso)["environment"]["WAKELINE_ALLOWED_ORIGINS"], "http://localhost:8701,http://127.0.0.1:8701")
 
+    def test_extra_allowed_origins_are_an_empty_opt_in_that_reaches_only_the_api(self):
+        """`next dev`(http://localhost:3000)로 화면을 띄울 때의 개발 전용 opt-in(리뷰 cto-2026-10 S1 후속): 기본은 비어 있어 허용 목록은 게시 포트뿐이고,
+        .env 의 EXTRA_ALLOWED_ORIGINS 는 api 의 WAKELINE_EXTRA_ALLOWED_ORIGINS 로만 간다(AppProperties.originPatterns 가 목록 뒤에 붙인다)."""
+        for cfg in (self.dev, self.iso):
+            with self.subTest(project=cfg["name"]):
+                self.assertEqual(self.svc("api", cfg)["environment"]["WAKELINE_EXTRA_ALLOWED_ORIGINS"], "")
+        custom = self._config({"EXTRA_ALLOWED_ORIGINS": "http://localhost:3000"})
+        api = custom["services"]["api"]["environment"]
+        self.assertEqual(api["WAKELINE_EXTRA_ALLOWED_ORIGINS"], "http://localhost:3000")
+        self.assertEqual(api["WAKELINE_ALLOWED_ORIGINS"], "http://localhost:8700,http://127.0.0.1:8700", "the stack's own list is unchanged")
+        for name, svc in custom["services"].items():
+            if name != "api":
+                self.assertNotIn("WAKELINE_EXTRA_ALLOWED_ORIGINS", sorted(svc.get("environment") or {}), name)
+
     # --- REL-20 · 계약 §8: collector 헬스체크 ---
     def test_collector_healthcheck(self):
         hc = self.svc("collector")["healthcheck"]
@@ -330,6 +352,18 @@ class ComposePolicyTest(unittest.TestCase):
         for k in FAKE_EXTERNAL:
             with self.subTest(key=k):
                 self.assertEqual(self.iso_env.get(k), "", "Makefile ISO_ENV 가 빈 값으로 덮어써야 한다")
+
+    def test_iso_env_blanks_the_dev_only_extra_origins(self):
+        """격리 스택(make e2e · demo, 8701)은 개발자 .env 의 EXTRA_ALLOWED_ORIGINS(`next dev` 용 opt-in)를 물려받지 않는다 —
+        두 스택이 같은 .env 를 읽으므로 외부 키처럼 ISO_ENV 가 빈 값으로 덮어써야 허용 목록이 게시 포트(8701)뿐이다."""
+        self.assertEqual(self.iso_env.get("EXTRA_ALLOWED_ORIGINS"), "", "Makefile ISO_ENV 가 빈 값으로 덮어써야 한다")
+        dev_env = Path(self._tmp.name) / "extra-origins.env"
+        dev_env.write_text(re.sub(r"^EXTRA_ALLOWED_ORIGINS=.*$", "EXTRA_ALLOWED_ORIGINS=http://localhost:3000",
+                                  self.env_file.read_text(), flags=re.M))
+        self.assertIn("EXTRA_ALLOWED_ORIGINS=http://localhost:3000", dev_env.read_text())
+        api = self._config(self.iso_env, project="wakeline-e2e", env_file=dev_env)["services"]["api"]["environment"]
+        self.assertEqual(api["WAKELINE_EXTRA_ALLOWED_ORIGINS"], "")
+        self.assertEqual(api["WAKELINE_ALLOWED_ORIGINS"], "http://localhost:8701,http://127.0.0.1:8701")
 
     def test_api_has_shutdown_grace(self):
         self.assertIn("stop_grace_period", self.svc("api"))
@@ -438,7 +472,7 @@ class ComposePolicyTest(unittest.TestCase):
             with self.subTest(secret=key):
                 broken = Path(self._tmp.name) / f"missing-{key}.env"
                 broken.write_text(re.sub(rf"^{re.escape(key)}=.*\n", "", text, flags=re.M))
-                drop = ("WAKELINE_", "REDIS_", "DB_", "COMPOSE_", "OPENSKY_", "KMA_", "AIS_", "aisstream")
+                drop = ("WAKELINE_", "REDIS_", "DB_", "COMPOSE_", "OPENSKY_", "KMA_", "AIS_", "aisstream", "EXTRA_ALLOWED_ORIGINS")
                 env = {k: v for k, v in os.environ.items() if not k.startswith(drop)}
                 r = subprocess.run(["docker", "compose", "-f", str(COMPOSE), "--env-file", str(broken), "config", "--quiet"],
                                    capture_output=True, text=True, env=env)

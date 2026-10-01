@@ -17,9 +17,9 @@
 | **스택** | nginx · Next.js 16 / React 19 / MapLibre GL 6 · Spring Boot 4.1(Java 25, 가상 스레드, JTS) · Python 3.13(asyncio, httpx, websockets, shapely) · PostgreSQL 18 + PostGIS 3.6 · Redis 8 Streams · Docker Compose |
 | **구성** | 상시 컨테이너 7개(edge · web · api · collector · ais · redis · db) + 일회성 migrate(Flyway V1–V17) |
 | **데이터** | 항공기 adsb.lol · adsb.fi · OpenSky · 노선 adsbdb(선택 시만, 저장 안 함) / 선박 aisstream.io · 항구 UN/LOCODE · 한국 항만 입출항 해양수산부 PORT-MIS(공공데이터포털, 수집기가 항만청 10곳을 날짜별로 색인) · 연안 교통량 한국해양교통안전공단 실시간 해양교통정보 + 해양수산부 해양격자 4단계(공공데이터포털) / 기상 AviationWeather.gov · RainViewer · 기상청 API허브 레이더(HSR) / 지도 OpenFreeMap |
-| **검증** | 자동 시험 4,750건(pytest 1,729 · collector 실 Redis 14 · JUnit 968 · Vitest 1,413 · Playwright E2E 43 · 인프라 정책 129 · 버리는 컨테이너 시험 454 — 2026-10-01 bbox 타일 채우기 · README 그림 통합 뒤 모두 실행) · 적대적 리뷰 2회(97건 · 19건 수정) · **리뷰 v1**(기준선 측정 → 진단 98건(고유 97 + 3단계 추가 R-98) → 승인 85 · 보류 13 → 수정(R-63 은 2026-09-30 직접 빌드한 db 이미지로 해결(ADR-004 개정), 일부는 부분 처리 — review §5.2) · 2차 검토 35건 · 문서 사실 확인 2회 → 재측정, [review](docs/review/VERIFICATION.md)) · 장애 주입 6종 · 실측 문제 기록 97건([VERIFICATION](docs/VERIFICATION.md)) |
+| **검증** | 자동 시험 5,327건(pytest 1,919 · collector 실 Redis 16 · 실 PostgreSQL 7 · JUnit 1,071 · Vitest 1,658 · Playwright E2E 43 · 인프라 정책 157 · 버리는 컨테이너 시험 456 — 2026-10-02 CTO 리뷰 2026-10 브랜치에서 모두 실행) · **CTO 리뷰 2026-10**(보안 · 데이터 손실 · 구조 · 측정한 성능 — [PLAN](docs/review/cto-2026-10/PLAN.md) · ADR-028–030 · 독립 리뷰 2회) · 적대적 리뷰 2회(97건 · 19건 수정) · **리뷰 v1**(기준선 측정 → 진단 98건(고유 97 + 3단계 추가 R-98) → 승인 85 · 보류 13 → 수정(R-63 은 2026-09-30 직접 빌드한 db 이미지로 해결(ADR-004 개정), 일부는 부분 처리 — review §5.2) · 2차 검토 35건 · 문서 사실 확인 2회 → 재측정, [review](docs/review/VERIFICATION.md)) · 장애 주입 6종 · 실측 문제 기록 102건([VERIFICATION](docs/VERIFICATION.md)) |
 | **성능(실측)** | REST 100 rps p95 5.1–17.9 ms(경합 기록이 없는 오전 실행 6회) · WS 200 연결 p95 123–287 ms(목표 500) · api 메모리 경합 기록이 없는 오전 k6 실행 약 500 MiB(목표 512 — 같은 기계에 부하가 겹치면 577–611 MiB, 최종 측정 527 MiB: 미충족·다음 후보) · 첫 화면 JS 543,507 B(gzip 본문 · 워커 포함 · 웹 이미지의 Node 로 압축 — 클릭 뒤에만 보이는 카드·목록과 그 선박 표시 함수를 첫 화면 뒤로 옮겨 556,719 → 539,966 B, 세 레인 통합 뒤 540,774 B, 통합 마무리 뒤 540,955 B(배포 스택에서도 같은 값), 두 레인(collector · coverage) 통합 뒤 542,767 B · 그 리뷰의 수정 뒤 543,138 B, 2026-10-01 기상청 '목록에도 … 없음' 글 뒤 543,497 B, 네 레인 통합 뒤 543,507 B(빌드 결과). 예산 550,000 B, ADR-026: 400 KB 는 MapLibre 약 305 KB + Next·React 약 130 KB 인 바닥 때문에 지도를 빼야만 닿는다 · CI 가 빌드 결과를 웹 이미지의 Node 로, 첫 화면 파일 목록을 브라우저로 검사) · 집중 추적 관측 간격 중앙값 5.05 s · api 크래시 복귀 6.2 s([PERF](docs/PERF.md)) |
-| **설계 기록** | ADR 27건([docs/adr](docs/adr)) · 변경 계약 v1–v5([docs/audit](docs/audit)) |
+| **설계 기록** | ADR 30건([docs/adr](docs/adr)) · 변경 계약 v1–v5([docs/audit](docs/audit)) |
 
 ## 1. 무엇을 하나
 
@@ -45,7 +45,7 @@
 flowchart LR
   B[브라우저<br/>Next.js · MapLibre] -->|HTTP · WS :8700| E[edge · nginx<br/>Host 허용 목록 · XFF 덮어쓰기 · limit_req]
   E -->|/| W[web · Next.js]
-  E -->|/api /ws| A[api · Spring Boot<br/>ingest · engine · ws · demand · rest · ops · persist]
+  E -->|/api /ws| A[api · Spring Boot<br/>ingest · aircraft · ships · weather · ws · ops · platform]
   C[collector · Python<br/>항공기·기상 폴링 · 정규화 · 품질 게이트 · 예산 · 속도 상한] -->|XADD| R[(redis · Streams · ACL<br/>예산 Lua · 세션 · 수요 임대)]
   S[ais · Python<br/>구역별 WebSocket(최대 3) · 대기열 · MMSI 별 최신 · 10 s 배치] -->|XADD| R
   R -->|XREADGROUP → XACK| A
@@ -70,6 +70,10 @@ flowchart LR
   WebSocket 메시지도 `schemas/ws/*.json`(ADR-020): api 시험이 실제 빌더의 출력을 검증해 표본을 웹 fixture 로 남기고, 웹은 번들에 스키마 검증기를 싣지 않는 대신 손으로 쓴 검증기(`lib/ws-validate.ts`)를 그 표본과 스키마 잎 제약 전수 시험으로 묶는다.
   버린 메시지는 종류에 맞게 다시 받는다(항공기 · 선박 `resync`, 알림 · SIGMET · 레이더 `resync` scope — status · 선택 · demand 는 요청하지 않고 다음 주기 메시지를 기다린다).
 - **핫 상태는 메모리, 이력은 DB**: 불변 스냅샷 참조 교체(락 없음), STRtree 는 SIGMET 갱신 때만 재구축, 항적·선박 위치는 비동기 배치 저장(일 파티션 · 보존 정책).
+- **api 는 기능 단위 패키지**(ADR-028): 항공기 · 선박 · 기상은 기능마다 `core`(업무 규칙 · 메모리 상태 — JDBC · Redis · 서블릿을 쓰지 않는다) · `data`(DB · Redis) ·
+  `web`(컨트롤러 · 응답 JSON)으로, 작은 기능(운영 · 설정 · 상태 · 이력 · 교통량 · 수신 범위 · 수요 · 노선 · 입출항 · 로그)은 평평하게, 기반은 `platform.*` · `geo` 에 둔다.
+  의존은 바깥 → 업무 규칙 한 방향이고 패키지 순환이 없다. 컨트롤러는 데이터에 직접 닿지 않고, `ws` 는 누구도 import 하지 않으며, `ingest` 는 스트림 어댑터다 —
+  `ArchitectureTest` 가 소스의 import 로 이 규칙들을 검사한다(받아들인 예외 0).
 
 ### 결정과 그 근거(발췌)
 | 결정 | 근거(측정·문서) |
@@ -108,6 +112,7 @@ make ops-user u=admin     # 운영자 계정 생성·비밀번호 변경(프롬�
 ```
 외부 키는 **없어도 동작**합니다(adsb.lol · adsb.fi · AWC · RainViewer 는 무인증). 있으면 켜지는 것: OpenSky(전세계 항공기), 기상청 API허브(한국 고해상도 레이더, 활용신청 필요), aisstream.io(선박), 공공데이터포털 `DATA_GO_KR_SERVICE_KEY` 하나(선박 카드의 한국 항만 입출항 — 해양수산부_선박운항정보 · 연안 교통량 — 한국해양교통안전공단 실시간 교통정보 조회 · 해양수산부 해양격자 WFS 활용신청, collector 에만 주입).
 외부 호출 없이 보려면 `make demo` — 분리된 스택(http://localhost:8701)에서 실응답 스냅샷(fixtures/)을 재생합니다.
+화면만 고치며 `next dev`(apps/web, http://localhost:3000 — /api 는 떠 있는 스택으로 넘긴다)로 띄울 때 운영 변경(쓰기)까지 하려면 `.env` 에 `EXTRA_ALLOWED_ORIGINS=http://localhost:3000` 을 넣고 `make up` 합니다(개발 전용, 기본은 비어 있어 스택 주소만 허용 — 읽기는 그대로 됩니다).
 
 | 명령 | 내용 |
 |---|---|
@@ -168,7 +173,7 @@ make rotate-db-passwords P=wakeline-e2e sync=1   # 격리 스택(데모·E2E)의
 
 ## 6. 저장소 구조
 ```
-apps/api         Spring Boot — dev.wakeline.{ingest,engine,ws,demand,rest,persist,ops,logs,route,portcalls,coverage,domain,config} · Flyway V1–V17 · JUnit/Testcontainers
+apps/api         Spring Boot — dev.wakeline.{platform.*,geo,aircraft·ships·weather.{core,data,web},ingest,ws,ops,settings,status,history,traffic,coverage,demand,route,portcalls,logs}(ADR-028) · Flyway V1–V17 · JUnit/Testcontainers
 apps/collector   Python — providers · normalize · quality · sigmet_parse · budget · ratelimit · demand · jobs · ais/(수신·대기열·정리·발행·공백)
 apps/web         Next.js — app/(상황판·replay·stats·airports·ops·logs·about·guide) · lib(ws·store·ships·demand·viewport·interpolate) · e2e
 schemas/         aircraft_state · ship_state · ship_static · sigmet · stream_envelope · log_event · ws/(WS 메시지) · vectors/(가림 · 억제 · 선종 순서 — 언어 간 시험 벡터) (계약의 단일 원천)

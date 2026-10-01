@@ -1,15 +1,16 @@
 package dev.wakeline.ws;
 
-import dev.wakeline.domain.ShipState;
-import dev.wakeline.domain.ShipStatic;
-import dev.wakeline.ingest.IngestEvents;
-import dev.wakeline.ingest.Receipt;
-import dev.wakeline.ingest.ShipStore;
-import dev.wakeline.persist.StoredStaticReader;
+import dev.wakeline.platform.support.Receipt;
 import dev.wakeline.portcalls.PortCallFixtures;
 import dev.wakeline.portcalls.PortCallIndex;
 import dev.wakeline.portcalls.PortCallReader;
 import dev.wakeline.route.RouteInfoTest;
+import dev.wakeline.ships.core.ShipEvents;
+import dev.wakeline.ships.core.ShipState;
+import dev.wakeline.ships.core.ShipStatic;
+import dev.wakeline.ships.core.ShipStore;
+import dev.wakeline.ships.data.StoredStaticReader;
+import dev.wakeline.ships.web.ShipJson;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.JsonNode;
 
@@ -49,7 +50,7 @@ class ShipFanoutTest {
     /** ShipStore 에 반영하고 이벤트를 팬아웃에 넘긴다(timer 없음 — 바로 팬아웃). */
     static ShipStore.Change publish(WsTestKit k, List<ShipState> st, List<ShipStatic> sc) {
         ShipStore.Change c = k.ships.apply(st, sc, T, "aisstream", System.currentTimeMillis());
-        k.shipFanout.onShips(new IngestEvents.ShipsUpdated(T, "aisstream", st, sc, c.changed(), Set.of(), Receipt.NONE));
+        k.shipFanout.onShips(new ShipEvents.ShipsUpdated(T, "aisstream", st, sc, c.changed(), Set.of(), Receipt.NONE));
         return c;
     }
 
@@ -141,7 +142,7 @@ class ShipFanoutTest {
             assertThat(diffs.get(3).path("upsert").get(0).path("name").asString()).isEqualTo("NAMED LATER");
             // 만료(실시간 목록에서 빠짐) → remove
             ShipStore.Change c = k.ships.expire(System.currentTimeMillis() + 3_600_000L, false);
-            k.shipFanout.onShips(IngestEvents.ShipsUpdated.liveOnly(Set.of(), c.removed()));
+            k.shipFanout.onShips(ShipEvents.ShipsUpdated.liveOnly(Set.of(), c.removed()));
             assertThat(sseqs(f)).containsExactly(1, 2, 3, 4, 5, 6);
             assertThat(ofType(f, "ships_diff").getLast().path("remove")).extracting(JsonNode::asString).containsExactly("440000001");
         }
@@ -244,7 +245,7 @@ class ShipFanoutTest {
             // 만료로 1,201 척 — 1,500 이하지만 격자 세션은 1,200 이하가 되어야 돌아온다
             ShipStore.Change c = k.ships.expire(System.currentTimeMillis(), false);
             assertThat(c.removed()).hasSize(300);
-            k.shipFanout.onShips(IngestEvents.ShipsUpdated.liveOnly(Set.of(), c.removed()));
+            k.shipFanout.onShips(ShipEvents.ShipsUpdated.liveOnly(Set.of(), c.removed()));
             int snaps = ofType(f, "ships_snapshot").size();
             JsonNode g2 = ofType(f, "ships_grid").getLast();
             assertThat(g2.path("capped").asBoolean()).isTrue();
@@ -269,8 +270,8 @@ class ShipFanoutTest {
     }
 
     @Test void pointsLimit_byZoomAndHysteresis() {
-        assertThat(ShipFanout.pointsLimit(7, false)).isEqualTo(ShipFanout.MAX_SHIPS_PER_MESSAGE);
-        assertThat(ShipFanout.pointsLimit(12, true)).as("no hysteresis at zoom ≥ 7").isEqualTo(ShipFanout.MAX_SHIPS_PER_MESSAGE);
+        assertThat(ShipFanout.pointsLimit(7, false)).isEqualTo(ShipJson.MAX_SHIPS_PER_MESSAGE);
+        assertThat(ShipFanout.pointsLimit(12, true)).as("no hysteresis at zoom ≥ 7").isEqualTo(ShipJson.MAX_SHIPS_PER_MESSAGE);
         assertThat(ShipFanout.pointsLimit(4, false)).isEqualTo(1_500);
         assertThat(ShipFanout.pointsLimit(6, false)).isEqualTo(1_500);
         assertThat(ShipFanout.pointsLimit(6, true)).isEqualTo(1_200);
@@ -281,7 +282,7 @@ class ShipFanoutTest {
     @Test void cappedAtZoom7_thenZoomOutIntoTheBand_usesTheResumeThreshold() throws Exception {
         try (WsTestKit k = new WsTestKit()) {
             List<ShipState> many = new ArrayList<>();
-            for (int i = 0; i <= ShipFanout.MAX_SHIPS_PER_MESSAGE; i++)
+            for (int i = 0; i <= ShipJson.MAX_SHIPS_PER_MESSAGE; i++)
                 many.add(pos(String.format("%09d", 300_000_000 + i), 34.001 + (i % 100) * 0.019, 128.001 + (i / 100) * 0.03, T));
             publish(k, many, List.of());
             FakeWsSession f = session(k, "dense", BUSAN, true);
@@ -303,7 +304,7 @@ class ShipFanoutTest {
     @Test void moreThan5000ShipsInTheViewport_sendsACappedGridInstead() throws Exception {
         try (WsTestKit k = new WsTestKit()) {
             List<ShipState> many = new ArrayList<>();
-            for (int i = 0; i <= ShipFanout.MAX_SHIPS_PER_MESSAGE; i++)
+            for (int i = 0; i <= ShipJson.MAX_SHIPS_PER_MESSAGE; i++)
                 many.add(pos(String.format("%09d", 300_000_000 + i), 34.001 + (i % 100) * 0.019, 128.001 + (i / 100) * 0.03, T));
             publish(k, many, List.of());
             FakeWsSession f = session(k, "dense", BUSAN, true);
@@ -350,7 +351,7 @@ class ShipFanoutTest {
 
             // 실시간 목록에서 빠짐 → state null(키는 남는다), static 은 알고 있는 동안
             ShipStore.Change c = k.ships.expire(System.currentTimeMillis() + 3_600_000L, false);
-            k.shipFanout.onShips(IngestEvents.ShipsUpdated.liveOnly(Set.of(), c.removed()));
+            k.shipFanout.onShips(ShipEvents.ShipsUpdated.liveOnly(Set.of(), c.removed()));
             JsonNode gone = ofType(f, "ship_selected").getLast();
             assertThat(gone.has("state")).isTrue();
             assertThat(gone.get("state").isNull()).isTrue();
@@ -665,5 +666,21 @@ class ShipFanoutTest {
         assertThat(ShipFanout.changed(a, new ShipStore.Ship(noSpeed, null))).as("speed became unknown").isTrue();
         ShipState manual = new ShipState("440000001", 35, 129, 12.0, 45.0, 44, 0, 3, "manual", T.plusSeconds(5), "aisstream", "PositionReport", "A");
         assertThat(ShipFanout.changed(a, new ShipStore.Ship(manual, null))).isTrue();
+    }
+
+    /**
+     * 리뷰 cto-2026-10 A4(B10): 선택 선박 다시 계산(입출항 색인 갱신 · 오래됨 — 주기 작업)의 예외는 주기를 멈추지 않게 삼킨다. 예전에는 흔적이 없었다 —
+     * 이제 wakeline_ws_ship_refresh_errors_total 로 세고 DEBUG 한 줄.
+     */
+    @Test
+    void aFailingSelectedShipRefreshIsCountedAndDoesNotEscape() throws Exception {
+        try (WsTestKit k = new WsTestKit()) {
+            ShipFanout f = new ShipFanout(k.hub, k.ships, k.meters, null, k.shipClock::get) {
+                @Override void recheckSelected(WsSession s) { throw new IllegalStateException("bug"); }
+            };
+            k.subscribed("s1", "1.2.3.4");
+            org.assertj.core.api.Assertions.assertThatCode(f::refreshSelected).doesNotThrowAnyException();
+            assertThat(k.meters.find("wakeline_ws_ship_refresh_errors_total").counter().count()).isEqualTo(1.0);
+        }
     }
 }

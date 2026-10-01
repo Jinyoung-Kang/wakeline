@@ -23,7 +23,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 @EnabledIf("dev.wakeline.DbTestSupport#dockerAvailable")
 class StaticPartsIT extends IntegrationTest {
-    @org.springframework.beans.factory.annotation.Autowired dev.wakeline.ingest.ShipStore ships;
+    @org.springframework.beans.factory.annotation.Autowired dev.wakeline.ships.core.ShipStore ships;
     static final Duration WAIT = Duration.ofSeconds(20);
     static final String MMSI = "440700251", OLDER = "440700252";
 

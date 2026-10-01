@@ -37,6 +37,17 @@ export function legendDefaultOpen(viewportWidth: number): boolean {
   return Number.isFinite(viewportWidth) && viewportWidth >= LEGEND_OPEN_MIN_WIDTH;
 }
 
+export const LEGEND_KEY = "wakeline.legend";
+/** 이 브라우저에 저장한 범례 열림("1" · "0"). 없거나 다른 값이거나 읽지 못하면 null — 부른 쪽이 화면 폭으로 정한다(legendDefaultOpen) */
+export function loadLegendOpen(kv: KV | null = storage()): boolean | null {
+  let stored: string | null = null;
+  try { stored = kv?.getItem(LEGEND_KEY) ?? null; } catch { /* 저장소 없음 */ }
+  return stored === "0" || stored === "1" ? stored === "1" : null;
+}
+export function saveLegendOpen(open: boolean, kv: KV | null = storage()): void {
+  try { kv?.setItem(LEGEND_KEY, open ? "1" : "0"); } catch { /* 저장소 없음 */ }
+}
+
 export function saveLayers(l: Layers, kv: KV | null = storage()): void {
   if (!kv) return;
   const o: Partial<Layers> = {};

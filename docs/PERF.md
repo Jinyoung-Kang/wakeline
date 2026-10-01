@@ -244,6 +244,276 @@ CI 의 web job 이 운영 빌드 뒤 `npm run check:first-js -- --in-image`(빌�
 (`apps/web/tests/first-screen-js.test.ts` 가 순서와 인자를 본다), 이어서 같은 빌드를 127.0.0.1:8790 에 띄워 브라우저 첫 화면 파일이 빌드 결과 목록과 같은지 본다
 (import() 조각이 첫 그리기에 쓰이면 바이트 검사가 세지 못한다 — ADR-026 5). 배포 스택은 `npm run measure:first-js -- http://localhost:8700` 으로 잰다(위 '배포 스택에서 확인').
 
+## 11. 웹 렌더 작업 — 저장소 안에서 재는 전후(CTO 리뷰 2026-10 Phase 4, web-review §4)
+환경: Apple M1 · Node v24.3.0 · vitest 5 의 **React 19.3 개발 빌드** · 최소 DOM(`tests/helpers/mini-dom`) · 합성 자료. 값은 React `<Profiler>` 의 `actualDuration` 합(브라우저의
+스타일 · 레이아웃 · MapLibre 는 들어 있지 않다 — 상대 크기로 읽는다). **CI 가 보는 것은 횟수(커밋 · 다시 계산)** 이고 결정적이다. 시간은 `WAKELINE_PERF=1` 일 때만 잰다
+(같은 시험 파일의 `measure` — 7번 중 가운데 값, 처음 3번은 JIT 데우기로 버림). 두 번 돌린 값을 함께 적었다.
+
+**P2 — 화면 안 선박 목록(`ShipList`, 선박 탭 · 선택 없음)**: 경과 칸 때문에 1 s 마다 다시 그리면서 화면 안 선박 전부를 거르고(`shipList`) 정렬(`sortShipRows`)한 뒤 50줄만 보였다.
+이제 거르기는 선박 메시지 · 거르기 글자 · 선종 필터가 바뀔 때만, 정렬은 그것과 정렬이 바뀔 때만 — 시계를 따라가는 것은 경과 정렬뿐이다(`useMemo`).
+시험 `tests/perf-ship-list.test.ts`: 이름 정렬에서 시계 10번 → 커밋 10 · 거르기 0 · 정렬 0(전: 10 · 10), 경과 정렬 → 정렬 10 · 거르기 0, 선박 메시지 → 각 1.
+
+| 시계 10번(10 s)의 React 작업 | 전 | 후 |
+|---|---|---|
+| 1,000척 · 이름 정렬 | 18.4 · 16.8 ms | 12.3 · 14.3 ms |
+| 5,000척 · 이름 정렬 | 37.5 · 37.5 ms | 12.2 · 16.2 ms |
+| 10,000척 · 이름 정렬 | 65.1 · 71.0 ms | **12.1 · 13.8 ms** |
+| 1,000척 · 경과 정렬 | 20.2 · 22.9 ms | 17.5 · 21.7 ms |
+| 5,000척 · 경과 정렬 | 59.8 · 55.6 ms | 39.4 · 44.3 ms |
+| 10,000척 · 경과 정렬 | 113.4 · 139.1 ms | **77.0 · 86.0 ms** |
+
+- 이름 정렬(기본)은 선박 수와 상관없이 50줄을 다시 그리는 값만 남는다(10,000척에서 틱당 약 6.8 → 1.3 ms). 경과 정렬은 거르기만 빠진다(약 −30 %).
+- 재현: `cd apps/web && WAKELINE_PERF=1 npx vitest run tests/perf-ship-list.test.ts -t measure`. 전 = 커밋 `6bda549`(이 변경의 부모).
+
+**P1 — 숨긴 알림 패널(`AlertPanel`, 오른쪽 패널의 다른 탭을 보는 동안)**: R-08 로 마운트된 채 숨겨 두는데, 예측 행마다의 ETA 배지(1 s 시계)가 숨긴 동안에도 1초마다
+다시 그려졌다. 이제 내용은 React 19.3 `<Activity mode="hidden">` 아래 — 상태(펼친 행 · 범위)와 DOM 은 남고 효과(시계 · 스토어 구독)는 떼어 숨긴 동안 0번, 다시 보이면 그 순간의
+값으로 그린다. 겉 상자(`data-testid="alert-panel"`)는 Activity 밖이라 서버 렌더에도 늘 있다(숨긴 Activity 의 내용은 서버가 그리지 않는다).
+시험 `tests/perf-alert-panel.test.ts`: 보일 때 시계 10번 → 커밋 10, 숨긴 동안 → **0**(전: 10), 다시 보이면 줄어든 ETA · 펼친 행 그대로.
+
+| 시계 10번(10 s)의 React 작업 | 보일 때(전 · 후 — 같은 일) | 숨긴 동안 전 | 숨긴 동안 후 |
+|---|---|---|---|
+| 예측 50행 | 1.8 · 2.1 → 2.1 · 1.8 ms | 2.1 · 6.5 ms(커밋 10) | **0 ms(커밋 0)** |
+| 예측 225행 | 16.1 · 9.5 → 9.1 · 10.8 ms | 10.4 · 10.9 ms(커밋 10) | **0 ms(커밋 0)** |
+| 예측 525행 | 22.7 · 37.0 → 21.3 · 20.3 ms | 49.9 · 28.4 ms(커밋 10) | **0 ms(커밋 0)** |
+
+- 재현: `cd apps/web && WAKELINE_PERF=1 npx vitest run tests/perf-alert-panel.test.ts -t measure`. 전 = 커밋 `f4ba9d0`.
+
+**P5 — 상단 통합 검색(`AircraftSearch`, 늘 마운트된 머리 줄)**: 결과가 닫혀 있어도 1 s 시계를 구독해 1초마다 다시 그렸다. 시계는 결과(선박 표의 경과)를 보일 때만 필요하다 —
+이제 `useServerNow(1000, 결과가 보이는가)`(lib/clock `useNow` 의 active — 구독하지 않으면 렌더할 때 마지막 값을 읽는다). 선박을 고를 때의 '지금'은 고른 순간에 읽는다.
+시험 `tests/perf-search-clock.test.ts`(상황판처럼 다른 1 s 시계 구독자가 있는 채로): 닫힘 → 시계 10번에 커밋 **0**(전: 10), 결과 열림 → 10, Esc 로 닫으면 다시 0.
+
+| 시계 10번(10 s)의 React 작업 | 전 | 후 |
+|---|---|---|
+| 결과 닫힘 | 2.05 · 2.11 ms(커밋 10) | **0 ms(커밋 0)** |
+| 결과 열림(항공기 1 · 선박 10) | 24.97 · 31.46 ms(커밋 10) | 39.57 · 27.23 ms(커밋 10 — 같은 일, 흔들림) |
+
+- 작다(틱당 약 0.2 ms) — 늘 마운트된 자리라 없앴다. 재현: `cd apps/web && WAKELINE_PERF=1 npx vitest run tests/perf-search-clock.test.ts -t measure`. 전 = 커밋 `c6e22c0`.
+
+**P6 — 범례(`MapLegend`)의 `hasCoverage` 선택자: 재고 바꾸지 않음.** 스토어가 바뀔 때마다(`setData` — WS diff 마다) 선택자가 AIS 수신 범위의 GeoJSON 을 만들어
+불(참/거짓)만 본다(값이 같으면 다시 그리지 않는다 — 일은 선택자 안에서만). 범례가 열려 있을 때만 마운트된다.
+`tests/perf/map-legend.bench.ts`(`vitest bench` — `vitest run` 은 집지 않는다), 한 번 부를 때의 평균(두 번 돌림):
+
+| 수신 범위 상자 | GeoJSON 을 만드는 지금 | 참조만 읽을 때(바꾼다면) |
+|---|---|---|
+| 1개(`.env.example` AIS_BBOXES) | 1.4 · 1.4 µs | 0.00003 µs |
+| 2개(운영 설정 예 — 두 연결) | 1.5 · 1.6 µs | 〃 |
+| 5개 | 6.3 · 6.9 µs | 〃 |
+
+- 스토어 변경 한 번에 약 1.5 µs — 같은 변경에 상태 바 한 번 다시 그리기가 0.12 ms(web-review §4 P6)라 그 1 % 남짓이다. 줄일 것이 없다고 보고 **바꾸지 않았다**
+  (계획 Phase 4: 이득이 측정되지 않으면 하지 않는다). 재현: `cd apps/web && npx vitest bench --run --reporter=verbose tests/perf/map-legend.bench.ts`.
+
+## 12. 수집기 — 구조 개선 · Phase 4(2026-10-01, CTO 리뷰 collector-review §4 · PLAN Phase 3B/4)
+
+이 기계(M1 · CPython 3.13 · 스택 없이 — 외부 호출 · Redis 없음). 스크립트는 `apps/collector/tests/perf/`(pytest 가 모으지 않는다), 시험은 `apps/collector/tests/`.
+
+**공급자 체인의 운영자 끔 읽기(PLAN 3B-7)** — `tests/perf/chain_disabled_reads.py`: 가짜 상태의 읽기 하나가 50 ms 를 기다린다(Redis 가 멈춘 동안
+AUX_TIMEOUT_S 1.5 s 로 끊기는 HGET 의 모형). 관심 지역 체인(공급자 a · b), 다섯 번의 가운데 값.
+
+| 주기 | 전(`9394300`): 읽기 · 기다림 | 뒤: 읽기 · 기다림 |
+|---|---|---|
+| normal(pick — a) | 1 · 51.0 ms(1.02 번) | 2 · 51.3 ms(1.03 번) |
+| first_disabled(운영자가 a 를 껐다 — b) | 2 · 102.4 ms(2.05 번) | 2 · 51.2 ms(1.02 번) |
+| after_429(pick a → 429 → peek b) | 3 · 153.3 ms(3.07 번) | 2 · 51.3 ms(1.03 번) |
+
+뒤: pick 이 설정된 후보의 운영자 끔을 함께(`asyncio.gather`) 한 번 읽고 같은 주기의 peek 은 그것을 다시 쓴다. Redis 가 멈추면 429 주기의 읽기 기다림이
+최악 약 4.6 s → 1.5 s(1.5 s × 3 → × 1). 평상시에는 HGET 이 주기당 1 → 2(함께 — 기다림은 같다). 고르는 결과는 같다(test_fallback · test_chain_store ·
+test_aircraft_job 그대로 통과).
+
+**수집기 이벤트 루프 지연 지표(D0 — PLAN Phase 4-1)** — `tests/perf/loop_lag_sampling.py`: 수집기 heartbeat 의 loop_lag_max_s · loop_stalls_total · loop_tick_s
+(diag.LoopLag — ais 와 같은 측정)의 표본 간격을 골랐다. 표본기는 늦게 깬 만큼을 재므로 막힘이 깨는 순간에 걸려야 보인다.
+
+| 표본 간격 | 표본기 비용(빈 루프) | 20 ms 막힘이 약 0.5 s 마다 — 60 s 창의 최댓값(씨앗 셋) | 약 5 s 마다(demand focus 주기 모형) |
+|---|---|---|---|
+| 0.5 s(ais) | 0.26 CPU ms/s | 37.0 · 19.9 · 20.1 ms | 7.2 · 7.3 · 17.1 ms |
+| 0.1 s(수집기 — 고른 값) | 1.23–1.51 CPU ms/s | 19.1 · 24.1 · 21.0 ms | 13.5 · 10.2 · 28.5 ms |
+
+드문 막힘은 0.5 s 간격이면 막힌 길이의 일부만 보였다. 20 ms 를 넘는 값은 이 기계의 다른 일(개발 스택)이 더한 지연이다 — 운영에서도 지표는 루프가 실제로
+겪은 지연이다. 0.1 s 의 비용은 한 코어의 약 0.15 %.
+
+**기상청 레이더 격자의 정수 임계값(D3 · collector-review F9 — PLAN Phase 4-2)** — `tests/perf/kma_render.py`: 실제 헤더(2305 × 2881)에 합성 격자(시험의
+synthetic_grid(1)), 운영 폭 1152. 세 번 돌린 값.
+
+| | 전(`4a0fede` — float32 임계값) | 뒤(정수 임계값 dbz_threshold) |
+|---|---|---|
+| render_mercator_png 한 번 | 182–216 ms · 최고점 +73.4 MiB | 167–178 ms · 최고점 +23.3 MiB |
+| 에코 셀 수 식만(참고) | float32 16.4–32.5 ms · +57.0 MiB | int16 4.6–8.1 ms · +12.7 MiB(같은 수 659,549) |
+
+같은 결과: 모든 int16 값에서 정수 비교 = 실수 식(색 구간 · min_dbz · 경계 근처 · 범위 밖 23가지 — test_kma_grid_output), 합성 격자 세 개의 PNG
+바이트 · echo_cells · observed_cells 가 전과 같다(같은 시험의 고정값). 해석은 전용 스레드에서 돌므로(_DECODE_POOL) 이벤트 루프가 아니라 프레임당
+CPU 와 수집기 RSS 최고점(컨테이너 512 MiB)이 준다.
+
+**수요 추적의 루프 위 정규화(D2 — PLAN Phase 4, collector-review §4 P2)** — `tests/perf/demand_on_loop.py`: 응답 하나 → normalize.readsb_batch(정규화 +
+게이트) → hot_payload + envelope(orjson · gzip · base64). 항공기는 fixtures/adsb_lol_region.json(127대)의 hex 를 바꿔 늘렸고 응답 시각을 지금으로 옮겨
+모두 게이트를 지난다(그러지 않으면 낡은 위치로 모두 버려 일을 적게 잰다). 100번씩, 세 번 돌린 범위. 루프 지연 = 1 ms 표본기가 본 늦음.
+
+| 항공기 | 일 한 번 p50 · p99 | 루프 위(지금): 지연 p99 · 최대 | 전용 스레드 하나: 지연 p99 · 최대 |
+|---|---|---|---|
+| 127 | 2.0–2.1 · 3.9–7.7 ms | 1.8–3.6 · 2.2–6.7 ms | 2.2–6.7 · 3.9–8.0 ms |
+| 300 | 4.6–5.3 · 5.9–14.6 ms | 6.2–6.3 · 9.2–26.5 ms | 4.5–5.0 · 4.8–14.4 ms |
+| 600 | 9.5–9.8 · 23.4–27.5 ms | 10.6–10.9 · 12.3–17.0 ms | 8.5–8.9 · 19.8–21.7 ms |
+
+결정: **옮기지 않는다**(계획의 조건 — 루프 지연 20 ms 이상 — 에 닿지 않는다). 루프 지연 p99 는 600대에서도 약 11 ms 이고, 스레드로 옮겨도 p99 가 거의 같고
+최대는 오히려 같거나 컸다 — 일이 순수 파이썬(pydantic)이라 GIL 을 5 ms 마다 넘겨받아도 루프가 함께 기다린다(전세계 정규화의 15–19 ms 와 같은 까닭).
+focus 는 한 번에 50대 이하, hot 셀은 관심 지역 전체 고정본(127대)보다 작다. 덧붙여 hot 셀은 셀마다 태스크라 스레드로 옮기면 공유 게이트(hot_gate)를
+잠가야 한다. 운영에서 heartbeat loop_lag_max_s 가 20 ms 를 자주 넘으면 다시 본다(그때는 게이트 정규화를 덜 쓰는 쪽 — 리뷰 §4 P1 의 'dict 를 바로 만든다').
+
+## 13. api — Phase 4(2026-10-01, CTO 리뷰 api-review §3 B9 · §4 · PLAN Phase 4)
+
+이 기계(M1 · JDK 25 · Docker Desktop · 스택 없이 — Testcontainers 로 운영 DB 이미지 `wakeline-db:local`, 필요하면 `redis:8-alpine`). 측정 시험은
+`@Tag("perf")` 이라 평소의 `./gradlew test` · 커버리지에는 들지 않고 `./gradlew --offline perfTest --tests …` 로만 돈다(이 작업은 JaCoCo 계측을 끈다).
+결과 원문은 `apps/api/build/perf/*.txt`.
+
+**D6 — 공유 풀 굶주림(api-review B9 · PLAN Phase 4-7)** — `platform/data/SharedPoolStarvationPerfTest`: 운영과 같은 공유 풀(Hikari 12 · 연결 대기 5 s ·
+statement_timeout 30 s · lock_timeout 5 s)에 운영 클래스 그대로의 기록기 셋(TrackWriter · ShipWriter · OrderedWriter — 운영 재시도 간격)과 운영 모양의
+입력(관심 지역 200대 / 10 s · 전세계 10,000대 / 120 s · 선박 위치 400건 / 10 s · 순서 큐 작업 1건 / 5 s — §1 · §3 의 실측 크기)을 돌리면서, 60 s 동안
+공개 조회(`Sql.publicRead` 로 `pg_sleep(10)` — 3 s 상한에 끊긴다: 느린 DB 의 모형, 요청마다 가상 스레드 하나)를 초당 N 건 넣었다. 3 s 문장이면 풀 12개가
+초당 4건까지 받는다. 기록기 연결 대기는 기록기 DataSource 를 감싼 계측(같은 풀)으로 쟀다. 계획(Phase 4-7)은 격리 스택의 k6 를 적었지만 운영 스택을 건드리지
+않으려 같은 상황을 저장소 안의 DB 시험으로 만들었다.
+
+| 공개 조회 / s | 기록기 연결 대기 p50 / p95 / 최대 | 기록기 연결 대기 초과(항적 · 선박 · 순서) | 폭주 60 s 동안 쓴 항적 행 · 선박 행 · 순서 작업(넣은 것) | 폭주 뒤 따라잡기 | 공개 조회: 3 s 취소 · 5 s 대기 초과(503) · p95 |
+|---|---|---|---|---|---|
+| 0 | 1 / 3 / 3 ms | 0 · 0 · 0 | 11,200 · 2,400 · 12(모두) | 0 s | — |
+| 2 | 0 / 7 / 10 ms | 0 · 0 · 0 | 모두 | 0 s | 121 · 0 · 3.0 s |
+| 4 | 250 / 425 / 467 ms | 0 · 0 · 0 | 11,200 · 2,400 · 11 | 0.4 s | 241 · 0 · 3.3 s |
+| 8 | 1 / **5,006** / 5,008 ms | 5 · 5 · 6 | **200 · 400 · 4**(11,200 · 2,400 · 12) | 35.6 s | 264 · 217 · 8.0 s |
+| 16 | 0 / **5,002** / 5,002 ms | 5 · 5 · 6 | **200 · 400 · 1** | 36.2 s | 264 · 697 · 8.0 s |
+
+- 같은 조건의 첫 실행(표 형식을 다듬기 전): 8건 / s 에서 기록기 연결 대기 초과 15번 · 따라잡기 6.6 s, 16건 / s 에서 16번 · 35.5 s, 4건 / s 이하는 0번.
+- 공개 조회가 풀이 받는 것보다 빨리 들어오면(초당 8건 — 재생 요청 하나가 문장 3–4개라 사용자 몇 명의 재생 스크럽이면 된다) 기록기는 연결 대기 5 s 를
+  넘기고 물러나기를 되풀이해 재시도 간격이 30 s 까지 커진다 — 60 s 동안 항적 행 2 %, 선박 행 17 %, 순서 큐 작업 0–4건만 쓰였고 폭주가 끝난 뒤에도
+  약 36 s(물러난 간격) 동안 쓰지 못했다. 그동안 공개 조회도 3 s 상한이 아니라 연결 대기 5 s + 문장 3 s = 8 s 뒤에 503 이 됐다.
+- 폭주가 길면 행을 버린다 — 같은 시험을 초당 16건 · 9분(`-Dwakeline.perf.pool.rates=16 -Dwakeline.perf.pool.storm-s=540`)으로: 기록기 연결 대기 초과
+  84번, 9분 동안 쓴 것 항적 8,400 / 60,800행 · 선박 400 / 21,600행 · 순서 작업 6 / 108건, 항적 큐가 상한 50,000 에 닿아 **항적 1,000행을 버렸다**
+  (result=dropped — 선박 큐 22,000 · 순서 큐 105 는 상한 아래). 공개 조회는 3 s 취소 2,172 · 5 s 대기 초과 6,469(p95 7.9 s).
+- **확인됨** — 다음 커밋에서 공개 조회의 동시 수를 제한한다(격벽).
+
+**D6 뒤 — 공개 조회 격벽(`platform.data.PublicReadGate`, 허가 6 · 기다림 1 s)**: 공개 조회(`Sql.publicRead` 가 앱의 JdbcClient — `SharedJdbcClient` — 로
+낼 때)는 허가를 얻어야 공유 풀에서 연결을 빌리고, 연결을 돌려줄 때 놓는다. 1 s 안에 허가를 못 얻으면 연결을 빌리지 않고 503 + Retry-After(풀 대기 초과 ·
+문장 상한과 같은 답). 같은 시험(공개 조회는 운영과 같은 길 — SharedJdbcClient → 격벽):
+
+| 공개 조회 / s | 기록기 연결 대기 p50 / p95 / 최대 | 기록기 연결 대기 초과 | 폭주 60 s 동안 쓴 것 | 폭주 뒤 따라잡기 | 공개 조회: 3 s 취소(연결을 얻음) · 격벽이 돌려보냄 · 5 s 대기 초과 · p95 |
+|---|---|---|---|---|---|
+| 0 | 1 / 1 / 2 ms | 0 | 모두 | 0 s | — |
+| 2 | 0 / 1 / 3 ms | 0 | 모두 | 0 s | 121 · 0 · 0 · 3.3 s |
+| 4 | 0 / 1 / 1 ms | 0 | 모두 | 0 s | 124 · 117 · 0 · 4.0 s |
+| 8 | 1 / 6 / 12 ms | 0 | 모두 | 0 s | 126 · 355 · 0 · 3.9 s |
+| 16 | 0 / **11** / 15 ms | **0** | **모두**(항적 11,200 · 선박 2,400 · 순서 12) | **0 s** | 126 · 835 · **0** · 4.0 s |
+
+- 기록기는 폭주와 상관없이 연결을 곧바로 얻는다(p95 ≤ 11 ms — 전: 5,002 ms · 대기 초과 16번 · 항적 2 %만 씀). 돌려보낸 공개 조회는 연결을 빌리지 않고
+  기다림 1 s 뒤에 503 이 된다(전: 연결 대기 5 s + 문장 3 s). 허가를 얻은 공개 조회의 처리량은 6개 / 3 s = 초당 2건(느린 DB 에서 — 전에는 초당 4건이었지만
+  그 위로는 기록기와 함께 무너졌다).
+- 허가 수(초당 16건 · 60 s, 기다림 1 s):
+
+  | 허가 | 기록기 연결 대기 p95 · 대기 초과 | 폭주 동안 쓴 것 | 연결을 얻은 공개 조회(3 s 취소) · 돌려보냄 |
+  |---|---|---|---|
+  | 4 | 2 ms · 0 | 모두 | 84 · 877 |
+  | 6(고른 값) | 11 ms · 0 | 모두 | 126 · 835 |
+  | 8 | 3 ms · 0 | 모두 | 168 · 793 |
+  | 10 | 4 ms · 0 | 모두 | 210 · 751 |
+
+  이 시험의 기록기 셋(스레드 하나씩 — 동시에 연결 셋 이하)은 허가 10 까지도 굶지 않는다 — 측정이 더 작은 값을 강요하지는 않는다. 운영에서는 같은 풀을
+  정기 작업(스케줄러 16 스레드 — 집계 · 보존 · 파티션), 운영 화면 · 로그인 · 설정 쓰기, DB 헬스 확인도 쓴다. 그래서 6: 기록기 셋의 두 배(6)를 남기고,
+  느린 DB 에서 공개 조회 처리량은 초당 2건(허가 10 이면 3.3건)으로 준다. 바꾸려면 `wakeline.public-reads.permits`(1–11) ·
+  `wakeline.public-reads.wait-ms`(0–3,000).
+- 기다림 1 s 를 고른 까닭 — `burst`(DB 가 멀쩡할 때 edge 의 IP 당 burst 30: 재생 같은 요청 30개 × 문장 셋(각 30 ms), 2 s 간격으로 5번, 기록기 없음):
+
+| | 503 | 요청 p50 / p95 / 최대 |
+|---|---|---|
+| 격벽 없음(전) | 0 / 150 | 211 / 462 / 510 ms |
+| 허가 6 · 기다림 0(바로 실패) | **120 / 150** | 0 / 113 / 188 ms |
+| 허가 6 · 기다림 1 s(고른 값) | 0 / 150 | 440 / 560 / 594 ms |
+
+  바로 실패하게 하면 멀쩡한 DB 에서도 한 사용자의 몰림이 80 % 503 이 된다. 1 s 기다리면 몰림은 줄을 서서 모두 답하고(p95 +0.1 s), 느린 DB 에서는 1 s 뒤에
+  돌려보낸다.
+
+**P1 — 전세계 항공기 메시지의 처리 시간(api-review §4 P1 · PLAN Phase 4-4)**: 처리 시간 지표 `wakeline_stream_process_seconds` 에 `kind` · `scope` 태그를 달았다
+(커밋 523cd9c — 예전에는 태그가 없어 120 s 에 한 번 오는 전세계 메시지가 관심 지역 · hot · focus 의 p95 에 묻혔다. 이제 운영에서
+`wakeline_stream_process_seconds{kind="aircraft",scope="global"}` 로 본다). 그다음 두 번 파싱(스키마 검증의 Jackson 2 파싱 + 코덱용 Jackson 3 readTree)을
+`ingest/StreamParsePerfTest` 로 쟀다 — 10,000대 전세계 고정본(리뷰와 같은 모양, JSON 3.4 MB · gzip+base64 162 kB), 단계마다 데우기 10번 뒤 21번의 가운데 값,
+세 번 돌린 범위. 한 번 파싱 후보는 검증을 그대로 다 한다(결정 8): networknt 가 문자열을 받을 때 쓰는 것과 같은 Jackson 2 매퍼로 한 번 읽어 그 트리를 검증하고,
+코덱용 Jackson 3 트리로 옮긴다(시험 안의 시제품 — 옮긴 트리가 Jackson 3 readTree 의 트리와 같고 검증 결과도 같음을 먼저 확인).
+
+| 단계 | 지금 |
+|---|---|
+| parse() 전체(봉투 · 풀기 · 검증 · 두 번째 파싱 · 코덱) | 58.3–63.2 ms |
+| 페이로드 스키마 검증(문자열) — 그중 Jackson 2 파싱 · 트리 검증 | 31.8–34.4 ms — 11.9–16.0 · 17.8–19.1 ms |
+| Jackson 3 readTree(두 번째 파싱) | 10.7–11.8 ms |
+| 코덱(10,000 상태) | 12.2–12.7 ms |
+| 검증 + 코덱용 트리: 지금 → 후보(한 번 파싱 + 트리 옮기기 3.7–4.9 ms) | 40.3–43.9 → 35.4–38.4 ms |
+| **이득** | **4.9–6.1 ms = parse() 의 8–10 %** |
+
+결정: **바꾸지 않는다.** 두 번째 파싱을 없애도 트리를 옮기는 데 그 절반 가까이를 다시 쓴다 — 120 s 에 한 번 오는 메시지에서 약 5 ms(한 코어의 0.004 %),
+뒤에 줄 선 관심 지역 메시지의 지연에도 5 ms 이고, WS 지연 예산(p95 ≤ 500 ms)에 견주면 보이지 않는다. 대신 손으로 쓴 Jackson 2 → 3 트리 변환(수 종류 ·
+새 노드 형)을 지켜야 한다. 검증(48.6 ms 라던 것 — 이 기계에서는 32–34 ms)은 결정 8 대로 건드리지 않는다. 운영에서 전세계 메시지의 p95 가 커지면
+위 태그로 보고 다시 판단한다. 리뷰의 84 ms 와의 차이는 기계 · JIT 상태다(같은 고정본).
+
+**P4 — SIGMET 재생 조건(api-review §4 P7 · PLAN Phase 4-5)** — `weather/data/SigmetReplayPlanPerfTest`: SIGMET 은 지우지 않아(MaintenanceJobs) 표가
+계속 자란다. 합성 200,000건(약 250일 — 하루 약 800건 · 2–6 h 유효라 같은 때 유효한 것 약 130건 = 운영 실측과 같은 크기, 5 % 철회 · 5 % 도형 없음, 도형은
+세계 곳곳의 3° × 2° 상자)을 넣고 `VACUUM ANALYZE` 한 뒤, 재생이 받는 시각(지난 31일) 넷 × bbox 둘(전세계 · 한국 주변)로 `SigmetRepository.validAt`(운영 SQL
+그대로)의 맞춤 계획 `EXPLAIN (ANALYZE, BUFFERS)`(PlanCapture) · 일반 계획(같은 연결에서 여러 번 실행한 뒤 — pgjdbc 가 다섯 번째부터 서버 준비 문장으로
+보내면 PostgreSQL 이 고를 수 있는 것) · validAt 한 번의 시간(데우기 5번 뒤 15번의 가운데 값)을 쟀다. 두 번 돌린 범위.
+
+| 조건 | 전세계 bbox: 맞춤 계획 · 실행 · 버퍼 | 전세계: validAt | 한국 bbox: 맞춤 계획 · 실행 · 버퍼 | 한국: validAt |
+|---|---|---|---|---|
+| 전 `valid_from <= :t AND coalesce(withdrawn_at, valid_to) > :t` | Seq Scan(200,000행) · 17.2–20.9 ms · 6,205 | **30.0–31.5 ms**(일반 계획 = 도형 GIST 비트맵으로 전세계) | 도형 GIST 비트맵 · 12.2–18.3 ms · 7,538–7,740 | 13.1–13.7 ms |
+| 뒤 `… AND valid_to > :t AND …` — 지금 · 1일 · 7일 전 | `sigmet_valid` 비트맵 · **0.55–0.91 ms · 121–152** | **1.4–3.1 ms** | `sigmet_valid` ∧ 도형 GIST · 3.9–6.2 ms · 1,425–1,600 | 4.4–6.1 ms |
+| 뒤 — 30일 전(받는 범위의 끝) | `sigmet_valid` 비트맵(병렬) · 12.4–18.9 ms · 314–345 | 13.6–16.6 ms | 같은 꼴 · 3.9–4.3 ms · 1,548–1,700 | 5.0–6.0 ms |
+
+- 결과 행은 시각마다 119–156건(전세계) · 5–13건(한국). 인덱스 `sigmet_valid (valid_to, valid_from)` 는 어느 계획도 쓰지 못한다 — 조건이 `valid_to` 를 직접
+  묶지 않는다.
+- 고친 것(쿼리만 — 마이그레이션 없음): `valid_to > :t` 를 더했다. 원래 조건에 이미 들어 있다 — 쓰기 길이 `withdrawn_at < valid_to` 를 지키므로(철회 표시는
+  `valid_to > 세트 시각` 인 행에만 그 시각을 쓰고, `valid_to` 를 바꾸는 upsert 는 늘 `withdrawn_at` 을 지운다 — 이 표를 쓰는 길은 그 둘뿐, 수집기 역할은 이 표에
+  권한이 없다). 그래서 결과는 같다 — `WeatherPersistDbTest.replayPredicateWithTheImpliedValidToBoundSelectsExactlyWhatTheOriginalPredicateSelects` 가 실제
+  쓰기 길(세트 · 철회 · 다시 나타남 · 만료 늘이기/줄이기)로 만든 표에서 불변식과, 경계(발효 · 만료 · 철회 ± 1 s)를 포함한 약 700 시각의 결과가 원래 조건과
+  같음을 본다(바꾸기 전 SQL 에서도 통과).
+- 이제 `sigmet_valid` 가 `valid_to > :t` 로 범위를 좁혀, 최근 시각의 전세계 재생은 표 크기와 거의 상관없이 1–3 ms 다(전: 표 전체를 훑어 30 ms — 표가 자랄수록
+  늘었다). 받는 범위 끝(30일 전)은 그 뒤에 끝난 경보를 모두 훑어 13–17 ms 로 아직 크지만 전의 절반이다.
+
+**P3 — 운영 로그 화면의 다시 훑기(api-review §4 P5 · PLAN Phase 4-6)** — `logs/LogReaderScanPerfTest`: 운영 로그 화면은 15 s 마다(web useLogFeed — 탭이 보일
+때만) 목록 첫 쪽이나 묶음을 다시 받는다. 묶음(groups)은 늘 두 스트림 전체(최대 4,200건)를, 목록은 필터에 맞는 항목이 쪽(100)을 채우지 못하면 끝까지 훑고,
+훑는 항목마다 스키마 검증 · 파싱 · 다시 가림을 한다. 항목은 리뷰와 같은 모양(서버 3,100건 — 세 건에 하나는 150줄 스택, 브라우저 오류 1,100건 — JSON
+6,608,098자). 메모리 스트림(해석만)과 실제 Redis(`redis:8-alpine`, 운영 생성자 — XREVRANGE 200건씩 · TIME), 데우기 5번 뒤 11번의 가운데 값, 두 번 돌린 범위:
+
+| 요청 | 메모리 스트림 | Redis |
+|---|---|---|
+| 목록 첫 쪽, 필터 없음(4,200 중 100) | 3.0–4.0 ms | 3.5–4.2 ms |
+| 목록, 맞는 것 없는 필터(끝까지) | 90.6–91.8 ms | 129.5–214.1 ms |
+| 묶음(끝까지) | 92.2–93.6 ms | 127.7–136.0 ms |
+| XREVRANGE 만(두 스트림 끝까지) | — | 21.0–21.5 ms |
+
+- 끝까지 훑는 요청의 약 3/4(90 ms 남짓)이 항목 해석이다 — 스트림이 거의 바뀌지 않았는데도 폴링마다 처음부터 다시 한다. 묶음 보기를 열어 두면 15 s 마다 약
+  130 ms(한 코어의 약 0.9 %), 운영자가 로그를 보는 때는 대개 장애 중이다.
+
+**P3 뒤 — 해석한 항목 캐시(`LogReader.Decoded`, 스트림마다)**: 스트림 항목은 실린 뒤 바뀌지 않으므로(XADD 만, 트림은 지울 뿐) 스트림 · id 로 해석 결과
+(검증 · 파싱 · 다시 가림을 마친 노드)를 다시 쓴다. 원문의 길이 · 해시가 다르면(같은 id 로 다시 실었을 때) 다시 해석한다. 해결 표시는 담지 않고 요청마다 그때의
+해결 기록으로 사본에 붙인다. 스트림은 Redis 에서 그대로 다시 읽으므로 새 항목 · 트림은 읽기가 정한다. 상한은 스트림마다 항목 keepMax(3,100 · 1,100) · 원문
+글자 합(700만 · 100만 자)이고, 넘으면 **가장 작은 id 부터** 버린다(스트림의 트림과 같은 순서). 처음 만든 판(가장 오래 쓰지 않은 것부터 버림)은 이 측정에서
+두 스트림이 가득일 때 새 항목 10건마다 4,200건을 모두 다시 해석했다 — 최신 순으로 훑는 다음 폴링이 바로 쓸 항목부터 버렸다
+(`LogReaderTest.fullStreamsWithAFewNewEntriesPerPollDecodeOnlyTheNewOnes` 가 그때 "expected: 10L but was: 4200L" 로 실패했다). 같은 시험, 두 번 돌린 범위:
+
+| 요청 | 메모리 스트림 전 → 뒤 | Redis 전 → 뒤 |
+|---|---|---|
+| 목록 첫 쪽, 필터 없음 | 3.0–4.0 → 0.3 ms | 3.5–4.2 → 2.3–3.3 ms |
+| 목록, 맞는 것 없는 필터(끝까지) | 90.6–91.8 → **9.1–9.8 ms** | 129.5–214.1 → **30.2–38.9 ms** |
+| 묶음(끝까지) | 92.2–93.6 → **8.3–8.4 ms** | 127.7–136.0 → **26.3–29.1 ms** |
+| 묶음, 앞 폴링 뒤로 새 항목 10건(LogSink 처럼 XADD … MAXLEN ~) | — | **28.7–30.5 ms** |
+| XREVRANGE 만 | — | 21.0–26.4 ms |
+
+- 이제 끝까지 훑는 폴링의 대부분은 Redis 읽기다(묶음 보기의 15 s 폴링 — 한 코어의 약 0.9 % → 0.2 %). 캐시가 잡는 힙: 이 항목 모양(660만 자)으로 약 13.2 MB
+  (GC 뒤 사용량 차이), 상한(800만 자)에서 약 16 MB. 로그 화면을 한 번 열면 다음 재시작까지 그만큼 남는다(api 힙 최대 약 410 MiB — §1 · §7).
+- 결과는 같다 — `LogReaderTest` 의 새 시험 셋: 새 항목이 보이고 그것만 해석, 해결 표시는 그때의 해결 기록대로(가리기 · 보이기 · 묶음 · 항목 하나 — 이미 돌려준
+  쪽은 뒤 요청이 바꾸지 않는다: 사본에 붙이지 않으면 실패함을 확인), 같은 id 의 다른 원문은 다시 해석, 상한과 버리는 순서. 기존 LogReaderTest · LogsIT 그대로 통과.
+- 스트림 마지막 id 로 통째로 캐시하는 길(계획의 문구)은 쓰지 않았다 — Redis 읽기 약 20 ms 를 더 아끼지만 두 스트림의 사본 · 트림 · 이어 읽기 규칙을 따로
+  맞춰야 한다. 남은 비용이 폴링당 약 30 ms 라 거기서 멈췄다.
+
+**선택 항목 — 항공기 조각 캐시의 적중 카운터(api-review §4 P4)** — `ws/AircraftJsonCachePerfTest`: WS 팬아웃은 세션마다 항공기 조각을 이어 붙이며
+`AircraftJsonCache.get` 이 항공기마다 적중 카운터(`wakeline_cache_requests_total{cache="aircraft_json"}`)를 올린다. 운영과 같은 Prometheus 레지스트리로, 세션
+하나의 전세계 스냅샷 이어 붙이기(10,000대 · 조각은 이미 캐시에 — 리뷰와 같은 모양)와 그 안의 카운터 증가 10,000번(가운데 값, 세 번):
+전세계 스냅샷 1.49–2.09 ms 중 카운터 0.119–0.121 ms(**6–8 %**). 매 틱의 diff(10 % 바뀜)에서는 그 1/10 이다. 결정: **바꾸지 않는다** — 전체 스냅샷은 구독 ·
+줌이 바뀔 때만 가고, 틱마다의 몫은 세션당 약 0.01 ms 다. 운영 프로파일(JFR — 리뷰의 방법)에서 보이면 팬아웃마다 한 번 세도록 바꾼다.
+TrackWriter 의 바뀌지 않은 행(api-review §4 P6)은 재지 않았다 — 판단에 필요한 것은 운영의 충돌 비율(`wakeline_track_rows_total{result="written"}` 대
+`pg_stat_user_tables.n_tup_ins`)이고 저장소 안에서는 만들 수 없다.
+
 ## 재현
 ```bash
 make bench SHIPS=1               # k6 REST + WS(선박 포함), api 층 직접
@@ -251,5 +521,17 @@ make measure-ais d=600 i=30      # AIS 수신 상태·처리량·자원(읽기 �
 (cd apps/web && npm run build && npm run check:first-js -- --in-image)      # 첫 화면 JS 예산(빌드 결과에서 계산 · 웹 이미지의 Node — CI 와 같다. 호스트 Node 로는 인자 없이)
 (cd apps/web && npm run build && npm run measure:first-js -- --serve 8790)   # 첫 화면 JS(브라우저 측정, 운영 빌드를 127.0.0.1:8790 에)
 (cd apps/web && npm run measure:first-js -- http://localhost:8700)          # 첫 화면 JS(배포 스택 — 페이지만 연다)
+(cd apps/web && WAKELINE_PERF=1 npx vitest run tests/perf-ship-list.test.ts tests/perf-alert-panel.test.ts tests/perf-search-clock.test.ts -t measure)   # §11 웹 렌더 작업(시간)
+(cd apps/web && npx vitest bench --run --reporter=verbose tests/perf/map-legend.bench.ts)                                                              # §11 P6(범례 선택자)
 bash tools/chaos.sh              # 장애 주입(개발 스택을 실제로 죽였다 살린다)
+(cd apps/collector && uv run --frozen python tests/perf/chain_disabled_reads.py)   # §12 공급자 체인의 운영자 끔 읽기(스택 없이)
+(cd apps/collector && uv run --frozen python tests/perf/loop_lag_sampling.py)      # §12 루프 지연 표본 간격의 비용 · 잡는 힘(약 13분)
+(cd apps/collector && uv run --frozen python tests/perf/kma_render.py)             # §12 기상청 격자 해석 · PNG 시간 · 최고 메모리
+(cd apps/collector && uv run --frozen python tests/perf/demand_on_loop.py)         # §12 수요 추적의 루프 위 정규화(루프 위 · 스레드)
+(cd apps/api && ./gradlew --offline perfTest --tests 'dev.wakeline.platform.data.SharedPoolStarvationPerfTest.measure')   # §13 D6 공유 풀 굶주림(약 10분 · Docker — 격벽 전: -Dwakeline.perf.pool.permits=none)
+(cd apps/api && ./gradlew --offline perfTest --tests 'dev.wakeline.platform.data.SharedPoolStarvationPerfTest.burst')     # §13 D6 멀쩡한 DB 의 몰림(격벽의 기다림)
+(cd apps/api && ./gradlew --offline perfTest --tests 'dev.wakeline.ingest.StreamParsePerfTest')       # §13 P1 전세계 메시지 해석 · 두 번 파싱
+(cd apps/api && ./gradlew --offline perfTest --tests 'dev.wakeline.weather.data.SigmetReplayPlanPerfTest')   # §13 P4 SIGMET 재생 조건(합성 200,000건 · Docker)
+(cd apps/api && ./gradlew --offline perfTest --tests 'dev.wakeline.logs.LogReaderScanPerfTest')          # §13 P3 운영 로그 다시 훑기(메모리 · Redis — Docker)
+(cd apps/api && ./gradlew --offline perfTest --tests 'dev.wakeline.ws.AircraftJsonCachePerfTest')         # §13 조각 캐시 적중 카운터의 몫
 ```

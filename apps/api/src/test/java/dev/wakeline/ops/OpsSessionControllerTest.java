@@ -1,8 +1,8 @@
 package dev.wakeline.ops;
 
-import dev.wakeline.config.AppProperties;
-import dev.wakeline.config.ProblemAdvice;
-import dev.wakeline.config.RateLimiter;
+import dev.wakeline.platform.config.AppProperties;
+import dev.wakeline.platform.web.ProblemAdvice;
+import dev.wakeline.platform.web.RateLimiter;
 import jakarta.servlet.http.HttpServletRequest;
 import org.junit.jupiter.api.Test;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -31,7 +31,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 /** 로그인: 요청 제한은 실패 시 닫힘(Redis 장애 → 503, 비밀번호 검사도 하지 않음), 실패·잠금은 감사 기록(SEC-6). */
 class OpsSessionControllerTest {
     static final AppProperties PROPS = new AppProperties("", "36.5,127.8", 250, 120, 200, 5, 10, 30, 2500, 0, "classpath:schemas", 72, 30,
-            120, List.of("http://localhost:8700"));
+            120, List.of("http://localhost:8700"), List.of());
     static final String BODY = "{\"username\":\"admin\",\"password\":\"not-the-password\"}";
 
     final List<String> audited = new ArrayList<>();
@@ -45,7 +45,7 @@ class OpsSessionControllerTest {
     boolean registryDown;
 
     MockMvc mvc(Supplier<long[]> limiterResult, OpsUserService.AuthResult auth) {
-        RateLimiter limiter = new RateLimiter(new StringRedisTemplate()) {
+        RateLimiter limiter = new RateLimiter(new StringRedisTemplate(), meters) {
             @Override public long[] hitStrict(String bucket, String ip, int windowS) { return limiterResult.get(); }
         };
         OpsUserService users = new OpsUserService(null, null) {
@@ -64,7 +64,8 @@ class OpsSessionControllerTest {
                 unregistered.add(userId + ":" + sessionId);
             }
         };
-        var controller = new OpsSessionController(users, new HttpSessionSecurityContextRepository(), audit, limiter, PROPS, meters, registry);
+        var controller = new OpsSessionController(users, new HttpSessionSecurityContextRepository(), audit, limiter, PROPS, meters, registry,
+                org.springframework.security.web.csrf.CookieCsrfTokenRepository.withHttpOnlyFalse());
         return MockMvcBuilders.standaloneSetup(controller).setControllerAdvice(new ProblemAdvice()).build();
     }
 
@@ -131,9 +132,9 @@ class OpsSessionControllerTest {
                 .andExpect(status().isOk()).andReturn();
         assertThat(audited).containsExactly("LOGIN:admin");
         assertThat(r.getRequest().getSession(false)).isNotNull();
-        assertThat(r.getRequest().getSession(false).getAttribute(dev.wakeline.config.OpsSessionLifetimeFilter.USER_ID)).isEqualTo(7);
+        assertThat(r.getRequest().getSession(false).getAttribute(dev.wakeline.ops.OpsSessionLifetimeFilter.USER_ID)).isEqualTo(7);
         // R-95 후속: 세션은 로그인 때 확인한 자격 표식에 묶인다
-        assertThat(r.getRequest().getSession(false).getAttribute(dev.wakeline.config.OpsSessionLifetimeFilter.CREDENTIAL)).isEqualTo("tag-7");
+        assertThat(r.getRequest().getSession(false).getAttribute(dev.wakeline.ops.OpsSessionLifetimeFilter.CREDENTIAL)).isEqualTo("tag-7");
         // R-95: 최종 세션 id(교체 뒤)를 사용자 목록에 올린다
         assertThat(registered).containsExactly("7:" + r.getRequest().getSession(false).getId());
     }

@@ -137,7 +137,7 @@ function spyStorage() {
 describe("both maps use it; attribution stays visible in the footer", () => {
   const src = (f: string) => readFileSync(new URL(`../${f}`, import.meta.url), "utf8");
   it("dashboard and replay maps add the compact control instead of an always-expanded one", () => {
-    for (const f of ["components/MapView.tsx", "components/ReplayMap.tsx"]) {
+    for (const f of ["components/map/useMapLifecycle.ts", "components/ReplayMap.tsx"]) {
       const s = src(f);
       expect(s, f).toMatch(/mapAttributionControl\(/);
       expect(s, f).not.toMatch(/AttributionControl\(\{ compact: false/);

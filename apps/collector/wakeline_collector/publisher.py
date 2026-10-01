@@ -69,8 +69,37 @@ def decode_payload(s: str) -> Any:
     return orjson.loads(gunzip_bounded(base64.b64decode(s, validate=True), PAYLOAD_MAX_BYTES))
 
 
-def _size(fields: dict[str, str]) -> int:
+def entry_size(fields: dict[str, str]) -> int:
+    """스트림 항목 하나의 크기(필드 이름 · 값 길이 합) — 바이트 예산(StreamTrim)과 로컬 큐 상한이 세는 단위."""
     return sum(len(k) + len(v) for k, v in fields.items())
+
+
+def envelope(
+    *,
+    kind: str,
+    scope: str,
+    provider: str,
+    fetched_at: datetime,
+    raw_ref: str,
+    count: int,
+    payload: Any,
+    run_id: str | None = None,
+) -> dict[str, str]:
+    """스트림 항목의 필드(계약 — schema_version 1, payload 는 gzip+base64 JSON). 순수 함수: 수집기 작업(Publisher.envelope)과 ais 싱크가 함께 쓴다."""
+    env = {
+        "schema_version": "1",
+        "kind": kind,
+        "scope": scope,
+        "provider": provider,
+        "fetched_at": fetched_at.astimezone(UTC).isoformat().replace("+00:00", "Z"),
+        "raw_ref": raw_ref,
+        "encoding": "gzip+base64",
+        "count": str(count),
+        "payload": encode_payload(payload),
+    }
+    if run_id is not None:
+        env["run_id"] = run_id
+    return env
 
 
 class StreamTrim:
@@ -132,7 +161,7 @@ async def existing_entries(redis: Redis, stream: str, *, since_ms: int, budget_b
         rows = await redis.xrevrange(stream, max=hi, min=str(since_ms), count=SEED_PAGE) or []
         for sid, fields in rows:
             sid_s = sid.decode() if isinstance(sid, bytes) else str(sid)
-            n = sum(len(k) + len(v) for k, v in (fields or {}).items())  # _size 와 같다(bytes 응답이면 바이트 수)
+            n = sum(len(k) + len(v) for k, v in (fields or {}).items())  # entry_size 와 같다(bytes 응답이면 바이트 수)
             out.append((int(sid_s.split("-")[0]) / 1000, n))
             total += n
             if total > budget_bytes:
@@ -172,23 +201,20 @@ class Publisher:
         payload: Any,
         run_id: str | None = None,
     ) -> dict[str, str]:
-        env = {
-            "schema_version": "1",
-            "kind": kind,
-            "scope": scope,
-            "provider": provider,
-            "fetched_at": fetched_at.astimezone(UTC).isoformat().replace("+00:00", "Z"),
-            "raw_ref": raw_ref,
-            "encoding": "gzip+base64",
-            "count": str(count),
-            "payload": encode_payload(payload),
-        }
-        if run_id is not None:
-            env["run_id"] = run_id
-        return env
+        """모듈 함수 envelope 와 같다(작업들이 ctx.publisher 로 부른다)."""
+        return envelope(
+            kind=kind,
+            scope=scope,
+            provider=provider,
+            fetched_at=fetched_at,
+            raw_ref=raw_ref,
+            count=count,
+            payload=payload,
+            run_id=run_id,
+        )
 
     def _enqueue(self, stream: str, fields: dict[str, str]) -> None:
-        size = _size(fields)
+        size = entry_size(fields)
         while self._queue and (len(self._queue) >= QUEUE_MAX or self._queued_bytes + size > QUEUE_MAX_BYTES):
             _s, _f, n = self._queue.popleft()
             self._queued_bytes -= n
@@ -252,7 +278,7 @@ class Publisher:
         trim = self._trims.get(stream)
         if trim is not None and not trim.seeded:
             await self._seed(stream, trim)
-        size = _size(fields)
+        size = entry_size(fields)
         args = trim.xadd_args(size) if trim is not None else {"maxlen": MAXLEN, "approximate": True}
         sid = await self._r.xadd(stream, fields, **args)  # type: ignore[arg-type]
         if trim is not None:

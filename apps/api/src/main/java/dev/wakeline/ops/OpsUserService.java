@@ -1,5 +1,6 @@
 package dev.wakeline.ops;
 
+import dev.wakeline.platform.data.Sql;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -100,7 +101,7 @@ public class OpsUserService {
         }
         Map<String, Object> r = row.get();
         int id = ((Number) r.get("id")).intValue();
-        Instant lockedUntil = r.get("locked_until") == null ? null : dev.wakeline.persist.TrackRepository.toInstant(r.get("locked_until"));
+        Instant lockedUntil = r.get("locked_until") == null ? null : Sql.toInstant(r.get("locked_until"));
         if (lockedUntil != null && lockedUntil.isAfter(Instant.now())) {
             encoder.matches(password, DUMMY_HASH); // 잠긴 계정도 같은 시간이 걸린다(잠금 해제 시각을 재지 못하게)
             return AuthResult.fail(Failure.LOCKED, false);

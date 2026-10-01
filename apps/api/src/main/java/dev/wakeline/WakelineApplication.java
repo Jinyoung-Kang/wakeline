@@ -1,6 +1,6 @@
 package dev.wakeline;
 
-import dev.wakeline.config.AppProperties;
+import dev.wakeline.platform.config.AppProperties;
 import dev.wakeline.ops.OpsUserService;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.output.MigrateResult;
@@ -77,26 +77,27 @@ public class WakelineApplication {
     }
 
     /**
-     * 운영자 계정 생성/갱신. 비밀번호는 표준 입력 한 줄(--password-stdin, 계약 §7 — 명령행·프로세스 목록에 남지 않는다) 또는
-     * 환경변수 WAKELINE_OPS_PASSWORD(이전 방식 호환). 사용자명은 WAKELINE_OPS_USER(기본 admin). 비밀번호는 소스·로그에 남지 않는다.
+     * 운영자 계정 생성/갱신. 비밀번호는 표준 입력 한 줄로만 받는다(--password-stdin, 계약 §7 — 명령행 · 프로세스 목록 · 환경에 남지 않는다. `make ops-user`
+     * 가 이렇게 부른다). 예전의 환경변수 WAKELINE_OPS_PASSWORD 경로는 없앴다(리뷰 cto-2026-10 S8). 사용자명은 WAKELINE_OPS_USER(기본 admin).
+     * 비밀번호는 소스·로그에 남지 않는다.
      * @return 종료 코드(0 성공, 2 입력 오류, 3 비밀번호는 바뀌었지만 기존 세션을 끝내지 못함 — {@link #applyOpsUser})
      */
     static int createOpsUser(boolean passwordFromStdin, InputStream stdin, Map<String, String> env) {
         String user = env.getOrDefault("WAKELINE_OPS_USER", "admin");
+        if (!passwordFromStdin) {
+            System.err.println("--create-ops-user reads the password from standard input only: add --password-stdin and pipe one line (make ops-user does this)");
+            return 2;
+        }
         String password;
-        if (passwordFromStdin) {
-            try {
-                password = readPasswordLine(stdin);
-            } catch (IOException e) {
-                System.err.println("could not read the password from stdin");
-                return 2;
-            }
-            if (password == null) {
-                System.err.println("--password-stdin: no password on stdin");
-                return 2;
-            }
-        } else {
-            password = env.get("WAKELINE_OPS_PASSWORD");
+        try {
+            password = readPasswordLine(stdin);
+        } catch (IOException e) {
+            System.err.println("could not read the password from stdin");
+            return 2;
+        }
+        if (password == null) {
+            System.err.println("--password-stdin: no password on stdin");
+            return 2;
         }
         String problem = checkOpsPassword(password);
         if (problem != null) {

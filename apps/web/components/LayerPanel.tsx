@@ -1,6 +1,6 @@
 "use client";
 import { useEffect } from "react";
-import { legendDefaultOpen, loadLayers, loadShipCats, saveLayers } from "@/lib/prefs";
+import { legendDefaultOpen, loadLayers, loadLegendOpen, loadShipCats, saveLayers, saveLegendOpen } from "@/lib/prefs";
 import { SHIP_CATEGORIES, type ShipCategory } from "@/lib/ships";
 import { useUi, type Layers } from "@/lib/ui-store";
 import { MapChipsView } from "./MapChips";
@@ -16,7 +16,6 @@ const ITEMS: { k: keyof Layers; label: string }[] = [
   { k: "airports", label: "공항" }, { k: "tracks", label: "항적" }, { k: "prediction", label: "예측(추정)" },
   { k: "traffic", label: TRAFFIC_LAYER_LABEL }, // ADR-023 — 5분 집계 격자별 선박 척수(기본 끔)
 ];
-const LEGEND_KEY = "wakeline.legend";
 const LEGEND_ID = "map-legend";
 
 /**
@@ -35,9 +34,7 @@ export function LayerPanel() {
   const shipCats = useUi((s) => s.shipCats);
   const setShipCats = useUi((s) => s.setShipCats);
   useEffect(() => {
-    let stored: string | null = null;
-    try { stored = window.localStorage.getItem(LEGEND_KEY); } catch { /* 저장소 없음 */ }
-    setLegendOpen(stored === "0" || stored === "1" ? stored === "1" : legendDefaultOpen(window.innerWidth));
+    setLegendOpen(loadLegendOpen() ?? legendDefaultOpen(window.innerWidth));
     const saved = loadLayers();
     if (saved) setLayers(saved);
     const cats = loadShipCats();
@@ -59,7 +56,7 @@ export function LayerPanelView({ layers, shipCats, legendOpen }: { layers: Layer
   const flip = () => {
     const next = !legendOpen;
     setLegendOpen(next);
-    try { window.localStorage.setItem(LEGEND_KEY, next ? "1" : "0"); } catch { /* 저장소 없음 */ }
+    saveLegendOpen(next);
   };
   return (
     // bottom-16: 펼친 범례가 지도 오른쪽 아래 출처 표기(AttributionControl)를 가리지 않게(R-31).

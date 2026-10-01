@@ -9,7 +9,8 @@ import pytest
 from PIL import Image
 
 from wakeline_collector.kma_grid import HEADER_BYTES, NULL_OUTSIDE, parse_header, read_echo, render_mercator_png
-from wakeline_collector.providers.kma_radar import kst_now, parse_file_list
+from wakeline_collector.providers.kma_radar import parse_file_list
+from wakeline_collector.timeutil import kst_now
 
 FIX = Path(__file__).resolve().parents[3] / "fixtures" / "kma_rdr_cmp_head.bin"
 
@@ -133,7 +134,7 @@ def test_pixel_map_cached_between_frames():
 
 # ---- COR-13 / PERF-13: 후보 선택 ---------------------------------------------------------------------------------
 def test_candidates_only_newer_than_newest_stored():
-    from wakeline_collector.jobs.kma_radar import select_candidates
+    from wakeline_collector.kma_rules import select_candidates
 
     day = [f"20260927{h:02d}{m:02d}" for h in range(0, 24) for m in range(0, 60, 5)]
     listing = [t for t in day if t <= "202609272100"]
@@ -424,7 +425,7 @@ async def test_r03_missing_frame_gives_up_after_bounded_tries(kma_env):
 
 
 def test_r03_candidates_backfill_holes_inside_storage_window():
-    from wakeline_collector.jobs.kma_radar import KEEP_FRAMES, select_candidates
+    from wakeline_collector.kma_rules import KEEP_FRAMES, select_candidates
 
     listing = _tms("202609272000")
     window = listing[-KEEP_FRAMES:]

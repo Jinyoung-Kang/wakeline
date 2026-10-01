@@ -32,8 +32,6 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
-import httpx
-
 from wakeline_collector.budget import UNKNOWN
 from wakeline_collector.config import settings
 from wakeline_collector.demand import Demand, DemandPoller, DemandStatus, HotCell, status_value
@@ -42,12 +40,13 @@ from wakeline_collector.http import ProviderHttpError
 from wakeline_collector.jobs.context import JobContext
 from wakeline_collector.jobs.route import RouteLookup
 from wakeline_collector.models import AircraftState, ProviderResult
-from wakeline_collector.normalize import Rejected, normalize_readsb, readsb_reference_time
+from wakeline_collector.normalize import readsb_batch
 from wakeline_collector.publisher import STREAM_AIRCRAFT
 from wakeline_collector.quality import AircraftGate, Quarantine
 from wakeline_collector.ratelimit import RateLimiter, Throttled
 from wakeline_collector.raw_store import archive
 from wakeline_collector.route import normalize_callsign
+from wakeline_collector.send_outcome import classify_send
 from wakeline_collector.status import newest_age_s
 
 log = logging.getLogger("job.demand")
@@ -397,16 +396,16 @@ class DemandTracker:
             return None, "throttled", why, started
         try:
             return await call(), None, None, started
-        except Throttled as e:
-            await self._release()  # 호출하지 않았다
-            self.counts["throttled"] += 1
-            return None, "throttled", _err(e), started
         except Exception as e:  # noqa: BLE001 — 공급자 실패는 상태로 드러내고 다음 주기에 다시
+            kind = classify_send(e)
+            if kind != "sent":
+                await self._release()  # 보내지 않았다(속도 상한 · 연결 실패 · 연결 풀 대기 초과 등 — classify_send, R-65)
+            if kind == "throttled":
+                self.counts["throttled"] += 1
+                return None, "throttled", _err(e), started
             http_status = e.status if isinstance(e, ProviderHttpError) else None
-            if isinstance(e, httpx.ConnectError | httpx.ConnectTimeout):
-                await self._release()
             self.counts["errors"] += 1
-            why = describe_error(e)
+            why = describe_error(e) if kind != "not_sent" else f"not sent — {describe_error(e)}"
             self.ctx.db.record_run(job, self.provider.name, started, status="error", http_status=http_status, error_text=why)
             log.info("%s: %s failed (%s)", job, self.provider.name, why)
             return None, "throttled" if http_status == 429 else "error", _err(e), started
@@ -414,26 +413,10 @@ class DemandTracker:
     async def _normalize(
         self, res: ProviderResult, gate: AircraftGate, keep: Callable[[str | None], bool]
     ) -> tuple[list[AircraftState], list[Quarantine], set[str]]:
-        """(통과한 상태, 격리, 응답에 들어 있던 hex). keep(hex) 가 False 인 레코드는 보지 않는다(요청하지 않은 항공기)."""
-        states: list[AircraftState] = []
-        pre: list[Quarantine] = []
-        seen: set[str] = set()
-        ref = readsb_reference_time(res.data, res.fetched_at)  # 같은 관측은 어느 작업이 받아도 같은 seen_at
-        for ac in res.data.get("ac") or []:
-            if not isinstance(ac, dict):
-                continue
-            raw_hex = ac.get("hex")
-            h = raw_hex.strip().lower() if isinstance(raw_hex, str) else None
-            if not keep(h):
-                continue
-            if h:
-                seen.add(h)
-            r = normalize_readsb(ac, self.provider.name, res.fetched_at, ref)
-            if isinstance(r, Rejected):
-                pre.append(Quarantine(r.rule, r.hex, r.detail))
-            else:
-                states.append(r)
-        g = gate.apply(states, 0, datetime.now(UTC), pre=pre)
+        """(통과한 상태, 격리, 응답에 들어 있던 hex). keep(hex) 가 False 인 레코드는 보지 않는다(요청하지 않은 항공기). 관심 지역 작업과 같은
+        정규화 · 게이트(normalize.readsb_batch — 같은 관측은 어느 작업이 받아도 같은 seen_at). 이벤트 루프 위에서 돈다 — 잰 루프 지연 p99 는 600대에서도
+        약 11 ms 이고 스레드로 옮겨도 GIL 때문에 줄지 않았다(docs/PERF.md §12 — D2, 운영은 heartbeat loop_lag_max_s 로 본다)."""
+        _records, g, seen = readsb_batch(res.data, self.provider.name, res.fetched_at, gate, keep=keep)
         return g.kept, g.quarantined, seen
 
     async def _raw_ref(self, res: ProviderResult, kind: str) -> str:

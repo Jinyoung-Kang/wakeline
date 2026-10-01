@@ -1,24 +1,25 @@
 package dev.wakeline.ws;
 
-import dev.wakeline.config.AppProperties;
-import dev.wakeline.config.RedisConfig;
-import dev.wakeline.domain.AircraftState;
-import dev.wakeline.domain.Alert;
-import dev.wakeline.domain.Bbox;
-import dev.wakeline.domain.SigmetRecord;
-import dev.wakeline.engine.AlertStateMachine;
-import dev.wakeline.engine.EngineEvents;
-import dev.wakeline.engine.EngineService;
-import dev.wakeline.engine.PredictionAvailability;
-import dev.wakeline.ingest.IngestEvents;
-import dev.wakeline.ingest.RadarStore;
-import dev.wakeline.ingest.SigmetStore;
-import dev.wakeline.ingest.Snapshot;
-import dev.wakeline.ingest.SnapshotStore;
-import dev.wakeline.rest.SigmetGeoJson;
-import dev.wakeline.rest.StatusService;
+import dev.wakeline.aircraft.core.AircraftEvents;
+import dev.wakeline.aircraft.core.AircraftState;
+import dev.wakeline.aircraft.core.SnapshotStore;
+import dev.wakeline.aircraft.web.AircraftJson;
+import dev.wakeline.geo.Bbox;
+import dev.wakeline.platform.config.AppProperties;
+import dev.wakeline.platform.config.RedisConfig;
 import dev.wakeline.route.RouteInfo;
 import dev.wakeline.route.RouteReader;
+import dev.wakeline.status.StatusService;
+import dev.wakeline.weather.core.Alert;
+import dev.wakeline.weather.core.AlertStateMachine;
+import dev.wakeline.weather.core.EngineEvents;
+import dev.wakeline.weather.core.EngineService;
+import dev.wakeline.weather.core.PredictionAvailability;
+import dev.wakeline.weather.core.RadarStore;
+import dev.wakeline.weather.core.SigmetRecord;
+import dev.wakeline.weather.core.SigmetStore;
+import dev.wakeline.weather.core.WeatherEvents;
+import dev.wakeline.weather.web.SigmetGeoJson;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
@@ -29,6 +30,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.SmartLifecycle;
 import org.springframework.context.annotation.Profile;
 import org.springframework.context.event.EventListener;
+import org.springframework.core.Ordered;
+import org.springframework.core.annotation.Order;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.CloseStatus;
@@ -86,13 +89,8 @@ public class WsHub implements SmartLifecycle {
     private static final Logger log = LoggerFactory.getLogger(WsHub.class);
     /** hello 는 연결 후 이 시간 안에 와야 한다(설계 9.5 · 계약 §1). */
     public static final long HELLO_TIMEOUT_MS = 5_000;
-    /** status 페이로드(Redis 3회 조회) 공유 캐시 수명 */
-    static final long STATUS_TTL_MS = 3_000;
     /** 알림 배치 이력(세션이 놓친 배치를 순서대로 다시 보낼 수 있는 범위). 넘으면 전체 목록. */
     static final int ALERT_BATCH_HISTORY = 64;
-    /** 피드 stale 기준(계약 §1): 지역 60 s · 전세계 300 s */
-    static final int REGION_STALE_S = 60;
-    static final int GLOBAL_STALE_S = 300;
     /** ping 뒤 pong 이 없는 heartbeat 가 이 수를 넘으면 닫는다 — 연속 2회 무응답(설계 9.5). */
     static final int MAX_MISSED_PONGS = 2;
     /** 시험 생성자의 노선 조회 마감(바로 실행하는 실행기라 쓰이지 않는다 — 운영은 spring.data.redis.timeout). */
@@ -135,14 +133,12 @@ public class WsHub implements SmartLifecycle {
     // ---- SIGMET·레이더·status 공유 페이로드 ----
     record SigmetPayload(SigmetStore.State state, long version, String json, long validUntilMs) {}
     record RadarPayload(RadarStore.Frames frames, String json) {}
-    private record StatusPayload(long atMs, String json, Map<String, Object> status) {}
+    /** 마지막으로 직렬화한 status 메시지 — 같은 상태 맵(StatusService 의 3 s 공유 캐시 · 같은 인스턴스)이면 다시 직렬화하지 않는다. */
+    private record StatusPayload(Map<String, Object> status, String json) {}
     private final Object sigmetsBuildLock = new Object();
     private final AtomicReference<SigmetPayload> sigmetsCache = new AtomicReference<>();
     private final AtomicReference<RadarPayload> radarCache = new AtomicReference<>();
-    private final Object statusLock = new Object();
     private volatile StatusPayload statusCache;
-    private final Counter statusHit;
-    private final Counter statusMiss;
 
     /**
      * 운영: 노선 조회는 {@link #useRouteReader} — 답의 마감 = Redis 명령 상한. 기본 연결(RedisConfig)의 Lettuce 명령 상한 · REST 노선 기다림(RouteReader)과 같은
@@ -152,7 +148,7 @@ public class WsHub implements SmartLifecycle {
     public WsHub(ObjectMapper json, AppProperties props, SnapshotStore snapshots, SigmetStore sigmets, RadarStore radar,
                  StatusService status, EngineService engine, MeterRegistry meters, RouteReader routes,
                  @Value(RedisConfig.COMMAND_TIMEOUT) String redisCommandTimeout) {
-        this(json, props, snapshots, sigmets, radar, status::publicStatus, () -> engine.activeAlerts(null), engine::predictionAvailability,
+        this(json, props, snapshots, sigmets, radar, status::cachedPublicStatusOrNull, () -> engine.activeAlerts(null), engine::predictionAvailability,
                 meters, Executors.newVirtualThreadPerTaskExecutor(),
                 Executors.newSingleThreadScheduledExecutor(Thread.ofPlatform().daemon().name("ws-timer").factory()), HELLO_TIMEOUT_MS);
         useRouteReader(routes, RedisConfig.commandTimeout(redisCommandTimeout));
@@ -177,9 +173,6 @@ public class WsHub implements SmartLifecycle {
         this.routeLookups = new RouteLookups(Runnable::run, DIRECT_LOOKUP_DEADLINE_MS, meters);
         this.fragments = new AircraftJsonCache(json, meters);
         this.meters = meters;
-        // 캐시 적중률(R-53): 공유 status 페이로드(REST /status 도 쓴다)
-        this.statusHit = Counter.builder("wakeline_cache_requests_total").tag("cache", "status").tag("result", "hit").register(meters);
-        this.statusMiss = Counter.builder("wakeline_cache_requests_total").tag("cache", "status").tag("result", "miss").register(meters);
         meters.gauge("wakeline_ws_sessions", sessions, Map::size);
         this.dropped = Counter.builder("wakeline_ws_dropped_total").description("열린 세션에 보내지 못한 메시지").register(meters);
         this.coalesced = Counter.builder("wakeline_ws_coalesced_total").description("이전 팬아웃이 대기 중이라 합친 요청").register(meters);
@@ -408,8 +401,10 @@ public class WsHub implements SmartLifecycle {
 
     // ---- 이벤트(스트림 소비·엔진 스레드 — 예약만 하고 돌아간다) ----
 
+    /** 엔진(EngineService#onSnapshot — HIGHEST_PRECEDENCE)이 그 스냅샷의 판정 주기를 끝낸 뒤에 팬아웃 · selected 를 예약한다(명시 — 예전에는 클래스 스캔 순서였다, ListenerWiringIT). */
     @EventListener
-    public void onSnapshot(IngestEvents.SnapshotUpdated e) {
+    @Order(Ordered.LOWEST_PRECEDENCE)
+    public void onSnapshot(AircraftEvents.SnapshotUpdated e) {
         String scope = e.current().scope();
         if (SnapshotStore.HOT.equals(scope) || SnapshotStore.FOCUS.equals(scope)) onDemandSnapshot(e, SnapshotStore.FOCUS.equals(scope));
         else for (WsSession s : sessions.values()) if (s.subscribed() && wantsAircraft(s)) requestFanout(s);
@@ -422,7 +417,7 @@ public class WsHub implements SmartLifecycle {
      * hot·focus 메시지: 바뀐 항공기의 이전·현재 위치를 감싸는 범위와 겹치는 구독 세션만 팬아웃(diff 는 병합 뷰 기준이라 빠짐이 없다 —
      * 범위 밖 세션은 다음 region/global 팬아웃에서 같은 결과를 받는다). focus 는 그 hex 를 선택한 세션에 selected 를 따로 예약한다.
      */
-    private void onDemandSnapshot(IngestEvents.SnapshotUpdated e, boolean focus) {
+    private void onDemandSnapshot(AircraftEvents.SnapshotUpdated e, boolean focus) {
         Bbox area = envelope(e.previous().states().values(), e.current().states().values());
         for (WsSession s : sessions.values()) {
             if (!s.subscribed()) continue;
@@ -451,13 +446,13 @@ public class WsHub implements SmartLifecycle {
     }
 
     @EventListener
-    public void onSigmets(IngestEvents.SigmetsUpdated e) {
+    public void onSigmets(WeatherEvents.SigmetsUpdated e) {
         pushSigmets();
     }
 
     /** 유효시간 만료로 활성 SIGMET 이 줄었을 때(새 수신 없이) — 버전이 올라 있으므로 모든 구독 세션에 다시 보낸다(REL-13). */
     @EventListener
-    public void onSigmetsExpired(IngestEvents.SigmetsExpired e) {
+    public void onSigmetsExpired(WeatherEvents.SigmetsExpired e) {
         pushSigmets();
     }
 
@@ -466,7 +461,7 @@ public class WsHub implements SmartLifecycle {
     }
 
     @EventListener
-    public void onRadar(IngestEvents.RadarUpdated e) {
+    public void onRadar(WeatherEvents.RadarUpdated e) {
         for (WsSession s : sessions.values()) if (s.subscribed()) s.schedule(WsSession.Job.RADAR, () -> runRadar(s, false));
     }
 
@@ -670,7 +665,7 @@ public class WsHub implements SmartLifecycle {
 
     private boolean sendSnapshot(WsSession s, SnapshotStore.View view, Instant now) {
         WsSession.Sub sub = s.sub;
-        WsMessages.Encoding enc = sub.encoding();
+        AircraftJson.Encoding enc = sub.encoding();
         StringBuilder arr = new StringBuilder(4096).append('[');
         boolean first = true;
         s.sent.clear();
@@ -682,7 +677,7 @@ public class WsHub implements SmartLifecycle {
             arr.append(fragments.get(a, enc));
         }
         arr.append(']');
-        String msg = toJson(new WsMessages.SnapshotMsg("snapshot", 1, version(view), now, sources(view, now),
+        String msg = toJson(new WsMessages.SnapshotMsg("snapshot", 1, version(view), now, AircraftJson.sources(view, now),
                 sigmets.state().version(), arr.toString()));
         if (send(s, msg)) {
             s.seq = 1;
@@ -730,7 +725,7 @@ public class WsHub implements SmartLifecycle {
         WsSession.SelectedSent prev = s.selectedSent;
         if (!force && prev != null && hex.equals(prev.hex()) && Objects.equals(prev.prediction(), p) && Objects.equals(prev.route(), r)
                 && (when == Resend.NEW_OBSERVATION ? prev.state() == a && a != null : sameSelected(prev.state(), a))) return;
-        String state = a == null ? null : fragments.get(a, WsMessages.Encoding.FULL);
+        String state = a == null ? null : fragments.get(a, AircraftJson.Encoding.FULL);
         String msg = toJson(new WsMessages.SelectedMsg("selected", hex, state, p, r));
         if (!force && prev != null && msg.equals(prev.json())) return; // 보이는 것이 모두 같다 — 같은 내용을 두 번 보내지 않는다
         if (send(s, msg)) s.selectedSent = new WsSession.SelectedSent(hex, a, p, r, msg);
@@ -809,7 +804,7 @@ public class WsHub implements SmartLifecycle {
         return !DiffCalculator.changed(x, y) && Objects.equals(x.seenAt(), y.seenAt());
     }
 
-    private String jsonArray(List<AircraftState> list, WsMessages.Encoding enc) {
+    private String jsonArray(List<AircraftState> list, AircraftJson.Encoding enc) {
         StringBuilder sb = new StringBuilder(64 + list.size() * 160).append('[');
         for (int i = 0; i < list.size(); i++) {
             if (i > 0) sb.append(',');
@@ -821,24 +816,6 @@ public class WsHub implements SmartLifecycle {
     /** 참고용 전역 버전 v(계약 §1) — 병합 뷰가 바뀔 때마다 오른다(region·global·hot·focus 어느 것이든). */
     static long version(SnapshotStore.View view) {
         return view.version();
-    }
-
-    /** 스냅샷 sources(계약 §1): 스코프별 provider·fetched_at·lag_s·stale. 전세계 피드가 한 번도 없으면 global = null. REST /aircraft meta 도 같은 모양을 쓴다. */
-    public static WsMessages.Sources sources(SnapshotStore.View view, Instant now) {
-        return new WsMessages.Sources(source(view.region(), now, REGION_STALE_S),
-                hasFeed(view.global()) ? source(view.global(), now, GLOBAL_STALE_S) : null);
-    }
-
-    private static boolean hasFeed(Snapshot s) {
-        return s.fetchedAt() != null && !Instant.EPOCH.equals(s.fetchedAt());
-    }
-
-    static WsMessages.Source source(Snapshot s, Instant now, int staleS) {
-        boolean known = hasFeed(s);
-        String provider = s.provider() == null || s.provider().isBlank() || "-".equals(s.provider()) ? null : s.provider();
-        if (!known) return new WsMessages.Source(provider, null, null, true); // 수집 이력 없음 = 현재 아님
-        double lag = (now.toEpochMilli() - s.fetchedAt().toEpochMilli()) / 1000.0;
-        return new WsMessages.Source(provider, s.fetchedAt(), Math.round(lag * 10) / 10.0, lag > staleS);
     }
 
     // ---- 공유 페이로드(버전마다 한 번 직렬화) ----
@@ -940,48 +917,25 @@ public class WsHub implements SmartLifecycle {
         return c;
     }
 
-    /** status 페이로드(Redis 조회 3회) — STATUS_TTL_MS 동안 모든 세션이 공유한다. 조회 실패 시 이전 값(없으면 null). */
-    String statusJson() {
-        StatusPayload c = statusPayload();
-        return c == null ? null : c.json();
-    }
-
     /**
-     * 공개 상태(REST /api/v1/status 가 쓴다, R-53) — WS 와 같은 STATUS_TTL_MS 캐시. 요청마다 Redis 를 읽지 않는다. 조회 실패 시 이전 값,
-     * 이전 값도 없으면 예외를 그대로 올린다(REST 가 503 으로).
+     * status 메시지 — 상태 맵은 StatusService 의 3 s 공유 캐시(REST /status 와 같은 값, R-53)에서 오고, 같은 맵이면 직렬화한 String 을 모든 세션이
+     * 나눠 쓴다. 조회 실패 시 이전 값(없으면 null).
      */
-    public Map<String, Object> status() {
-        StatusPayload c = statusPayload();
-        return c != null ? c.status() : statusSource.get();
-    }
-
-    private StatusPayload statusPayload() {
-        long now = System.currentTimeMillis();
+    String statusJson() {
         StatusPayload c = statusCache;
-        if (c != null && now - c.atMs() < STATUS_TTL_MS) {
-            statusHit.increment();
-            return c;
-        }
-        synchronized (statusLock) {
-            c = statusCache;
-            if (c != null && now - c.atMs() < STATUS_TTL_MS) {
-                statusHit.increment();
-                return c;
-            }
-            statusMiss.increment();
-            try {
-                Map<String, Object> st = statusSource.get();
-                Map<String, Object> m = new LinkedHashMap<>();
-                m.put("type", "status");
-                m.put("status", st);
-                String j = toJson(m);
-                StatusPayload fresh = new StatusPayload(System.currentTimeMillis(), j, st);
-                statusCache = fresh;
-                return fresh;
-            } catch (RuntimeException e) {
-                log.debug("ws status unavailable: {}", e.toString());
-                return c;
-            }
+        try {
+            Map<String, Object> st = statusSource.get();
+            if (st == null) return c == null ? null : c.json();
+            if (c != null && c.status() == st) return c.json();
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("type", "status");
+            m.put("status", st);
+            StatusPayload fresh = new StatusPayload(st, toJson(m));
+            statusCache = fresh;
+            return fresh.json();
+        } catch (RuntimeException e) {
+            log.debug("ws status unavailable: {}", e.toString());
+            return c == null ? null : c.json();
         }
     }
 }

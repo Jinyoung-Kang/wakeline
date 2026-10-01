@@ -1,13 +1,13 @@
 package dev.wakeline.ws;
 
-import dev.wakeline.domain.AircraftState;
-import dev.wakeline.domain.Alert;
-import dev.wakeline.domain.SigmetRecord;
-import dev.wakeline.engine.AlertStateMachine;
-import dev.wakeline.engine.EngineEvents;
-import dev.wakeline.engine.PredictionAvailability;
-import dev.wakeline.ingest.IngestEvents;
-import dev.wakeline.ingest.RadarStore;
+import dev.wakeline.aircraft.core.AircraftState;
+import dev.wakeline.weather.core.Alert;
+import dev.wakeline.weather.core.AlertStateMachine;
+import dev.wakeline.weather.core.EngineEvents;
+import dev.wakeline.weather.core.PredictionAvailability;
+import dev.wakeline.weather.core.RadarStore;
+import dev.wakeline.weather.core.SigmetRecord;
+import dev.wakeline.weather.core.WeatherEvents;
 import org.junit.jupiter.api.Test;
 import org.springframework.web.socket.CloseStatus;
 import tools.jackson.databind.JsonNode;
@@ -318,7 +318,7 @@ class WsHubTest {
             k.hub.onAlerts(changed(AlertStateMachine.EventType.ENTERED, a));
             k.hub.onAlerts(changed(AlertStateMachine.EventType.LEFT, a.closed(now, Alert.CLOSE_LEFT, null)));
             var st = k.sigmets.replace(now, "awc_isigmet", Map.of("S1", sig("S1", now.minusSeconds(60), now.plusSeconds(3600))));
-            k.hub.onSigmets(new IngestEvents.SigmetsUpdated(st));
+            k.hub.onSigmets(new WeatherEvents.SigmetsUpdated(st));
             assertThat(f.sent).isEmpty(); // 일시정지 중엔 보내지 않는다
 
             k.msg(f, "{\"type\":\"resume\"}");
@@ -407,11 +407,11 @@ class WsHubTest {
             Instant now = Instant.now();
             FakeWsSession f = k.subscribed("s", "1.1.1.1");
             var st = k.sigmets.replace(now, "awc_isigmet", Map.of("S1", sig("S1", now.minusSeconds(60), now.plusSeconds(3600))));
-            k.hub.onSigmets(new IngestEvents.SigmetsUpdated(st));
-            k.hub.onSigmets(new IngestEvents.SigmetsUpdated(st));  // 같은 v — 다시 보내지 않음
+            k.hub.onSigmets(new WeatherEvents.SigmetsUpdated(st));
+            k.hub.onSigmets(new WeatherEvents.SigmetsUpdated(st));  // 같은 v — 다시 보내지 않음
             k.msg(f, "{\"type\":\"subscribe\",\"bbox\":[125,33,132,39],\"zoom\":7}"); // 팬 — 받은 v 는 다시 보내지 않음
             var expired = k.sigmets.republish();
-            k.hub.onSigmetsExpired(new IngestEvents.SigmetsExpired(expired, Set.of("S0")));
+            k.hub.onSigmetsExpired(new WeatherEvents.SigmetsExpired(expired, Set.of("S0")));
             assertThat(ofType(f, "sigmets")).extracting(n -> n.path("v").asLong()).containsExactly(0L, st.version(), expired.version());
             JsonNode props = ofType(f, "sigmets").get(1).path("collection").path("features").get(0).path("properties");
             assertThat(props.path("id").asString()).isEqualTo("S1");
@@ -423,8 +423,8 @@ class WsHubTest {
             FakeWsSession f = k.subscribed("s", "1.1.1.1");
             var frames = new RadarStore.Frames("https://tilecache.rainviewer.com", 1, List.of(new RadarStore.Frame(1, "/v2/radar/1")), Instant.now(), "rainviewer");
             k.radar.replace(frames);
-            k.hub.onRadar(new IngestEvents.RadarUpdated(frames));
-            k.hub.onRadar(new IngestEvents.RadarUpdated(frames));
+            k.hub.onRadar(new WeatherEvents.RadarUpdated(frames));
+            k.hub.onRadar(new WeatherEvents.RadarUpdated(frames));
             assertThat(ofType(f, "radar")).hasSize(2); // 초기 1 + 변경 1
         }
     }

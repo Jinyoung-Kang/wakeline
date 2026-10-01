@@ -8,6 +8,8 @@
 #  - apps/web/tests/resolutions.test.ts:18 · :69–71 (커밋 1e17faa)  비밀값이 아니라 로그 지문 예 `0123456789abcdef` — 해결 API 의 key 필드(ADR-024), 이름이 key 라 규칙에 걸림
 #  - apps/collector/tests/test_ais_keepalive.py:33 (커밋 9598eef)  가짜 aisstream 키 "test-ais-key-keepalive-…" — 로컬 가짜 WS 서버로 keepalive 1011 을 재현하는 시험 입력
 #    (2026-09-30 확인: .env 의 어떤 값과도 같지 않다 — 스크립트로 대조, 값은 출력하지 않음)
+#  - apps/collector/tests/test_db_writer.py:176 (커밋 cd127c0)  이 시험에서 지은 가짜 authKey 값 — 품질 사례 detail 가림(보안 검토 L-2) 시험 입력
+#    (2026-10-01: 시험에 손으로 적은 합성 글자 — 어떤 설정 · 비밀값에서도 오지 않았다. 앞으로의 가짜 값은 키 모양이 아닌 글자로 쓴다)
 # 새 항목은 값이 가짜임을 확인한 뒤 gitleaks 보고서의 Fingerprint 를 한 줄씩 더한다.
 5251859bac52838e622a55edd431727500aebb18:apps/collector/tests/test_ais_server.py:generic-api-key:35
 94ae84e2f28cfdc00835410d58b0780bccd791bd:apps/collector/tests/test_masking.py:jwt:12
@@ -20,3 +22,4 @@ ae22d59146f8a4b597762bf48027bf058a5f6abb:apps/collector/tests/test_masking.py:ge
 1e17faab307616aba658013e1b8ef568f0044089:apps/web/tests/resolutions.test.ts:generic-api-key:70
 1e17faab307616aba658013e1b8ef568f0044089:apps/web/tests/resolutions.test.ts:generic-api-key:71
 9598eef659f5135ad689ae0c26be36ec0e1a4ed1:apps/collector/tests/test_ais_keepalive.py:generic-api-key:33
+cd127c0e41eee7309a11cd8a5e5a0727ecf5e854:apps/collector/tests/test_db_writer.py:generic-api-key:176

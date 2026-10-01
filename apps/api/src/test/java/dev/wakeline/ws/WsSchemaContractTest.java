@@ -1,29 +1,30 @@
 package dev.wakeline.ws;
 
+import dev.wakeline.aircraft.core.AircraftState;
 import dev.wakeline.demand.CollectorDemandStatus;
 import dev.wakeline.demand.DemandStats;
-import dev.wakeline.domain.AircraftState;
-import dev.wakeline.domain.Alert;
-import dev.wakeline.domain.HotCell;
-import dev.wakeline.domain.ShipState;
-import dev.wakeline.domain.ShipStatic;
-import dev.wakeline.domain.SigmetRecord;
-import dev.wakeline.engine.AlertStateMachine;
-import dev.wakeline.engine.EngineEvents;
-import dev.wakeline.engine.EngineService;
-import dev.wakeline.ingest.AisStatus;
-import dev.wakeline.ingest.IngestEvents;
-import dev.wakeline.ingest.RadarStore;
-import dev.wakeline.ingest.Receipt;
-import dev.wakeline.ingest.ShipStore;
-import dev.wakeline.ops.RegionSettings;
-import dev.wakeline.persist.StoredStaticReader;
+import dev.wakeline.demand.HotCell;
+import dev.wakeline.platform.support.Receipt;
 import dev.wakeline.portcalls.PortCallFixtures;
 import dev.wakeline.portcalls.PortCallIndex;
 import dev.wakeline.portcalls.PortCallReader;
-import dev.wakeline.rest.StatusService;
 import dev.wakeline.route.RouteInfoTest;
 import dev.wakeline.route.RouteReader;
+import dev.wakeline.settings.RegionSettings;
+import dev.wakeline.ships.core.AisStatus;
+import dev.wakeline.ships.core.ShipEvents;
+import dev.wakeline.ships.core.ShipState;
+import dev.wakeline.ships.core.ShipStatic;
+import dev.wakeline.ships.core.ShipStore;
+import dev.wakeline.ships.data.AisStatusReader;
+import dev.wakeline.ships.data.StoredStaticReader;
+import dev.wakeline.status.StatusService;
+import dev.wakeline.weather.core.Alert;
+import dev.wakeline.weather.core.AlertStateMachine;
+import dev.wakeline.weather.core.EngineEvents;
+import dev.wakeline.weather.core.EngineService;
+import dev.wakeline.weather.core.RadarStore;
+import dev.wakeline.weather.core.SigmetRecord;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.locationtech.jts.geom.Coordinate;
@@ -157,6 +158,7 @@ class WsSchemaContractTest {
                         Map.entry("missing_listed", "EXT,KMA"), Map.entry("missing_probe_every_s", "900"), // 계약 v5 §G26 — 늦춘 확인 간격
                         // 계약 v5 §G26 개정(2026-10-01): 마지막 확인의 목록 — 가장 새 tm 이 last_tm 이고 그 뒤로 싣지 않았다(목록도 자라지 않음)
                         Map.entry("missing_list_tm", "202609290525"), Map.entry("missing_list_newer", "0")),
+                // hot: 수집기가 쓰지 않는 필드 — 공개 status 의 active_providers 에 실리지 않는다(허용 목록, 리뷰 cto-2026-10 S13)
                 "wakeline:active", Map.of("region", "adsb_lol", "global", "opensky", "hot", "adsb_fi"),
                 AisStatus.KEY, Map.of("provider", "aisstream", "connected", "1", "state", "receiving", "updated_at", now.minusSeconds(3).toString(),
                         "last_msg_at", now.minusSeconds(1).toString(), "msgs_per_s", "12.5",
@@ -165,8 +167,8 @@ class WsSchemaContractTest {
         StringRedisTemplate redis = new StringRedisTemplate() {
             @Override public <HK, HV> HashOperations<String, HK, HV> opsForHash() { return (HashOperations) hash; }
         };
-        AisStatus ais = new AisStatus(redis, k.ships);
-        ais.refresh();
+        AisStatus ais = new AisStatus(k.ships);
+        new AisStatusReader(redis, ais).refresh();
         DemandStats demand = new DemandStats();
         demand.update(new DemandStats.Counts(1, 1, 1, 1, 1, 1));
         EngineService engine = new EngineService(k.snapshots, k.sigmets, e -> { }, k.meters);
@@ -198,7 +200,7 @@ class WsSchemaContractTest {
 
     static void ships(WsTestKit k, List<ShipState> states, List<ShipStatic> statics, Instant t) {
         ShipStore.Change c = k.ships.apply(states, statics, t, "aisstream", System.currentTimeMillis());
-        k.shipFanout.onShips(new IngestEvents.ShipsUpdated(t, "aisstream", states, statics, c.changed(), c.removed(), Receipt.NONE));
+        k.shipFanout.onShips(new ShipEvents.ShipsUpdated(t, "aisstream", states, statics, c.changed(), c.removed(), Receipt.NONE));
     }
 
     static String first(List<String> msgs, String type, Predicate<JsonNode> when) {
@@ -674,7 +676,7 @@ class WsSchemaContractTest {
         List<String> enumOrder = new ArrayList<>();
         defs.path("ship_category").path("enum").forEach(x -> enumOrder.add(x.asString()));
         List<String> java = new ArrayList<>();
-        for (dev.wakeline.domain.ShipCategory c : dev.wakeline.domain.ShipCategory.values()) java.add(c.key());
+        for (dev.wakeline.ships.core.ShipCategory c : dev.wakeline.ships.core.ShipCategory.values()) java.add(c.key());
         assertThat(enumOrder).isEqualTo(order).isEqualTo(java);
     }
 

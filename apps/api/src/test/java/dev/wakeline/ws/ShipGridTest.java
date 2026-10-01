@@ -1,10 +1,10 @@
 package dev.wakeline.ws;
 
-import dev.wakeline.domain.Bbox;
-import dev.wakeline.domain.ShipCategory;
-import dev.wakeline.domain.ShipState;
-import dev.wakeline.domain.ShipStatic;
-import dev.wakeline.ingest.ShipStore;
+import dev.wakeline.geo.Bbox;
+import dev.wakeline.ships.core.ShipCategory;
+import dev.wakeline.ships.core.ShipState;
+import dev.wakeline.ships.core.ShipStatic;
+import dev.wakeline.ships.core.ShipStore;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.JsonNode;
 

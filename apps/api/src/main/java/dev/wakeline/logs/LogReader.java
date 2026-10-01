@@ -1,6 +1,7 @@
 package dev.wakeline.logs;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
+import dev.wakeline.platform.support.LogMasker;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Range;
 import org.springframework.data.domain.Range.Bound;
@@ -23,6 +24,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.concurrent.TimeUnit;
 import java.util.function.LongSupplier;
 import java.util.regex.Pattern;
@@ -64,6 +66,13 @@ public class LogReader {
     public static final int SCAN_MAX = (int) (LogStream.SERVER.keepMax() + LogStream.CLIENT.keepMax());
     static final long SKEW_MS = 60_000;
     static final int SAMPLE_MAX = 500;
+    /**
+     * 해석한 항목 캐시({@link Decoded})의 원문 글자 합 상한(스트림마다 — 항목 수 상한은 그 스트림의 {@link LogStream#keepMax()}). 리뷰의 항목 모양(서버 3,100건 중
+     * 세 건에 하나는 150줄 스택 · 브라우저 오류 1,100건 — 합 약 660만 자, 힙 약 13 MB — docs/PERF.md §13)이 다 든다. 두 상한의 합 800만 자가 힙 약 16 MB.
+     * 항목이 더 크면(스키마 상한까지 가면 건당 약 19,000자) 새 것부터 일부만 담는다.
+     */
+    static final long DECODED_SERVER_MAX_CHARS = 7_000_000;
+    static final long DECODED_CLIENT_MAX_CHARS = 1_000_000;
     private static final JsonMapper JSON = JsonMapper.builder().build();
     private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(LogReader.class);
     private static final Pattern STREAM_ID = Pattern.compile("\\d{1,20}-\\d{1,20}");
@@ -132,6 +141,9 @@ public class LogReader {
     private final Source client;
     private final LongSupplier redisNowMs;
     private final LogEventSchema schema = new LogEventSchema();
+    private final Decoded decodedServer = new Decoded((int) LogStream.SERVER.keepMax(), DECODED_SERVER_MAX_CHARS);
+    private final Decoded decodedClient = new Decoded((int) LogStream.CLIENT.keepMax(), DECODED_CLIENT_MAX_CHARS);
+    private final java.util.concurrent.atomic.AtomicLong decodes = new java.util.concurrent.atomic.AtomicLong();
 
     @Autowired
     public LogReader(StringRedisTemplate redis) {
@@ -422,8 +434,9 @@ public class LogReader {
         return r != null && !p.ts().isAfter(r.upto()) ? r : null;
     }
 
-    /** 항목에 resolved 를 싣는다(없으면 명시적 null — 키를 빼지 않는다). */
-    private static ObjectNode annotate(ObjectNode node, Resolved r) {
+    /** 항목의 사본에 resolved 를 싣는다(없으면 명시적 null — 키를 빼지 않는다). 해석한 노드는 캐시와 같이 쓰므로 사본에. */
+    private static ObjectNode annotate(ObjectNode cached, Resolved r) {
+        ObjectNode node = cached.deepCopy();
         if (r == null) node.putNull("resolved");
         else {
             ObjectNode o = node.putObject("resolved");
@@ -438,9 +451,27 @@ public class LogReader {
         return since == null ? null : Math.max(0, since.toEpochMilli() - SKEW_MS) + "-0";
     }
 
-    /** 검증 → 파싱 → 다시 가림 → {id, stream, ...항목}. 맞지 않으면 null. */
+    /**
+     * 항목 하나의 해석 — 같은 스트림 · id · 원문(길이 · 해시)이면 앞서 해석한 것({@link Decoded}). 돌려준 노드는 캐시와 같이 쓰므로 바꾸지 않는다
+     * (응답에 싣는 것은 {@link #annotate} 가 사본에 resolved 를 붙인다).
+     */
     private Parsed parse(LogStream stream, Raw r) {
-        if (r.e() == null || schema.validate(r.e()) != null) return null;
+        if (r.e() == null) return null;
+        Decoded cache = stream == LogStream.SERVER ? decodedServer : decodedClient;
+        Decoded.Entry hit = cache.get(r.id(), r.e());
+        if (hit != null) return hit.parsed();
+        Parsed p = decode(stream, r);
+        cache.put(r.id(), r.e(), p);
+        return p;
+    }
+
+    /** 해석한 항목 수(시험 — 캐시가 같은 항목을 다시 해석하지 않는지). */
+    long decodeCount() { return decodes.get(); }
+
+    /** 검증 → 파싱 → 다시 가림 → {id, stream, ...항목}. 맞지 않으면 null. */
+    private Parsed decode(LogStream stream, Raw r) {
+        decodes.incrementAndGet();
+        if (schema.validate(r.e()) != null) return null;
         JsonNode n;
         Instant ts;
         try {
@@ -494,6 +525,53 @@ public class LogReader {
                 ex.path("message").asString(null), ex.path("stack").asString(null)})
             if (s != null && s.toLowerCase(Locale.ROOT).contains(q)) return true;
         return false;
+    }
+
+    /**
+     * 해석한 항목의 캐시(스트림마다 하나 — 리뷰 cto-2026-10 P3 · api-review §4 P5, 측정 docs/PERF.md §13): 운영 로그 화면은 15 s 마다 묶음 · 목록을 다시 받고,
+     * 그때마다 두 스트림 4,200건을 처음부터 검증 · 파싱 · 가렸다. 스트림 항목은 실린 뒤 바뀌지 않으므로(XADD 만 — 트림은 지울 뿐) id 로 해석 결과를 다시 쓴다.
+     * 같은 id 에 다른 원문이 오면(스트림을 지우고 같은 id 로 다시 실었을 때) 길이 · 해시가 달라 다시 해석한다. 맞지 않는 항목(null)도 기억한다.
+     * 해결 표시(resolved)는 담지 않는다 — 요청마다 그때의 해결 기록으로 사본에 붙인다. 스트림은 Redis 에서 그대로 다시 읽는다(새 항목 · 트림은 읽기가 정한다).
+     * 상한(항목 수 = 그 스트림이 남길 수 있는 수 · 원문 글자 합)을 넘으면 <b>가장 작은 id 부터</b> 버린다 — 스트림의 트림과 같은 순서라 버리는 것은 이미 잘렸거나
+     * 곧 잘릴 항목이다(가장 오래 쓰지 않은 것부터 버리면 최신 순으로 훑는 다음 폴링이 바로 쓸 항목부터 버려 모두 다시 해석했다 — LogReaderTest).
+     * 요청 스레드 여럿이 같이 쓰므로 잠근다(운영 화면 — 드물다).
+     */
+    static final class Decoded {
+        record Entry(int length, int hash, Parsed parsed) {}
+
+        private static final java.util.Comparator<long[]> ID_ORDER = (a, b) -> {
+            int c = Long.compareUnsigned(a[0], b[0]);
+            return c != 0 ? c : Long.compareUnsigned(a[1], b[1]);
+        };
+        private final int maxEntries;
+        private final long maxChars;
+        private final TreeMap<long[], Entry> map = new TreeMap<>(ID_ORDER);
+        private long chars;
+
+        Decoded(int maxEntries, long maxChars) {
+            this.maxEntries = maxEntries;
+            this.maxChars = maxChars;
+        }
+
+        /** 그 id 의 해석 — 원문(길이 · 해시)이 같을 때만. 없으면 null. */
+        synchronized Entry get(String id, String raw) {
+            long[] k = parseId(id);
+            Entry e = k == null ? null : map.get(k);
+            return e != null && e.length() == raw.length() && e.hash() == raw.hashCode() ? e : null;
+        }
+
+        synchronized void put(String id, String raw, Parsed p) {
+            long[] k = parseId(id);
+            if (k == null || raw.length() > maxChars) return;
+            Entry old = map.put(k, new Entry(raw.length(), raw.hashCode(), p));
+            if (old != null) chars -= old.length();
+            chars += raw.length();
+            while (map.size() > maxEntries || chars > maxChars) chars -= map.pollFirstEntry().getValue().length();
+        }
+
+        synchronized int size() { return map.size(); }
+
+        synchronized long chars() { return chars; }
     }
 
     /** 스트림 id(ms-seq — Redis 는 두 칸 모두 부호 없는 64비트) → {ms, seq}. 형식이 틀리거나 64비트를 넘으면 null. */

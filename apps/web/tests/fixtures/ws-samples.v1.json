@@ -1345,8 +1345,7 @@
         },
         "active_providers" : {
           "region" : "adsb_lol",
-          "global" : "opensky",
-          "hot" : "adsb_fi"
+          "global" : "opensky"
         },
         "demand" : {
           "hot_active" : 1,

@@ -6,7 +6,6 @@ import dev.wakeline.ingest.StreamMetrics;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -23,7 +22,10 @@ import java.util.function.Supplier;
  *   <li>collector: 수집기 heartbeat 해시(wakeline:collector)의 publish_dropped·db_dropped·db_pending(수집기 프로세스 기동 뒤 누계·현재 대기 수)
  *       ·stream_budget_trims(R-14: 바이트 예산 때문에 항공기 스트림을 보존 창보다 일찍 자른 XADD 수, 기동 뒤 누계 — 창을 줄일 뿐 손실이 아니다.
  *       손실은 api 의 stream_trim_loss_events)·stream_retention_s(항공기 스트림 시간 트림 목표, 초 — 수집기 설정)·stream_budget_bytes(항공기
- *       스트림 바이트 예산 — 수집기 설정). heartbeat_age_s = 해시의 가장 최근 *_at 의 나이. heartbeat 가 {@value #COLLECTOR_MAX_AGE_S} s 보다
+ *       스트림 바이트 예산 — 수집기 설정). 이벤트 루프 지연(collector-review D0 — ais 와 같은 이름 · 같은 형식 규칙): 최근 diag_window_s 초의
+ *       최댓값 loop_lag_max_s · 누적 loop_stalls_total(지연 ≥ loop_stall_s 표본 수), 수집기가 고른 설정 loop_tick_s · diag_window_s · loop_stall_s ·
+ *       loop_warn_s · loop_warn_every_s. 원천 보관(F6): raw_unsaved(보관하지 못한 응답 본문) · raw_purge_failed(지우거나 읽지 못한 파일 · 디렉터리),
+ *       기동 뒤 누계. heartbeat_age_s = 해시의 가장 최근 *_at 의 나이. heartbeat 가 {@value #COLLECTOR_MAX_AGE_S} s 보다
  *       오래됐으면 값은 null(수집기가 멈춰 마지막 값이 지금 값이 아니다) — 나이는 그대로 싣는다.</li>
  *   <li>ais: ais 상태 해시(wakeline:ais:status)의 dropped_total·quarantined_total·stream_budget_trims·stream_retention_s·stream_budget_bytes
  *       (선박 스트림, R-14). 수신 진단(ADR-014 부록 C — keepalive 1011 원인 가리기): 최근 diag_window_s 초의 최댓값 loop_lag_max_s(이벤트 루프
@@ -43,7 +45,8 @@ import java.util.function.Supplier;
  *       (같은 지문 10 s 억제로 따로 싣지 않고 다른 항목의 suppressed 에 실은 수 — 손실이 아니라 묶음 요약. 다음 항목이 오지 않으면 창이 닫힐 때
  *       마지막 억제 발생이 항목이 된다 — §G9)까지.</li>
  * </ul>
- * null = 모름(해시·필드가 없거나 형식이 틀림 · heartbeat 가 오래됨 · Redis 를 읽지 못함). 0 으로 채우지 않는다. 해시는 읽기만 한다.
+ * null = 모름(해시·필드가 없거나 형식이 틀림 · heartbeat 가 오래됨 · Redis 를 읽지 못함). 0 으로 채우지 않는다. 해시는 읽기만 한다 —
+ * 읽기는 {@link PipelineSignals}(ADR-028 — 컨트롤러는 Redis 를 쓰지 않는다).
  */
 @org.springframework.context.annotation.Profile("!cli & !migrate")
 @RestController
@@ -56,21 +59,21 @@ public class OpsPipelineController {
     /** 미래로 이보다 틀어진 시각은 믿지 않는다. */
     static final long MAX_FUTURE_S = 60;
 
-    private final StringRedisTemplate redis;
+    private final PipelineSignals signals;
     private final MeterRegistry meters;
     private final ObjectProvider<StreamConsumer> consumer;
     private final ObjectProvider<StreamMetrics> streams;
     private final Supplier<Instant> clock;
 
     @org.springframework.beans.factory.annotation.Autowired
-    public OpsPipelineController(StringRedisTemplate redis, MeterRegistry meters, ObjectProvider<StreamConsumer> consumer,
+    public OpsPipelineController(PipelineSignals signals, MeterRegistry meters, ObjectProvider<StreamConsumer> consumer,
                                  ObjectProvider<StreamMetrics> streams) {
-        this(redis, meters, consumer, streams, Instant::now);
+        this(signals, meters, consumer, streams, Instant::now);
     }
 
-    OpsPipelineController(StringRedisTemplate redis, MeterRegistry meters, ObjectProvider<StreamConsumer> consumer,
+    OpsPipelineController(PipelineSignals signals, MeterRegistry meters, ObjectProvider<StreamConsumer> consumer,
                           ObjectProvider<StreamMetrics> streams, Supplier<Instant> clock) {
-        this.redis = redis;
+        this.signals = signals;
         this.meters = meters;
         this.consumer = consumer;
         this.streams = streams;
@@ -82,7 +85,14 @@ public class OpsPipelineController {
 
     @JsonInclude(JsonInclude.Include.ALWAYS)
     public record CollectorSignals(Long publishDropped, Long dbDropped, Long dbPending, Long streamBudgetTrims, Long streamRetentionS,
-                                   Long streamBudgetBytes, Double heartbeatAgeS, Long logSent, Long logDropped) {}
+                                   Long streamBudgetBytes, Double heartbeatAgeS, Long logSent, Long logDropped, Double loopLagMaxS,
+                                   Long loopStallsTotal, Double loopTickS, Double diagWindowS, Double loopStallS, Double loopWarnS,
+                                   Double loopWarnEveryS, Long rawUnsaved, Long rawPurgeFailed) {
+        /** heartbeat 가 오래됐거나 없을 때: 나이만 싣는다(모르면 null). */
+        static CollectorSignals unknown(Double age) {
+            return new CollectorSignals(null, null, null, null, null, null, age, null, null, null, null, null, null, null, null, null, null, null);
+        }
+    }
 
     @JsonInclude(JsonInclude.Include.ALWAYS)
     public record AisSignals(Long droppedTotal, Long quarantinedTotal, Long streamBudgetTrims, Long streamRetentionS, Long streamBudgetBytes,
@@ -114,7 +124,7 @@ public class OpsPipelineController {
     }
 
     CollectorSignals collector(Instant now) {
-        Map<Object, Object> h = hash("wakeline:collector");
+        Map<Object, Object> h = signals.collector();
         Double age = null;
         Instant newest = null;
         for (var e : h.entrySet()) {
@@ -126,14 +136,16 @@ public class OpsPipelineController {
             double s = (now.toEpochMilli() - newest.toEpochMilli()) / 1000.0;
             if (s >= -MAX_FUTURE_S) age = Math.round(Math.max(0, s) * 10) / 10.0;
         }
-        if (age == null || age > COLLECTOR_MAX_AGE_S) return new CollectorSignals(null, null, null, null, null, null, age, null, null);
+        if (age == null || age > COLLECTOR_MAX_AGE_S) return CollectorSignals.unknown(age);
         return new CollectorSignals(count(h.get("publish_dropped")), count(h.get("db_dropped")), count(h.get("db_pending")),
                 count(h.get("stream_budget_trims")), count(h.get("stream_retention_s")), count(h.get("stream_budget_bytes")), age,
-                count(h.get("log_sent")), count(h.get("log_dropped")));
+                count(h.get("log_sent")), count(h.get("log_dropped")), seconds(h.get("loop_lag_max_s")), count(h.get("loop_stalls_total")),
+                seconds(h.get("loop_tick_s")), seconds(h.get("diag_window_s")), seconds(h.get("loop_stall_s")), seconds(h.get("loop_warn_s")),
+                seconds(h.get("loop_warn_every_s")), count(h.get("raw_unsaved")), count(h.get("raw_purge_failed")));
     }
 
     AisSignals ais(Instant now) {
-        Map<Object, Object> h = hash("wakeline:ais:status");
+        Map<Object, Object> h = signals.ais();
         Instant hb = time(h.get("updated_at"));
         long ageS = hb == null ? Long.MAX_VALUE : (now.toEpochMilli() - hb.toEpochMilli()) / 1000;
         if (hb == null || ageS > AIS_MAX_AGE_S || ageS < -MAX_FUTURE_S) return AisSignals.UNKNOWN;
@@ -178,15 +190,6 @@ public class OpsPipelineController {
         double sum = 0;
         for (Counter c : search.counters()) sum += c.count();
         return (long) sum;
-    }
-
-    private Map<Object, Object> hash(String key) {
-        try {
-            Map<Object, Object> h = redis.opsForHash().entries(key);
-            return h == null ? Map.of() : h;
-        } catch (RuntimeException e) {
-            return Map.of(); // Redis 를 읽지 못하면 모두 모름
-        }
     }
 
     /** 0 이상의 정수 문자열만. 아니면 null(모름). */

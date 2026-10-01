@@ -1,0 +1,42 @@
+# 저장소 루트를 빌드 컨텍스트로 쓰는 이미지(collector · ais — infra/compose.yml 의 context: ..)에서 뺄 것 (S11 · L-8).
+# BuildKit 은 COPY 가 가리키는 경로만 보내지만, 나중에 넓은 COPY(COPY . .)를 쓰거나 다른 빌더로 빌드해도 비밀값 · 큰 산출물이 이미지에 들어가지 않게.
+# Dockerfile 이 COPY 하는 경로(apps/collector/{pyproject.toml,uv.lock,wakeline_collector} · schemas · fixtures)는 빼지 않는다 —
+# infra/tests/test_dockerfile_policy.py 가 확인한다. api(apps/api) · web(apps/web, 자체 .dockerignore) · db(infra/db)는 자기 디렉터리가 컨텍스트다.
+
+# 비밀값 · 백업
+.env
+.env.*
+**/.env
+**/.env.*
+**/*.env.local
+backups
+
+# 버전 관리 · 도구 설정
+.git
+.github
+.claude
+**/.DS_Store
+
+# 의존성 · 빌드 산출물 · 캐시
+**/node_modules
+**/.venv
+**/__pycache__
+**/.pytest_cache
+**/.ruff_cache
+**/.mypy_cache
+apps/api/build
+apps/api/.gradle
+apps/web/.next
+apps/web/out
+apps/web/coverage
+apps/web/playwright-report
+apps/web/test-results
+apps/collector/.coverage
+apps/collector/coverage.xml
+apps/collector/htmlcov
+
+# 실행 자료 · 측정 결과 · 로그
+data
+raw
+perf/results
+**/*.log

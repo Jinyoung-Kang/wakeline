@@ -13,7 +13,7 @@ import logging
 from datetime import UTC, datetime, timedelta
 
 from wakeline_collector.jobs.context import JobContext
-from wakeline_collector.portcalls import kst_date
+from wakeline_collector.timeutil import kst_date
 
 log = logging.getLogger("job.maintenance")
 PORT_CALL_RETENTION_DAYS = 60

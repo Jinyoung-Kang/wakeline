@@ -221,5 +221,6 @@ export interface KrRadar {
   missing?: KrRadarMissing | null;
   frames: KrRadarFrame[];
   attribution: string;
-  meta: { fetched_at: string | null; stale: boolean };
+  /** 응답의 meta — 형식이 틀리면 null(모름, lib/kr-radar parseKrRadar) */
+  meta: { fetched_at: string | null; stale: boolean } | null;
 }

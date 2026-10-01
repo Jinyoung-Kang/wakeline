@@ -11,7 +11,8 @@ import { parseShipSearchResponse, shipChoice, shipRowFromHit } from "@/lib/searc
 import { resetData, setData } from "@/lib/store";
 import { ShipTable } from "@/components/ShipTable";
 import { SearchResultsView } from "@/components/AircraftSearch";
-import { parseShipDetail, ShipCardView } from "@/components/ShipCard";
+import { ShipCardView } from "@/components/ShipCard";
+import { parseShipDetail } from "@/lib/ship-card";
 import { preloadDashboardParts } from "./helpers/dashboard-parts";
 
 const text = (h: string) => h.replace(/<[^>]+>/g, "").replace(/&#x27;/g, "'");

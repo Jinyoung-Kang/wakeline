@@ -6,7 +6,6 @@ import org.springframework.http.server.ServletServerHttpResponse;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 
-import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 
@@ -43,12 +42,6 @@ class OriginAllowListTest {
 
     @Test void allowsMissingOrigin_nonBrowserClients() throws Exception {
         assertThat(handshake("localhost:8700", null, new MockHttpServletResponse())).isTrue();
-    }
-
-    @Test void normalize_dropsWildcardAndBlanks_fallsBackToDefaultWhenEmpty() {
-        assertThat(OriginAllowList.normalize(Arrays.asList(" http://a:1/ ", "*", "", null, "http://a:1"))).containsExactly("http://a:1");
-        assertThat(OriginAllowList.normalize(List.of("*"))).isEqualTo(OriginAllowList.DEFAULT);
-        assertThat(OriginAllowList.normalize(null)).isEqualTo(OriginAllowList.DEFAULT);
     }
 
     @Test void patternEntries_work() {

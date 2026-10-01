@@ -1,20 +1,23 @@
 package dev.wakeline.ws;
 
-import dev.wakeline.config.AppProperties;
-import dev.wakeline.domain.Bbox;
-import dev.wakeline.domain.DestinationInfo;
-import dev.wakeline.domain.DestinationParser;
-import dev.wakeline.domain.ShipState;
-import dev.wakeline.domain.ShipStatic;
-import dev.wakeline.ingest.IngestEvents;
-import dev.wakeline.ingest.ShipStore;
-import dev.wakeline.persist.ReadPool;
-import dev.wakeline.persist.StoredStaticReader;
+import dev.wakeline.geo.Bbox;
+import dev.wakeline.platform.config.AppProperties;
+import dev.wakeline.platform.data.ReadPool;
 import dev.wakeline.portcalls.PortCallReader;
 import dev.wakeline.portcalls.PortCallsInfo;
+import dev.wakeline.ships.core.DestinationInfo;
+import dev.wakeline.ships.core.DestinationParser;
+import dev.wakeline.ships.core.ShipEvents;
+import dev.wakeline.ships.core.ShipState;
+import dev.wakeline.ships.core.ShipStatic;
+import dev.wakeline.ships.core.ShipStore;
+import dev.wakeline.ships.data.StoredStaticReader;
+import dev.wakeline.ships.web.ShipJson;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.SmartLifecycle;
 import org.springframework.context.annotation.Profile;
@@ -72,8 +75,8 @@ import java.util.function.LongSupplier;
 @Profile("!cli & !migrate")
 @Component
 public class ShipFanout implements SmartLifecycle {
+    private static final Logger log = LoggerFactory.getLogger(ShipFanout.class);
     public static final int POINTS_MIN_ZOOM = 7;
-    public static final int MAX_SHIPS_PER_MESSAGE = 5_000;
     /** 계약 v4 §C: 줌 4~6 에서도 뷰포트 안 선박이 적으면 개별로 보낸다. */
     public static final int BAND_MIN_ZOOM = 4;
     /** 줌 4~6 의 개별 표시 상한(넘으면 격자). */
@@ -106,6 +109,7 @@ public class ShipFanout implements SmartLifecycle {
     private volatile boolean running = true;
     /** 선택 선박의 DB 조회(저장 정적 보고 · 입출항 — 우편함 밖). 시험은 바로 실행하는 것을 쓰거나 바꿔 넣는다({@link #useLookups}). */
     private volatile ShipLookups lookups;
+    private final Counter refreshErrors;
     private final Counter snapshots;
     private final Counter diffs;
     private final Counter grids;
@@ -152,6 +156,8 @@ public class ShipFanout implements SmartLifecycle {
         this.store = store;
         this.timer = timer;
         this.clock = clock;
+        this.refreshErrors = Counter.builder("wakeline_ws_ship_refresh_errors_total")
+                .description("선택 선박 다시 계산(주기 작업)의 예외 — 다음 주기에 다시 한다").register(meters);
         this.snapshots = Counter.builder("wakeline_ws_ship_messages_total").tag("type", "ships_snapshot").register(meters);
         this.diffs = Counter.builder("wakeline_ws_ship_messages_total").tag("type", "ships_diff").register(meters);
         this.grids = Counter.builder("wakeline_ws_ship_messages_total").tag("type", "ships_grid").register(meters);
@@ -221,7 +227,9 @@ public class ShipFanout implements SmartLifecycle {
         try {
             for (WsSession s : hub.sessionsView()) recheckSelected(s);
         } catch (RuntimeException e) {
-            // 다음 주기에 다시
+            // 다음 주기에 다시 — 흔적은 남긴다(리뷰 cto-2026-10 A4: 예전에는 조용히 삼켰다)
+            refreshErrors.increment();
+            log.debug("selected-ship refresh failed, retried next period: {}", e.toString());
         }
     }
 
@@ -233,7 +241,7 @@ public class ShipFanout implements SmartLifecycle {
     // ---- 이벤트(스트림 소비·만료 스레드 — 예약만) ----
 
     @EventListener
-    public void onShips(IngestEvents.ShipsUpdated e) {
+    public void onShips(ShipEvents.ShipsUpdated e) {
         for (WsSession s : hub.sessionsView()) {
             String sel = s.selectedMmsi;
             if (sel != null && s.subscribed() && (e.changed().contains(sel) || e.removed().contains(sel)))
@@ -308,7 +316,7 @@ public class ShipFanout implements SmartLifecycle {
      * 1,200 이하가 되어야 돌아온다. 줌 &lt; 4 는 부르지 않는다(항상 격자).
      */
     static int pointsLimit(int zoom, boolean dense) {
-        if (zoom >= POINTS_MIN_ZOOM) return MAX_SHIPS_PER_MESSAGE;
+        if (zoom >= POINTS_MIN_ZOOM) return ShipJson.MAX_SHIPS_PER_MESSAGE;
         return dense ? BAND_RESUME_SHIPS : BAND_MAX_SHIPS;
     }
 
@@ -460,7 +468,7 @@ public class ShipFanout implements SmartLifecycle {
     /** 조회 결과를 지금의 메모리 정적 정보에 맞춘다: 물음이 같으면 입출항(같은 호출부호)은 그대로, 보일 정적 정보는 지금 메모리 값(live). */
     private static ShipLookups.Resolved fit(ShipLookups.Resolved r, ShipStatic live) {
         if (live == null || r.sel().stat() == live) return r;
-        return new ShipLookups.Resolved(new ShipLookups.SelectedStatic(live, WsMessages.STATIC_LIVE), r.calls());
+        return new ShipLookups.Resolved(new ShipLookups.SelectedStatic(live, ShipJson.STATIC_LIVE), r.calls());
     }
 
     /** 보낸 것과 다르거나(선박 객체 · 정적 정보 · 출처 · 입출항) 강제면 보낸다. */
@@ -472,9 +480,9 @@ public class ShipFanout implements SmartLifecycle {
         if (!s.shipSelectedForcePending && prev != null && mmsi.equals(prev.mmsi()) && prev.ship() == ship && Objects.equals(prev.stat(), stat)
                 && Objects.equals(prev.staticSource(), source) && Objects.equals(prev.portCalls(), calls))
             return;
-        String state = ship == null ? null : hub.toJson(WsMessages.encodeShipState(ship.state()));
-        String st = stat == null ? null : hub.toJson(WsMessages.encodeShipStatic(stat));
-        String storedAt = WsMessages.STATIC_STORED.equals(source) ? stat.updatedAt().toString() : null;
+        String state = ship == null ? null : hub.toJson(ShipJson.encodeShipState(ship.state()));
+        String st = stat == null ? null : hub.toJson(ShipJson.encodeShipStatic(stat));
+        String storedAt = ShipJson.STATIC_STORED.equals(source) ? stat.updatedAt().toString() : null;
         DestinationInfo dest = stat == null ? null : destinations.parse(stat.destination());
         if (hub.send(s, hub.toJson(new WsMessages.ShipSelectedMsg("ship_selected", mmsi, state, st, source, storedAt, dest, calls)))) {
             s.shipSelectedSent = new WsSession.ShipSelectedSent(mmsi, ship, stat, source, calls);
@@ -488,7 +496,7 @@ public class ShipFanout implements SmartLifecycle {
     String lite(ShipStore.Ship ship) {
         CachedJson c = liteJson.get(ship.mmsi());
         if (c != null && c.ship() == ship) return c.json();
-        String j = hub.toJson(WsMessages.encodeShipLite(ship.state(), ship.stat()));
+        String j = hub.toJson(ShipJson.encodeShipLite(ship.state(), ship.stat()));
         liteJson.put(ship.mmsi(), new CachedJson(ship, j));
         return j;
     }

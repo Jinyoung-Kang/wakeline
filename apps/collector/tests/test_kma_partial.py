@@ -55,7 +55,7 @@ def _entry(tm: str, stations: int | None, *, fetched_after_s: float = 220, **ext
 
 # ---- 기준 지점 수 · partial ---------------------------------------------------------------------------------------------
 def test_reference_is_the_largest_site_count_in_the_60_min_ending_at_the_newest_frame():
-    from wakeline_collector.jobs.kma_radar import annotate_partial
+    from wakeline_collector.kma_rules import annotate_partial
 
     # 관찰한 모양(13:55–14:50 KST): 12 15 15 15 5 15 15 7 12 7 9 7
     tms = [f"20260929{h:02d}{m:02d}" for h, m in [(13, 55)] + [(14, m) for m in range(0, 55, 5)]]
@@ -71,7 +71,7 @@ def _verdicts(frames: list[dict]) -> list[tuple[int | None, bool | None]]:
 
 
 def test_reference_window_includes_its_60_min_edge_and_leaves_older_frames_as_they_were():
-    from wakeline_collector.jobs.kma_radar import annotate_partial
+    from wakeline_collector.kma_rules import annotate_partial
 
     old = _entry("202609291340", 15, stations_ref=15, partial=False)  # 창 밖(65분 전) — 창 안에 있을 때 받은 값 그대로
     edge = _entry("202609291345", 12)  # 정확히 60분 전 — 창 안
@@ -84,7 +84,7 @@ def test_reference_window_includes_its_60_min_edge_and_leaves_older_frames_as_th
 def test_a_frame_that_alone_sets_the_reference_gets_no_verdict_until_another_frame_reaches_it():
     """기준 도달(partial=False)은 기준에 닿은 프레임이 둘 이상일 때만. 기준이 자기 자신뿐이면 비교할 근거가 없다 — 판정 없음(모름).
     부분 합성(partial=True)은 늘 더 많은 다른 프레임이 근거라 그대로 둔다."""
-    from wakeline_collector.jobs.kma_radar import REF_MIN_SUPPORT, annotate_partial
+    from wakeline_collector.kma_rules import REF_MIN_SUPPORT, annotate_partial
 
     assert REF_MIN_SUPPORT == 2
     first = annotate_partial([_entry("202609291450", 7)])  # 첫 기동 · 공백 뒤 — 비교할 프레임이 없다
@@ -102,7 +102,7 @@ def test_a_frame_that_alone_sets_the_reference_gets_no_verdict_until_another_fra
 
 
 def test_unknown_site_counts_are_not_counted_and_get_no_reference_or_flag():
-    from wakeline_collector.jobs.kma_radar import annotate_partial
+    from wakeline_collector.kma_rules import annotate_partial
 
     legacy = {
         "tm": "202609291440",
@@ -327,7 +327,7 @@ async def test_a_fuller_frame_arriving_later_flags_the_earlier_ones_and_updates_
 
 # ---- 다시 받기: 고르기 ---------------------------------------------------------------------------------------------------
 def test_refetch_picks_partial_frames_at_most_30_min_old_spaced_4_min_oldest_first_at_most_2():
-    from wakeline_collector.jobs.kma_radar import annotate_partial, select_refetch
+    from wakeline_collector.kma_rules import annotate_partial, select_refetch
 
     now_kst = _tm("202609291455")
     now_utc = _utc_of("202609291455")
@@ -359,7 +359,7 @@ def test_refetch_picks_partial_frames_at_most_30_min_old_spaced_4_min_oldest_fir
 def test_refetch_takes_the_least_refetched_first_then_the_longest_waiting_then_the_oldest_tm():
     """주기당 2개를 공정하게: 다시 받은 횟수가 적은 것 → 마지막 시도가 오래된 것 → 오래된 tm. 오래된 두 프레임이 계속 부분 합성이어도
     새 부분 합성 프레임이 기한 끝까지 밀려나지 않는다('기한까지 다시 받기 대상' 이 빈말이 되지 않게)."""
-    from wakeline_collector.jobs.kma_radar import annotate_partial, select_refetch
+    from wakeline_collector.kma_rules import annotate_partial, select_refetch
 
     now_utc = _utc_of("202609291418", 40)
     at = lambda m: _iso(_utc_of("202609291413", 40) + timedelta(minutes=m))  # noqa: E731
@@ -399,7 +399,8 @@ async def test_one_radar_offline_every_partial_frame_is_first_refetched_one_spac
 def test_refetch_headroom_is_the_regular_share_until_utc_midnight_at_three_calls_per_cycle():
     """정규 주기 몫 = (남은 초 // 주기 + 1) × 3(목록 1 + 새 프레임 1 + 일시 오류 다시 부르기 1 — 선택값). 기상 작업과 같은 규칙(budget.regular_headroom)."""
     from wakeline_collector.budget import regular_headroom
-    from wakeline_collector.jobs.kma_radar import REGULAR_CALLS_PER_CYCLE, refetch_headroom
+    from wakeline_collector.jobs.kma_radar import refetch_headroom
+    from wakeline_collector.kma_rules import REGULAR_CALLS_PER_CYCLE
 
     assert REGULAR_CALLS_PER_CYCLE == 3
     midnight = datetime(2026, 9, 29, 0, 0, tzinfo=UTC)
@@ -411,7 +412,7 @@ def test_refetch_headroom_is_the_regular_share_until_utc_midnight_at_three_calls
 # ---- 다시 받기: 작업 흐름 --------------------------------------------------------------------------------------------------
 async def _seed(mod, r, entries: list[dict]) -> list[dict]:
     """저장된 상태를 만든다: 목록(판정 포함) · 이미지 · meta(최신 프레임)."""
-    from wakeline_collector.jobs.kma_radar import annotate_partial
+    from wakeline_collector.kma_rules import annotate_partial
 
     for e in entries:
         await r.set(mod.KEY_FRAME.format(tm=e["tm"]), f"old-{e['tm']}", ex=mod.FRAME_TTL_S)

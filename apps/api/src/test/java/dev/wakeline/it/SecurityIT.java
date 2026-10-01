@@ -248,7 +248,7 @@ class SecurityIT extends IntegrationTest {
         assertProblem(b.send("POST", "/api/v1/ops/providers/opensky/explode", null, b.withCsrf()), 404, "NOT_FOUND", "/api/v1/ops/providers/opensky/explode");
 
         // 통계 재집계(멱등) + 감사
-        String day = dev.wakeline.persist.MaintenanceJobs.today().minusDays(2).toString(); // KST 날짜(계약 v5 §G20)
+        String day = dev.wakeline.history.MaintenanceJobs.today().minusDays(2).toString(); // KST 날짜(계약 v5 §G20)
         Res agg = b.send("POST", "/api/v1/ops/stats/aggregate?day=" + day, null, b.withCsrf());
         assertThat(agg.status()).isEqualTo(200);
         assertThat(agg.json().path("day").asString()).isEqualTo(day);
@@ -271,6 +271,91 @@ class SecurityIT extends IntegrationTest {
         assertThat(ais.status()).isEqualTo(200);
         assertThat(ItStack.admin().opsForHash().get("wakeline:settings", "ais_bboxes")).isEqualTo("-90,-180,90,180");
         assertThat(audit("SETTING_UPDATE", "ais_bboxes")).isEqualTo(1);
+    }
+
+    // ---------- CSRF: 토큰은 헤더에서만 (리뷰 cto-2026-10 S1) ----------
+
+    /** Spring 의 XOR 처리기가 받아들이던 토큰 모양: base64url(가림 바이트 ‖ 가림 XOR 토큰) — 가림을 0 으로 하면 토큰 바이트 그대로다. */
+    static String maskedToken(String token) {
+        byte[] t = token.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        byte[] m = new byte[t.length * 2];
+        System.arraycopy(t, 0, m, t.length, t.length);
+        return java.util.Base64.getUrlEncoder().encodeToString(m);
+    }
+
+    /**
+     * S1: 다른 localhost 포트의 페이지는 CSRF 쿠키를 읽을 수 있고(쿠키는 포트를 가리지 않는다) 사용자 헤더 없는 단순 POST 는 사전 요청 없이 보낸다.
+     * 토큰을 _csrf 요청 파라미터(쿼리 · 폼 본문)로도 받으면 그 페이지가 운영 변경을 운영자 이름으로 실행했다. 토큰은 X-CSRF-Token 헤더에서만 받는다.
+     */
+    @Test
+    void theCsrfTokenIsAcceptedFromTheHeaderOnlyNeverFromTheCsrfParameter() {
+        users.upsert("it-csrf-param", PW);
+        Browser b = new Browser();
+        assertThat(b.login("it-csrf-param", PW).status()).isEqualTo(200);
+        String path = "/api/v1/ops/providers/rainviewer/enable";
+        String masked = maskedToken(b.csrf());
+        long before = audit("PROVIDER_ENABLE", "rainviewer");
+        assertProblem(b.send("POST", path + "?_csrf=" + masked, null, Map.of()), 403, "CSRF_INVALID", path);
+        assertProblem(b.send("POST", path, "_csrf=" + masked, headers("Content-Type", "application/x-www-form-urlencoded")), 403, "CSRF_INVALID", path);
+        assertThat(audit("PROVIDER_ENABLE", "rainviewer")).as("nothing was changed").isEqualTo(before);
+        // 헤더(쿠키 값 그대로 — 웹 lib/api.ts 가 보내는 모양)는 된다
+        assertThat(b.send("POST", path, null, b.withCsrf()).status()).isEqualTo(200);
+        assertThat(audit("PROVIDER_ENABLE", "rainviewer")).isEqualTo(before + 1);
+    }
+
+    /**
+     * S1: 운영 변경 요청(GET 아님)은 브라우저가 붙이는 출처 헤더를 본다 — Origin 이 허용 목록(wakeline.allowed-origins, WS 와 같은 목록)에 없거나
+     * Sec-Fetch-Site 가 same-origin 이 아니면 올바른 CSRF 헤더가 있어도 403. 둘 다 없으면(curl · 시험 — 브라우저가 아니라 피해자의 쿠키가 없다) 그대로.
+     */
+    @Test
+    void opsChangesFromAnotherOriginAreRefusedEvenWithAValidCsrfHeader() {
+        users.upsert("it-origin", PW);
+        Browser b = new Browser();
+        assertThat(b.login("it-origin", PW).status()).isEqualTo(200);
+        String path = "/api/v1/ops/providers/rainviewer/enable";
+        long before = audit("PROVIDER_ENABLE", "rainviewer");
+        // 다른 포트 · 다른 호스트 · 불투명 출처(null), 같은 사이트의 다른 출처(Sec-Fetch-Site: same-site = 다른 포트), 교차 사이트
+        assertProblem(b.send("POST", path, null, b.withCsrf("Origin", "http://localhost:9999")), 403, "ORIGIN_NOT_ALLOWED", path);
+        assertProblem(b.send("POST", path, null, b.withCsrf("Origin", "http://evil.example")), 403, "ORIGIN_NOT_ALLOWED", path);
+        assertProblem(b.send("POST", path, null, b.withCsrf("Origin", "null")), 403, "ORIGIN_NOT_ALLOWED", path);
+        assertProblem(b.send("POST", path, null, b.withCsrf("Sec-Fetch-Site", "same-site")), 403, "ORIGIN_NOT_ALLOWED", path);
+        assertProblem(b.send("POST", path, null, b.withCsrf("Sec-Fetch-Site", "cross-site")), 403, "ORIGIN_NOT_ALLOWED", path);
+        assertProblem(b.send("POST", path, null, b.withCsrf("Origin", ORIGIN, "Sec-Fetch-Site", "same-site")), 403, "ORIGIN_NOT_ALLOWED", path);
+        assertProblem(b.send("PUT", "/api/v1/ops/settings/region_poll_s", "{\"value\":15}", b.withCsrf("If-Match", "1", "Origin", "http://localhost:9999")),
+                403, "ORIGIN_NOT_ALLOWED", "/api/v1/ops/settings/region_poll_s");
+        assertProblem(b.send("DELETE", "/api/v1/ops/session", null, b.withCsrf("Sec-Fetch-Site", "cross-site")), 403, "ORIGIN_NOT_ALLOWED", "/api/v1/ops/session");
+        assertThat(audit("PROVIDER_ENABLE", "rainviewer")).as("nothing was changed").isEqualTo(before);
+        // 허용된 출처(두 주소 모두) + same-origin · 출처 헤더 없음(브라우저가 아닌 클라이언트)은 된다. 읽기(GET)는 출처를 보지 않는다
+        assertThat(b.send("POST", path, null, b.withCsrf("Origin", ORIGIN, "Sec-Fetch-Site", "same-origin")).status()).isEqualTo(200);
+        assertThat(b.send("POST", path, null, b.withCsrf("Origin", "http://127.0.0.1:8700")).status()).isEqualTo(200);
+        assertThat(b.send("POST", path, null, b.withCsrf()).status()).isEqualTo(200);
+        assertThat(b.send("GET", "/api/v1/ops/providers", null, headers("Origin", "http://localhost:9999", "Sec-Fetch-Site", "cross-site")).status()).isEqualTo(200);
+        assertThat(audit("PROVIDER_ENABLE", "rainviewer")).isEqualTo(before + 3);
+        // 로그인도 — 다른 출처의 페이지가 운영자 브라우저를 남의 계정으로 로그인시키지 못한다(세션 쿠키가 없어 CSRF 면제인 요청)
+        Browser other = new Browser();
+        assertProblem(other.login("it-origin", PW, headers("Origin", "http://localhost:9999")), 403, "ORIGIN_NOT_ALLOWED", "/api/v1/ops/session");
+        assertThat(other.cookies).doesNotContainKey("WAKELINE_SESSION");
+    }
+
+    /**
+     * S14(I-4): 로그인은 세션 ID 와 함께 CSRF 토큰도 새로 만든다. 다른 포트의 페이지가 로그인 전에 심어 둔(쿠키 던지기) 값은 로그인 뒤에 쓸 수 없다.
+     * 다시 로그인해도 새 토큰이다.
+     */
+    @Test
+    void loginIssuesAFreshCsrfToken() {
+        users.upsert("it-rotate", PW);
+        Browser b = new Browser();
+        b.cookies.put("WAKELINE_CSRF", "planted-before-login");
+        assertThat(b.login("it-rotate", PW).status()).isEqualTo(200);
+        assertThat(b.csrf()).as("token after login").isNotBlank().isNotEqualTo("planted-before-login");
+        String path = "/api/v1/ops/providers/rainviewer/enable";
+        assertProblem(b.send("POST", path, null, headers("X-CSRF-Token", "planted-before-login")), 403, "CSRF_INVALID", path);
+        assertThat(b.send("POST", path, null, b.withCsrf()).status()).isEqualTo(200);
+        String first = b.csrf();
+        assertThat(b.login("it-rotate", PW, b.withCsrf()).status()).isEqualTo(200);
+        assertThat(b.csrf()).as("token after logging in again").isNotEqualTo(first);
+        assertProblem(b.send("POST", path, null, headers("X-CSRF-Token", first)), 403, "CSRF_INVALID", path);
+        assertThat(b.send("POST", path, null, b.withCsrf()).status()).isEqualTo(200);
     }
 
     // ---------- 세션 절대 수명(R-54) ----------
@@ -323,7 +408,7 @@ class SecurityIT extends IntegrationTest {
      */
     @Test
     void everyProviderHasADatabaseSwitchAfterStartup() {
-        for (String p : dev.wakeline.rest.StatusService.PROVIDERS) {
+        for (String p : dev.wakeline.status.StatusService.PROVIDERS) {
             assertThat(db.sql("SELECT count(*) FROM provider_switch WHERE provider = :p").param("p", p).query(Long.class).single()).as(p).isEqualTo(1);
             assertThat(count("SELECT count(*) FROM audit_log WHERE action = 'PROVIDER_SWITCH_IMPORT' AND target = ? AND user_id IS NULL", p)).as(p).isLessThanOrEqualTo(1);
         }

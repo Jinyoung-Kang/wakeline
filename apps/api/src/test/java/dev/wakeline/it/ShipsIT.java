@@ -1,6 +1,6 @@
 package dev.wakeline.it;
 
-import dev.wakeline.ingest.ShipStore;
+import dev.wakeline.ships.core.ShipStore;
 import dev.wakeline.ingest.StreamConsumer;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIf;
@@ -36,7 +36,7 @@ class ShipsIT extends IntegrationTest {
     static final Duration WAIT = Duration.ofSeconds(15);
 
     @Autowired ShipStore ships;
-    @Autowired dev.wakeline.ingest.AisStatus aisStatus;
+    @Autowired dev.wakeline.ships.core.AisStatus aisStatus;
 
     long pendingShips() {
         var p = ItStack.admin().opsForStream().pending(Streams.SHIPS, StreamConsumer.GROUP);
@@ -317,7 +317,7 @@ class ShipsIT extends IntegrationTest {
         Map<String, String> out = new HashMap<>();
         for (JsonNode cell : grid.path("cells")) {
             assertThat(cell.size()).as("cell = [lat, lon, count, category, per-category counts]").isEqualTo(5);
-            assertThat(cell.get(4).size()).isEqualTo(dev.wakeline.domain.ShipCategory.count());
+            assertThat(cell.get(4).size()).isEqualTo(dev.wakeline.ships.core.ShipCategory.count());
             int sum = 0;
             for (JsonNode n : cell.get(4)) sum += n.asInt();
             assertThat(sum).as("per-category counts add up to the cell count").isEqualTo(cell.get(2).asInt());

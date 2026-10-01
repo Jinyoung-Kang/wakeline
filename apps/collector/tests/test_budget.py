@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 
 from fakes import FakeRedis
+from redis.exceptions import NoScriptError
+from redis.exceptions import TimeoutError as RedisTimeoutError
 
 from wakeline_collector.budget import UNKNOWN, Budget, day_key, hour_key
 
@@ -77,3 +80,116 @@ async def test_a_shared_hour_window_counts_several_providers_and_lets_the_lower_
     # 입출항 색인(ADR-022 개정)은 기다리는 사람이 없는 배경 작업이다 — 셀 수 없으면 부르지 않는다(엄격)
     assert (await b.reserve_hour("portmis", 4, now=t, window="mof"))[:2] == (False, UNKNOWN)
     assert await b.reserve("portmis") == (False, UNKNOWN)
+
+
+class _Scripts(FakeRedis):
+    """SCRIPT LOAD 마다 새 sha · forget() 뒤에는 그 sha 를 모른다(NoScriptError — 재시작 · SCRIPT FLUSH 와 같은 모양) · lose 번 응답을 잃는다(스크립트는
+    돌았는데 응답을 받기 전에 시간 초과)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.known: set[str] = set()
+        self.loads = 0
+        self.lose = 0
+
+    async def script_load(self, script: str) -> str:
+        self.loads += 1
+        sha = f"sha{self.loads}"
+        self.known.add(sha)
+        return sha
+
+    def forget(self) -> None:
+        self.known.clear()
+
+    async def evalsha(self, sha, *args, **kwargs):
+        if sha not in self.known:
+            raise NoScriptError("No matching script. Please use EVAL.")
+        out = await super().evalsha(sha, *args, **kwargs)
+        if self.lose:
+            self.lose -= 1
+            raise RedisTimeoutError("Timeout reading from socket")
+        return out
+
+
+async def test_a_reply_lost_after_the_script_ran_does_not_reserve_twice():
+    """F4(collector-review · PLAN D4): _eval 은 EVALSHA 가 어떤 예외로 실패해도 스크립트를 다시 올리고 한 번 더 실행했다 — 스크립트는 돌았고 응답만
+    잃은 시간 초과면 두 번 예약했다(OpenSky 는 그때마다 4크레딧). 다시 실행하는 것은 서버가 스크립트를 모를 때(NoScriptError)뿐이다."""
+    r = _Scripts()
+    r.lose = 1
+    b = Budget(r, {"opensky": 4000})  # type: ignore[arg-type]
+    assert await b.reserve("opensky", 4) == (False, UNKNOWN)  # 결과를 모른다 — 엄격한 공급자는 부르지 않는다
+    assert r.kv[day_key("opensky")]["used"] == "4"  # 한 번만 예약됐다(전에는 8)
+
+
+async def test_a_forgotten_script_is_loaded_again_once():
+    r = _Scripts()
+    b = Budget(r, {"adsb_fi": 10})  # type: ignore[arg-type]
+    assert await b.reserve("adsb_fi") == (True, 1)
+    r.forget()  # Redis 재시작 · SCRIPT FLUSH
+    assert await b.reserve("adsb_fi") == (True, 2)
+    assert r.loads == 2
+
+
+def _clock(monkeypatch, start: datetime) -> list[datetime]:
+    """budget.day_key 의 '지금'을 바꿀 수 있게 — 하루 키를 고르는 시각만 움직인다."""
+    from wakeline_collector import budget as budget_mod
+
+    clock = [start]
+    real = budget_mod.day_key
+    monkeypatch.setattr(budget_mod, "day_key", lambda p, now=None: real(p, now or clock[0]))
+    return clock
+
+
+DAY1_END = datetime(2026, 10, 1, 23, 59, 59, 900000, tzinfo=UTC)
+DAY2 = datetime(2026, 10, 2, 0, 0, 4, tzinfo=UTC)
+
+
+async def test_a_give_back_after_utc_midnight_goes_to_the_day_it_was_reserved_on(monkeypatch):
+    """F3(collector-review 부록 B 실험 3 · PLAN D4): release 가 돌려줄 때의 날 키를 다시 셌다 — 00:00Z 를 넘긴 돌려주기(속도 상한 대기 · 연결 실패 ·
+    다시 부르기 5 s)는 새 날 키에서 뺐다: 앞 날은 1 그대로, 새 날 used=-1 · TTL 없는 키(noeviction 에서 남는다) · 유지보수가 -1 을 적는다."""
+    clock = _clock(monkeypatch, DAY1_END)
+    r = FakeRedis()
+    b = Budget(r, {"adsbdb": 2000})  # type: ignore[arg-type]
+    assert await b.reserve("adsbdb") == (True, 1)
+    clock[0] = DAY2
+    await b.release("adsbdb")
+    assert r.kv["budget:adsbdb:20261001"]["used"] == "0"
+    assert "budget:adsbdb:20261002" not in r.kv
+    assert await b.usage("adsbdb") == (0, 2000)
+
+
+async def test_each_task_gives_back_to_its_own_reservation(monkeypatch):
+    """예약과 돌려주기는 같은 태스크(작업)에서 짝을 이룬다 — 자정을 사이에 두고 두 작업이 같은 공급자를 예약해도 저마다 제 날에 돌려준다."""
+    clock = _clock(monkeypatch, DAY1_END)
+    r = FakeRedis()
+    b = Budget(r, {"adsb_fi": 100})  # type: ignore[arg-type]
+    reserved, go = asyncio.Event(), asyncio.Event()
+
+    async def before_midnight() -> None:
+        assert await b.reserve("adsb_fi") == (True, 1)
+        reserved.set()
+        await go.wait()
+        await b.release("adsb_fi")  # 자정 뒤에 돌려준다
+
+    task = asyncio.create_task(before_midnight())
+    await reserved.wait()
+    clock[0] = DAY2
+    assert await b.reserve("adsb_fi") == (True, 1)  # 이 태스크는 새 날에 예약했다
+    go.set()
+    await task
+    assert (r.kv["budget:adsb_fi:20261001"]["used"], r.kv["budget:adsb_fi:20261002"]["used"]) == ("0", "1")
+    await b.release("adsb_fi")
+    assert r.kv["budget:adsb_fi:20261002"]["used"] == "0"
+
+
+async def test_a_give_back_never_creates_a_key_or_goes_below_zero():
+    r = FakeRedis()
+    b = Budget(r, {"adsbdb": 10})  # type: ignore[arg-type]
+    await b.release("adsbdb")  # 이 태스크는 예약한 적이 없다 · 오늘 키도 없다
+    assert day_key("adsbdb") not in r.kv
+    assert await b.reserve("adsbdb") == (True, 1)
+    await b.release("adsbdb", 2)  # 예약한 것보다 많이 — 돌려주지 않는다
+    assert r.kv[day_key("adsbdb")]["used"] == "1"
+    await b.release("adsbdb")
+    await b.release("adsbdb")
+    assert r.kv[day_key("adsbdb")]["used"] == "0"

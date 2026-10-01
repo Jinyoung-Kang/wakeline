@@ -7,7 +7,7 @@
  * 기준이 그 프레임 하나뿐이면 수집기가 판정을 두지 않는다(REF_MIN_SUPPORT) — "판정 —".
  */
 import { fmtKst, fmtKstMinute, fmtKstRange, fmtKstSpan, fmtTimeTitle, kstWallMs, timeParts } from "./time";
-import type { KrRadarFrame } from "./types";
+import type { KrRadar, KrRadarFrame } from "./types";
 
 /** 기준 지점 수를 세는 창(분) — 수집기 jobs/kma_radar.py REF_WINDOW_S(선택값)와 같다(tests/kma-partial 이 견준다). 설명 글자에만 쓴다. */
 export const KR_REF_WINDOW_MIN = 60;
@@ -235,4 +235,39 @@ export function krMissing(m: unknown, nowMs: number): KrMissingInfo | null {
     word: stale ? "파일 없음 · 확인 멈춤" : "파일 없음", text, title, range, since: clock(sinceMs), last: clock(lastMs), tms, checkedAt, stale, file, listed,
     everyS, staleMin, cadence, listIdle, listText,
   };
+}
+
+const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+const isNum = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
+const isPair = (p: unknown) => Array.isArray(p) && p.length === 2 && isNum(p[0]) && isNum(p[1]);
+
+/**
+ * GET /api/v1/radar/kr 본문 검사(web-review B10 — WS 는 lib/ws-validate 가 검사하지만 이 REST 본문은 캐스트만 했다). 화면이 바로 읽는 값만 본다:
+ * - available(불리언) · frames(배열)가 틀리면 null — 부른 쪽이 마지막 값을 둔다(frames 없는 본문이 RadarTimeline 을 던지게 해 상황판 전체가 오류 화면이 됐다).
+ * - 프레임은 tm(12자리) · url · echo_cells(수)가 맞는 것만 — 지도에 놓을 수 없는 프레임은 뺀다.
+ * - 참고 값이 틀리면 그 값만 모름(null): 네 꼭짓점 좌표(지도에 놓지 않는다) · 범례 칸 · 격자 · meta. 지어내지 않는다. 나머지 키는 그대로(missing 은 krMissing 이 다시 본다).
+ */
+export function parseKrRadar(v: unknown): KrRadar | null {
+  if (!isObj(v) || typeof v.available !== "boolean" || !Array.isArray(v.frames)) return null;
+  const frames = v.frames.filter((f): f is KrRadarFrame => isObj(f) && typeof f.tm === "string" && /^\d{12}$/.test(f.tm) && typeof f.url === "string" && isNum(f.echo_cells));
+  const c = v.coordinates;
+  const g = v.grid;
+  return {
+    ...v,
+    frames,
+    coordinates: Array.isArray(c) && c.length === 4 && c.every(isPair) ? (c as [number, number][]) : null,
+    legend: Array.isArray(v.legend) ? v.legend.filter((e): e is [number, number[]] => Array.isArray(e) && isNum(e[0]) && Array.isArray(e[1]) && e[1].length >= 3 && e[1].every(isNum)) : null,
+    grid: isObj(g) && isNum(g.nx) && isNum(g.ny) && isNum(g.res_m) && Array.isArray(g.ref) ? (g as KrRadar["grid"]) : null,
+    meta: isObj(v.meta) ? (v.meta as KrRadar["meta"]) : null,
+  } as KrRadar;
+}
+
+/**
+ * 기상청을 골랐는데 쓸 수 있는 프레임이 없을 때(R-11) — 지도에 레이더가 없는 이유를 타임라인에 쓴다.
+ * 서버가 준 note 와 '파일 없음' 연속(miss)과 마지막 수집 시각(meta.fetched_at)만 붙인다(모르면 붙이지 않는다).
+ */
+export function krUnavailableText(d: KrRadar | null, miss: KrMissingInfo | null): string {
+  if (!d) return "기상청 레이더 없음 — 상태 수신 전";
+  const last = fmtKst(d.meta?.fetched_at);
+  return `기상청 레이더 없음${d.note ? ` — ${d.note}` : ""}${miss ? ` — ${miss.text}` : ""}${last !== "—" ? ` · 마지막 수집 ${last}` : ""}`;
 }

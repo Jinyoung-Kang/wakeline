@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import gzip
+import logging
 import os
 import time
 from datetime import UTC, datetime
+from pathlib import Path
+from types import SimpleNamespace
 
 from wakeline_collector.raw_store import RawStore
 
@@ -38,3 +41,42 @@ def test_purge_missing_root_and_save_failure(tmp_path):
     blocker = tmp_path / "file"
     blocker.write_text("x")
     assert RawStore(str(blocker)).save("p", b"x").startswith("unsaved:")
+
+
+def test_failed_saves_are_counted_and_warned_at_most_once_a_minute(tmp_path, caplog, monkeypatch):
+    """F6(collector-review · PLAN C2): 보관 실패가 조용했다 — 로그도 지표도 없이 raw_ref 'unsaved:…' 만 남아, 가득 차거나 읽기 전용인 /data/raw 가
+    보관을 멈춰도 아무도 몰랐다. 실패마다 센다(heartbeat raw_unsaved) · WARN 은 분에 한 번(그 사이 실패 수를 싣는다)."""
+    from wakeline_collector import raw_store
+
+    clock = [1000.0]
+    monkeypatch.setattr(raw_store, "time", SimpleNamespace(monotonic=lambda: clock[0], time=time.time))
+    blocker = tmp_path / "file"
+    blocker.write_text("x")
+    rs = RawStore(str(blocker))  # 뿌리가 파일이라 mkdir 이 실패한다
+    with caplog.at_level(logging.WARNING, logger="raw_store"):
+        assert rs.save("p", b"x").startswith("unsaved:")
+        assert rs.save("p", b"y").startswith("unsaved:")
+        clock[0] += 61
+        assert rs.save("p", b"z").startswith("unsaved:")
+    assert rs.unsaved == 3
+    warns = [r.getMessage() for r in caplog.records if r.name == "raw_store"]
+    assert len(warns) == 2
+    assert warns[0].startswith("raw archive: could not save p (") and "1 unsaved since start" in warns[0]
+    assert "3 unsaved since start" in warns[1]
+
+
+def test_failed_purges_are_counted_and_warned(tmp_path, caplog, monkeypatch):
+    rs = RawStore(str(tmp_path))
+    ref = rs.save("adsb_lol", b"{}")
+    old = time.time() - 80 * 3600
+    os.utime(tmp_path / ref, (old, old))
+
+    def refuse(self, missing_ok=False):
+        raise PermissionError(13, "read-only file system")
+
+    monkeypatch.setattr(Path, "unlink", refuse)
+    with caplog.at_level(logging.WARNING, logger="raw_store"):
+        assert rs.purge(72) == 0
+    assert rs.purge_failed == 1 and (tmp_path / ref).exists()
+    (warn,) = [r.getMessage() for r in caplog.records if r.name == "raw_store"]
+    assert warn.startswith("raw archive: could not purge ") and "PermissionError" in warn and "1 not purged since start" in warn

@@ -17,6 +17,13 @@ export function chartSummary(rows: ChartRow[], unit = ""): string {
  * 시간대별(00–23 — 서버가 준 시, 통계는 KST 시) 행: 서버에 행이 없는 시간은 null(자료 없음) — 0 으로 채우지 않는다.
  * 서버 행의 시간 키는 hour 또는 dim("00".."23").
  */
+/** 차원(dim)마다 값을 더해(여러 날) 큰 값부터 n 개 — 통계 막대(SIGMET FIR · 위험 유형). 값은 Number() 로 더한다 */
+export function topDims(rows: readonly { dim: string; value: unknown }[], n = 24): { label: string; value: number }[] {
+  const m = new Map<string, number>();
+  for (const r of rows) m.set(r.dim, (m.get(r.dim) ?? 0) + Number(r.value));
+  return [...m].map(([label, value]) => ({ label, value })).sort((a, b) => b.value - a.value).slice(0, n);
+}
+
 export function hourlyRows(items: { hour?: string | null; dim?: string | null; value: unknown }[]): ChartRow[] {
   const byHour = new Map<string, number>();
   for (const r of items) {

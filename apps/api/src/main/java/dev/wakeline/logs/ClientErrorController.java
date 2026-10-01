@@ -1,10 +1,11 @@
 package dev.wakeline.logs;
 
-import dev.wakeline.config.AppProperties;
-import dev.wakeline.config.ClientIp;
-import dev.wakeline.config.Problem;
-import dev.wakeline.config.RateLimiter;
-import dev.wakeline.config.RequestIdFilter;
+import dev.wakeline.platform.config.AppProperties;
+import dev.wakeline.platform.support.LogMasker;
+import dev.wakeline.platform.web.ClientIp;
+import dev.wakeline.platform.web.Problem;
+import dev.wakeline.platform.web.RateLimiter;
+import dev.wakeline.platform.web.RequestIdFilter;
 import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.servlet.http.HttpServletRequest;

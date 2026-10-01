@@ -1,14 +1,10 @@
 package dev.wakeline.ops;
 
-import dev.wakeline.config.Problem;
-import dev.wakeline.rest.StatusService;
+import dev.wakeline.platform.web.Problem;
+import dev.wakeline.status.StatusService;
+import dev.wakeline.settings.SettingsService;
 import jakarta.servlet.http.HttpServletRequest;
-import org.springframework.data.domain.Range;
-import org.springframework.data.redis.connection.Limit;
-import org.springframework.data.redis.connection.stream.MapRecord;
-import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.ResponseEntity;
-import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -31,35 +27,34 @@ import java.util.Map;
  * 운영 API(인증 필요, 비인가 404). 공급자·실행 이력·품질 게이트·설정·감사·DLQ.
  * 모든 변경은 감사 기록과 원자적이다(SEC-11): 변경의 원본은 DB 이고 감사 행과 한 트랜잭션으로 커밋된다 — 감사 없이 적용된 변경도,
  * 적용되지 않았는데 남은 감사 행도 없다. collector 가 읽는 Redis 값(설정·공급자 스위치)은 커밋 뒤 미러이고 60 s 마다 다시 맞춘다(StartupMirror).
+ * DB · Redis 읽기는 {@link OpsQueries} · {@link IngestRunRepository} 가 한다(ADR-028 — 컨트롤러는 JDBC · Redis 를 쓰지 않는다).
  */
 @org.springframework.context.annotation.Profile("!cli & !migrate")
 @RestController
 @RequestMapping("/api/v1/ops")
 public class OpsController {
     private final StatusService status;
-    private final JdbcClient db;
-    private final StringRedisTemplate redis;
+    private final OpsQueries queries;
     private final SettingsService settings;
     private final AuditService audit;
-    private final dev.wakeline.persist.MaintenanceJobs jobs;
+    private final dev.wakeline.history.MaintenanceJobs jobs;
     private final TransactionTemplate tx;
     private final ProviderSwitchService switches;
     private final ResolutionService resolutions;
     private final IngestRunRepository ingestRuns;
 
-    public OpsController(StatusService status, JdbcClient db, StringRedisTemplate redis, SettingsService settings, AuditService audit,
-                         dev.wakeline.persist.MaintenanceJobs jobs, TransactionTemplate tx, ProviderSwitchService switches,
-                         ResolutionService resolutions) {
+    public OpsController(StatusService status, OpsQueries queries, SettingsService settings, AuditService audit,
+                         dev.wakeline.history.MaintenanceJobs jobs, TransactionTemplate tx, ProviderSwitchService switches,
+                         ResolutionService resolutions, IngestRunRepository ingestRuns) {
         this.status = status;
-        this.db = db;
-        this.redis = redis;
+        this.queries = queries;
         this.settings = settings;
         this.audit = audit;
         this.jobs = jobs;
         this.tx = tx;
         this.switches = switches;
         this.resolutions = resolutions;
-        this.ingestRuns = new IngestRunRepository(db);
+        this.ingestRuns = ingestRuns;
     }
 
     /**
@@ -68,7 +63,7 @@ public class OpsController {
      */
     @PostMapping("/stats/aggregate")
     public ResponseEntity<Map<String, Object>> aggregate(@RequestParam(required = false) java.time.LocalDate day, HttpServletRequest req, Authentication auth) {
-        java.time.LocalDate today = dev.wakeline.persist.MaintenanceJobs.today();
+        java.time.LocalDate today = dev.wakeline.history.MaintenanceJobs.today();
         java.time.LocalDate d = day == null ? today.minusDays(1) : day;
         if (!d.isBefore(today)) throw Problem.badRequest("BAD_DAY", "day must be before today (KST, Asia/Seoul) — a day is aggregated once it has ended");
         tx.executeWithoutResult(st -> {
@@ -96,17 +91,29 @@ public class OpsController {
             p.put("last_error_resolution", r == null ? tools.jackson.databind.node.NullNode.getInstance() : r.ref());
             p.put("last_error_resolved", r != null && r.covers(OpsPipelineController.time(p.get("last_error_at"))));
         }
-        List<Map<String, Object>> switchEvents = new java.util.ArrayList<>(); // collector 의 자동 전환(wakeline:events)
+        List<Map<String, Object>> switchEvents = List.of(); // collector 의 자동 전환(wakeline:events)
+        String switchesError = null;
         try {
-            List<MapRecord<String, Object, Object>> recs = redis.opsForStream().reverseRange("wakeline:events", Range.unbounded(), Limit.limit().count(20));
-            if (recs != null) for (var r : recs) switchEvents.add(new LinkedHashMap<>(castMap(r.getValue())));
-        } catch (RuntimeException ignored) { }
-        var budgets = db.sql("SELECT provider, to_char(day, 'YYYY-MM-DD') AS day, calls, limit_value FROM provider_budget_day WHERE day >= (now() AT TIME ZONE 'UTC')::date - 7 ORDER BY 2 DESC, provider").query().listOfRows();
+            switchEvents = queries.switchEvents();
+        } catch (RuntimeException e) {
+            // 읽지 못한 것을 '전환 없음' 과 구별한다 — /ops/dlq 와 같은 error 필드(리뷰 cto-2026-10 A4 — 예전에는 빈 목록뿐이었다)
+            switchesError = "redis unavailable";
+        }
+        var budgets = queries.budgetDays();
         // provider_switch: 켜고 끄기의 원본(DB)과 collector 가 따르는 Redis 미러를 공급자마다 나란히(R-94) — providers 의 disabled 는 미러 값이다
         // generated_at: 이 응답을 만든 서버 시각 — 운영 화면이 수집기 시각(missing_checked_at 등)의 나이를 브라우저 시계가 아니라 서버 기준으로 잰다(계약 v5 §G22)
-        return Map.of("providers", list, "active", status.publicStatus().get("active_providers"), "collector", status.collectorHeartbeat(),
-                "switches", switchEvents, "budget_days", budgets, "budget_day_zone", "UTC", "provider_switch", switches.states(), "resolution_state", res.state().label(),
-                "generated_at", Instant.now());
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("providers", list);
+        m.put("active", status.publicStatus().get("active_providers"));
+        m.put("collector", status.collectorHeartbeat());
+        m.put("switches", switchEvents);
+        if (switchesError != null) m.put("error", switchesError);
+        m.put("budget_days", budgets);
+        m.put("budget_day_zone", "UTC");
+        m.put("provider_switch", switches.states());
+        m.put("resolution_state", res.state().label());
+        m.put("generated_at", Instant.now());
+        return m;
     }
 
     /**
@@ -171,16 +178,10 @@ public class OpsController {
         // day 는 KST 날짜 "YYYY-MM-DD"(계약 v5 §G20 — 수집기가 실행이 시작된 KST 날짜로 센다 · R-45 — JVM 시간대의 자정 시각이 아니다). 최근 d 일(KST 오늘 포함 d+1 개 날)
         // counted_since = V16 이 이 표를 KST 날짜 셈으로 바꾼 순간(kst_day_cutover, UTC ISO) — 그 KST 날짜의 수는 그 뒤 실행만 든 부분 값이다(화면이 '부분' 으로 적는다).
         // 그보다 앞 KST 날짜의 행은 내지 않는다: 배포 중 아직 돌던 이전 수집기가 UTC 날짜로 쓴 행뿐이다(V16 앞의 수는 보관 표에 있다).
-        String zone = dev.wakeline.persist.MaintenanceJobs.DAY_ZONE_ID;
-        String since = db.sql("SELECT to_char(cut_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"') FROM kst_day_cutover WHERE table_name = 'quality_rule_count'")
-                .query(String.class).optional().orElse(null);
-        var counts = db.sql("""
-                SELECT to_char(day, 'YYYY-MM-DD') AS day, rule, count FROM quality_rule_count
-                WHERE day >= :from
-                  AND day >= coalesce((SELECT (cut_at AT TIME ZONE :zone)::date FROM kst_day_cutover WHERE table_name = 'quality_rule_count'), day)
-                ORDER BY 1 DESC, rule""")
-                .param("from", dev.wakeline.persist.MaintenanceJobs.today().minusDays(d)).param("zone", zone).query().listOfRows();
-        var recent = db.sql("SELECT id, run_id, rule, hex, detail::text detail, created_at FROM quality_event ORDER BY id DESC LIMIT 50").query().listOfRows();
+        String zone = dev.wakeline.history.MaintenanceJobs.DAY_ZONE_ID;
+        String since = queries.qualityCountedSince();
+        var counts = queries.qualityRuleCounts(dev.wakeline.history.MaintenanceJobs.today().minusDays(d), zone);
+        var recent = queries.qualityRecent();
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("rule_counts", counts);
         m.put("recent", recent);
@@ -191,11 +192,10 @@ public class OpsController {
 
     @GetMapping("/dlq")
     public Map<String, Object> dlq() {
-        List<Map<String, Object>> items = new java.util.ArrayList<>();
+        List<Map<String, Object>> items;
         try {
-            var recs = redis.opsForStream().reverseRange("wakeline:dlq", Range.unbounded(), Limit.limit().count(50));
-            if (recs != null) for (var r : recs) { var m = new LinkedHashMap<>(castMap(r.getValue())); m.put("stream_id", r.getId().getValue()); items.add(m); }
-        } catch (RuntimeException e) { return Map.of("items", items, "error", "redis unavailable"); }
+            items = queries.dlq();
+        } catch (RuntimeException e) { return Map.of("items", List.of(), "error", "redis unavailable"); }
         return Map.of("items", items);
     }
 
@@ -217,10 +217,7 @@ public class OpsController {
     @GetMapping("/audit")
     public Map<String, Object> auditLog(@RequestParam(required = false) Long cursor, @RequestParam(defaultValue = "50") int limit) {
         int n = Math.max(1, Math.min(limit, 200));
-        var rows = db.sql("""
-                SELECT a.id, u.username, a.action, a.target, a.before::text before, a.after::text after, host(a.ip) ip, a.request_id, a.at
-                FROM audit_log a LEFT JOIN ops_user u ON u.id = a.user_id WHERE (:cursor::bigint IS NULL OR a.id < :cursor) ORDER BY a.id DESC LIMIT :n""")
-                .param("cursor", cursor).param("n", n + 1).query().listOfRows();
+        var rows = queries.auditRows(cursor, n + 1);
         Long next = rows.size() > n ? ((Number) rows.get(n - 1).get("id")).longValue() : null;
         // 다음 쪽이 없으면 null — 키가 빠진다(R-74: /alerts/history · /ops/runs 와 같은 계약, 이전에는 빈 문자열)
         Map<String, Object> m = new LinkedHashMap<>();
@@ -229,9 +226,6 @@ public class OpsController {
         m.put("generated_at", Instant.now());
         return m;
     }
-
-    @SuppressWarnings("unchecked")
-    private static Map<String, Object> castMap(Map<?, ?> m) { return (Map<String, Object>) m; }
 
     private static Integer userId(Authentication auth) { return auth instanceof OpsAuthentication o ? o.user().id() : null; }
 }

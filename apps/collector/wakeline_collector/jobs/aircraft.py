@@ -12,20 +12,18 @@ import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-import httpx
-
 from wakeline_collector.budget import UNKNOWN
 from wakeline_collector.config import settings
 from wakeline_collector.errors import describe_error
 from wakeline_collector.fallback import ProviderChain
-from wakeline_collector.http import ProviderHttpError
+from wakeline_collector.http import PreSendFailed, ProviderHttpError
 from wakeline_collector.jobs.context import JobContext
-from wakeline_collector.models import AircraftState
-from wakeline_collector.normalize import Rejected, normalize_opensky, normalize_readsb, readsb_reference_time
+from wakeline_collector.normalize import gate_records, normalize_opensky, readsb_batch
 from wakeline_collector.publisher import STREAM_AIRCRAFT
-from wakeline_collector.quality import AircraftGate, Quarantine
+from wakeline_collector.quality import AircraftGate
 from wakeline_collector.ratelimit import Throttled
 from wakeline_collector.raw_store import archive
+from wakeline_collector.send_outcome import classify_send
 from wakeline_collector.status import newest_age_s
 
 log = logging.getLogger("job.aircraft")
@@ -166,14 +164,9 @@ class AircraftJob:
         fetched_at = result.fetched_at
         if provider == "opensky":
             results = [normalize_opensky(v, fetched_at) for v in result.data.get("states") or []]
-        else:
-            ref = readsb_reference_time(result.data, fetched_at)
-            results = [
-                normalize_readsb(ac, provider, fetched_at, ref) for ac in result.data.get("ac") or [] if isinstance(ac, dict)
-            ]
-        states = [r for r in results if isinstance(r, AircraftState)]
-        pre = [Quarantine(r.rule, r.hex, r.detail) for r in results if isinstance(r, Rejected)]
-        gate = self.gate.apply(states, 0, datetime.now(UTC), pre=pre)
+            gate = gate_records(results, self.gate, datetime.now(UTC))
+        else:  # demand(focus · hot)와 같은 정규화 · 게이트(normalize.readsb_batch)
+            results, gate, _seen = readsb_batch(result.data, provider, fetched_at, self.gate)
         lat, lon, radius = region
         payload = {
             "region": None if self.scope == "global" else {"lat": lat, "lon": lon, "radius_nm": radius},
@@ -222,13 +215,19 @@ class AircraftJob:
 
     async def _on_fetch_error(self, name: str, cost: int, started: datetime, e: Exception) -> None:
         ctx = self.ctx
-        if isinstance(e, Throttled):
+        kind = classify_send(e)
+        if isinstance(e, Throttled):  # kind 'throttled'
             await self._on_throttled(name, cost, started, e)
             return
-        http_status = e.status if isinstance(e, ProviderHttpError) else None
-        if isinstance(e, httpx.ConnectError | httpx.ConnectTimeout) and cost:
-            await ctx.budget.release(name, cost)  # 연결조차 못 했으면 공급자 쪽 사용량도 없다
+        if kind != "sent" and cost:  # 보내지 않았다 — 공급자 쪽 사용량도 없다(연결 실패 · 토큰 실패 · 우리 쪽 까닭 — R-65)
+            await ctx.budget.release(name, cost)
         why = describe_error(e)
+        if kind == "not_sent":
+            # 우리 쪽 까닭(연결 풀 대기 초과 · 프록시 · 허용 호스트 아님 · 보내기 직전 취소) — 공급자에 닿지도 않았다: 공급자 상태 · 3번 규칙에 넣지 않는다
+            ctx.db.record_run(self.job_name, name, started, status="error", error_text=f"not sent — {why}")
+            log.info("%s: %s not called (%s)", self.scope, name, why)
+            return
+        http_status = e.status if isinstance(e, ProviderHttpError | PreSendFailed) else None
         self._last_error = (name, why)
         retried = self.chain.probing(name)  # 3회 연속 실패로 쉬는 중이지만 다른 공급자가 없어 다시 시도한 호출
         await ctx.status.failure(name, at=datetime.now(UTC), error=why, http_status=http_status)

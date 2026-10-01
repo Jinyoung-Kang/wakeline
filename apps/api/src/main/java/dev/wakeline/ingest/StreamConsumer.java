@@ -1,11 +1,20 @@
 package dev.wakeline.ingest;
 
-import dev.wakeline.domain.AircraftState;
-import dev.wakeline.domain.AisGap;
-import dev.wakeline.domain.HotCell;
-import dev.wakeline.domain.ShipState;
-import dev.wakeline.domain.ShipStatic;
-import dev.wakeline.domain.SigmetRecord;
+import dev.wakeline.aircraft.core.AircraftEvents;
+import dev.wakeline.aircraft.core.AircraftState;
+import dev.wakeline.aircraft.core.Snapshot;
+import dev.wakeline.aircraft.core.SnapshotStore;
+import dev.wakeline.demand.HotCell;
+import dev.wakeline.platform.support.Receipt;
+import dev.wakeline.ships.core.AisGap;
+import dev.wakeline.ships.core.ShipEvents;
+import dev.wakeline.ships.core.ShipState;
+import dev.wakeline.ships.core.ShipStatic;
+import dev.wakeline.ships.core.ShipStore;
+import dev.wakeline.weather.core.RadarStore;
+import dev.wakeline.weather.core.SigmetRecord;
+import dev.wakeline.weather.core.SigmetStore;
+import dev.wakeline.weather.core.WeatherEvents;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
@@ -22,8 +31,8 @@ import org.springframework.data.redis.connection.stream.MapRecord;
 import org.springframework.data.redis.connection.stream.PendingMessage;
 import org.springframework.data.redis.connection.stream.PendingMessages;
 import org.springframework.data.redis.connection.stream.ReadOffset;
-import org.springframework.data.redis.connection.stream.StreamOffset;
 import org.springframework.data.redis.connection.stream.StreamInfo;
+import org.springframework.data.redis.connection.stream.StreamOffset;
 import org.springframework.data.redis.connection.stream.StreamReadOptions;
 import org.springframework.data.redis.core.StreamOperations;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -133,7 +142,12 @@ public class StreamConsumer implements SmartLifecycle {
     private final Counter shipsRejectedCap;
     private final Counter shipsRejectedFuture;
     private final Counter gapScopeInvalid;
-    private final Timer processTimer;
+    /**
+     * 처리 시간(검증 · 해석 · 반영 — 소비 스레드가 이 메시지에 쓴 시간)을 메시지 종류(kind) · 범위(scope)마다 따로(리뷰 cto-2026-10 P1 · api-review §4 P1:
+     * 하나뿐이던 지표에서는 120 s 에 한 번 오는 전세계 메시지 — 10,000대, 약 84 ms — 가 관심 지역 · hot · focus 의 p95 에 묻혔다). 값은 봉투 검증
+     * (stream_envelope.v1 의 kind · scope enum)을 지난 것뿐이라 수가 묶인다(kind 5 × scope 6 이하 — 실제로는 aircraft × 4 · sigmet · radar · ships · ais_gap).
+     */
+    private final Map<String, Timer> processTimers = new ConcurrentHashMap<>();
     /** durable 해진 메시지 — 소비 스레드가 모아 XACK 한다. */
     private final ConcurrentLinkedQueue<Ack> acks = new ConcurrentLinkedQueue<>();
     /** 영수증이 아직 풀리지 않은 메시지(stream/id) — 같은 프로세스 안에서 PEL 재처리가 진행 중인 메시지를 다시 처리하지 않게. */
@@ -193,7 +207,6 @@ public class StreamConsumer implements SmartLifecycle {
                 .description("seen_at 이 5분 넘게 미래라 받지 않은 보고").register(meters);
         this.gapScopeInvalid = Counter.builder("wakeline_ais_gap_scope_invalid_total")
                 .description("ais_gap 의 scope 가 구역 규칙(AisBboxes)에 맞지 않아 구역 없음(모든 곳에 적용)으로 받은 공백").register(meters);
-        this.processTimer = Timer.builder("wakeline_stream_process_seconds").publishPercentiles(0.5, 0.95).register(meters);
         meters.gauge("wakeline_stream_unacked", inFlight, Set::size);
     }
 
@@ -414,7 +427,7 @@ public class StreamConsumer implements SmartLifecycle {
             from = boundary;
             if (page.size() < SHIPS_BOOTSTRAP_PAGE) break;
         }
-        if (applied > 0) events.publishEvent(IngestEvents.ShipsUpdated.liveOnly(changed, Set.of()));
+        if (applied > 0) events.publishEvent(ShipEvents.ShipsUpdated.liveOnly(changed, Set.of()));
         log.info("ships bootstrap: {} entries applied ({} invalid skipped), {} live ships, {} gaps", applied, invalid,
                 shipStore.view().size(), shipStore.gaps().size());
         return applied;
@@ -554,13 +567,21 @@ public class StreamConsumer implements SmartLifecycle {
         try {
             apply(p, receipt, true);
             processed.increment();
-            processTimer.record(Duration.ofNanos(System.nanoTime() - t0));
+            processTimer(p).record(Duration.ofNanos(System.nanoTime() - t0));
         } catch (RuntimeException e) {
             applyErrors.increment();
             log.error("message {} from {} passed validation but could not be applied (not dead-lettered): {}", id, stream, e.toString(), e);
         } finally {
             receipt.release(); // 소비자 자신의 보유 — 비동기 저장이 없으면 여기서 바로 ACK 대기열로
         }
+    }
+
+    /** 이 메시지의 처리 시간 지표(kind · scope — {@link #processTimers}). */
+    private Timer processTimer(Parsed p) {
+        String scope = p.fields().get("scope");
+        return processTimers.computeIfAbsent(p.kind() + "/" + scope, k -> Timer.builder("wakeline_stream_process_seconds")
+                .description("검증을 지난 스트림 메시지 하나를 해석 · 반영하는 데 소비 스레드가 쓴 시간(메시지 종류 · 범위별)")
+                .tag("kind", p.kind()).tag("scope", scope == null ? "-" : scope).publishPercentiles(0.5, 0.95).register(meters));
     }
 
     /** durable 해진 메시지를 스트림별로 모아 XACK(소비 스레드 전용). 실패하면 되돌려 두고 예외를 올린다(루프가 재시도). */
@@ -716,14 +737,14 @@ public class StreamConsumer implements SmartLifecycle {
         ShipStore.Change c = shipStore.apply(p.ships().states(), p.ships().statics(), p.fetchedAt(), p.fields().get("provider"), System.currentTimeMillis());
         if (c.rejectedCap() > 0) shipsRejectedCap.increment(c.rejectedCap());
         if (c.rejectedFuture() > 0) shipsRejectedFuture.increment(c.rejectedFuture());
-        events.publishEvent(new IngestEvents.ShipsUpdated(p.fetchedAt(), p.fields().get("provider"), p.ships().states(), p.ships().statics(),
+        events.publishEvent(new ShipEvents.ShipsUpdated(p.fetchedAt(), p.fields().get("provider"), p.ships().states(), p.ships().statics(),
                 c.changed(), Set.of(), receipt));
     }
 
     private void aisGap(Parsed p, Receipt receipt) {
         if (p.gapScopeInvalid()) gapScopeInvalid.increment(); // 부트스트랩(다시 읽기)은 여기를 거치지 않는다 — 같은 공백을 두 번 세지 않는다
         shipStore.addGap(p.gap());
-        events.publishEvent(new IngestEvents.AisGapReceived(p.gap(), receipt));
+        events.publishEvent(new ShipEvents.AisGapReceived(p.gap(), receipt));
     }
 
     private void aircraft(Map<String, String> f, Map<String, AircraftState> states, String cell, Instant fetchedAt, Receipt receipt) {
@@ -742,7 +763,7 @@ public class StreamConsumer implements SmartLifecycle {
             backlog(scope, fetchedAt, states, receipt);
             return;
         }
-        events.publishEvent(new IngestEvents.SnapshotUpdated(prev, snap, receipt));
+        events.publishEvent(new AircraftEvents.SnapshotUpdated(prev, snap, receipt));
     }
 
     /** hot: 셀별 fetched_at 단조. 받아들이면 SnapshotUpdated(이전 = 그 셀의 이전 메시지), 아니면 백로그(항적만). */
@@ -753,7 +774,7 @@ public class StreamConsumer implements SmartLifecycle {
             backlog(SnapshotStore.HOT, fetchedAt, states, receipt);
             return;
         }
-        events.publishEvent(new IngestEvents.SnapshotUpdated(prev, snap, receipt));
+        events.publishEvent(new AircraftEvents.SnapshotUpdated(prev, snap, receipt));
     }
 
     /**
@@ -768,27 +789,27 @@ public class StreamConsumer implements SmartLifecycle {
             backlog(SnapshotStore.FOCUS, fetchedAt, states, receipt);
             return;
         }
-        events.publishEvent(new IngestEvents.SnapshotUpdated(prev, snap, receipt));
+        events.publishEvent(new AircraftEvents.SnapshotUpdated(prev, snap, receipt));
     }
 
     private void backlog(String scope, Instant fetchedAt, Map<String, AircraftState> states, Receipt receipt) {
         staleSkipped.increment();
         log.debug("aircraft/{} entry fetched_at={} is not newer than the current snapshot — history only", scope, fetchedAt);
-        events.publishEvent(new IngestEvents.AircraftBacklog(scope, fetchedAt, List.copyOf(states.values()), receipt));
+        events.publishEvent(new AircraftEvents.AircraftBacklog(scope, fetchedAt, List.copyOf(states.values()), receipt));
     }
 
     private void sigmet(Map<String, String> f, Map<String, SigmetRecord> set, Instant fetchedAt, Receipt receipt, boolean persistHistory) {
         // 이력: 새 세트든 백로그든 스트림 순서대로(실시간 반영보다 먼저 — 이 세트의 SIGMET 행이 이 세트로 만든 알림보다 먼저 저장된다)
-        if (persistHistory) events.publishEvent(new IngestEvents.SigmetSetReceived(fetchedAt, f.get("provider"), set, receipt));
+        if (persistHistory) events.publishEvent(new WeatherEvents.SigmetSetReceived(fetchedAt, f.get("provider"), set, receipt));
         if (!fetchedAt.isAfter(sigmets.state().fetchedAt())) { staleSkipped.increment(); return; } // 백로그: 더 새 목록이 이미 있다
         SigmetStore.State st = sigmets.replaceIfNewer(fetchedAt, f.get("provider"), set);
         if (st == null) { staleSkipped.increment(); return; }
-        events.publishEvent(new IngestEvents.SigmetsUpdated(st));
+        events.publishEvent(new WeatherEvents.SigmetsUpdated(st));
     }
 
     private void radar(RadarStore.Frames fr) {
         if (!radar.replaceIfNewer(fr)) { staleSkipped.increment(); return; } // 백로그: 더 새 목록이 이미 있다
-        events.publishEvent(new IngestEvents.RadarUpdated(fr));
+        events.publishEvent(new WeatherEvents.RadarUpdated(fr));
     }
 
     /** 마지막 XREADGROUP 응답 뒤 지난 시간(ms). 아직 한 번도 읽지 않았으면 -1. */

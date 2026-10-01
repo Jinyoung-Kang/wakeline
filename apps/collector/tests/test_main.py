@@ -205,8 +205,11 @@ async def test_run_until_stopped_lets_short_jobs_finish_and_cancels_stuck_ones()
     assert finished == ["quick"] and tasks[1].cancelled()
 
 
-async def test_run_until_stopped_when_a_job_ends_unexpectedly():
+async def test_run_until_stopped_when_a_job_ends_unexpectedly(caplog):
+    """F5(collector-review · PLAN C1): 작업 태스크가 예상 밖으로 끝나면(예외 · 그냥 돌아옴) 어느 작업인지 · 왜인지 ERROR 로 남기고 '비정상'을 돌려준다
+    — main 이 1 로 끝난다(ais 와 같다, compose 가 다시 띄운다). 전에는 아무것도 남기지 않고(asyncio 의 GC 메시지는 로그 싱크를 뗀 뒤에 났다) 0 으로 끝났다."""
     import asyncio
+    import logging
 
     from wakeline_collector.main import run_until_stopped
 
@@ -215,12 +218,82 @@ async def test_run_until_stopped_when_a_job_ends_unexpectedly():
     async def ends():
         return None
 
+    async def boom():
+        raise RuntimeError("job loop broke")
+
     async def loops():
         await stop.wait()
 
-    tasks = [asyncio.create_task(ends()), asyncio.create_task(loops())]
-    await asyncio.wait_for(run_until_stopped(tasks, stop, grace_s=1), 1)
-    assert stop.is_set() and all(t.done() for t in tasks)
+    for job, why in ((ends, "returned"), (boom, "RuntimeError('job loop broke')")):
+        stop.clear()
+        caplog.clear()
+        tasks = [asyncio.create_task(job(), name="job:radar_kr"), asyncio.create_task(loops(), name="job:region")]
+        with caplog.at_level(logging.INFO, logger="main"):
+            crashed = await asyncio.wait_for(run_until_stopped(tasks, stop, grace_s=1), 1)
+        assert crashed is True and stop.is_set() and all(t.done() for t in tasks)
+        errors = [r for r in caplog.records if r.name == "main" and r.levelno == logging.ERROR]
+        assert [r.getMessage() for r in errors] == [f"job:radar_kr ended unexpectedly ({why}) — stopping the collector, exit 1"]
+        assert (errors[0].exc_info is not None) is (job is boom)  # 예외면 스택도 남긴다
+
+
+async def test_run_until_stopped_after_a_stop_signal_is_not_a_crash(caplog):
+    import asyncio
+    import logging
+
+    from wakeline_collector.main import run_until_stopped
+
+    stop = asyncio.Event()
+
+    async def loops():
+        await stop.wait()
+
+    tasks = [asyncio.create_task(loops(), name="job:region")]
+    runner = asyncio.create_task(run_until_stopped(tasks, stop, grace_s=1))
+    await asyncio.sleep(0.01)
+    stop.set()
+    assert await asyncio.wait_for(runner, 1) is False
+    assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
+
+
+async def test_main_returns_1_when_a_job_task_crashes(monkeypatch):
+    import asyncio
+
+    from fakes import FakeRedis
+
+    from wakeline_collector import main as mainmod
+    from wakeline_collector.db import Db
+    from wakeline_collector.jobs.portcalls_index import PortCallIndexJob
+
+    async def broken(self, stop):
+        raise RuntimeError("port-call loop broke")
+
+    monkeypatch.setattr(mainmod.settings, "wakeline_fixture_mode", 1)
+    monkeypatch.setattr(mainmod.settings, "log_sink_enabled", False)
+    monkeypatch.setattr(mainmod, "SHUTDOWN_GRACE_S", 0.5)
+    monkeypatch.setattr(mainmod, "DB_DRAIN_S", 0.1)
+    monkeypatch.setattr(PortCallIndexJob, "run", broken)
+
+    async def no_db():
+        raise OSError("no db in this test")
+
+    assert await asyncio.wait_for(mainmod.main(stop=asyncio.Event(), redis=FakeRedis(), db=Db(no_db)), 10) == 1
+
+
+def test_the_entrypoint_exits_with_the_code_main_returns(monkeypatch):
+    """python -m wakeline_collector 는 main() 의 값으로 끝난다(ais 의 __main__ 과 같다) — 1 이면 compose 가 다시 띄운다."""
+    import runpy
+
+    import pytest
+
+    from wakeline_collector import main as mainmod
+
+    async def fake_main() -> int:
+        return 1
+
+    monkeypatch.setattr(mainmod, "main", fake_main)
+    with pytest.raises(SystemExit) as e:
+        runpy.run_module("wakeline_collector.__main__", run_name="__main__")
+    assert e.value.code == 1
 
 
 async def test_main_fixture_mode_smoke(monkeypatch):
@@ -278,6 +351,7 @@ async def test_main_fixture_mode_smoke(monkeypatch):
     assert hb["stream_retention_s"] == "9000" and hb["stream_budget_bytes"] == str(80 * 2**20)
     # R-18: 손실 신호가 api 가 읽는 heartbeat 해시(wakeline:collector)에 있다 — 발행 큐 버림·DB 쓰기 버림/대기/실패·속도 상한
     loss = ("publish_dropped", "publish_queued", "db_dropped", "db_pending", "db_failures", "db_ok", "http_throttled")
+    loss += ("raw_unsaved", "raw_purge_failed")  # F6: 원천 보관 · 정리 실패(기동 뒤 누계)
     assert all(hb.get(k, "").isdigit() for k in loss), {k: hb.get(k) for k in loss}
     assert hb["db_ok"] == "0"  # 시험의 DB 는 연결되지 않는다 — 그대로 드러난다(실패 횟수는 heartbeat 시점에 따라 0 일 수 있다)
     # 계약 v4 G A-2: fixture 모드는 외부 호출이 없다 — 노선을 묻지 않고, 선택한 항공기의 콜사인(응답의 콜사인 · 메타 콜사인)에
@@ -476,3 +550,44 @@ def test_portmis_params_are_validated_before_they_reach_the_url():
         with pytest.raises(ValueError):
             p.params(**(ok | bad))
     assert not PortMisProvider(HttpClient(), "  ").configured
+
+
+async def test_the_collector_heartbeat_reports_its_event_loop_lag(monkeypatch):
+    """collector-review §4 'Enabler (D0)' · PLAN Phase 4-1: 수집기에는 이벤트 루프 지연 지표가 없어 루프를 막는 작업(전세계 정규화의 GIL 멈춤 · 루프 위
+    demand 정규화)을 운영에서 판단할 수 없었다. heartbeat(wakeline:collector)에 ais 상태 해시와 같은 이름으로 싣는다: loop_lag_max_s(최근 60 s 의 최댓값,
+    초 — 표본이 없으면 빈 값) · loop_stalls_total(지연 ≥ 1 s 표본 수, 기동 뒤 누계) · loop_tick_s(표본 간격 — 읽는 쪽이 해상도를 안다). 멈추면 측정도 끝난다."""
+    import asyncio
+
+    r = await _run_collector_until(monkeypatch, lambda r: r.kv.get("wakeline:collector", {}).get("loop_lag_max_s"), enabled=False)
+    hb = r.kv["wakeline:collector"]
+    assert float(hb["loop_lag_max_s"]) >= 0 and hb["loop_stalls_total"].isdigit() and float(hb["loop_tick_s"]) > 0
+    assert not [t for t in asyncio.all_tasks() if t.get_name() == "collector-loop-lag"]
+
+
+async def test_the_collector_heartbeat_carries_the_loop_lag_chosen_values(monkeypatch):
+    """운영 PIPELINE 탭(collector 묶음)이 루프 지연 행의 창 · 멈춤 기준 · WARN 문턱과 간격을 숫자로 들고 있지 않게(ais 상태 해시와 같은 이름 · 같은 형식 —
+    계약 v5 §G23: 고른 값은 잰 값이 아니라 수집기가 싣는다, 초는 지수 없는 십진수): diag_window_s(loop_lag_max_s 의 창) · loop_stall_s(loop_stalls_total 의
+    기준) · loop_warn_s · loop_warn_every_s, 그리고 loop_tick_s. 값은 이 프로세스의 LoopLag 가 실제로 쓰는 것이다."""
+    import re
+
+    from wakeline_collector import diag
+    from wakeline_collector import main as mainmod
+
+    r = await _run_collector_until(monkeypatch, lambda r: r.kv.get("wakeline:collector", {}).get("loop_lag_max_s"), enabled=False)
+    hb = r.kv["wakeline:collector"]
+    chosen = {
+        "diag_window_s": diag.DIAG_WINDOW_S,
+        "loop_tick_s": mainmod.LOOP_TICK_S,
+        "loop_stall_s": diag.LOOP_STALL_S,
+        "loop_warn_s": diag.LOOP_WARN_S,
+        "loop_warn_every_s": diag.WARN_EVERY_S,
+    }
+    for k, v in chosen.items():
+        assert re.fullmatch(r"\d+(\.\d{1,3})?", hb.get(k, "")), (k, hb.get(k))
+        assert float(hb[k]) == v, (k, hb[k])
+    assert (
+        hb["diag_window_s"] == "60"
+        and hb["loop_tick_s"] == "0.1"
+        and hb["loop_stall_s"] == "1"
+        and hb["loop_warn_every_s"] == "60"
+    )

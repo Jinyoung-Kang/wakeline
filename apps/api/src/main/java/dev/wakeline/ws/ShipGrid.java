@@ -1,8 +1,8 @@
 package dev.wakeline.ws;
 
-import dev.wakeline.domain.Bbox;
-import dev.wakeline.domain.ShipCategory;
-import dev.wakeline.ingest.ShipStore;
+import dev.wakeline.geo.Bbox;
+import dev.wakeline.ships.core.ShipCategory;
+import dev.wakeline.ships.core.ShipStore;
 
 import java.util.HashMap;
 import java.util.Map;

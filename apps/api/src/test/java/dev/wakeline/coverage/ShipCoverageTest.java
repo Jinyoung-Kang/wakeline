@@ -1,11 +1,11 @@
 package dev.wakeline.coverage;
 
-import dev.wakeline.domain.ShipState;
-import dev.wakeline.ingest.IngestEvents;
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
+import dev.wakeline.ships.core.ShipEvents;
+import dev.wakeline.ships.core.ShipState;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 import org.slf4j.LoggerFactory;
@@ -19,8 +19,8 @@ import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -108,7 +108,7 @@ class ShipCoverageTest {
         AtomicLong clock = new AtomicLong(START);
         ShipCoverage c = coverage(new FakeSource(), clock);
         assertThat(c.liveFromMs()).isEqualTo(CUT);
-        c.onSampled(new IngestEvents.ShipsSampled(List.of(
+        c.onSampled(new ShipEvents.ShipsSampled(List.of(
                 pos("440000001", 37.2, 126.2, CUT - 1),                   // 재시작 전 백로그 — DB 몫(두 번 세지 않는다)
                 pos("440000002", 37.2, 126.2, CUT),                       // 셈 시작의 첫 순간
                 pos("440000003", 37.2, 126.2, START + 6 * 60_000),        // 5분 넘게 미래 — 세지 않는다
@@ -205,7 +205,7 @@ class ShipCoverageTest {
                 during.set(c.snapshotNow());
                 openDuringWait[0] = src.opened.get() - src.closed.get();
                 // 기다리는 동안: 다시 읽을 시의 보고는 그 몫(세지 않는다), 이미 읽은 시(빈 시보다 오래된 시)의 늦은 보고는 실시간으로 센다
-                c.onSampled(new IngestEvents.ShipsSampled(List.of(pos("440000501", 37.2, 126.2, HOUR0 - 3 * H + 5_000),
+                c.onSampled(new ShipEvents.ShipsSampled(List.of(pos("440000501", 37.2, 126.2, HOUR0 - 3 * H + 5_000),
                         pos("440000502", 37.2, 126.2, HOUR0 - 5 * H + 5_000))));
             }
             clock.addAndGet(ms);
@@ -609,7 +609,7 @@ class ShipCoverageTest {
         AtomicLong clock = new AtomicLong(START + 1_000);
         ShipCoverage c = coverage(new FakeSource(), clock);
         ShipCoverage.Snapshot a = c.snapshot();
-        c.onSampled(new IngestEvents.ShipsSampled(List.of(pos("440000002", 37.2, 126.2, START))));
+        c.onSampled(new ShipEvents.ShipsSampled(List.of(pos("440000002", 37.2, 126.2, START))));
         clock.addAndGet(ShipCoverage.SNAPSHOT_MS - 1);
         ShipCoverage.Snapshot b = c.snapshot();
         assertThat(b).as("same snapshot within 60 s").isSameAs(a);
@@ -707,7 +707,7 @@ class ShipCoverageTest {
         assertThat(c.backlogWritten(START + 30_000)).as("no backlog seen, queue settled").isTrue();
         queued.set(500);
         settled.set(100);
-        c.onSampled(new IngestEvents.ShipsSampled(List.of(pos("440000001", 37.2, 126.2, CUT - 1)))); // +31 s: 재시작 전 보고가 아직 온다
+        c.onSampled(new ShipEvents.ShipsSampled(List.of(pos("440000001", 37.2, 126.2, CUT - 1)))); // +31 s: 재시작 전 보고가 아직 온다
         assertThat(c.backlogWritten(START + 35_000)).as("reports before live_from still arriving").isFalse();
         queued.set(700);
         assertThat(c.backlogWritten(START + 41_000)).as("quiet for 10 s, rows up to 700 not written yet").isFalse();
@@ -722,7 +722,7 @@ class ShipCoverageTest {
             clock.set(START + 31_000);
             ShipCoverage stuck = new ShipCoverage(new FakeSource(), clock::get, new SimpleMeterRegistry(), 30_000, 100, 1_000, START, w);
             settled.set(0);
-            stuck.onSampled(new IngestEvents.ShipsSampled(List.of(pos("440000001", 37.2, 126.2, CUT - 1))));
+            stuck.onSampled(new ShipEvents.ShipsSampled(List.of(pos("440000001", 37.2, 126.2, CUT - 1))));
             assertThat(stuck.backlogWritten(START + 30_000 + ShipCoverage.BACKLOG_WAIT_MAX_MS - 1)).isFalse();
             assertThat(stuck.backlogWritten(START + 30_000 + ShipCoverage.BACKLOG_WAIT_MAX_MS)).isTrue();
             assertThat(stuck.backlogWritten(START + 30_000 + ShipCoverage.BACKLOG_WAIT_MAX_MS + 1_000)).isTrue();
@@ -745,14 +745,14 @@ class ShipCoverageTest {
         FakeSource src = new FakeSource();
         ShipCoverage[] holder = new ShipCoverage[1];
         src.onRead = () -> { // 둘째 시(08:00–09:00)를 읽는 동안 그 시의 보고가 도착한다
-            if (src.reads.size() == 2) holder[0].onSampled(new IngestEvents.ShipsSampled(List.of(pos("440000077", 37.2, 126.2, HOUR0 - H + 5_000))));
+            if (src.reads.size() == 2) holder[0].onSampled(new ShipEvents.ShipsSampled(List.of(pos("440000077", 37.2, 126.2, HOUR0 - H + 5_000))));
         };
         ShipCoverage c = new ShipCoverage(src, clock::get, meters, 0, 100, 1_000, START);
         holder[0] = c;
-        c.onSampled(new IngestEvents.ShipsSampled(List.of(pos("440000066", 37.2, 126.2, CUT - 1)))); // 부트스트랩 전 — 그 몫
+        c.onSampled(new ShipEvents.ShipsSampled(List.of(pos("440000066", 37.2, 126.2, CUT - 1)))); // 부트스트랩 전 — 그 몫
         c.runBootstrap();
         ShipCoverage.Snapshot before = c.snapshotNow();
-        c.onSampled(new IngestEvents.ShipsSampled(List.of(
+        c.onSampled(new ShipEvents.ShipsSampled(List.of(
                 pos("440000088", 37.2, 126.2, CUT - 10_000),                  // 다 읽은 첫 시(09:00–09:37) — 늦게 저장된 백로그: 실시간으로 센다
                 pos("440000099", 37.2, 126.2, before.windowFrom().toEpochMilli() - 1)))); // 창보다 오래됨 — 세지 않는다
         ShipCoverage.Snapshot after = c.snapshotNow();
@@ -769,7 +769,7 @@ class ShipCoverageTest {
         AtomicLong clock = new AtomicLong(START);
         SimpleMeterRegistry meters = new SimpleMeterRegistry();
         ShipCoverage c = new ShipCoverage(new FakeSource(), clock::get, meters, 0, 1, 1_000);
-        c.onSampled(new IngestEvents.ShipsSampled(List.of(pos("440000002", 37.2, 126.2, START), pos("440000003", 10.2, 10.2, START))));
+        c.onSampled(new ShipEvents.ShipsSampled(List.of(pos("440000002", 37.2, 126.2, START), pos("440000003", 10.2, 10.2, START))));
         ShipCoverage.Snapshot s = c.snapshotNow();
         assertThat(s.dropped()).isEqualTo(1);
         assertThat(s.maxCells()).isEqualTo(1);

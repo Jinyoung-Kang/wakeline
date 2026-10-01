@@ -1,8 +1,8 @@
 package dev.wakeline.ws;
 
-import dev.wakeline.config.AppProperties;
-import dev.wakeline.domain.Bbox;
-import dev.wakeline.ingest.SnapshotStore;
+import dev.wakeline.platform.config.AppProperties;
+import dev.wakeline.geo.Bbox;
+import dev.wakeline.aircraft.core.SnapshotStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Profile;
@@ -18,6 +18,7 @@ import tools.jackson.databind.ObjectMapper;
 import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Pattern;
 
 /**
@@ -101,18 +102,47 @@ public class WakelineWsHandler extends TextWebSocketHandler {
         }
         String type = m == null ? "" : m.path("type").asString("");
         if (!s.hello && !"hello".equals(type)) { hub.fatal(s, "HELLO_REQUIRED", "first message must be hello", CloseStatus.PROTOCOL_ERROR); return; }
-        switch (type) {
-            case "hello" -> hello(s, m);
-            case "subscribe" -> subscribe(s, m);
-            case "select" -> select(s, m);
-            case "pause" -> { s.paused = true; hub.demandChanged(); } // 보지 않는 세션은 수요를 내지 않는다(계약 v2 §A1)
-            case "resume" -> resume(s);
-            case "resync" -> resync(s, m);
-            case "layers" -> layers(s, m);
-            case "select_ship" -> selectShip(s, m);
-            case "pong" -> s.missedPongs.set(0);
-            case "ping" -> hub.reply(s, PONG);
-            default -> hub.error(s, "UNKNOWN_TYPE", "unknown message type");
+        try {
+            switch (type) {
+                case "hello" -> hello(s, m);
+                case "subscribe" -> subscribe(s, m);
+                case "select" -> select(s, m);
+                case "pause" -> { s.paused = true; hub.demandChanged(); } // 보지 않는 세션은 수요를 내지 않는다(계약 v2 §A1)
+                case "resume" -> resume(s);
+                case "resync" -> resync(s, m);
+                case "layers" -> layers(s, m);
+                case "select_ship" -> selectShip(s, m);
+                case "pong" -> s.missedPongs.set(0);
+                case "ping" -> hub.reply(s, PONG);
+                default -> hub.error(s, "UNKNOWN_TYPE", "unknown message type");
+            }
+        } catch (RuntimeException e) {
+            badMessage(s, type, e);
+        }
+    }
+
+    /** 클라이언트 메시지 처리 중 예외의 WARN 간격 — 그사이의 것은 세어 다음 WARN 에 싣는다(DEBUG 한 줄씩). */
+    static final long BAD_MESSAGE_WARN_INTERVAL_MS = 60_000;
+    private static final java.util.Set<String> TYPES = java.util.Set.of("hello", "subscribe", "select", "pause", "resume", "resync", "layers",
+            "select_ship", "pong", "ping");
+    private final AtomicLong lastBadMessageWarnMs = new AtomicLong(Long.MIN_VALUE / 2);
+    private final AtomicLong badMessagesSinceWarn = new AtomicLong();
+
+    /**
+     * 메시지 처리 중 예외(리뷰 cto-2026-10 S4 — 클라이언트 입력이 닿는 우리 코드의 결함): 그 연결만 프로토콜 오류(BAD_MESSAGE, 1002)로 닫고 WARN 은 스택 없이
+     * 분에 한 번. 예전에는 처리기 밖으로 나가 Spring 이 ERROR 스택을 남기고 1011 로 닫았다 — 익명 클라이언트가 초에 여러 번 서버 오류 로그를 만들 수 있었다.
+     */
+    private void badMessage(WsSession s, String type, RuntimeException e) {
+        hub.fatal(s, "BAD_MESSAGE", "message could not be processed", CloseStatus.PROTOCOL_ERROR);
+        String t = TYPES.contains(type) ? type : "other"; // 로그에는 아는 이름만(클라이언트가 보낸 글자를 싣지 않는다)
+        long now = System.currentTimeMillis(), last = lastBadMessageWarnMs.get();
+        if (now - last >= BAD_MESSAGE_WARN_INTERVAL_MS && lastBadMessageWarnMs.compareAndSet(last, now)) {
+            long more = badMessagesSinceWarn.getAndSet(0);
+            log.warn("ws '{}' message failed — closed that connection with 1002 (protocol error){}: {}", t,
+                    more > 0 ? ", " + more + " more since the last warning" : "", e.toString());
+        } else {
+            badMessagesSinceWarn.incrementAndGet();
+            log.debug("ws bad message ({}): {}", t, e.toString());
         }
     }
 
@@ -148,7 +178,9 @@ public class WakelineWsHandler extends TextWebSocketHandler {
         Bbox bbox = parseBbox(m.path("bbox"));
         if (bbox == null) { hub.error(s, "BAD_BBOX", "bbox must be [lomin,lamin,lomax,lamax] within range"); return; }
         JsonNode z = m.path("zoom");
-        int zoom = z.isNumber() ? Math.max(0, Math.min(MAX_ZOOM, z.asInt())) : 7;
+        // 범위 안전하게 읽는다(리뷰 cto-2026-10 S4): Jackson 3 의 asInt() 는 int 밖의 수(1e10 · 2^31 · 큰 정수)면 던진다 — 익명 클라이언트가 ERROR 스택과
+        // 1011 종료를 만들었다. double 로 읽어 0–24 로 자르면 범위 안의 값은 예전과 같고(소수는 버림) 밖의 값은 끝으로 간다.
+        int zoom = z.isNumber() ? (int) Math.max(0, Math.min(MAX_ZOOM, z.asDouble())) : 7;
         if (bbox.area() > props.maxBboxAreaSqdeg() && zoom > 5) {
             hub.error(s, "BBOX_TOO_LARGE", "bbox area exceeds limit; zoom out to ≤ 5 for world view");
             return;

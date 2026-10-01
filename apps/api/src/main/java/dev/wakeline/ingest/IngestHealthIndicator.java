@@ -1,5 +1,6 @@
 package dev.wakeline.ingest;
 
+import dev.wakeline.aircraft.core.SnapshotStore;
 import org.springframework.boot.health.contributor.Health;
 import org.springframework.boot.health.contributor.HealthIndicator;
 import org.springframework.boot.health.contributor.Status;
@@ -75,6 +76,8 @@ public class IngestHealthIndicator implements HealthIndicator {
         Verdict v = verdict();
         Health.Builder b = Health.status(v.status());
         if (!v.reasons().isEmpty()) b.withDetail("reasons", v.reasons());
-        return b.withDetail("region_lag_s", v.regionLagS() < 0 ? null : Math.round(v.regionLagS())).build();
+        // 스냅샷이 없으면 지연은 모른다 — 키를 뺀다. Boot 4 의 withDetail 은 null 을 받지 않아(던진다) 그 상태가 500 이었다(리뷰 cto-2026-10 A1)
+        if (v.regionLagS() >= 0) b.withDetail("region_lag_s", Math.round(v.regionLagS()));
+        return b.build();
     }
 }

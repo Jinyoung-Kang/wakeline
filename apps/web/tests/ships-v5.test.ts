@@ -21,7 +21,8 @@ import { ShipTable } from "@/components/ShipTable";
 import { SearchResultsView, searchListIds } from "@/components/AircraftSearch";
 import { normalizeShipQuery, parseSearchResponse, parseShipSearchResponse, shipChoice } from "@/lib/search";
 import { MapChipsView } from "@/components/MapChips";
-import { parseShipDetail, ShipCard, ShipCardView, ShipPanelView } from "@/components/ShipCard";
+import { ShipCard, ShipCardView, ShipPanelView } from "@/components/ShipCard";
+import { parseShipDetail } from "@/lib/ship-card";
 import { preloadDashboardParts } from "./helpers/dashboard-parts";
 
 const text = (h: string) => h.replace(/<[^>]+>/g, "").replace(/&#x27;/g, "'");
@@ -45,7 +46,7 @@ describe("ship category order (contract v5 §B2)", () => {
   const repoRoot = new URL("../../../", import.meta.url);
   const inRepo = existsSync(new URL("apps/api/", repoRoot)) && existsSync(new URL("schemas/", repoRoot));
   it.skipIf(!inRepo)("SHIP_CATEGORIES equals the declaration order of the Java enum ShipCategory (apps/api)", () => {
-    const java = new URL("apps/api/src/main/java/dev/wakeline/domain/ShipCategory.java", repoRoot);
+    const java = new URL("apps/api/src/main/java/dev/wakeline/ships/core/ShipCategory.java", repoRoot);
     expect(existsSync(java), "ShipCategory.java moved — update this pin").toBe(true);
     const src = readFileSync(java, "utf8");
     const body = /public enum ShipCategory \{([^;]*);/.exec(src)?.[1] ?? "";

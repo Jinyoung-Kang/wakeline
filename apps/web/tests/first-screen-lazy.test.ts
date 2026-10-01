@@ -32,6 +32,11 @@ const CARRIED_BY_PARTS: Record<string, string> = {
   "components/PortCallsSection.tsx": "선박 카드 안",
   "lib/ship-card.ts": "선박 카드 · 선박 표의 표시 함수와 문구(저장 정적 보고 문구 · ETA · 크기 · 흘수 · 목적지 줄 · 공백 요약 · 선박 목록)",
   "lib/reception.ts": "관측 수신 범위 레이어 조각(응답 검증 · 조회 · 칸 그리기 · 화면 안 칸 수 · 툴팁 · 상태 줄)",
+  "lib/airport-wx.ts": "공항 카드(공항을 고른 뒤) · 공항 기상 이력 화면의 응답 모양과 검사",
+  "lib/endpoints/ship-detail.ts": "선박 카드의 REST 상세 조회(선박을 고른 뒤)",
+  "lib/aircraft-card.ts": "항공기 카드의 행 규칙(품질 · 비상 squawk · 예측 까닭 · 더 새 관측) — 항공기를 고른 뒤",
+  "lib/airport-list.ts": "공항 탭 목록의 줄(카테고리 · 오래됨 · 색)",
+  "lib/endpoints/weather.ts": "공항 카드 · 공항 탭 · SIGMET 카드의 REST 조회(고르거나 탭을 연 뒤)",
 };
 
 /**

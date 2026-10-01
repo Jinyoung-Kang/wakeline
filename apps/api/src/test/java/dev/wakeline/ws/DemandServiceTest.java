@@ -2,11 +2,11 @@ package dev.wakeline.ws;
 
 import dev.wakeline.demand.DemandLeases;
 import dev.wakeline.demand.DemandStats;
-import dev.wakeline.domain.AircraftState;
-import dev.wakeline.domain.HotCell;
-import dev.wakeline.domain.ShipStatic;
-import dev.wakeline.ingest.Snapshot;
-import dev.wakeline.ops.RegionSettings;
+import dev.wakeline.aircraft.core.AircraftState;
+import dev.wakeline.demand.HotCell;
+import dev.wakeline.ships.core.ShipStatic;
+import dev.wakeline.aircraft.core.Snapshot;
+import dev.wakeline.settings.RegionSettings;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.JsonNode;
 
@@ -30,7 +30,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class DemandServiceTest {
     /** 도쿄 부근(관심 지역 원 밖) 뷰포트 — 줌 9. */
     static final String TOKYO = "{\"type\":\"subscribe\",\"bbox\":[139.2,35.2,140.2,35.9],\"zoom\":9}";
-    static final String TOKYO_CELL = HotCell.forViewport(new dev.wakeline.domain.Bbox(139.2, 35.2, 140.2, 35.9)).key();
+    static final String TOKYO_CELL = HotCell.forViewport(new dev.wakeline.geo.Bbox(139.2, 35.2, 140.2, 35.9)).key();
     /** 관심 지역(한반도 원) 안 — 줌 8. */
     static final String SEOUL = "{\"type\":\"subscribe\",\"bbox\":[126.5,37.2,127.5,37.8],\"zoom\":8}";
 

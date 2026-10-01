@@ -6,7 +6,7 @@
 - disabled(계약 v4 G A-2) = 조회가 꺼져 있다(fixture 모드 — 외부 호출 없음, 또는 운영자가 adsbdb 를 끔). 노선 내용은 없다.
 - 검증을 통과하지 못한 공항은 null, 출발·도착 둘 다 없으면 not_found. 선택 항목(IATA·도시·국가 등)이 형식에 맞지 않으면 그 항목만 null.
 - 항공사는 이름이 없어도 ICAO(3자)·IATA(2자) 코드 중 하나가 유효하면 남긴다(이름 null, 계약 v4 G A-3).
-- 문자열은 제어·서식 문자를 지우고 공백을 하나로 모은 뒤 길이를 자른다. 코드는 대문자로만 맞춘다. 추측해 채우지 않는다.
+- 문자열은 제어·서식 문자를 지우고 공백을 하나로 모은 뒤 길이를 자른다(textutil.clean_text). 코드는 대문자로만 맞춘다. 추측해 채우지 않는다.
 - 예외 메시지에는 응답 내용을 싣지 않는다(로그로 새지 않게).
 """
 
@@ -14,12 +14,13 @@ from __future__ import annotations
 
 import math
 import re
-import unicodedata
 from datetime import UTC, datetime
 from typing import Any, Literal
 
 import orjson
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_serializer
+
+from wakeline_collector.textutil import clean_text
 
 ROUTE_KEY_PREFIX = "wakeline:route:"
 TTL_FOUND_S = 1800  # found · not_found
@@ -56,15 +57,6 @@ def route_key(callsign: str) -> str:
     if not CALLSIGN_RE.fullmatch(callsign):
         raise ValueError("invalid callsign")
     return ROUTE_KEY_PREFIX + callsign
-
-
-def clean_text(v: object, limit: int) -> str | None:
-    """제어·서식·서로게이트·미지정 문자(유니코드 C*)를 지우고 공백을 하나로 모은 뒤 limit 자로 자른다. 비면 None."""
-    if not isinstance(v, str):
-        return None
-    s = "".join(ch for ch in v if not unicodedata.category(ch).startswith("C"))
-    s = " ".join(s.split())[:limit].strip()
-    return s or None
 
 
 def _code(v: object, pattern: re.Pattern[str]) -> str | None:

@@ -112,7 +112,7 @@ describe("the row: one chip per feed — name, state (colour and shape, a word w
 describe("health thresholds are the existing ones (code and server), not new numbers", () => {
   const ages = (ageS: number): Partial<StatusInput> => ({ sigmetsFetchedAt: iso(-ageS * 1000), radar: { host: "h", generated: 0, past: [], fetched_at: iso(-ageS * 1000) }, status: {} });
   it("SIGMET > 900 s and radar > 600 s are copied from api StatusService (read here), region 60 s · world 300 s are the api's too", () => {
-    const java = readFileSync(new URL("../../api/src/main/java/dev/wakeline/rest/StatusService.java", import.meta.url), "utf8");
+    const java = readFileSync(new URL("../../api/src/main/java/dev/wakeline/status/StatusService.java", import.meta.url), "utf8");
     expect(java).toMatch(new RegExp(`lag\\(ss\\.fetchedAt\\(\\), now\\) > ${SIGMET_STALE_S}\\b`));
     expect(java).toMatch(new RegExp(`lag\\(rf\\.fetchedAt\\(\\), now\\) > ${RADAR_STALE_S}\\b`));
     expect(java).toMatch(new RegExp(`r\\.stale\\(now, ${REGION_STALE_S}\\)`));
@@ -196,7 +196,7 @@ describe("connection chip", () => {
     expect(c.title).toContain("탭이 숨겨져");
     expect(c.title).toContain("resume");
     // lib/ws 의 pause 는 visibilitychange(document.hidden)에서만 불린다 — 이 설명이 맞는지 코드로 확인
-    const map = readFileSync(new URL("../components/MapView.tsx", import.meta.url), "utf8");
+    const map = readFileSync(new URL("../components/map/useLiveFeed.ts", import.meta.url), "utf8");
     expect(map).toMatch(/if \(document\.hidden\) \{ client\.pause\(\);/);
   });
   it("open but silent past 45 s says '수신 없음'; retries are counted", () => {

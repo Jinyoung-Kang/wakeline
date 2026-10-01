@@ -1,6 +1,6 @@
 package dev.wakeline.portcalls;
 
-import dev.wakeline.domain.ShipStatic;
+import dev.wakeline.ships.core.ShipStatic;
 import dev.wakeline.route.RouteInfoTest;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.QueryTimeoutException;

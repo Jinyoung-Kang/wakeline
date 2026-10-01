@@ -7,6 +7,11 @@ traffic_grid = 연안 교통량(ADR-023). 입출항 색인 · 연안 교통량�
 
 WARN·ERROR 로그는 가려서 wakeline:logs 로도 보낸다(계약 v5 §C2 · logsink.py). 작업 태스크 이름(job:<작업>)이 로그 항목의 context.task 다.
 
+이벤트 루프 지연(collector-review §4 'Enabler (D0)'): LoopLag(diag.py — ais 와 같은 측정)를 LOOP_TICK_S 마다 재어 heartbeat 에 싣는다 —
+loop_lag_max_s(최근 60 s 의 최댓값, 초 — 표본이 없으면 빈 값) · loop_stalls_total(지연 ≥ 1 s 표본 수, 기동 뒤 누계) · loop_tick_s. 5 s 넘게 막히면
+WARN(분에 한 번까지). 이 측정이 끝나도 작업은 계속한다(작업 태스크가 아니다 — 멈출 때 취소한다). 고른 값(창 diag_window_s · 멈춤 기준 loop_stall_s ·
+WARN 문턱 loop_warn_s · 간격 loop_warn_every_s · loop_tick_s)도 ais 상태 해시와 같은 이름 · 형식으로 싣는다(loop_lag_settings — 읽는 쪽이 숫자를 들고 있지 않게).
+
 종료(SIGTERM, COL-4): 진행 중 작업을 SHUTDOWN_GRACE_S 동안 끝내게 두고, 남은 작업은 취소한 뒤 DB 쓰기 큐를 DB_DRAIN_S 안에서 비우고,
 남은 로그 항목을 logsink.CLOSE_S 안에서 보낸다. 합계(18 + 4 + 4 + 0.5 s)는 compose stop_grace_period(30 s) 안이다 — 그래야 SIGKILL 전에
 close() 가 돈다.
@@ -27,6 +32,7 @@ from wakeline_collector.chain_store import ChainStateStore
 from wakeline_collector.config import Settings, settings
 from wakeline_collector.db import Db
 from wakeline_collector.demand import DemandPoller, DemandStatus
+from wakeline_collector.diag import LoopLag
 from wakeline_collector.fallback import ProviderChain
 from wakeline_collector.http import HttpClient, build_limiter
 from wakeline_collector.jobs.aircraft import AircraftJob
@@ -62,6 +68,29 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 log = logging.getLogger("main")
+
+# 이벤트 루프 지연 표본 간격(선택값 — 잰 값이 아니다). ais 는 0.5 s(1 s 멈춤을 놓치지 않게)지만 수집기에서 보려는 멈춤은 수십 ms 다(collector-review §4:
+# 전세계 정규화가 스레드에서도 GIL 로 15–19 ms, demand 정규화가 루프에서 최대 약 15 ms). 멈춤이 표본의 깨는 순간에 걸려야 보이므로 20 ms 멈춤이 걸릴
+# 확률은 0.5 s 간격에서 4 %, 0.1 s 에서 20 % — 60 s 창 안에 그런 멈춤이 몇 번이면 대개 잡힌다. 깨우기는 초당 10번(비용 — docs/PERF.md §12)
+LOOP_TICK_S = 0.1
+LOOP_CONTEXT = "jobs, timers and publishing waited meanwhile"  # 수집기 루프 멈춤 WARN 이 덧붙이는 말
+
+
+def _chosen_s(v: float) -> str:
+    """고른 초(잰 값 아님) — 지수 표기 없는 십진수, 소수 3자리까지("0.1" · "60"). ais 상태 해시(ais/sink.py _setting)와 같은 형식."""
+    return f"{v:.3f}".rstrip("0").rstrip(".")
+
+
+def loop_lag_settings(lag: LoopLag) -> dict[str, str]:
+    """heartbeat 의 루프 지연 고른 값(ais 상태 해시와 같은 이름): 표본 간격 · loop_lag_max_s 의 창 · loop_stalls_total 의 기준 · WARN 문턱과 간격.
+    운영 PIPELINE 탭이 설명 · 창을 이 값으로 채운다(웹이 숫자를 들고 있지 않다 — 계약 v5 §G23 의 ais 와 같은 규칙)."""
+    return {
+        "loop_tick_s": _chosen_s(lag.tick_s),
+        "diag_window_s": _chosen_s(lag.window.window_s),
+        "loop_stall_s": _chosen_s(lag.stall_s),
+        "loop_warn_s": _chosen_s(lag.warn_s),
+        "loop_warn_every_s": _chosen_s(lag.warn_every_s),
+    }
 
 
 def traffic_grid_job(http: HttpClient, key: str, ctx: JobContext) -> TrafficGridJob:
@@ -139,8 +168,9 @@ def make_redis(s: Settings) -> Redis:
     )
 
 
-async def main(stop: asyncio.Event | None = None, redis: Any = None, db: Db | None = None) -> None:
-    """stop·redis·db 는 테스트용 주입(기본: SIGTERM/SIGINT · 설정의 Redis · 실제 DB writer)."""
+async def main(stop: asyncio.Event | None = None, redis: Any = None, db: Db | None = None) -> int:
+    """stop·redis·db 는 테스트용 주입(기본: SIGTERM/SIGINT · 설정의 Redis · 실제 DB writer).
+    돌려주는 값 = 프로세스 종료 코드: 0 정상 종료, 1 작업 태스크가 예상 밖으로 끝났다(run_until_stopped — ais 와 같다, compose 가 다시 띄운다)."""
     fixture = settings.fixture_mode
     configure_logging(secret_values(settings))
     log.info("wakeline collector starting (fixture_mode=%s)", fixture)
@@ -151,9 +181,11 @@ async def main(stop: asyncio.Event | None = None, redis: Any = None, db: Db | No
     http = HttpClient(limiter)
     limits = build_limits(settings)
     publisher = Publisher(redis)
+    raw = RawStore()
     tracker: DemandTracker | None = None
     portcalls: PortCallIndexJob | None = None
     logsink: LogSink | None = None
+    loop_lag = LoopLag(label="collector", context=LOOP_CONTEXT, logger=logging.getLogger("collector.loop"), tick_s=LOOP_TICK_S)
 
     def metrics() -> dict[str, str]:
         m = {
@@ -173,6 +205,13 @@ async def main(stop: asyncio.Event | None = None, redis: Any = None, db: Db | No
             "http_throttled": str(limiter.throttled),
             # 계약 v5 §C2: 로그 싱크가 wakeline:logs 로 보낸 수 · 대기열 상한으로 버린 수(기동 뒤 누계, 끄면 빈 값)
             **sink_metrics(logsink),
+            # F6: 원천 보관 · 정리 실패(기동 뒤 누계 — 0 이 아니면 /data/raw 가 가득 찼거나 읽기 전용이다)
+            "raw_unsaved": str(raw.unsaved),
+            "raw_purge_failed": str(raw.purge_failed),
+            # D0: 이벤트 루프 지연 — ais 상태 해시와 같은 이름(최근 60 s 최댓값 · 지연 ≥ 1 s 표본 누계 · 고른 값: 표본 간격 · 창 · 멈춤 기준 · WARN)
+            "loop_lag_max_s": "" if (lag := loop_lag.max_s()) is None else f"{lag:.3f}",
+            "loop_stalls_total": str(loop_lag.stalls),
+            **loop_lag_settings(loop_lag),
         }
         if tracker is not None:
             m.update(tracker.metrics())
@@ -184,7 +223,7 @@ async def main(stop: asyncio.Event | None = None, redis: Any = None, db: Db | No
         budget=Budget(redis, limits),
         db=db,
         publisher=publisher,
-        raw=RawStore(),
+        raw=raw,
         status=ProviderStatus(redis, metrics=metrics),
         rt=RuntimeSettings(redis),
         fixture=fixture,
@@ -239,6 +278,10 @@ async def main(stop: asyncio.Event | None = None, redis: Any = None, db: Db | No
             loop.add_signal_handler(sig, stop.set)
 
     logsink = start_log_sink("collector", redis, enabled=settings.log_sink_enabled)  # MaskFilter(configure_logging) 뒤에 붙인다
+    lag_task = asyncio.create_task(
+        loop_lag.run(), name="collector-loop-lag"
+    )  # 작업 태스크가 아니다 — 끝나도 수집기를 멈추지 않는다
+    crashed = False
     try:
         await ctx.rt.refresh()
         if not fixture:  # 운영 설정(Redis 미러)을 읽은 뒤 — 실제로 쓸 순서
@@ -259,20 +302,30 @@ async def main(stop: asyncio.Event | None = None, redis: Any = None, db: Db | No
         if tracker is not None:
             jobs["demand"] = tracker.run(stop)
         tasks = [asyncio.create_task(c, name=f"job:{name}") for name, c in jobs.items()]  # 로그 항목 context.task
-        await run_until_stopped(tasks, stop, grace_s=SHUTDOWN_GRACE_S)
+        crashed = await run_until_stopped(tasks, stop, grace_s=SHUTDOWN_GRACE_S)
     finally:
+        lag_task.cancel()
+        await asyncio.gather(lag_task, return_exceptions=True)
         await http.aclose()
         await db.close(drain_s=DB_DRAIN_S)
         await close_log_sink(logsink)  # 루트 로거에서 떼고 남은 항목을 보낸다(Redis 를 닫기 전에)
         await redis.aclose()
         log.info("collector stopped")
+    return 1 if crashed else 0
 
 
-async def run_until_stopped(tasks: list[asyncio.Task[Any]], stop: asyncio.Event, *, grace_s: float) -> None:
-    """stop 이 켜질 때까지(또는 작업이 모두 끝날 때까지) 기다린 뒤, 진행 중 작업을 grace_s 동안 끝내게 두고 남은 것은 취소한다(COL-4)."""
+async def run_until_stopped(tasks: list[asyncio.Task[Any]], stop: asyncio.Event, *, grace_s: float) -> bool:
+    """stop 이 켜질 때까지(또는 작업이 모두 끝날 때까지) 기다린 뒤, 진행 중 작업을 grace_s 동안 끝내게 두고 남은 것은 취소한다(COL-4).
+    돌려주는 값: 작업 태스크가 stop 전에 끝났는가(예상 밖 — 어느 태스크인지 · 까닭(예외는 스택까지)을 ERROR 로 남긴다. F5: 전에는 아무것도 남기지 않고
+    0 으로 끝났다 — asyncio 의 'exception was never retrieved' 는 로그 싱크를 뗀 뒤에야 나와 로그 화면에 닿지 않았다)."""
     stopper = asyncio.create_task(stop.wait())
+    crashed = False
     try:
-        await asyncio.wait([stopper, *tasks], return_when=asyncio.FIRST_COMPLETED)
+        done, _pending = await asyncio.wait([stopper, *tasks], return_when=asyncio.FIRST_COMPLETED)
+        if stopper not in done:
+            crashed = True
+            for t in done:
+                _log_unexpected_end(t)
         stop.set()  # 작업 하나가 예상 밖으로 끝났어도 나머지를 정리한다
         _done, pending = await asyncio.wait(tasks, timeout=grace_s)
         if pending:
@@ -282,3 +335,10 @@ async def run_until_stopped(tasks: list[asyncio.Task[Any]], stop: asyncio.Event,
             await asyncio.gather(*pending, return_exceptions=True)
     finally:
         stopper.cancel()
+    return crashed
+
+
+def _log_unexpected_end(t: asyncio.Task[Any]) -> None:
+    exc = None if t.cancelled() else t.exception()  # 꺼내 둔다 — asyncio 가 나중에 'never retrieved' 를 따로 내지 않게
+    why = "cancelled" if t.cancelled() else "returned" if exc is None else repr(exc)
+    log.error("%s ended unexpectedly (%s) — stopping the collector, exit 1", t.get_name(), why, exc_info=exc)

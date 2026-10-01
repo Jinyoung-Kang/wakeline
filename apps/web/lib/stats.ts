@@ -87,6 +87,15 @@ export function statsEmptyText(aggregated: boolean | undefined, day: string | nu
  */
 export type StatsLoad<T = unknown> = { status: "loading" } | { status: "loaded"; resp: T } | { status: "failed"; error: unknown };
 /** 패널의 data-state(시험 · 설명서 캡처가 읽는다): 받는 중 · 그릴 행이 있음 · 받았지만 그릴 것이 없음 · 받지 못함 */
+/** 받은 응답의 집계 여부(R-45 aggregated) — KST 날짜로 셌다고 밝힌 응답만, 그 밖(받는 중 · 실패 · 옛 응답)은 undefined(모름) */
+export function flagOf(l: StatsLoad): boolean | undefined {
+  return l.status === "loaded" && statsZoneOk(l.resp) ? aggregatedFlag(l.resp) : undefined;
+}
+/** 받았지만 KST 날짜로 셌다고 밝히지 않은 응답(옛 api — UTC 날짜 집계) */
+export function zoneBad(l: StatsLoad): boolean {
+  return l.status === "loaded" && !statsZoneOk(l.resp);
+}
+
 export type StatsPanelState = "loading" | "ready" | "empty" | "error";
 export function statsPanelState(load: StatsLoad, drawable: boolean): StatsPanelState {
   return load.status === "loading" ? "loading" : load.status === "failed" ? "error" : drawable ? "ready" : "empty";

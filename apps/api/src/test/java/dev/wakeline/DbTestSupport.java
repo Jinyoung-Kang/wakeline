@@ -3,6 +3,7 @@ package dev.wakeline;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
+import dev.wakeline.platform.config.AppProperties;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
@@ -41,6 +42,9 @@ public final class DbTestSupport {
             .propertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE)
             .changeDefaultPropertyInclusion(i -> i.withValueInclusion(JsonInclude.Include.NON_NULL))
             .build();
+    /** DB 시험이 정기 작업 · 지역 설정을 만들 때 쓰는 앱 설정(관심 지역 36.5,127.8 반경 250 NM — 운영 기본값). 예전 PersistDbTest.PROPS. */
+    public static final AppProperties PROPS = new AppProperties("", "36.5,127.8", 250, 120, 200, 5, 10, 30, 2500, 0, "classpath:schemas", 72, 30,
+            120, List.of("http://localhost:8700"), List.of());
 
     private static PostgreSQLContainer container;
     private static HikariDataSource api;

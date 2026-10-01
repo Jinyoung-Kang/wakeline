@@ -3,7 +3,8 @@ SHELL := /bin/bash
 COMPOSE := docker compose -f infra/compose.yml --env-file .env
 # 격리 스택(E2E·데모): 프로젝트·포트·서브넷·볼륨이 개발 스택과 분리된다. fixture 모드라 외부 호출이 없다.
 # 외부 키는 빈 값으로 덮어쓴다(셸 환경이 --env-file 보다 우선) — 격리 스택 컨테이너에는 실제 키가 들어가지 않는다(fixture 모드와 이중 안전장치).
-ISO_ENV := WAKELINE_FIXTURE_MODE=1 WAKELINE_PORT=8701 WAKELINE_NET_PREFIX=10.78.0 aisstream_key= OPENSKY_CLIENT_ID= OPENSKY_CLIENT_SECRET= KMA_APIHUB_KEY= DATA_GO_KR_SERVICE_KEY=
+# 개발 전용 EXTRA_ALLOWED_ORIGINS(`next dev` opt-in)도 비운다 — 격리 스택의 허용 Origin 은 게시 포트(8701)뿐이다.
+ISO_ENV := WAKELINE_FIXTURE_MODE=1 WAKELINE_PORT=8701 WAKELINE_NET_PREFIX=10.78.0 aisstream_key= OPENSKY_CLIENT_ID= OPENSKY_CLIENT_SECRET= KMA_APIHUB_KEY= DATA_GO_KR_SERVICE_KEY= EXTRA_ALLOWED_ORIGINS=
 ISO := $(ISO_ENV) docker compose -p wakeline-e2e -f infra/compose.yml --env-file .env
 # 부하 시험 도구 — 버전+다이제스트 고정(latest 가 바뀌어 내부망에 붙는 도구가 조용히 달라지지 않게). Dependabot 대상 아님: 올릴 때 여기서 함께 바꾼다.
 K6_IMAGE := grafana/k6:2.3.0@sha256:9c2dee7f8ed74d317e4027c06a10f169b625638189de8d4555d0b3486a5aeb34
@@ -12,7 +13,7 @@ NET_PREFIX := $(or $(WAKELINE_NET_PREFIX),10.77.0)
 BENCH_API := http://$(NET_PREFIX).30:8000
 BENCH_ORIGIN ?= http://localhost:$(or $(WAKELINE_PORT),8700)
 
-.PHONY: help init up down ps logs build ops-user test test-api test-collector test-web test-infra infra-docker-test security contract contract-rest ws-samples readme-images e2e demo demo-down bench bench-edge measure-ais db-superuser-local-only backup restore rotate-db-passwords fixtures clean
+.PHONY: help init up down ps logs build ops-user test test-api test-collector test-collector-db test-web test-infra infra-docker-test security contract contract-rest ws-samples readme-images e2e demo demo-down bench bench-edge measure-ais db-superuser-local-only backup restore rotate-db-passwords fixtures clean
 
 help: ## 명령 목록
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
@@ -64,13 +65,16 @@ test-api: ## Java 단위·통합 테스트 + JaCoCo 커버리지 보고서·검�
 test-collector: ## Python 단위 테스트
 	cd apps/collector && uv run pytest -q
 
+test-collector-db: ## 수집기 SQL 을 실제 PostgreSQL(api 의 Flyway 마이그레이션 · 수집기 계정)에 대조 — 버리는 컨테이너(db 이미지 wakeline-db:local 은 make build · infra-docker-test 가 만든다)
+	bash infra/tests/collector_pg_test.sh
+
 test-web: ## 프론트 단위 테스트
 	cd apps/web && npm test
 
 test-infra: ## 인프라 정책 시험(.env 생성 · compose 해석(개발·격리): 권한 축소·ACL 사용자·비밀값 분리·다이제스트 고정 · CI 스캔 범위) — 컨테이너를 띄우지 않는다
 	python3 -m unittest discover -s infra/tests -v
 
-infra-docker-test: init ## 버리는 컨테이너로 edge(Host 허용 목록·비root) · redis(ACL: api·collector·ais) · db(권한 축소·슈퍼유저 로컬 소켓 전용 · 백업·복원 · 비밀번호 교체 · 이전 이미지 → 새 이미지 교체) 동작 시험 — 개발 스택은 건드리지 않는다
+infra-docker-test: init ## 버리는 컨테이너로 edge(Host 허용 목록·비root) · redis(ACL: api·collector·ais) · db(권한 축소·슈퍼유저 로컬 소켓 전용 · 백업·복원 · 비밀번호 교체 · 이전 이미지 → 새 이미지 교체) · 수집기 SQL(실제 PostgreSQL) 동작 시험 — 개발 스택은 건드리지 않는다
 	$(COMPOSE) build db   # R-63: db 이미지는 infra/db 에서 직접 빌드한다(레지스트리에 없다) — db 시험이 이 태그를 쓴다
 	bash infra/tests/edge_test.sh
 	bash infra/tests/redis_acl_test.sh
@@ -78,9 +82,11 @@ infra-docker-test: init ## 버리는 컨테이너로 edge(Host 허용 목록·�
 	bash infra/tests/db_backup_test.sh
 	bash infra/tests/db_rotate_test.sh
 	bash infra/tests/db_image_swap_test.sh
+	bash infra/tests/collector_pg_test.sh
 
 # 원격 CI 가 없어도 ci.yml 의 security·third-party-images 와 같은 기준으로 막는다(R-07). 스캐너는 다이제스트 고정·네트워크 없음·docker.sock 없음(tools/scan_lib.sh).
-security: ## 보안 게이트: gitleaks(git 이력) + trivy(자체 이미지 차단 · 제3자는 ci.yml 행렬대로) — 이미지는 먼저 make build · SCAN_OFFLINE=1 이면 DB 캐시만
+# 의존성 감사는 ci.yml 의 web·collector job 과 같은 명령(tools/dependency_audit.sh, S2) — 레지스트리·취약점 DB 에 닿아야 하고, 돌리지 못하면 실패다.
+security: ## 보안 게이트: gitleaks(git 이력) + trivy(자체 이미지 차단 · 제3자는 ci.yml 행렬대로) + npm audit · pip-audit(CI 와 같은 명령) — 이미지는 먼저 make build · SCAN_OFFLINE=1 이면 trivy DB 캐시만 쓰고 의존성 감사는 건너뜀(SKIP 표시)
 	bash tools/security_gate.sh
 
 contract: ## Python↔Java 스키마 계약 검사 (+ api 테스트가 남긴 REST 응답 기록이 있으면 REST 계약도)
@@ -156,5 +162,9 @@ restore: ## 백업 복원: make restore f=backups/<파일>.dump confirm=wakeline
 rotate-db-passwords: init ## DB 서비스 계정(migrator·api·collector) 비밀번호 교체(DB·.env 함께) → 이어서 make up · sync=1 이면 .env 의 지금 값을 DB 에 맞춤(어긋남 복구) · 격리 스택은 같은 .env 를 읽으므로 P=wakeline-e2e sync=1 만
 	@WAKELINE_PROJECT='$(or $(P),wakeline)' python3 tools/db_rotate_passwords.py $(if $(filter 1,$(sync)),--sync,)
 
-print-%: ## 변수 값 출력 (CI 용, 예: make -s print-K6_IMAGE)
+# 변수 값 출력(CI · 보안 게이트 · 정책 시험용, 예: make -s print-K6_IMAGE). 허용 목록의 고정 설정만 — make 는 환경변수도 변수로 읽으므로
+# 아무 이름이나 받으면 셸 · CI 에 export 된 비밀값까지 찍는다(I-8). 늘릴 때는 비밀값이 아닌지 확인하고 이름을 더한다(test_scripts_policy.py).
+PRINTABLE_VARS := K6_IMAGE ISO_ENV
+.PHONY: $(addprefix print-,$(PRINTABLE_VARS))
+$(addprefix print-,$(PRINTABLE_VARS)): print-%:
 	@echo '$($*)'

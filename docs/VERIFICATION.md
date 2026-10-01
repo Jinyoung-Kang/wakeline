@@ -1063,19 +1063,107 @@
 - **시험** web `readme-images.test.ts`(README 의 docs/images 참조 ↔ 설정 ↔ 설명서 id · fixture 표시 · 남은 파일) · `guide-capture.test.ts`(world/hot 결정 · 대기 상한 · 앞뒤 읽기 ·
   스택 확인을 동작으로) · infra Makefile 정책.
 
-## 자동 검사 현황(2026-10-01 12:50 KST, 네 레인 통합(#88–#93) · bbox 타일 채우기(#94) · README 그림(#96) 뒤)
+## #97 CTO 리뷰 2026-10 — 보안(Phase 1 · 브랜치 `review/cto-2026-10`, 계획 [PLAN](review/cto-2026-10/PLAN.md) · 근거 [security-review](review/cto-2026-10/security-review.md))
+모든 항목은 오늘 코드에서 실패하는 시험을 먼저 쓰고(실패 글은 각 커밋 메시지), 근본 원인을 고친 뒤 통과를 보였다. 계약에 닿는 것은 [ADR-017 §6](adr/ADR-017-review-v1-contract-changes.md).
+- **운영 변경의 출처(S1 · S1b · S1c · S14)** CSRF 토큰을 `X-CSRF-Token` 헤더에서만 읽는다(`5aad288a` — 재현: 쿠키 값을 `_csrf` 로 실은 단순 POST 가 200). `/api/v1/ops/**` 의 변경은
+  `Origin` · `Sec-Fetch-Site` 를 본다(`69229802`, 403 `ORIGIN_NOT_ALLOWED`) — 최종 리뷰 뒤 **정확한 origin 만**(`74c11ddb`: `http://localhost:[*]` · `**` 같은 패턴 하나가 모든 포트를 열었다).
+  `next dev` 용 opt-in `EXTRA_ALLOWED_ORIGINS`(`0a644e66`) · 격리 스택은 늘 비움(`3364748a`). 로그인하면 CSRF 토큰도 새로(`94df1962` — 한계: 더 좁은 경로로 심은 쿠키는 남는다, ADR-017 §6.1).
+- **세션 · 계정(S3 · S8)** DB 장애 중에도 로그아웃이 된다(`803ac633` — 전: 503 으로 막혀 세션이 최대 8 h). `--create-ops-user` 는 stdin 만(`95a1966b`, 사용자 결정 5).
+- **WS(S4)** `zoom:1e10` 하나가 ERROR 스택 + 1011 을 냈다 → 실수로 읽고 0–24 로 자름(`77316857`), 메시지 처리 중 어떤 예외든 그 클라이언트의 프로토콜 오류로(`c4bccb01`).
+  시험 표 40행(`WsInputRobustnessTest`). 한계: 309자리 이상 정수는 그 연결만 1002 로 닫힌다.
+- **공개 응답(S13 · I-2)** `/status` · WS `status` 는 수집기 해시의 정해 둔 필드만(`abc39e96`), 429 본문은 `ProblemJson`(`54462e8b` — 경로를 이스케이프).
+- **수집기 입력(S5 · S6 · S9 · S10 · 3xx)** PORT-MIS XML 은 엄격한 UTF-8 만(`c693522d` — UTF-16 본문이 DTD 검사를 지나갔다), `quality_event.detail` 의 문자열 값을 저장 전에 가림(`cd127c0e`),
+  압축을 풀면서 응답 크기 상한(`f086c72c` — 전: 청크마다 재서 한 청크가 약 64 MiB 까지 풀렸다), RainViewer 타일은 알려진 호스트 · `/v2/radar/<hex>` 만(`6d3d970d`),
+  3xx 는 따라가지 않고 호스트만 적는 HTTP 오류(`a77d0a12`, 상대 Location 은 '같은 호스트'로 — `6068e5ce`).
+- **비밀값 · 공급망(S7 · S11 · S2 · I-8)** Redis 서비스 비밀번호를 `redis-server` 명령행에서 뺐다 — SHA-256 해시만 적은 0600 ACL 파일(tmpfs)을 `--aclfile` 로(`184100dc`, ACL 시험 299건).
+  수집기 이미지는 `uv sync --locked`(`d87a946e`), 저장소 루트 `.dockerignore`(`f317411a`), web 빌드 컨텍스트도 `.env*` 를 뺀다(`bcf3e731` — 최종 리뷰). `make security` 에 npm audit · pip-audit(`17bbb2e3`, 0 · 0).
+  `make print-%` 는 허용한 변수만(`59ba0d19`). 최종 검증 날(10-01 → 10-02) 다이제스트로 고정한 기반 이미지에 새로 고쳐진 OS CVE(openssl · pcre2 — HIGH, main 이미지도 같음)가 나와
+  api · collector 실행 단계도 db 처럼 `apt-get upgrade`(`abf337ee`, 정책 시험) — 다시 빌드한 네 이미지 trivy PASS.
+- **화면 경로(W)** 서버 값으로 만드는 경로 조각을 인코딩하고 `""` · `.` · `..` 를 거절(`65281c66` · `d5813b9c` · `c59c7b3c`).
+- **버전(S12)** Next.js 16.3.6 → 16.3.8(`cc91bf84`). ESLint 10 은 eslint-config-next 가 아직 지원하지 않아 9 에 둔다(사용자 결정 7 — 개발 도구, 9 는 2026-08-06 지원 종료).
+  Python 3.13 은 보안 수정만(2029-10 까지), Node 24 는 2026-10-20 부터 유지보수 — 남은 위험에 적는다.
+
+## #98 CTO 리뷰 2026-10 — 데이터 손실 · 신뢰성(Phase 2) · 기능 버그
+- **api** 선박 정적 정보 메모를 대기열에서 버린 행과 함께 잊는다(`4015f883` — 전: 수집기가 다시 보내도 쓰지 않았다), SQLState 없는 오류의 묶음은 세 번 뒤 포기(`663e36dd` — 전: 영원히 재시도해 소비가 멈췄다),
+  같은 날 통계 집계를 트랜잭션 advisory lock 으로 줄 세움(`e2c95f45` — 23505 를 3/3 재현 → 0; 한계: 앞 실행이 `lock_timeout` 5 s 보다 길면 뒤 실행은 55P03 → 503 · WARN, 데이터는 맞다 · 실제 집계 시간은 재지 못했다),
+  관심 지역 스냅샷 전 `/actuator/health` 500 → UNKNOWN/DOWN(`23dd12e2`), Jackson 3 강제 변환 전에 범위 검사(`5b8eaa24`, 네 곳), 기상청 프레임 영상: Redis 장애 503 + Retry-After · 없음 404 · 깨짐 404 + 카운터
+  (`16f08927`, 사용자 결정 6) · Redis LOADING 도 503(`977ec520` — 최종 리뷰), 조용한 catch-all 세 곳을 보이게(`8faa0429`), 느린 공개 조회가 공유 풀을 다 잡아 기록기가 물러나고 긴 폭주에서는 항적 행을 버리던 것을 격벽으로(D6 — `93d78620`, #100).
+- **수집기** 기상청 작업의 Redis 실패를 'error' 실행으로 남기고 meta 를 목록보다 먼저(`e520cca0` — 전: 실행 기록이 사라졌다), 목록에서 빠진 옛 영상 지우기만 실패하면 저장한 프레임은 성공(`cdf0084a` — 최종 리뷰),
+  예산: NOSCRIPT 뒤에만 다시 실행(`3949dcf6` — 잃어버린 답 뒤 두 번 예약) · 예약한 날의 키에 돌려줌(`fe997405`), 끝난 작업 태스크를 이름 · 까닭과 함께 남기고 종료 코드 1(`82c7928d`),
+  원시 보관 저장 · 정리 실패를 세고 분에 한 번 WARN(`55749aad`), DB 풀 크기(`961affbc`), 보냄 판정 하나(`9b61e791`), 이벤트 루프 지연 heartbeat(`007f72f4` · `2195afac`).
+- **web**(web-review W1–W17 과 최종 리뷰) EtagPoller 가 멈춘 뒤의 답을 버리고 요청을 끊음(`3b585a49`), 운영 쓰기 한 번에 하나(`4a2ce479`) · 실패 문구는 다음 쓰기나 '알림 닫기'까지(`9b175b30` · 탭을 오가도 `a92776e0`),
+  로그 '더 보기' 커서마다 한 번(`39358e5c`), 로그 자동 확인: 불러오는 중 · 앞 확인이 떠 있으면 건너뛰고 받을 때 보이는 목록과 견줌(`9a2871dd` · `f0528063` — 최종 리뷰: 이미 보이는 줄을 '새 항목 2건'으로 · `d80258d3` 필터를 바꾼 불러오기가 실패한 뒤),
+  숨은 탭에서 주기 요청을 쉼(`5f4996c7`, 사용자 결정 2), 지도 칩은 상태가 바뀔 때만 알림(`39851879` · 수요 칩 `fba63456`, 사용자 결정 3), 대기열의 지도 그리기 하나가 던져도 뒤 것을 건너뛰지 않음(`537090a3`),
+  그 밖: 검색 선택(`23037b5b`) · 공항 카드 오류(`bef31c3c`) · MapView 정리(`7b7b7f00`) · 레이더 · 공항 기상 본문 검증(`003c9796` · `4c4f76e6`) · 레이더 · 관심 공항 주기(`6a826752`) · 로그 상세(`aebb9603` · `722d77aa`) ·
+  세션 확인 실패(`3f298bf1`) · 요청 헤더(`d7f9edeb`) · AIS 공백 탭(`b6accd68` · `4e2d37a6`) · 공항 이력(`dbe9e942`) · 항공기 카드 30 s(`f4a0e920`) · DLQ 를 읽지 못함(`39ef342b`, 계약 §G31).
+- **운영 화면에 새 신호**(`d2666de8` · `6f38ed73` · `2536c947`, 계약 v5 §G29 · §G30): 수집기 루프 지연 · 멈춤 · 원시 보관 실패를 `/ops` 파이프라인에, 자동 전환 기록을 읽지 못하면 그렇게.
+
+## #99 CTO 리뷰 2026-10 — 구조(Phase 3, 동작 불변 커밋)
+- **api**([ADR-028](adr/ADR-028-api-package-boundaries.md)) 기능 패키지(`aircraft` · `ships` · `weather` 의 `core` · `data` · `web`) · `platform` · `geo` · `ingest` · `ws`. 컨트롤러는 데이터에 닿지 않는다.
+  패키지 순환 12개 패키지 · import 141개 → **0**. 가드 `ArchitectureTest`(KNOWN 비었음 · `MAX_CYCLE_EDGES` 0 — 최종 리뷰 뒤 주석 제거가 문자열을 안다, `7fe1bb11`).
+  세션 직렬화 클래스(`OpsAuthentication` · `OpsUserService$User`)는 옮기지 않았다(골든 직렬화 시험). 옮긴 클래스 13개의 로그 지문이 바뀐다(사용자 결정 1 — ADR-028 §5-4 표).
+- **web**([ADR-029](adr/ADR-029-web-data-access.md)) 전송(`lib/api.ts`) · 엔드포인트(`lib/endpoints/*` — 인코딩 · signal · 파싱) · Hook(`useApiResource` · `useVisibleInterval` · `useOpsSession` · `useOpsTabs` ·
+  `useLogFeed`) · React 없는 규칙(`lib/*`). `MapView` 는 28줄(Hook 여섯 — `components/map/`).
+- **수집기**([ADR-030](adr/ADR-030-collector-layering.md)) 층 entry · jobs · adapters · rules, 가드 `test_layering.py`(허용 목록 7 → **0**). `jobs/kma_radar.py` 1,626 → 1,255줄 · `jobs/traffic_grid.py`
+  1,627 → 1,334줄 · `fallback.py` 580 → 257줄.
+
+## #100 CTO 리뷰 2026-10 — 성능(Phase 4, 전후 수치만 — [PERF](PERF.md) §11 · §12 · §13)
+- **web**(§11) 선박 목록: 시계 10번의 React 작업 10,000척 · 이름 정렬 65.1 · 71.0 → 12.1 · 13.8 ms(`f4ba9d0d`). 숨은 경보 패널(`<Activity>`): 커밋 10 → 0(`c6e22c0c`). 검색 머리(닫힘): 커밋 10 → 0(`fc7c3f11`).
+  범례(MapLegend)는 약 1.5 µs 라 바꾸지 않았다.
+- **수집기**(§12) 공급자 체인: 읽기가 50 ms 멈추는 Redis 에서 429 뒤 주기 153 → 51 ms(`93407b02`). 기상청 렌더 182–216 → 167–178 ms · 최대 메모리 +73.4 → +23.3 MiB, PNG sha256 같음(`a6ab97b7`).
+  루프 지연 측정 비용 1.2–1.5 CPU ms/s. demand 정규화는 루프에 둔다(p99 10.6–10.9 ms, 스레드로 옮겨도 줄지 않음).
+- **api**(§13 — 측정 시험은 `@Tag("perf")`, `./gradlew perfTest`) **D6 공유 풀 굶주림 확인**: 운영과 같은 풀 · 기록기 셋 · 운영 모양 입력에서 느린 공개 조회(3 s 에 끊김)가
+  초당 8건이면 기록기 연결 대기 p95 5,006 ms · 대기 초과 16번 · 60 s 동안 항적 행 2 %만 씀 · 따라잡기 35.6 s, 9분 폭주면 **항적 1,000행을 버렸다**. → 공개 조회 격벽(`93d78620`,
+  `PublicReadGate` — 허가 6 · 기다림 1 s, 넘으면 연결을 빌리지 않고 503 + Retry-After, 지표 `wakeline_db_public_reads_rejected_total`): 초당 4 · 8 · 16건에서 기록기 p95 1 · 6 · 11 ms ·
+  대기 초과 0 · 모두 씀 · 따라잡기 0 s. DB 가 멀쩡할 때 몰림(30 × 5번)은 503 0건(p95 462 → 560 ms). **P4 SIGMET 재생**: `AND valid_to > :t`(쓰는 길이 모두 `withdrawn_at < valid_to` 를
+  지킨다 — 약 700 시점에서 옛 조건과 같은 결과) → 전세계 최근 시각 17–21 ms(전체 훑기) → 0.55–0.91 ms(`sigmet_valid`, `51ac1b4b`). **P3 운영 로그**: 해석한 항목을 다시 씀 → Redis 에서
+  전체 훑기 128–214 → 26–39 ms(`10ab0bec`, 상한 약 16 MB). **바꾸지 않음(측정)**: 전세계 메시지 두 번 파싱(한 번이면 4.9–6.1 ms — 120 s 에 한 번), 조각 캐시 적중 카운터(전세계 스냅샷의 6–8 %).
+  처리 타이머에 `kind` · `scope` 태그(`523cd9c1`).
+
+## #101 최종 독립 리뷰(별도 에이전트 다섯 — api 보안 · api 구조 · 수집기 · web · 인프라 문서, `e0e1eba0..056aa68b`)
+치명 · 높음 · 보통 0건. 낮음만 나왔고 정확성 · 요구 사항에 닿는 것은 고쳤다(각각 실패하는 시험 먼저):
+| 지적 | 처리 |
+|---|---|
+| Redis LOADING 중 레이더 프레임 500 | `977ec520` 503 |
+| 허용 Origin 의 패턴이 운영 변경 검사를 연다 | `74c11ddb` 정확한 origin 만 |
+| ArchitectureTest 가 문자열 속 `/*` 뒤를 못 봄 | `aab8faaa` · `7fe1bb11` |
+| web 빌드 컨텍스트에 `.env*` | `bcf3e731` |
+| 로그 자동 확인: 보이는 줄을 '새 항목'으로 · 요청이 쌓임 | `9a2871dd` · `f0528063` · `d80258d3`(필터를 바꾼 불러오기가 실패한 뒤 — 병합 중 찾음) |
+| 수요 칩 낭독 없음(결정 3) · 설정 저장 실패 문구가 탭 전환에 사라짐(결정 4) | `fba63456` · `a92776e0` |
+| 기상청: 옛 영상 지우기 실패가 저장을 실패로 | `cdf0084a` |
+| 상대 Location 을 '(no Location)'으로 | `6068e5ce` |
+| 문서와 코드가 다름(ADR-028 로거 표 · ADR-030 줄 수 · 규칙 수 · '순수'의 뜻 · kma_store 쓰기 순서 · PERF 절 표시 · 보안 게이트 주석 · ADR-029 §4) | `423fc7af` · `abdb706f` · `8b805ff6` · `46809df1` |
+| (병합 중 찾음) DLQ 를 읽지 못해도 '없음' · 그 api 시험 없음 | `39ef342b` · `418b74b1` · `e178d57a` |
+| **두 번째 독립 리뷰**(`056aa68b..9bdee083` — 위 수정 · 운영 화면 신호 · api 성능): 코드 결함 0, 문서 2(ADR-030 규칙 3 의 방향 · §G31 의 '시험 없음') | `8821b138` |
+고치지 않고 적은 것(남은 위험): CSRF 좁은 경로 쿠키(S14 한계), 같은 날 집계 잠금은 5 s 안에서만 줄 세움, 309자리 이상 정수의 WS zoom, 잘못된 IPv6 Location 이 `ValueError` 로 나가는 것(수집기 HTTP — 드묾).
+
+## #102 과정에서 생긴 결함 — 이력은 다시 쓰지 않고(사용자 금지) 앞으로 고쳤다
+- **`.gitignore` 의 `data/`** 가 이름이 `data` 인 Java 패키지를 숨겨 `f1f728fa` 부터 `0bc57f27^` 까지의 커밋은 따로 꺼내면 빌드되지 않는다(`DbErrors` 등 다섯 파일 — `0bc57f27` 로 추가 · `GitIgnoreScopeTest`).
+- **README ADR 수 시험**이 web ADR-029 커밋(`bd5251e` 뒤 레인 커밋)부터 README 커밋 전까지 실패했다. **`vitest run`** 이 수집기 2부 병합(`c27765ea`)부터 `cdeb7c22` 까지 5건 실패(옮긴 상수 경로).
+  **`ruff format --check`** 가 `831e3384` 부터 `f455dae1` 까지 실패.
+- **동작을 바꾼 `refactor` 커밋**(최종 리뷰): `c4461df3`(대체된 항적 요청을 끊음) · `a4d32182`(선박 카드 상세를 끊음) · `ff6c3be2` · `913a76c4` · `5a6da5b0`(`useApiResource` 로 옮기며 열쇠가 바뀌거나 사라지면 끊음) —
+  화면은 같고 ADR-029 §4 가 바라는 동작이지만 '리팩터링은 동작 불변' 규칙을 어겼다.
+- **재현이 아닌 시험**(최종 리뷰): `6a826752` 의 'GeoJSON Accept' 는 옛 코드도 보냈다(EtagPoller 기본값이 만들 406 을 막는 시험), `9b175b30` 의 '15 s 뒤에도 남음'은 옛 코드에서도 통과(새 '알림 닫기' 단추가 없어 실패),
+  `003c9796` 의 '저장소에 닿지 않음'은 저장소를 거치지 않는다(저장소 길은 `mapview-lifecycle` 이 본다).
+- **커밋 메시지의 틀린 수치**(고치지 않음): web `3c902c9` · `5a6da5b` · `6bda549`, api `7afd03e3`(서버 표본 30 → 36) · `bf03f42d`(지문 목록 — ADR-028 표가 맞다) · `831e3384`(AlertRepository 는 DEBUG · INFO 만),
+  infra `17bbb2e`(149 → 148), web `537090a3`(첫 화면 545,197 B 는 옛 Next 16.3.6 의존성으로 잰 값 — 16.3.8 로 545,290 B).
+- **E2E 를 돌리지 않은 레인의 병합**: 운영 화면 신호 병합(`69512105`)이 수집기 묶음에도 `loop_lag_max_s` 행을 더해 `ops-screens` E2E 가 같은 키 2행을 만나 실패(43 중 1) — 시험을 AIS 묶음으로 좁혔다(`953fceeb`, 제품은 의도대로).
+- **`make e2e` 가 운영 스택의 `:local` 이미지 태그를 덮었다**(같은 태그를 쓴다). 돌던 컨테이너는 영향 없었고, main 코드로 `:local` 을 다시 만들어 `:mainsafe` 로 고정했다. 이후 E2E 는 끝나면 `:mainsafe` → `:local` 로 되돌린다(최종 검증의 세 번도 그렇게 했다 — 브랜치 이미지는 `:cto`).
+
+## 자동 검사 현황(2026-10-02 00:0x KST, CTO 리뷰 2026-10 브랜치 `review/cto-2026-10` — #97–#102 뒤, 깨끗한 `git archive` 내보내기 · 격리 스택)
 | 층 | 도구 | 수 |
 |---|---|---|
-| collector · ais 단위·통합 | pytest | 1,729 통과(+88 — 기상청 목록 · 오래된 tm · 격자 채우기 · bbox 타일 · 관심 지역 WARN · 항만 산수. 21 건너뜀 = 실 Redis 14(아래 줄) · 실 PostgreSQL 7(손으로만 돌리는 선택 시험, 돌리지 않았다)) · 커버리지(`--cov=wakeline_collector`) 98 %(10,151문 중 252 빠짐) |
-| collector 실 Redis | `infra/tests/collector_redis_test.sh`(버리는 Redis 컨테이너) | 14 통과(+1 — 타일 상태 해시를 수집기 ACL 로) |
-| api 단위·통합 | JUnit 5 + Testcontainers(PostGIS·Redis 실물 — db 는 `wakeline-db:local`) | 968 통과(+29 — 쓰기 종료 경합 · 503 까닭 · 문장 이름 · /ops/runs 오류 글자 · ETag 에 note) · JaCoCo LINE 97.1 %(9,493줄 중 277 빠짐) · BRANCH 86.3 %(6,804 중 929 빠짐 · 하한 95 / 80 — 검증 통과) |
-| web 단위 | Vitest | 1,413(96 파일 — +93: /ops RUNS 드릴 · 상태 뜻 · 격자 채우기 줄(타일 진행) · 재생 503 · KMA 칩 · README 그림 · world/hot 캡처 결정) |
-| 정적 검사 · 빌드 | ruff check · ruff format --check(collector 전체) · mypy(77 파일) · tsc --noEmit · eslint · next build | 모두 통과 |
-| 언어 간 계약 | tools/contract_check.py | PASSED — 새 §8 영수증 표시 상한(수집기 상수로 다시 셈) 포함 |
-| REST 계약 | tools/rest_contract_check.py | 36종 PASSED |
-| 인프라 정책 | infra/tests(unittest) | 129 |
-| 버리는 컨테이너 시험 | edge · Redis ACL · db 권한 · 백업·복원 · 비밀번호 교체 · 이전 → 새 db 이미지 교체 | 35 · 297 · 36 · 48 · 27 · 11 = 454 — `make infra-docker-test` 모두 통과(2026-10-01 09:3x KST, Redis ACL 타일 해시 +6) |
-| E2E | Playwright(격리된 fixture 스택 8701, 작업자 1명) | 43 통과(README 그림 통합 뒤에도 다시 — 1.9 분. +2 — `ops-screens` 드릴 · `replay-503`. 처음 통합 판은 `replay-503` 1건 실패 → 재생 알림을 지도 위로(#92) 뒤 43 통과, `replay-503` · `replay-layout` 3번씩 되풀이 통과) |
-| 첫 화면 JS 예산 | `npm run check:first-js -- --in-image` · 브라우저 `measure:first-js -- --serve 8790` | 543,507 B / 550,000 B(여유 6,493 B — 통합 빌드, 웹 이미지의 Node) · 브라우저(2026-10-01 09:3x): 빌드 결과 목록과 같은 18개 · 541,194 B(호스트 Node) · 실패 0, 첫 화면 뒤 미리 받은 조각 10개 57,636 B(예산 밖) |
-| 보안 게이트 | `SCAN_OFFLINE=1 bash tools/security_gate.sh` | PASS(2026-10-01 12:5x KST, 배포한 이미지) — gitleaks 930 커밋 누출 0 · 자체 api · collector · web · db 고칠 수 있는 HIGH · CRITICAL 0 · 제3자 edge · redis PASS · k6 보고만 |
-| 배포 뒤 확인 | 수집기 · api 로그(사용자가 `docker logs` 읽기를 허용 — 2026-10-01) | 06:02 KST 배포(api · collector · web) 뒤 10분 WARN · ERROR 0, 08:33 KST 배포(Redis 재시작 · collector · web) 뒤 재연결 WARN 2건 밖에 없음, 타일 채우기 첫 차례(#94) |
+| collector · ais 단위·통합 | pytest | 1,919 통과(+190 — 보안 · 신뢰성 수정 · 규칙 모듈 표 시험 · 계층 가드 · 루프 지연. 23 건너뜀 = 실 Redis 16 · 실 PostgreSQL 7, 아래 두 줄에서 돈다) · 커버리지 98 %(10,539문 중 249 빠짐) |
+| collector 실 Redis · 실 PostgreSQL | `infra/tests/collector_redis_test.sh` · `collector_pg_test.sh`(버리는 컨테이너 — 이번에 `make infra-docker-test` 에 넣었다) | 16 · 7 통과 |
+| api 단위·통합 | JUnit 5 + Testcontainers(PostGIS · Redis 실물) | 1,071 통과(+103 — 보안 · 데이터 손실 수정 · 패키지 가드 · 격벽 · 측정 시험 5종은 `@Tag("perf")` 로 따로) · JaCoCo LINE 97.18 %(9,750줄 중 275 빠짐) · BRANCH 86.53 %(7,000 중 943 빠짐 · 하한 95 / 80 — 검증 통과) |
+| web 단위 | Vitest | 1,658 통과(+245) · 3 건너뜀(측정 시험 — `WAKELINE_PERF=1`), 127 파일 |
+| 정적 검사 · 빌드 | ruff check · ruff format --check · mypy(88 파일) · tsc --noEmit · eslint(오류 0, 경고 1 — 전부터) · next build | 모두 통과 |
+| 언어 간 계약 · REST 계약 | tools/contract_check.py · tools/rest_contract_check.py | PASSED · 36종 PASSED |
+| 구조 가드 | api `ArchitectureTest`(KNOWN 0 · 순환 import 0) · collector `test_layering.py`(ALLOWED 0) | 통과 |
+| 인프라 정책 | infra/tests(unittest) | 157 |
+| 버리는 컨테이너 시험 | edge · Redis ACL · db 권한 · 백업·복원 · 비밀번호 교체 · 이전 → 새 db 이미지 교체 | 35 · 299 · 36 · 48 · 27 · 11 = 456 — `make infra-docker-test` 모두 통과(+ 실행 이미지 검사 `image_test.sh` 11) |
+| E2E | Playwright(격리된 fixture 스택 8701, 작업자 1명) | 43 통과(2.0 분 — 마지막 코드로 두 번. 처음 판은 43 중 1 실패 → `953fceeb`, #102) |
+| 첫 화면 JS 예산 | `npm run check:first-js -- --in-image` · 브라우저 `measure:first-js -- --serve 8790` | 545,458 B / 550,000 B(여유 4,542 B — 웹 이미지의 Node) · 브라우저: 빌드 결과 목록과 같은 18개 · 543,168 B(호스트 Node) · 실패 0, 첫 화면 뒤 미리 받은 조각 10개 62,946 B(예산 밖) |
+| 성능 측정 | api `./gradlew perfTest` · web `WAKELINE_PERF=1 vitest` · collector `tests/perf/*.py` | [PERF](PERF.md) §11 · §12 · §13(#100) |
+| 보안 게이트 | `make security`(`SECURITY_OWN_IMAGES` = 브랜치 이미지 `:cto`) | PASS(2026-10-02 00:0x KST) — gitleaks 1,136 커밋 누출 0 · 자체 api · collector · web · db 고칠 수 있는 HIGH · CRITICAL 0(`abf337ee` 뒤 — 그 전에는 새로 나온 OS CVE 로 api 3 · collector 7 · db 6) · 제3자 edge · redis PASS · npm audit 0 · pip-audit 0 |
+| 독립 리뷰 | 별도 에이전트(전체 다섯 영역 + 증분) | #101 — 치명 · 높음 · 보통 0, 낮음은 고치거나 남은 위험으로 적음 |

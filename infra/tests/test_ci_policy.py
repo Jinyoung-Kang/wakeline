@@ -7,13 +7,17 @@ YAML 파서 없이(표준 라이브러리만 — CI 러너의 python3 그대로)
 - compose 의 모든 이미지가 스캔된다: wakeline-*:local 은 security job 의 Trivy, 제3자 이미지는 third-party-images 행렬
 - 모든 서드파티 액션은 커밋 SHA(40자)로 고정, 기본 권한은 contents: read
 - Dependabot 이 compose·Dockerfile·액션·세 앱 의존성을 모두 본다
+- 로컬 게이트(make security)가 CI 의 의존성 감사(npm audit · pip-audit)를 같은 명령으로 돌린다(S2 · M-2)
 
 실행: python3 -m unittest discover -s infra/tests -v
 """
 
 from __future__ import annotations
 
+import os
 import re
+import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -133,7 +137,7 @@ class CiPolicyTest(unittest.TestCase):
                 self.assertRegex(s, r'severity:\s*"HIGH,CRITICAL"')
 
     def test_gitleaks_allowlist_is_exact_fingerprints_only(self):
-        """허용 목록은 시험용 가짜 값 · 비밀이 아닌 예시 11건(값마다 가짜임을 확인 — .gitleaksignore 주석)의 정확한 지문뿐 — 정규식·경로 허용(.gitleaks.toml allowlist)은 없다."""
+        """허용 목록은 시험용 가짜 값 · 비밀이 아닌 예시 12건(값마다 가짜임을 확인 — .gitleaksignore 주석)의 정확한 지문뿐 — 정규식·경로 허용(.gitleaks.toml allowlist)은 없다."""
         ignore = ROOT / ".gitleaksignore"
         self.assertTrue(ignore.exists(), ".gitleaksignore 없음 — gitleaks 가 시험용 가짜 값에서 실패한다")
         entries = [ln.strip() for ln in ignore.read_text().splitlines() if ln.strip() and not ln.lstrip().startswith("#")]
@@ -152,6 +156,7 @@ class CiPolicyTest(unittest.TestCase):
             "1e17faab307616aba658013e1b8ef568f0044089:apps/web/tests/resolutions.test.ts:generic-api-key:70",
             "1e17faab307616aba658013e1b8ef568f0044089:apps/web/tests/resolutions.test.ts:generic-api-key:71",
             "9598eef659f5135ad689ae0c26be36ec0e1a4ed1:apps/collector/tests/test_ais_keepalive.py:generic-api-key:33",
+            "cd127c0e41eee7309a11cd8a5e5a0727ecf5e854:apps/collector/tests/test_db_writer.py:generic-api-key:176",
         })
         self.assertFalse((ROOT / ".gitleaks.toml").exists(), "넓은 허용 규칙 파일을 두지 않는다")
 
@@ -191,6 +196,102 @@ class CiPolicyTest(unittest.TestCase):
     def test_infra_job_runs_policy_and_container_tests(self):
         self.assertIn("make -s test-infra", self.jobs["infra"])
         self.assertIn("make -s infra-docker-test", self.jobs["infra"])
+
+
+AUDIT = ROOT / "tools" / "dependency_audit.sh"
+
+
+def run_lines(step: str) -> list[str]:
+    """step 의 run: 명령 줄들(한 줄 run 과 run: | 블록 모두)."""
+    m = re.search(r"(?m)^\s+run:\s*\|\s*\n((?:[ ]{10,}[^\n]*\n?)+)", step)
+    if m:
+        return [ln.strip() for ln in m.group(1).splitlines() if ln.strip()]
+    return [m.group(1).strip() for m in re.finditer(r"(?m)^\s+run:\s*(\S[^\n]*)$", step)]
+
+
+def script_commands(text: str) -> str:
+    """셸 스크립트에서 주석을 뺀 본문(줄 이음 합침)."""
+    body = re.sub(r"\\\n\s*", " ", text)
+    return "\n".join(ln for ln in body.splitlines() if not ln.lstrip().startswith("#"))
+
+
+class LocalDependencyAuditTest(unittest.TestCase):
+    """S2 · M-2: 원격이 없어 ci.yml 의 npm audit · pip-audit 가 한 번도 돌지 않았다 — make security 가 같은 명령을 돌린다.
+    네트워크가 필요하다: SCAN_OFFLINE=1 이면 보이는 안내와 함께 건너뛰고, 그 밖에 돌리지 못하면(도구 없음 · 네트워크 실패) 실패다."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.jobs = jobs(CI.read_text())
+        cls.audit = AUDIT.read_text() if AUDIT.exists() else ""
+
+    def ci_command(self, job: str, needle: str) -> list[str]:
+        st = [s for s in steps(self.jobs[job]) if needle in s]
+        self.assertEqual(len(st), 1, f"{job} job 의 {needle} 단계")
+        return run_lines(st[0])
+
+    def test_gate_runs_the_audits_and_fails_with_them(self):
+        gate = script_commands((ROOT / "tools" / "security_gate.sh").read_text())
+        self.assertRegex(gate, r"(?m)^bash tools/dependency_audit\.sh \|\| fail=1\b", "make security 가 돌리고, 실패하면 게이트도 실패(보고만이 아니다)")
+
+    def test_npm_audit_is_the_ci_command(self):
+        (ci,) = self.ci_command("web", "npm audit")
+        self.assertEqual(ci, "npm audit --audit-level=high")
+        self.assertIn(f"(cd apps/web && {ci})", script_commands(self.audit), "CI 의 web job 과 같은 디렉터리 · 같은 명령")
+
+    def test_pip_audit_is_the_ci_command(self):
+        ci = [ln.replace('"$RUNNER_TEMP/requirements.txt"', "REQ") for ln in self.ci_command("collector", "pip-audit")]
+        body = script_commands(self.audit)
+        m = re.search(r"(?m)^PIP_AUDIT_VERSION=([0-9.]+)", body)
+        self.assertIsNotNone(m, "pip-audit 버전 고정")
+        body = body.replace('"$WORK/requirements.txt"', "REQ").replace('"pip-audit@$PIP_AUDIT_VERSION"', f"pip-audit@{m.group(1)}")
+        self.assertEqual(len(ci), 2)
+        for line in ci:
+            with self.subTest(command=line.split()[0:2]):
+                self.assertIn(line, body, "CI collector job 과 같은 내보내기(uv.lock · 런타임 · 해시) · 같은 pip-audit 버전 · 같은 옵션")
+        self.assertIn("cd apps/collector &&", body)
+
+    # --- 동작: 가짜 npm · uv · uvx 로 스크립트를 돌린다(네트워크 없음) ---
+    def run_audit(self, *, fail: tuple[str, ...] = (), missing: tuple[str, ...] = (), offline: bool = False) -> tuple[int, str, list[str]]:
+        self.assertTrue(AUDIT.exists(), "tools/dependency_audit.sh 가 없다")
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "calls.log"
+            bin_dir = Path(tmp) / "bin"
+            bin_dir.mkdir()
+            for tool in ("npm", "uv", "uvx"):
+                if tool in missing:
+                    continue
+                rc = 1 if tool in fail else 0
+                (bin_dir / tool).write_text(f'#!/bin/sh\necho "{tool} $(basename "$PWD") $*" >> "{log}"\nexit {rc}\n')
+                (bin_dir / tool).chmod(0o755)
+            env = {"PATH": f"{bin_dir}:/usr/bin:/bin", "HOME": tmp, "TMPDIR": tmp}
+            if offline:
+                env["SCAN_OFFLINE"] = "1"
+            r = subprocess.run(["bash", str(AUDIT)], env=env, capture_output=True, text=True)
+            calls = log.read_text().splitlines() if log.exists() else []
+        return r.returncode, r.stdout + r.stderr, calls
+
+    def test_runs_both_audits_like_ci(self):
+        rc, out, calls = self.run_audit()
+        self.assertEqual(rc, 0, out)
+        self.assertRegex(out, r"(?m)^PASS  npm audit")
+        self.assertRegex(out, r"(?m)^PASS  pip-audit")
+        self.assertEqual(calls[0], "npm web audit --audit-level=high")
+        self.assertRegex(calls[1], r"^uv collector export --locked --no-dev --no-emit-project --format requirements-txt -o \S+/requirements\.txt$")
+        self.assertRegex(calls[2], r"^uvx collector pip-audit@2\.10\.1 --disable-pip --require-hashes -r \S+/requirements\.txt --progress-spinner off$")
+
+    def test_a_finding_or_a_failure_to_run_fails_closed(self):
+        for case in ({"fail": ("npm",)}, {"fail": ("uvx",)}, {"fail": ("uv",)}, {"missing": ("npm",)}, {"missing": ("uvx",)}):
+            with self.subTest(**{k: v[0] for k, v in case.items()}):
+                rc, out, calls = self.run_audit(**case)
+                self.assertNotEqual(rc, 0, out)
+                self.assertRegex(out, r"(?m)^FAIL  ")
+                self.assertTrue([c for c in calls if c.startswith("npm ")] or "npm" in case.get("missing", ()), "한쪽이 실패해도 다른 감사는 돈다")
+
+    def test_offline_skips_visibly(self):
+        rc, out, calls = self.run_audit(offline=True)
+        self.assertEqual(rc, 0)
+        self.assertEqual(calls, [], "네트워크가 필요한 감사는 돌리지 않는다")
+        self.assertRegex(out, r"(?m)^SKIP  npm audit · pip-audit — SCAN_OFFLINE=1")
 
 
 class DependabotPolicyTest(unittest.TestCase):
