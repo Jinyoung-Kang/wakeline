@@ -1,12 +1,18 @@
 package dev.wakeline.ops;
 
 import dev.wakeline.platform.web.ApiPaths;
+import dev.wakeline.platform.web.Problem;
 import dev.wakeline.platform.web.ProblemJson;
+import dev.wakeline.platform.web.RequestIdFilter;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.servlet.http.HttpSession;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataAccessException;
+import org.springframework.http.HttpHeaders;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
@@ -28,8 +34,12 @@ import java.util.function.IntFunction;
  * 경합하면 방금 만든 세션을 놓칠 수 있다 — 이 비교는 순서와 무관하다. DB 를 읽지 못하면 세션은 두고 503(모름 — 끝내지도, 통과시키지도 않는다).
  * 로그아웃(DELETE /api/v1/ops/session)은 자격 비교를 하지 않는다(리뷰 cto-2026-10 S3): 권한을 줄이는 요청이라 확인할 것이 없고, DB 장애 중에도 세션을
  * 끝낼 수 있어야 한다(예전에는 503 으로 막혀 세션이 최대 8 h 남았다). 절대 수명 검사는 로그아웃에도 그대로다.
+ * <p>
+ * 세션 저장소(Redis)를 읽지 못하면(QA-102) 운영 요청은 503 + Retry-After(계약 §2 — 로그인과 같다)다: 세션이 있는지 모르므로 통과시키지도(익명 404)
+ * 끝내지도 않는다. 예전에는 그 예외가 필터 밖으로 나가 500 + ERROR 스택이었다. 공개 경로는 세션을 읽지 않는다(OpsSessionIdResolver).
  */
 public class OpsSessionLifetimeFilter extends OncePerRequestFilter {
+    private static final Logger log = LoggerFactory.getLogger(OpsSessionLifetimeFilter.class);
     /** 로그인 시각(epoch ms, Long) 세션 속성. 세션 역직렬화 허용 목록(java.lang.Long)에 이미 있다. */
     public static final String AUTH_AT = "ops_auth_at";
     /** 로그인한 운영자 id(Integer). */
@@ -60,7 +70,15 @@ public class OpsSessionLifetimeFilter extends OncePerRequestFilter {
 
     @Override
     protected void doFilterInternal(HttpServletRequest req, HttpServletResponse res, FilterChain chain) throws ServletException, IOException {
-        HttpSession s = req.getSession(false);
+        HttpSession s;
+        try {
+            s = req.getSession(false);
+        } catch (DataAccessException e) { // 세션 저장소를 읽지 못함(연결 없음 · 명령 시간 초과 · LOADING) — 저장소 장애라 스택 없이 한 줄
+            log.warn("session store unavailable request_id={} path={} → 503: {}: {}", RequestIdFilter.current(req), req.getRequestURI(),
+                    e.getClass().getSimpleName(), e.getMostSpecificCause().getMessage());
+            unavailable(req, res, "ops session store temporarily unavailable; retry later");
+            return;
+        }
         if (s != null && expired(s, clock.millis())) s.invalidate();
         else if (s != null && currentCredential != null && !ApiPaths.OPS_LOGOUT.matches(req) && s.getAttribute(USER_ID) instanceof Integer uid) {
             Optional<String> now;
@@ -73,6 +91,12 @@ public class OpsSessionLifetimeFilter extends OncePerRequestFilter {
             if (now.isEmpty() || !now.get().equals(s.getAttribute(CREDENTIAL))) s.invalidate();
         }
         chain.doFilter(req, res);
+    }
+
+    /** 503 + Retry-After(계약 §2 의 기본 {@value Problem#UNAVAILABLE_RETRY_AFTER_S} s). */
+    private static void unavailable(HttpServletRequest req, HttpServletResponse res, String detail) throws IOException {
+        res.setHeader(HttpHeaders.RETRY_AFTER, String.valueOf(Problem.UNAVAILABLE_RETRY_AFTER_S));
+        ProblemJson.write(res, req, 503, "UNAVAILABLE", "service unavailable", detail);
     }
 
     /** 로그인(또는 속성이 없으면 세션 생성)으로부터 maxAge 이상 지났는가. */

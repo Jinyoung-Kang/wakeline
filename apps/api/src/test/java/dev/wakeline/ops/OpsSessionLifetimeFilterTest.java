@@ -143,6 +143,26 @@ class OpsSessionLifetimeFilterTest {
         assertThat(old.isInvalid()).isTrue();
     }
 
+    /** QA-102: 세션 저장소(Redis)를 읽지 못하면 운영 요청은 503 + Retry-After 10 — 넘기지 않는다(예전: 예외가 필터 밖으로 나가 500). */
+    @Test
+    void anOpsRequestWhoseSessionCannotBeReadIs503WithRetryAfter() throws Exception {
+        for (RuntimeException down : new RuntimeException[] {new org.springframework.data.redis.RedisSystemException("Redis exception",
+                new IllegalStateException("Currently not connected")), new org.springframework.dao.QueryTimeoutException("Redis command timed out")}) {
+            MockHttpServletRequest req = new MockHttpServletRequest("GET", "/api/v1/ops/settings") {
+                @Override public jakarta.servlet.http.HttpSession getSession(boolean create) { throw down; }
+            };
+            req.setRequestURI("/api/v1/ops/settings");
+            MockHttpServletResponse res = new MockHttpServletResponse();
+            MockFilterChain chain = new MockFilterChain();
+            FILTER.doFilter(req, res, chain);
+            assertThat(res.getStatus()).isEqualTo(503);
+            assertThat(res.getHeader("Retry-After")).isEqualTo("10");
+            assertThat(res.getContentType()).isEqualTo("application/problem+json");
+            assertThat(res.getContentAsString()).contains("\"code\":\"UNAVAILABLE\"");
+            assertThat(chain.getRequest()).as("not passed on").isNull();
+        }
+    }
+
     @Test
     void maxAgeMustBePositive() {
         assertThatThrownBy(() -> new OpsSessionLifetimeFilter(Duration.ZERO, Clock.systemUTC())).isInstanceOf(IllegalArgumentException.class);
