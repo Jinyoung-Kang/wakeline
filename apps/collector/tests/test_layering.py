@@ -51,6 +51,7 @@ RULE_FEATURES: dict[str, str] = {
     "sigmet_parse": "weather",
     "flight_category": "weather",
     "kma_grid": "kma",
+    "kma_rules": "kma",
     "marine_grid": "marine",
     "grid_tiles": "marine",
     "traffic_grid": "marine",

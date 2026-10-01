@@ -15,7 +15,8 @@ import pytest
 from fakes import FakeRedis, make_ctx
 
 from wakeline_collector.jobs import kma_radar as mod
-from wakeline_collector.jobs.kma_radar import KmaRadarJob, MissingStreak, _ListIdle
+from wakeline_collector.jobs.kma_radar import KmaRadarJob
+from wakeline_collector.kma_rules import ListIdle, MissingStreak
 
 NOW = datetime(2026, 10, 1, 0, 30, tzinfo=UTC)  # 09:30 KST
 
@@ -105,4 +106,4 @@ def test_list_idle(monkeypatch, case, kw, idle):
     if idle is None:
         assert got is None
     else:
-        assert got == _ListIdle(tm=idle[0], newest=idle[1], days=("20261001",), latest=LATEST, age_s=float(age_s))
+        assert got == ListIdle(tm=idle[0], newest=idle[1], days=("20261001",), latest=LATEST, age_s=float(age_s))

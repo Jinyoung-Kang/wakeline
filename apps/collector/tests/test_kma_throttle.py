@@ -168,7 +168,7 @@ async def test_recovery_backlog_is_paced_by_the_kma_host_bucket(kma):
     """'파일 없음' 연속이 닫힌 다음 주기: 보관 창의 빈 tm 을 MAX_PER_CYCLE 개까지 이어 받는다. 요청 사이 간격은 호스트 버킷(1/rate)보다 짧지 않다.
     속도는 시험 시간을 줄이려고 10 req/s(100 ms)로 둔다 — 운영 값(0.5 req/s = 2 s)과 같은 경로(default_limiter)를 지난다. 버킷은 허가 사이를 벌린다 —
     허가에서 보내기까지의 지연이 요청마다 조금 달라 보낸 시각 사이는 20 % 여유를 둔다(버킷 없을 때는 몇 ms)."""
-    from wakeline_collector.jobs.kma_radar import MAX_PER_CYCLE, MissingStreak
+    from wakeline_collector.kma_rules import MAX_PER_CYCLE, MissingStreak
 
     mod, r, ctx, clock, runs = kma
     rate = 10.0
