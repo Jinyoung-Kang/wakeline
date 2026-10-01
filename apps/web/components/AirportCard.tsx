@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { apiGet } from "@/lib/api";
+import { airportWx } from "@/lib/endpoints/weather";
 import { useUi } from "@/lib/ui-store";
 import { useNow } from "@/lib/clock";
 import { serverNowMs } from "@/lib/store";
@@ -9,7 +9,7 @@ import { CAT_COLORS, catSourceLabel, ceilingLabel, fmtDuration, fmtTempPair, fmt
 import { ErrorNote } from "./logs/ErrorNote";
 import { RAW_BULLETIN_LABEL, RAW_BULLETIN_TITLE } from "@/lib/time";
 import { KstTime } from "./KstTime";
-import { parseWx, WX_UNREADABLE, type AirportWx } from "@/lib/airport-wx";
+import { WX_UNREADABLE, type AirportWx } from "@/lib/airport-wx";
 
 /**
  * 공항 기상 카드(FR-22). 실링은 ceiling_state 로 "실링 없음"(구름 자료 있음·실링층 없음)과 "—"(모름)을 구분한다(GAP-16).
@@ -26,9 +26,8 @@ export function AirportCard({ icao }: { icao: string }) {
   useEffect(() => {
     let live = true;
     // 본문은 parseWx 로 검사한다(web-review B10) — 읽을 수 없으면 그리지 않고 그렇다고 말한다
-    apiGet<unknown>(`/api/v1/airports/${encodeURIComponent(icao)}/wx`).then((body) => {
+    airportWx(icao).then((x) => {
       if (!live) return;
-      const x = parseWx(body);
       if (x) { setWx(x); setFailed(null); } else setFailed({ icao, error: new Error(WX_UNREADABLE) });
     }).catch((e: unknown) => { if (live) setFailed({ icao, error: e }); });
     return () => { live = false; };

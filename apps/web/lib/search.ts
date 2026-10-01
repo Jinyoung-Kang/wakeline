@@ -1,3 +1,4 @@
+import { apiGet } from "./api";
 import { isMmsi, notLiveText, parseCategory, shipCategory, type ShipCategory, type ShipLite, type ShipRow } from "./ships";
 
 /**
@@ -5,6 +6,8 @@ import { isMmsi, notLiveText, parseCategory, shipCategory, type ShipCategory, ty
  * 응답은 두 종류가 섞인다: 현재 스냅샷의 항공기(위치 있음 = 실시간), DB 의 과거 기록(hex·registration·type_code·last_seen, 위치 없음).
  * 없는 값은 null 로 두고 화면은 "—"(채우지 않는다).
  * 선박 검색(계약 v5 §B1 — GET /api/v1/ships/search): 상단 검색이 두 요청을 함께 보내고 결과를 두 묶음으로 보인다(components/AircraftSearch).
+ * 두 검색 요청(searchAircraft · searchShips — web-review §3.1 의 엔드포인트 함수)도 여기 둔다: 상단 검색만 부르는 첫 로드 코드라, lib/endpoints 의 모듈로
+ * 떼면 이 모듈을 두 곳이 부르게 되어 번들러가 한 덩이로 합치지 못하고 첫 화면 JS 가 약 320 B 늘었다(이 모듈의 내보내기 표).
  */
 export interface SearchHit {
   hex: string;
@@ -30,6 +33,13 @@ export function normalizeQuery(raw: string): string | null {
 
 const str = (v: unknown) => (typeof v === "string" && v.trim().length > 0 ? v.trim() : null);
 const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+
+type Opts = { signal?: AbortSignal };
+
+/** 항공기 검색 요청(q 는 normalizeQuery 를 거친 값 — 인코딩해 보낸다). { signal } 은 그대로 넘긴다 */
+export function searchAircraft(q: string, o?: Opts): Promise<SearchHit[]> {
+  return apiGet<unknown>(`/api/v1/aircraft/search?q=${encodeURIComponent(q)}`, o).then((body) => parseSearchResponse(body));
+}
 
 export function parseSearchResponse(body: unknown, max = 20): SearchHit[] {
   const items = body && typeof body === "object" && Array.isArray((body as { items?: unknown }).items) ? (body as { items: unknown[] }).items : [];
@@ -131,6 +141,15 @@ export function parseShipSearchResponse(body: unknown, max = 20): ShipHit[] {
     if (out.length >= max) break;
   }
   return out;
+}
+
+/**
+ * 선박 검색 요청(q 는 normalizeShipQuery 를 거친 값 — 인코딩해 보낸다, 화면 상한 SHIP_SEARCH_LIMIT). dbUnavailable = 선박 DB 없이 실시간 목록에서만 찾았다.
+ * { signal } 은 그대로 넘긴다
+ */
+export function searchShips(q: string, o?: Opts): Promise<{ hits: ShipHit[]; dbUnavailable: boolean }> {
+  return apiGet<unknown>(`/api/v1/ships/search?q=${encodeURIComponent(q)}&limit=${SHIP_SEARCH_LIMIT}`, o)
+    .then((body) => ({ hits: parseShipSearchResponse(body), dbUnavailable: shipSearchDbUnavailable(body) }));
 }
 
 /** 선박 검색이 DB 없이 답했다(api meta.db_unavailable) — 실시간 목록에서만 찾았고 실시간이 아닌 선박·마지막 저장 시각은 빠졌다 */

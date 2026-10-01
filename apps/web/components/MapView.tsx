@@ -11,13 +11,13 @@ import { applyBasemap } from "@/lib/basemap";
 import { aircraftStates, getData, serverNowMs, setData, shipStates, useServerData } from "@/lib/store";
 import { addShipLayers, SHIP_LAYERS, shipCategoryFilter } from "@/lib/ship-layers";
 import {
-  aisCoverageFeatures, appendShipTrack, filterGridCells, gridFeatures, isMmsi, selectedShipFeatures, shipCategory, mergeStatusGaps, shipFeatures, shipTrackFeatures, shipTrackFromRest,
+  aisCoverageFeatures, appendShipTrack, filterGridCells, gridFeatures, isMmsi, selectedShipFeatures, shipCategory, mergeStatusGaps, shipFeatures, shipTrackFeatures,
   shipTrackPointFeatures,
   type ShipTrack,
 } from "@/lib/ships";
 import { useUi } from "@/lib/ui-store";
 import { WakelineWsClient } from "@/lib/ws";
-import { apiGet } from "@/lib/api";
+import { aircraftTrack, shipTrack as fetchShipTrack } from "@/lib/endpoints/tracks";
 import { activeSigmetFeatures } from "@/lib/sigmet";
 import { mapAttributionHtml, styleHasBasemapCredit } from "@/lib/attribution";
 import { mapAttributionControl } from "@/lib/map-attribution";
@@ -29,7 +29,7 @@ import { RECEPTION_FILL_LAYER } from "@/lib/reception-meta";
 import { EtagPoller, POLL_NONE } from "@/lib/etag-poller";
 import { addTrafficGridLayers, TRAFFIC_LAYERS, trafficDrawable, TrafficGridPoller, trafficGridFeatures, trafficGridTip, trafficStaleAt } from "@/lib/traffic-grid";
 import { aircraftTip, airportTip, renderTip, shipGridTip, shipTip, shipTrackPointTip, sigmetTip, type AirportProps, type Tip } from "@/lib/tooltip";
-import { appendTrackPoint, mergeTrack, pointFromState, trackError, trackFeatureCollection, trackFromRest, type TrackPt } from "@/lib/track";
+import { appendTrackPoint, mergeTrack, pointFromState, trackError, trackFeatureCollection, type TrackPt } from "@/lib/track";
 import type { KrRadar, RenderState, SigmetCollection } from "@/lib/types";
 
 const REGION_CENTER: [number, number] = [127.8, 36.5];
@@ -673,9 +673,8 @@ export function MapView({ onFirstLoad }: { onFirstLoad?: () => void }) {
       setData({ shipTrack: { mmsi: selectedShip, loaded: true, error, requestId, gaps: track.gaps.slice(), gapsTruncated: track.gapsTruncated === true, segments: track.segs.length, fromMs: from, hours: shipTrackHours } });
       onReady(map, "ship-track", () => drawShipTrack(map, track));
     };
-    const q = `from=${encodeURIComponent(new Date(from).toISOString())}&to=${encodeURIComponent(new Date(to).toISOString())}`;
-    apiGet<unknown>(`/api/v1/ships/${encodeURIComponent(selectedShip)}/track?${q}`)
-      .then((r) => finish(shipTrackFromRest(r), null))
+    fetchShipTrack(selectedShip, from, to)
+      .then((t) => finish(t, null))
       // 기록이 없거나 DB 장애 → 실시간 관측만으로 잇는다. 요청 id 는 카드의 문구에(계약 v5 §G5)
       .catch((e: unknown) => { const t = trackError(e); finish({ segs: [], gaps: [] }, t.error, t.requestId); });
     return () => { cancelled = true; };
@@ -735,8 +734,8 @@ export function MapView({ onFirstLoad }: { onFirstLoad?: () => void }) {
       track.current = { hex: selectedHex, pts, pending: [], loaded: true };
       onReady(map, "tracks", () => geo(map, "tracks")?.setData(trackFeatureCollection(pts)));
     };
-    apiGet<{ points: { ts?: string | null; lon: number; lat: number; alt_ft?: number | null }[] }>(`/api/v1/aircraft/${encodeURIComponent(selectedHex)}/track`)
-      .then((t) => finish(trackFromRest(t.points)))
+    aircraftTrack(selectedHex)
+      .then((pts) => finish(pts))
       .catch(() => finish([])); // DB 기록이 없거나(전세계 항공기) DB 장애 → 실시간 관측만으로 잇는다
     return () => { cancelled = true; };
   }, [selectedHex]);

@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { apiGet } from "@/lib/api";
+import { sigmetInside } from "@/lib/endpoints/weather";
 import { aircraftStates, useServerData } from "@/lib/store";
 import { useUi } from "@/lib/ui-store";
 import { useServerNow } from "@/lib/clock";
@@ -24,8 +24,8 @@ export function SigmetCard({ id }: { id: string }) {
   const now = useServerNow(30_000);
   useEffect(() => {
     let live = true;
-    apiGet<{ aircraft_inside?: string[] }>(`/api/v1/sigmets/${encodeURIComponent(id)}`)
-      .then((x) => { if (live) setInside({ id, hexes: Array.isArray(x.aircraft_inside) ? x.aircraft_inside : null }); })
+    sigmetInside(id)
+      .then((hexes) => { if (live) setInside({ id, hexes }); })
       .catch(() => { if (live) setInside({ id, hexes: null }); }); // 모름 — 0 대로 단정하지 않는다
     return () => { live = false; };
   }, [id]);

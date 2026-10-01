@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import { apiGet } from "@/lib/api";
+import { aircraftDetail, type AircraftDetail } from "@/lib/endpoints/aircraft";
 import { aircraftStates, useServerData } from "@/lib/store";
 import { useUi } from "@/lib/ui-store";
 import { useElapsedSince, useNow, useServerNow } from "@/lib/clock";
@@ -8,7 +8,7 @@ import { useVisibleInterval } from "@/lib/use-visible-interval";
 import { focusChip } from "@/lib/demand";
 import { isRxFresh } from "@/lib/ws-protocol";
 import { predict, seenAtMs } from "@/lib/interpolate";
-import type { AircraftState, Alert, PredictionReason } from "@/lib/types";
+import type { AircraftState, PredictionReason } from "@/lib/types";
 import { fmtAltGndDual, fmtBool, fmtDuration, fmtGsDual, fmtNum, fmtVrateDual } from "@/lib/format";
 import {
   EARTH_RADIUS_KM, fmtAirline, fmtAirportCodes, fmtAirportPlace, fmtRouteKm, parseRoute, ROUTE_ATTRIBUTION_TAIL, ROUTE_CAVEAT, ROUTE_SOURCE_URL,
@@ -18,18 +18,6 @@ import { EvidenceCard } from "./EvidenceCard";
 import { DemandBadge } from "./MapChips";
 import { RequestIdOf } from "./logs/ErrorNote";
 import { KstTime } from "./KstTime";
-
-interface Detail {
-  hex: string;
-  state: AircraftState | null;
-  static: { registration?: string | null; type_code?: string | null; category?: string | null; first_seen?: string | null; last_seen?: string | null } | null;
-  active_alerts?: Alert[];
-  inside_sigmets?: string[];
-  emergency?: boolean;
-  meta?: { provider?: string | null; fetched_at?: string | null; lag_s?: number | null; stale?: boolean; db_unavailable?: boolean };
-  /** 계약 v4 §A — 검증 전 값(parseRoute) */
-  route?: unknown;
-}
 
 /** 등록 정보(static)·SIGMET 포함 여부 등 REST 상세 갱신 주기. 위치·속도는 WS selected 스트림이 실시간으로 준다. */
 const DETAIL_REFRESH_MS = 30_000;
@@ -162,7 +150,7 @@ export function RouteSection({ route, pos, callsign, pendingForS = null }: { rou
  * 경과·stale·외삽은 서버 기준 시각으로 — 지도(워커)·툴팁과 같은 기준(WS-3 · DH-1). 지상이면 고도 대신 GND(DH-3).
  */
 export function AircraftCard({ hex }: { hex: string }) {
-  const [detail, setDetail] = useState<Detail | null>(null);
+  const [detail, setDetail] = useState<AircraftDetail | null>(null);
   const [error, setError] = useState<{ hex: string; msg: string; error?: unknown } | null>(null);
   const [refresh, setRefresh] = useState(0);
   const select = useUi((s) => s.select);
@@ -177,7 +165,7 @@ export function AircraftCard({ hex }: { hex: string }) {
   useVisibleInterval(() => setRefresh((n) => n + 1), DETAIL_REFRESH_MS);
   useEffect(() => {
     let live = true;
-    apiGet<Detail>(`/api/v1/aircraft/${encodeURIComponent(hex)}`)
+    aircraftDetail(hex)
       .then((x) => { if (live) { setDetail(x); setError(null); } })
       .catch((e: Error) => { if (live) setError({ hex, msg: String(e.message), error: e }); });
     return () => { live = false; };

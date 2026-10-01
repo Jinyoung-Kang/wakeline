@@ -1,13 +1,10 @@
 "use client";
 import { useEffect, useState } from "react";
-import { apiGet } from "@/lib/api";
+import { watchedAirports, type AirportFeature } from "@/lib/endpoints/weather";
 import { useServerNow } from "@/lib/clock";
 import { panIfOutside } from "@/lib/focus";
 import { CAT_COLORS, CAT_UNKNOWN_COLOR, fmtDuration, isMetarStale, metarAgeS } from "@/lib/format";
-import type { AirportProps } from "@/lib/tooltip";
 import { useUi } from "@/lib/ui-store";
-
-type AirportFeature = GeoJSON.Feature<GeoJSON.Point, AirportProps>;
 
 /** 공항 탭(선택 없음): 감시 공항 목록 — 지도 클릭 없이 키보드로 고른다(R-40). 카테고리는 글자로도 쓴다(색만으로 구분하지 않음). */
 export function AirportList() {
@@ -16,8 +13,8 @@ export function AirportList() {
   const now = useServerNow(60_000);
   useEffect(() => {
     let live = true;
-    apiGet<GeoJSON.FeatureCollection<GeoJSON.Point, AirportProps>>("/api/v1/airports?watched=true")
-      .then((fc) => { if (!live) return; setFeatures(Array.isArray(fc.features) ? fc.features.filter((f) => f.properties && typeof f.properties.icao === "string") : []); setState("done"); })
+    watchedAirports()
+      .then((list) => { if (!live) return; setFeatures(list); setState("done"); })
       .catch(() => { if (live) setState("error"); });
     return () => { live = false; };
   }, []);

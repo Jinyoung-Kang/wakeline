@@ -1,18 +1,17 @@
 "use client";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
-import { ApiError, apiGet } from "@/lib/api";
+import { ApiError } from "@/lib/api";
+import { aircraftDetail } from "@/lib/endpoints/aircraft";
 import { useServerNow } from "@/lib/clock";
 import { fmtKst, fmtKstTitle } from "@/lib/time";
 import { saveLayers } from "@/lib/prefs";
 import {
-  isTypingTarget, moveActive, normalizeQuery, normalizeShipQuery, parseSearchResponse, parseShipSearchResponse, SHIP_SEARCH_DB_NOTE, SHIP_SEARCH_LIMIT, shipChoice, shipRowFromHit,
-  shipSearchDbUnavailable,
+  isTypingTarget, moveActive, normalizeQuery, normalizeShipQuery, searchAircraft, searchShips, SHIP_SEARCH_DB_NOTE, shipChoice, shipRowFromHit,
   type SearchHit, type ShipHit,
 } from "@/lib/search";
 import { sortShipRows, type ShipSort, type ShipSortKey } from "@/lib/ships";
 import { aircraftStates, shipStates } from "@/lib/store";
 import { useUi } from "@/lib/ui-store";
-import type { AircraftState } from "@/lib/types";
 import { ShipTablePart } from "./DashboardParts";
 import { AltStack } from "./UnitStack";
 import { RequestIdOf } from "./logs/ErrorNote";
@@ -90,16 +89,15 @@ export function AircraftSearch() {
       setActive(-1);
       if (qa) {
         setAircraft((g) => ({ ...g, state: "loading" }));
-        apiGet<unknown>(`/api/v1/aircraft/search?q=${encodeURIComponent(qa)}`, { signal: ctl.signal })
-          .then((body) => { const h = parseSearchResponse(body); setAircraft({ hits: h, state: "done", msg: h.length ? `${h.length}건` : "일치하는 항공기 없음" }); })
+        searchAircraft(qa, { signal: ctl.signal })
+          .then((h) => { setAircraft({ hits: h, state: "done", msg: h.length ? `${h.length}건` : "일치하는 항공기 없음" }); })
           .catch((e: unknown) => { if (!ctl.signal.aborted) setAircraft({ hits: [], state: "error", msg: failText("항공기", e), error: e }); });
       } else setAircraft(IDLE);
       if (qs) {
         setShips((g) => ({ ...g, state: "loading" }));
-        apiGet<unknown>(`/api/v1/ships/search?q=${encodeURIComponent(qs)}&limit=${SHIP_SEARCH_LIMIT}`, { signal: ctl.signal })
-          .then((body) => {
-            const h = parseShipSearchResponse(body);
-            setShips({ hits: h, state: "done", msg: h.length ? `${h.length}건` : "일치하는 선박 없음", note: shipSearchDbUnavailable(body) ? SHIP_SEARCH_DB_NOTE : undefined });
+        searchShips(qs, { signal: ctl.signal })
+          .then(({ hits: h, dbUnavailable }) => {
+            setShips({ hits: h, state: "done", msg: h.length ? `${h.length}건` : "일치하는 선박 없음", note: dbUnavailable ? SHIP_SEARCH_DB_NOTE : undefined });
           })
           .catch((e: unknown) => { if (!ctl.signal.aborted) setShips({ hits: [], state: "error", msg: failText("선박", e), error: e }); });
       } else setShips(IDLE);
@@ -117,7 +115,7 @@ export function AircraftSearch() {
     if (!pos) { const s = aircraftStates.get(h.hex); if (s) pos = [s.lon, s.lat]; }
     if (!pos) {
       try {
-        const d = await apiGet<{ state: AircraftState | null }>(`/api/v1/aircraft/${encodeURIComponent(h.hex)}`);
+        const d = await aircraftDetail(h.hex);
         if (d.state && Number.isFinite(d.state.lat) && Number.isFinite(d.state.lon)) pos = [d.state.lon, d.state.lat];
       } catch { /* 위치 모름 */ }
       if (my !== choice.current) return; // 기다리는 사이 다른 것을 골랐다

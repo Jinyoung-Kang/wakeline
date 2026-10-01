@@ -1,13 +1,13 @@
 "use client";
 import { use, useEffect, useState } from "react";
-import { apiGet } from "@/lib/api";
+import { airportWx } from "@/lib/endpoints/weather";
 import { useNow } from "@/lib/clock";
 import { serverNowMs } from "@/lib/store";
 import { airportErrorText, CAT_COLORS, catSourceLabel, ceilingLabel, fmtDuration, fmtWind, isMetarStale, metarAgeS } from "@/lib/format";
 import { RequestIdOf } from "@/components/logs/ErrorNote";
 import { KstTime } from "@/components/KstTime";
 import { RAW_BULLETIN_LABEL, RAW_BULLETIN_TITLE } from "@/lib/time";
-import { parseWx, WX_UNREADABLE, type AirportWx } from "@/lib/airport-wx";
+import { WX_UNREADABLE, type AirportWx } from "@/lib/airport-wx";
 
 /**
  * 공항 기상 이력(FR-22). 시각은 날짜 포함 KST 만(계약 v5 §G20, lib/time — title 에 연도 · ms 까지의 KST). METAR · TAF 원문은 발표된 그대로(data-raw — 안의 "…Z" 는 발표 형식).
@@ -24,10 +24,9 @@ export default function AirportPage({ params }: { params: Promise<{ icao: string
   // 성공한 답은 앞선 실패를 지운다 · 떠난(정리된) 요청의 답은 쓰지 않는다 — 개발 모드는 조회를 두 번 해 첫 실패와 이력이 함께 보였다(web-review B17)
   useEffect(() => {
     let live = true;
-    apiGet<unknown>(`/api/v1/airports/${encodeURIComponent(code)}/wx`)
-      .then((body) => {
+    airportWx(code)
+      .then((x) => {
         if (!live) return;
-        const x = parseWx(body);
         if (x) { setWx(x); setErr(null); } else setErr({ text: `${WX_UNREADABLE}.`, error: null });
       })
       .catch((e: unknown) => { if (live) setErr({ text: airportErrorText(e, code), error: e }); });

@@ -1,11 +1,11 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { apiGet } from "@/lib/api";
+import { shipDetail } from "@/lib/endpoints/ship-detail";
 import { useServerNow } from "@/lib/clock";
 import { fmtKstTitle, fmtRangeTitle } from "@/lib/time";
 import { ageS, fmtDuration, fmtSogDual } from "@/lib/format";
 import { notLiveText, GAP_BREAK_MIN_MS, isMmsi, navStatusLabel, newerLite, positionBadge, ROT_LABEL, SHIP_CATEGORY_CODES, SHIP_CATEGORIES, SHIP_STALE_S, SHIP_TRACK_HOURS, shipAgeS, shipCategory, shipRotation, shipsChip, SHIPS_RULE_TEXT, sortShipRows, STORED_STATIC_LABEL, STORED_STATIC_TIME_LABEL, type ShipCategory, type ShipSort, type ShipSortKey, type ShipState, type ShipStatic } from "@/lib/ships";
-import { fmtDraught, fmtShipEta, LAST_SEEN_TITLE, fmtShipSize, fmtShipType, gapDurationS, gapSummary, imoField, parseShipDetail, pickDestinationInfo, positionSourceLabel, SHIP_SORT_DEFAULT, SHIP_TRACK_WINDOW_MS, shipDestinationLines, shipList, shipOriginText, shipRowFromLite, staticProvenance, storedPortCallsNote, STORED_STATIC_FIELDS_TEXT, STORED_STATIC_PORT_CALLS_TEXT, STORED_STATIC_PORT_CALLS_UNREAD_TEXT, STORED_STATIC_TITLE, STORED_STATIC_UNAVAILABLE_TEXT, type ShipDetail } from "@/lib/ship-card";
+import { fmtDraught, fmtShipEta, LAST_SEEN_TITLE, fmtShipSize, fmtShipType, gapDurationS, gapSummary, imoField, pickDestinationInfo, positionSourceLabel, SHIP_SORT_DEFAULT, SHIP_TRACK_WINDOW_MS, shipDestinationLines, shipList, shipOriginText, shipRowFromLite, staticProvenance, storedPortCallsNote, STORED_STATIC_FIELDS_TEXT, STORED_STATIC_PORT_CALLS_TEXT, STORED_STATIC_PORT_CALLS_UNREAD_TEXT, STORED_STATIC_TITLE, STORED_STATIC_UNAVAILABLE_TEXT, type ShipDetail } from "@/lib/ship-card";
 import { shipStates, useServerData } from "@/lib/store";
 import { saveLayers } from "@/lib/prefs";
 import { panIfOutside, shipPos } from "@/lib/focus";
@@ -33,8 +33,8 @@ export function ShipCard({ mmsi }: { mmsi: string }) {
     const have = loaded.current;
     if (gone && have?.mmsi === mmsi && have.state == null) return;
     let alive = true;
-    apiGet<unknown>(`/api/v1/ships/${encodeURIComponent(mmsi)}`)
-      .then((r) => { if (alive) { const p = parseShipDetail(mmsi, r); loaded.current = p; setDetail(p); setError(null); } })
+    shipDetail(mmsi)
+      .then((p) => { if (alive) { loaded.current = p; setDetail(p); setError(null); } })
       .catch((e: unknown) => { if (alive) setError({ mmsi, error: e }); });
     return () => { alive = false; };
   }, [mmsi, gone]);
