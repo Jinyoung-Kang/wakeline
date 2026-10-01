@@ -32,11 +32,12 @@ export function ShipCard({ mmsi }: { mmsi: string }) {
   useEffect(() => {
     const have = loaded.current;
     if (gone && have?.mmsi === mmsi && have.state == null) return;
-    let alive = true;
-    shipDetail(mmsi)
-      .then((p) => { if (alive) { loaded.current = p; setDetail(p); setError(null); } })
-      .catch((e: unknown) => { if (alive) setError({ mmsi, error: e }); });
-    return () => { alive = false; };
+    // 다른 선박 · 다시 받기 · 카드를 닫으면 떠 있는 요청을 끊고 그 답을 쓰지 않는다(web-review §3.2 — 이 규칙 있는 효과는 그대로 두고 끊기만 더한다)
+    const ctl = new AbortController();
+    shipDetail(mmsi, { signal: ctl.signal })
+      .then((p) => { if (!ctl.signal.aborted) { loaded.current = p; setDetail(p); setError(null); } })
+      .catch((e: unknown) => { if (!ctl.signal.aborted) setError({ mmsi, error: e }); });
+    return () => ctl.abort();
   }, [mmsi, gone]);
   const d = detail && detail.mmsi === mmsi ? detail : null;
   const err = error && error.mmsi === mmsi ? error.error : null;
