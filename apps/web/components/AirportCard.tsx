@@ -28,16 +28,17 @@ interface Wx {
  */
 export function AirportCard({ icao }: { icao: string }) {
   const [wx, setWx] = useState<Wx | null>(null);
-  /** 마지막 오류 — ApiError 면 요청 id 까지(계약 v5 §C8) */
-  const [err, setErr] = useState<unknown>(null);
+  /** 마지막 오류 — ApiError 면 요청 id 까지(계약 v5 §C8). wx 처럼 icao 로 묶는다: 다음 공항을 불러오는 동안 앞 공항의 오류 · 요청 id 를 보이지 않게(web-review B5) */
+  const [failed, setFailed] = useState<{ icao: string; error: unknown } | null>(null);
   const selectAirport = useUi((s) => s.selectAirport);
   const now = useNow(30_000);
   useEffect(() => {
     let live = true;
-    apiGet<Wx>(`/api/v1/airports/${encodeURIComponent(icao)}/wx`).then((x) => { if (live) { setWx(x); setErr(null); } }).catch((e: unknown) => { if (live) setErr(e); });
+    apiGet<Wx>(`/api/v1/airports/${encodeURIComponent(icao)}/wx`).then((x) => { if (live) { setWx(x); setFailed(null); } }).catch((e: unknown) => { if (live) setFailed({ icao, error: e }); });
     return () => { live = false; };
   }, [icao]);
   const w = wx && wx.airport.icao === icao ? wx : null;
+  const err = failed && failed.icao === icao ? failed.error : null;
   const m = w?.latest;
   const nowMs = now ? serverNowMs(now) : 0;
   const age = m && nowMs ? metarAgeS(m, nowMs) : null;
