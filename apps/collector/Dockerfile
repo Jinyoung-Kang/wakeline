@@ -14,7 +14,10 @@ RUN --mount=type=cache,target=/root/.cache/uv uv sync --locked --no-dev
 FROM python:3.13-slim@sha256:7c61056e61ac89e852de05f3dc6fa51a6dd2181797bceed46aa725dd7cb2cd3b
 # 앱은 .venv(빌드 단계에서 uv 가 만든다)만 쓴다. 기반 이미지의 시스템 pip 는 지운다 — 쓰이지 않으면서
 # pip 가 품은 패키지(msgpack·setuptools)가 이미지의 고칠 수 있는 HIGH 취약점 전부였다(R-29).
+# apt-get upgrade: 기반 이미지(다이제스트 고정)가 나온 뒤 고쳐진 Debian 보안 갱신까지 — db 이미지와 같은 방식, Trivy 게이트가 결과를 본다
+# (2026-10-01 최종 검증: libpcre2 등 고칠 수 있는 HIGH 7 — 같은 기반의 새 다이제스트는 아직 없었다).
 RUN python -m pip uninstall -y pip \
+ && apt-get update && apt-get upgrade -y --no-install-recommends && rm -rf /var/lib/apt/lists/* \
  && groupadd -r app && useradd -r -g app -d /app app && mkdir -p /data/raw && chown app:app /data/raw
 WORKDIR /app
 COPY --from=build --chown=app:app /app /app

@@ -80,6 +80,17 @@ class RuntimeToolsTest(unittest.TestCase):
         self.assertLess(runtime.index("pip uninstall"), runtime.index("USER app"), "root 로 지운 뒤 비root 로 내려간다")
 
 
+    def test_debian_and_ubuntu_runtimes_take_security_updates_at_build(self):
+        """2026-10-01 최종 검증: 다이제스트로 고정한 기반 이미지(R-85)가 나온 뒤 고쳐진 OS 보안 갱신(openssl · pcre2 — 고칠 수 있는 HIGH, 같은 기반의 새
+        다이제스트는 아직 없었다)이 api · collector 이미지에 남아 Trivy 게이트가 실패했다. db 와 같이 실행 단계에서 apt-get upgrade 하고 목록은 지운다."""
+        for name, path in (("api", DOCKERFILES["api"]), ("collector", DOCKERFILES["collector"]), ("db", ROOT / "infra" / "db" / "Dockerfile")):
+            runtime = stages(path.read_text())[-1]
+            joined = " ".join(re.findall(r"(?m)^RUN\s+(.*)$", re.sub(r"\\\n", " ", runtime)))
+            with self.subTest(image=name):
+                self.assertRegex(joined, r"apt-get update[^\n]*apt-get upgrade -y")
+                self.assertIn("rm -rf /var/lib/apt/lists/*", joined)
+
+
 PINNED = re.compile(r"^[\w./-]+:[\w.-]+@sha256:[0-9a-f]{64}$")
 
 
