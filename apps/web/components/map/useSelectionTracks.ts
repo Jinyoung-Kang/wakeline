@@ -7,15 +7,11 @@ import { onReady } from "@/lib/map-ready";
 import { aircraftTrack, shipTrack as fetchShipTrack } from "@/lib/endpoints/tracks";
 import { appendShipTrack, mergeStatusGaps, selectedShipPos, shipTrackFeatures, shipTrackPointFeatures, type ShipTrack } from "@/lib/ships";
 import { appendTrackPoint, mergeTrack, pointFromState, trackError, trackFeatureCollection, type TrackPt } from "@/lib/track";
-import type { WakelineWsClient } from "@/lib/ws";
+import type { FeedRef } from "./useLiveFeed";
 
 const EMPTY_FC: GeoJSON.FeatureCollection = { type: "FeatureCollection", features: [] };
 /** REST 항적을 받기 전에 온 실시간 관측 보류 상한 */
 const SHIP_PENDING_MAX = 500;
-
-/** 지도마다의 실시간 피드(WS 클라이언트 · 보간 워커 · 예측선 갱신) — 지도가 바뀌면 새것이다. 없으면(지도 전 · 떠난 뒤) null */
-export interface LiveFeed { client: WakelineWsClient; worker: Worker; refreshPrediction: () => void }
-export type FeedRef = { readonly current: LiveFeed | null };
 
 type LiveTrackPt = Parameters<typeof appendShipTrack>[1];
 type ShipTrackRef = { mmsi: string | null; track: ShipTrack; pending: LiveTrackPt[]; loaded: boolean; anchor: number | null; sinceMs: number };

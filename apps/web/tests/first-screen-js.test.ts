@@ -122,7 +122,7 @@ describe("first-screen files from the build output", () => {
     expect(() => firstScreenFiles(fakeBuild({ workers: false }))).toThrow(/interpolate\.worker\.js/);
   });
   it("the public worker list is exactly what the map component starts (new Worker)", () => {
-    const src = readFileSync(join(ROOT, "components/MapView.tsx"), "utf8");
+    const src = readFileSync(join(ROOT, "components/map/useLiveFeed.ts"), "utf8");
     const started = [...src.matchAll(/new Worker\(\s*["'`]\/([^"'`]+)["'`]/g)].map((m) => m[1]).sort();
     expect(started).toEqual([...FIRST_SCREEN_PUBLIC_SCRIPTS].sort());
   });
