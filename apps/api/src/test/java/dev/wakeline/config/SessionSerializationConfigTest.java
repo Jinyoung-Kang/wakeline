@@ -69,4 +69,41 @@ class SessionSerializationConfigTest {
         assertThat(ser.deserialize(SessionSerializationConfig.serialize(deepFinal))).isNull();
         assertThatThrownBy(() -> SessionSerializationConfig.serialize(new Object())).isInstanceOf(SerializationException.class); // 직렬화 불가
     }
+
+    /**
+     * 특성 시험(리뷰 cto-2026-10 api §2.7-1 · §5.4-3): 허용 목록은 클래스 이름 글자다. 세션 클래스를 옮기거나 이름을 바꾸면 목록이 그 클래스를 더는 허용하지
+     * 않아 배포 때 모든 운영 세션이 읽히지 않는다(다시 로그인). 목록에 적힌 클래스는 모두 지금 있는 직렬화 가능한 클래스여야 한다.
+     */
+    @Test
+    void everyClassNamedInTheAllowListExistsAndIsSerializable() throws ClassNotFoundException {
+        List<String> names = new ArrayList<>();
+        for (String e : SessionSerializationConfig.FILTER_PATTERN.split(";"))
+            if (!e.contains("=") && !e.endsWith("*") && !e.startsWith("!")) names.add(e);
+        assertThat(names).contains("dev.wakeline.ops.OpsAuthentication", "dev.wakeline.ops.OpsUserService$User");
+        for (String n : names) {
+            Class<?> c = Class.forName(n);
+            if (c != Object.class) assertThat(Serializable.class.isAssignableFrom(c)).as(n).isTrue();
+        }
+    }
+
+    /**
+     * 특성 시험: 2026-10-01 의 코드가 직렬화한 운영 세션의 보안 컨텍스트(운영자 7 · admin · ROLE_OPS — 리소스 파일)가 지금도 읽힌다. 세션 클래스를 옮기거나 바꾸면
+     * (serialVersionUID 를 정하지 않은 OpsAuthentication 은 필드 · 메서드만 바뀌어도) 배포 때 로그인 중인 운영자가 모두 로그아웃된다 — 여기서 먼저 알린다.
+     * Spring Security 의 판을 올리면(SecurityContextImpl 등의 serialVersionUID 가 판마다 바뀐다) 실제로도 세션이 끊기므로 이 시험도 실패한다 — 그렇게
+     * 알고 올리는 것이면 리소스를 새로 만든다: Base64(SessionSerializationConfig.serialize(new SecurityContextImpl(같은 OpsAuthentication))).
+     */
+    @Test
+    void aSessionWrittenBeforeTheRestructureStillDeserializes() throws Exception {
+        byte[] golden;
+        try (var in = getClass().getResourceAsStream("ops-security-context.v1.b64")) {
+            assertThat(in).as("golden session blob").isNotNull();
+            golden = java.util.Base64.getMimeDecoder().decode(in.readAllBytes());
+        }
+        Object back = ser.deserialize(golden);
+        assertThat(back).isInstanceOf(SecurityContextImpl.class);
+        var a = (OpsAuthentication) ((SecurityContextImpl) back).getAuthentication();
+        assertThat(a.user()).isEqualTo(new OpsUserService.User(7, "admin", "OPS"));
+        assertThat(a.isAuthenticated()).isTrue();
+        assertThat(a.getAuthorities()).extracting(Object::toString).containsExactly("ROLE_OPS");
+    }
 }
