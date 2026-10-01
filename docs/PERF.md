@@ -357,6 +357,36 @@ CPU 와 수집기 RSS 최고점(컨테이너 512 MiB)이 준다.
 focus 는 한 번에 50대 이하, hot 셀은 관심 지역 전체 고정본(127대)보다 작다. 덧붙여 hot 셀은 셀마다 태스크라 스레드로 옮기면 공유 게이트(hot_gate)를
 잠가야 한다. 운영에서 heartbeat loop_lag_max_s 가 20 ms 를 자주 넘으면 다시 본다(그때는 게이트 정규화를 덜 쓰는 쪽 — 리뷰 §4 P1 의 'dict 를 바로 만든다').
 
+## 13. api — Phase 4(2026-10-01, CTO 리뷰 api-review §3 B9 · §4 · PLAN Phase 4)
+
+이 기계(M1 · JDK 25 · Docker Desktop · 스택 없이 — Testcontainers 로 운영 DB 이미지 `wakeline-db:local`, 필요하면 `redis:8-alpine`). 측정 시험은
+`@Tag("perf")` 이라 평소의 `./gradlew test` · 커버리지에는 들지 않고 `./gradlew --offline perfTest --tests …` 로만 돈다(이 작업은 JaCoCo 계측을 끈다).
+결과 원문은 `apps/api/build/perf/*.txt`.
+
+**D6 — 공유 풀 굶주림(api-review B9 · PLAN Phase 4-7)** — `platform/data/SharedPoolStarvationPerfTest`: 운영과 같은 공유 풀(Hikari 12 · 연결 대기 5 s ·
+statement_timeout 30 s · lock_timeout 5 s)에 운영 클래스 그대로의 기록기 셋(TrackWriter · ShipWriter · OrderedWriter — 운영 재시도 간격)과 운영 모양의
+입력(관심 지역 200대 / 10 s · 전세계 10,000대 / 120 s · 선박 위치 400건 / 10 s · 순서 큐 작업 1건 / 5 s — §1 · §3 의 실측 크기)을 돌리면서, 60 s 동안
+공개 조회(`Sql.publicRead` 로 `pg_sleep(10)` — 3 s 상한에 끊긴다: 느린 DB 의 모형, 요청마다 가상 스레드 하나)를 초당 N 건 넣었다. 3 s 문장이면 풀 12개가
+초당 4건까지 받는다. 기록기 연결 대기는 기록기 DataSource 를 감싼 계측(같은 풀)으로 쟀다. 계획(Phase 4-7)은 격리 스택의 k6 를 적었지만 운영 스택을 건드리지
+않으려 같은 상황을 저장소 안의 DB 시험으로 만들었다.
+
+| 공개 조회 / s | 기록기 연결 대기 p50 / p95 / 최대 | 기록기 연결 대기 초과(항적 · 선박 · 순서) | 폭주 60 s 동안 쓴 항적 행 · 선박 행 · 순서 작업(넣은 것) | 폭주 뒤 따라잡기 | 공개 조회: 3 s 취소 · 5 s 대기 초과(503) · p95 |
+|---|---|---|---|---|---|
+| 0 | 1 / 3 / 3 ms | 0 · 0 · 0 | 11,200 · 2,400 · 12(모두) | 0 s | — |
+| 2 | 0 / 7 / 10 ms | 0 · 0 · 0 | 모두 | 0 s | 121 · 0 · 3.0 s |
+| 4 | 250 / 425 / 467 ms | 0 · 0 · 0 | 11,200 · 2,400 · 11 | 0.4 s | 241 · 0 · 3.3 s |
+| 8 | 1 / **5,006** / 5,008 ms | 5 · 5 · 6 | **200 · 400 · 4**(11,200 · 2,400 · 12) | 35.6 s | 264 · 217 · 8.0 s |
+| 16 | 0 / **5,002** / 5,002 ms | 5 · 5 · 6 | **200 · 400 · 1** | 36.2 s | 264 · 697 · 8.0 s |
+
+- 같은 조건의 첫 실행(표 형식을 다듬기 전): 8건 / s 에서 기록기 연결 대기 초과 15번 · 따라잡기 6.6 s, 16건 / s 에서 16번 · 35.5 s, 4건 / s 이하는 0번.
+- 공개 조회가 풀이 받는 것보다 빨리 들어오면(초당 8건 — 재생 요청 하나가 문장 3–4개라 사용자 몇 명의 재생 스크럽이면 된다) 기록기는 연결 대기 5 s 를
+  넘기고 물러나기를 되풀이해 재시도 간격이 30 s 까지 커진다 — 60 s 동안 항적 행 2 %, 선박 행 17 %, 순서 큐 작업 0–4건만 쓰였고 폭주가 끝난 뒤에도
+  약 36 s(물러난 간격) 동안 쓰지 못했다. 그동안 공개 조회도 3 s 상한이 아니라 연결 대기 5 s + 문장 3 s = 8 s 뒤에 503 이 됐다.
+- 폭주가 길면 행을 버린다 — 같은 시험을 초당 16건 · 9분(`-Dwakeline.perf.pool.rates=16 -Dwakeline.perf.pool.storm-s=540`)으로: 기록기 연결 대기 초과
+  84번, 9분 동안 쓴 것 항적 8,400 / 60,800행 · 선박 400 / 21,600행 · 순서 작업 6 / 108건, 항적 큐가 상한 50,000 에 닿아 **항적 1,000행을 버렸다**
+  (result=dropped — 선박 큐 22,000 · 순서 큐 105 는 상한 아래). 공개 조회는 3 s 취소 2,172 · 5 s 대기 초과 6,469(p95 7.9 s).
+- **확인됨** — 다음 커밋에서 공개 조회의 동시 수를 제한한다(격벽).
+
 ## 재현
 ```bash
 make bench SHIPS=1               # k6 REST + WS(선박 포함), api 층 직접
@@ -371,4 +401,5 @@ bash tools/chaos.sh              # 장애 주입(개발 스택을 실제로 죽�
 (cd apps/collector && uv run --frozen python tests/perf/loop_lag_sampling.py)      # §11 루프 지연 표본 간격의 비용 · 잡는 힘(약 13분)
 (cd apps/collector && uv run --frozen python tests/perf/kma_render.py)             # §11 기상청 격자 해석 · PNG 시간 · 최고 메모리
 (cd apps/collector && uv run --frozen python tests/perf/demand_on_loop.py)         # §11 수요 추적의 루프 위 정규화(루프 위 · 스레드)
+(cd apps/api && ./gradlew --offline perfTest --tests 'dev.wakeline.platform.data.SharedPoolStarvationPerfTest')   # §13 D6 공유 풀 굶주림(약 10분 · Docker)
 ```

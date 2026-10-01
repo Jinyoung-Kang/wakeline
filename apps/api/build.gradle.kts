@@ -90,6 +90,8 @@ tasks.withType<Test>().configureEach {
 }
 
 tasks.test {
+    // 성능 측정(@Tag("perf") — docs/PERF.md §13)은 평소 시험에서 빼고 perfTest 로만 돈다
+    useJUnitPlatform { excludeTags("perf") }
     // -PupdateOpenApi: OpenApiSnapshotIT 가 비교 대신 스냅샷을 다시 쓴다
     systemProperty("wakeline.openapi.update", providers.gradleProperty("updateOpenApi").map { it != "false" }.getOrElse(false).toString())
     // -PupdateWsSamples: WsSchemaContractTest 가 비교 대신 apps/web/tests/fixtures/ws-samples.v1.json 을 다시 쓴다(make ws-samples)
@@ -106,6 +108,21 @@ tasks.register<Test>("updateOpenApi") {
     filter { includeTestsMatching("dev.wakeline.it.OpenApiSnapshotIT") }
     systemProperty("wakeline.openapi.update", "true")
     outputs.upToDateWhen { false }
+}
+
+// 성능 측정(docs/PERF.md §13): @Tag("perf") 시험만 돈다 — 평소 test · 커버리지에는 들지 않는다. JaCoCo 계측은 끈다(잰 값을 부풀리지 않게).
+// 예: ./gradlew --offline perfTest --tests 'dev.wakeline.platform.data.SharedPoolStarvationPerfTest'
+tasks.register<Test>("perfTest") {
+    description = "Runs the @Tag(\"perf\") measurements (docs/PERF.md §13) — not part of test or coverage."
+    group = "verification"
+    testClassesDirs = sourceSets.test.get().output.classesDirs
+    classpath = sourceSets.test.get().runtimeClasspath
+    useJUnitPlatform { includeTags("perf") }
+    extensions.configure<JacocoTaskExtension> { isEnabled = false }
+    outputs.upToDateWhen { false }
+    testLogging { showStandardStreams = true }
+    // 측정의 선택값(-Dwakeline.perf.*=…)을 시험 JVM 으로 넘긴다
+    System.getProperties().stringPropertyNames().filter { it.startsWith("wakeline.perf.") }.forEach { systemProperty(it, System.getProperty(it)) }
 }
 
 // 커버리지(NFR-14): CI·make test-api 가 jacocoTestReport·jacocoTestCoverageVerification 을 부른다. Java 25 클래스 파일은 JaCoCo 0.8.14 이상.
