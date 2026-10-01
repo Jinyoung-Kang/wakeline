@@ -1,7 +1,5 @@
-package dev.wakeline.config;
+package dev.wakeline.ops;
 
-import dev.wakeline.ops.OpsAuthentication;
-import dev.wakeline.ops.OpsUserService;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.serializer.RedisSerializer;
 import org.springframework.data.redis.serializer.SerializationException;

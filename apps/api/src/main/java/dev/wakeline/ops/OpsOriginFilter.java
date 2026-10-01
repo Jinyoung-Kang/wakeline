@@ -1,4 +1,4 @@
-package dev.wakeline.config;
+package dev.wakeline.ops;
 
 import dev.wakeline.platform.web.ApiPaths;
 import dev.wakeline.platform.web.ProblemJson;

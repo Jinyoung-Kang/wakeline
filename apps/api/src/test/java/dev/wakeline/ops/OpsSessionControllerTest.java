@@ -132,9 +132,9 @@ class OpsSessionControllerTest {
                 .andExpect(status().isOk()).andReturn();
         assertThat(audited).containsExactly("LOGIN:admin");
         assertThat(r.getRequest().getSession(false)).isNotNull();
-        assertThat(r.getRequest().getSession(false).getAttribute(dev.wakeline.config.OpsSessionLifetimeFilter.USER_ID)).isEqualTo(7);
+        assertThat(r.getRequest().getSession(false).getAttribute(dev.wakeline.ops.OpsSessionLifetimeFilter.USER_ID)).isEqualTo(7);
         // R-95 후속: 세션은 로그인 때 확인한 자격 표식에 묶인다
-        assertThat(r.getRequest().getSession(false).getAttribute(dev.wakeline.config.OpsSessionLifetimeFilter.CREDENTIAL)).isEqualTo("tag-7");
+        assertThat(r.getRequest().getSession(false).getAttribute(dev.wakeline.ops.OpsSessionLifetimeFilter.CREDENTIAL)).isEqualTo("tag-7");
         // R-95: 최종 세션 id(교체 뒤)를 사용자 목록에 올린다
         assertThat(registered).containsExactly("7:" + r.getRequest().getSession(false).getId());
     }

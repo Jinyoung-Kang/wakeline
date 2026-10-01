@@ -1,4 +1,4 @@
-package dev.wakeline.config;
+package dev.wakeline.ops;
 
 import dev.wakeline.platform.config.AppProperties;
 import dev.wakeline.platform.config.AppPropertiesTest;

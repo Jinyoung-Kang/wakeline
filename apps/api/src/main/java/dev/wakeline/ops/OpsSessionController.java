@@ -2,7 +2,6 @@ package dev.wakeline.ops;
 
 import dev.wakeline.platform.config.AppProperties;
 import dev.wakeline.platform.web.ClientIp;
-import dev.wakeline.config.OpsSessionLifetimeFilter;
 import dev.wakeline.platform.web.Problem;
 import dev.wakeline.platform.web.RateLimiter;
 import io.micrometer.core.instrument.Counter;
