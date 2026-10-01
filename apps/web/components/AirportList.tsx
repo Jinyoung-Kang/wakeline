@@ -1,6 +1,6 @@
 "use client";
-import { useEffect, useState } from "react";
 import { watchedAirports, type AirportFeature } from "@/lib/endpoints/weather";
+import { useApiResource } from "@/lib/use-api-resource";
 import { useServerNow } from "@/lib/clock";
 import { panIfOutside } from "@/lib/focus";
 import { airportListRows } from "@/lib/airport-list";
@@ -8,17 +8,11 @@ import { useUi } from "@/lib/ui-store";
 
 /** 공항 탭(선택 없음): 감시 공항 목록 — 지도 클릭 없이 키보드로 고른다(R-40). 카테고리는 글자로도 쓴다(색만으로 구분하지 않음). */
 export function AirportList() {
-  const [state, setState] = useState<"loading" | "error" | "done">("loading");
-  const [features, setFeatures] = useState<AirportFeature[]>([]);
+  // 탭을 열 때 한 번(lib/use-api-resource — 탭을 닫으면 떠 있는 요청을 끊는다)
+  const res = useApiResource("watched", (signal) => watchedAirports({ signal }));
   const now = useServerNow(60_000);
-  useEffect(() => {
-    let live = true;
-    watchedAirports()
-      .then((list) => { if (!live) return; setFeatures(list); setState("done"); })
-      .catch(() => { if (live) setState("error"); });
-    return () => { live = false; };
-  }, []);
-  return <AirportListView state={state} features={features} now={now} />;
+  const state = res.status === "loaded" ? "done" : res.status === "failed" ? "error" : "loading";
+  return <AirportListView state={state} features={res.data ?? []} now={now} />;
 }
 
 /** 표시 부분(목록을 인자로 — 서버 렌더 시험용) */
