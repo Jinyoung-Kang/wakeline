@@ -1051,8 +1051,8 @@
 | 언어 간 계약 | tools/contract_check.py | PASSED — 새 §8 영수증 표시 상한(수집기 상수로 다시 셈) 포함 |
 | REST 계약 | tools/rest_contract_check.py | 36종 PASSED |
 | 인프라 정책 | infra/tests(unittest) | 129 |
-| 버리는 컨테이너 시험 | edge · Redis ACL · db 권한 · 백업·복원 · 비밀번호 교체 · 이전 → 새 db 이미지 교체 | 35 · 297 · 36 · 48 · 27 · 11 = 454 — Redis ACL 만 이번에 다시 돌림(297, 타일 해시 +6), 나머지는 2026-09-30 판의 값(그 인프라는 바뀌지 않았다) |
+| 버리는 컨테이너 시험 | edge · Redis ACL · db 권한 · 백업·복원 · 비밀번호 교체 · 이전 → 새 db 이미지 교체 | 35 · 297 · 36 · 48 · 27 · 11 = 454 — `make infra-docker-test` 모두 통과(2026-10-01 09:3x KST, Redis ACL 타일 해시 +6) |
 | E2E | Playwright(격리된 fixture 스택 8701, 작업자 1명) | 43 통과(+2 — `ops-screens` 드릴 · `replay-503`. 처음 통합 판은 `replay-503` 1건 실패 → 재생 알림을 지도 위로(#92) 뒤 43 통과, `replay-503` · `replay-layout` 3번씩 되풀이 통과) |
-| 첫 화면 JS 예산 | `npm run check:first-js -- --in-image` | 543,507 B / 550,000 B(여유 6,493 B — 통합 빌드) |
+| 첫 화면 JS 예산 | `npm run check:first-js -- --in-image` · 브라우저 `measure:first-js -- --serve 8790` | 543,507 B / 550,000 B(여유 6,493 B — 통합 빌드, 웹 이미지의 Node) · 브라우저(2026-10-01 09:3x): 빌드 결과 목록과 같은 18개 · 541,194 B(호스트 Node) · 실패 0, 첫 화면 뒤 미리 받은 조각 10개 57,636 B(예산 밖) |
 | 보안 게이트 | `SCAN_OFFLINE=1 bash tools/security_gate.sh` | PASS(2026-10-01 08:32 KST, 배포한 이미지) — gitleaks 917 커밋 누출 0 · 자체 api · collector · web · db 고칠 수 있는 HIGH · CRITICAL 0 · 제3자 edge · redis PASS · k6 보고만 |
 | 배포 뒤 확인 | 수집기 · api 로그(사용자가 `docker logs` 읽기를 허용 — 2026-10-01) | 06:02 KST 배포(api · collector · web) 뒤 10분 WARN · ERROR 0, 08:33 KST 배포(Redis 재시작 · collector · web) 뒤 재연결 WARN 2건 밖에 없음, 타일 채우기 첫 차례(#94) |
