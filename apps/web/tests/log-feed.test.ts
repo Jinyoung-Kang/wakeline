@@ -137,6 +137,103 @@ describe("/logs list: answers for conditions no longer on screen are dropped", (
   });
 });
 
+/**
+ * 자동 확인은 떠날 때 그려져 있던 쪽 · 묶음과 견주었다(리뷰 cto-2026-10 최종): 불러오는 동안(필터 · 새로고침 · '다시 불러오기') 떠난 확인은 앞 조건의 것과 —
+ * 새로 불러온 목록의 줄을 '새 항목'으로, 같은 묶음을 '묶음에 새 항목'으로 보였다(5f4996c7 뒤로 주기가 다시 걸리지 않아 불러오는 중에도 떠난다) —, 떠 있는 동안
+ * '새 항목'을 반영했으면 반영 전의 것과 견주어 이미 보이는 줄을 다시 내놓았다
+ */
+describe("/logs: an auto-check compares its answer with the list on screen, not with the one it started from", () => {
+  it("list: the check that fires while the new filter's list is loading does not offer that list's own rows", async () => {
+    const s = stub((u) => (!isList(u) ? json(404, {}) : u.includes("level=ERROR") ? null : json(200, page([T(5)]))));
+    await open();
+    expect(rows()).toEqual([T(5)]);
+    await m.act(() => { vi.advanceTimersByTime(14_000); });
+    await m.click(m.button("ERROR")); // ERROR 목록을 받는 중
+    expect(s.held).toHaveLength(1);
+    await m.act(() => { vi.advanceTimersByTime(1_000); }); // 그 사이 15 s 확인
+    await m.settle();
+    s.held[0].answer(json(200, page([T(1), T(2)])));
+    await m.settle();
+    expect(rows()).toEqual([T(1), T(2)]);
+    s.held[1]?.answer(json(200, page([T(1), T(2)]))); // 확인이 떠났다면 같은 답 — 새 것 없음
+    await m.settle();
+    expect(m.byTestId("logs-new")?.textContent ?? null).toBeNull();
+    expect(rows()).toEqual([T(1), T(2)]);
+  });
+
+  it("list: while the new filter's list is loading the check offers nothing, even when it answers before the list", async () => {
+    const s = stub((u) => (!isList(u) ? json(404, {}) : u.includes("level=ERROR") ? null : json(200, page([T(5)]))));
+    await open();
+    await m.act(() => { vi.advanceTimersByTime(14_000); });
+    await m.click(m.button("ERROR"));
+    await m.act(() => { vi.advanceTimersByTime(1_000); });
+    await m.settle();
+    s.held[1]?.answer(json(200, page([T(1), T(2)])));
+    await m.settle();
+    expect(m.byTestId("logs-new")?.textContent ?? null).toBeNull(); // 보이는 것은 아직 앞 필터의 [T(5)]
+    s.held[0].answer(json(200, page([T(1), T(2)])));
+    await m.settle();
+    expect(rows()).toEqual([T(1), T(2)]);
+    expect(m.byTestId("logs-new")?.textContent ?? null).toBeNull();
+  });
+
+  it("groups: the check that fires while the new filter's groups are loading does not offer those groups as changed", async () => {
+    const s = stub((u) => (!isGroups(u) ? (isList(u) ? json(200, page([T(1)])) : json(404, {})) : u.includes("level=ERROR") ? null : json(200, { groups: [group(17)], scanned: 10, scan_truncated: false })));
+    await open();
+    await m.click(m.button("묶음(fp)"));
+    expect(m.allByTestId("log-group")[0].textContent).toContain("17");
+    await m.act(() => { vi.advanceTimersByTime(14_000); });
+    await m.click(m.button("ERROR"));
+    expect(s.held).toHaveLength(1);
+    await m.act(() => { vi.advanceTimersByTime(1_000); });
+    await m.settle();
+    const errorGroups = { groups: [group(42)], scanned: 42, scan_truncated: false };
+    s.held[0].answer(json(200, errorGroups));
+    await m.settle();
+    expect(m.allByTestId("log-group")[0].textContent).toContain("42");
+    s.held[1]?.answer(json(200, errorGroups));
+    await m.settle();
+    expect(m.byTestId("logs-new")?.textContent ?? null).toBeNull();
+  });
+
+  it("list: a check that was out when '새 항목' was applied does not offer the applied rows again", async () => {
+    let body: unknown = page([T(1)]);
+    let hold = false;
+    const s = stub((u) => (!isList(u) ? json(404, {}) : hold ? null : json(200, body)));
+    await open();
+    body = page([T(0), T(1)]);
+    await tick();
+    expect(m.byTestId("logs-new")!.textContent).toBe("새 항목 1건");
+    hold = true;
+    await tick(); // 다음 확인은 떠 있다
+    expect(s.held).toHaveLength(1);
+    await m.click(m.byTestId("logs-new")); // 그동안 반영
+    expect(rows()).toEqual([T(0), T(1)]);
+    s.held[0].answer(json(200, page([T(0), T(1)])));
+    await m.settle();
+    expect(m.byTestId("logs-new")?.textContent ?? null).toBeNull();
+  });
+
+  it("groups: a check that was out when the changed groups were applied does not offer them again", async () => {
+    let groups = { groups: [group(17)], scanned: 10, scan_truncated: false };
+    let hold = false;
+    const s = stub((u) => (isGroups(u) ? (hold ? null : json(200, groups)) : isList(u) ? json(200, page([T(1)])) : json(404, {})));
+    await open();
+    await m.click(m.button("묶음(fp)"));
+    groups = { ...groups, groups: [group(18)] };
+    await tick();
+    expect(m.byTestId("logs-new")!.textContent).toBe("묶음에 새 항목 — 반영");
+    hold = true;
+    await tick();
+    expect(s.held).toHaveLength(1);
+    await m.click(m.byTestId("logs-new"));
+    expect(m.allByTestId("log-group")[0].textContent).toContain("18");
+    s.held[0].answer(json(200, groups));
+    await m.settle();
+    expect(m.byTestId("logs-new")?.textContent ?? null).toBeNull();
+  });
+});
+
 describe("/logs list: errors, the last-success time and the selection across reloads", () => {
   it("a failed load shows its error with the request id; the next successful check clears it and sets 갱신", async () => {
     let fail = true;

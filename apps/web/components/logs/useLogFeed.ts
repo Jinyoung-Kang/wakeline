@@ -18,7 +18,7 @@ const NO_PENDING = { items: [] as LogEntry[], more: false };
  * - 보기 · 필터가 바뀌면(active 일 때) 다시 불러온다 — 첫 요청은 다음 틱(개발 모드 이중 실행에서 한 번만). 불러올 때마다 번호를 올려 늦게 온 이전 필터의
  *   응답(그 사이의 자동 확인 · 더 보기 포함)을 버린다.
  * - 자동 확인(active 일 때 15 s · 탭이 보일 때만 · 다시 보이면 곧바로 — lib/use-visible-interval): 첫 쪽을 다시 받아 보이는 맨 위보다 새 항목만 대기열에
- *   (목록은 그대로 — 보이는 줄이 없으면 바로 보인다). 묶음 보기는 바뀌었는지만(logGroupsSig).
+ *   (목록은 그대로 — 보이는 줄이 없으면 바로 보인다). 묶음 보기는 바뀌었는지만(logGroupsSig). 불러오는 동안은 건너뛰고, 답은 받을 때 그려져 있는 쪽 · 묶음과 견준다.
  * - 더 보기는 커서 하나에 한 번만(받는 동안 다시 누르면 같은 쪽이 두 번 붙었다 — web-review B1), 붙일 때도 그 커서의 쪽일 때만.
  * - ops 호출 실패: err 로 보이고, 401/404 면 세션을 확인해 만료일 때만 onLeave(SESSION_EXPIRED_NOTE). 성공하면 err 를 지운다.
  * onList(p) = 목록 쪽을 새로 받았을 때(고른 줄을 그 목록에 맞추는 자리) — 바뀌지 않는 함수를 넘긴다.
@@ -36,8 +36,13 @@ export function useLogFeed(view: LogView, filter: LogFilter, { active, onLeave, 
   const [lastOk, setLastOk] = useState<number | null>(null);
   /** 목록·묶음을 새로 불러올 때마다 올린다 — 늦게 온 이전 필터의 응답(또는 그 사이의 자동 확인)을 버린다 */
   const loadSeq = useRef(0);
+  /** 끝난 마지막 불러오기의 번호 — loadSeq 와 다르면 불러오기가 떠 있다(자동 확인은 건너뛴다) */
+  const loadDone = useRef(0);
   /** 받는 중인 '더 보기' 커서(같은 프레임의 두 번째 누름도 막는다 — 상태는 다음 렌더에야 보인다) */
   const moreFor = useRef<string | null>(null);
+  /** 지금 그려진 쪽 · 묶음 — 자동 확인은 떠날 때가 아니라 답을 받을 때 보이는 것과 견준다(그 사이 '새 항목' · 바뀐 묶음을 반영했을 수 있다) */
+  const shown = useRef({ page, groups });
+  useEffect(() => { shown.current = { page, groups }; }, [page, groups]);
 
   /** ops 호출 실패: 문구로 보이고, 401/404 면 세션을 확인해 만료일 때만 로그인으로 */
   const fail = useCallback((e: unknown) => {
@@ -68,7 +73,7 @@ export function useLogFeed(view: LogView, filter: LogFilter, { active, onLeave, 
     } catch (e) {
       if (my === loadSeq.current) fail(e);
     } finally {
-      if (my === loadSeq.current) setLoading(false);
+      if (my === loadSeq.current) { loadDone.current = my; setLoading(false); }
     }
   }, [fail, onList]);
 
@@ -79,31 +84,37 @@ export function useLogFeed(view: LogView, filter: LogFilter, { active, onLeave, 
     return () => clearTimeout(t);
   }, [active, view, filter, load]);
 
-  /** 자동 확인: 첫 쪽을 다시 받아 보이는 맨 위보다 새 항목만 대기열에(목록은 그대로). 묶음 보기는 바뀌었는지만 */
+  /**
+   * 자동 확인: 첫 쪽을 다시 받아 보이는 맨 위보다 새 항목만 대기열에(목록은 그대로). 묶음 보기는 바뀌었는지만.
+   * 불러오는 동안은 건너뛴다(ADR-029 §5) — 그동안 보이는 것은 앞 조건(앞 필터 · 새로고침 전)의 쪽 · 묶음이라, 새로 불러온 목록의 줄을 '새 항목'으로 보였다.
+   * 답은 받을 때 그려져 있는 쪽 · 묶음(shown)과 견준다 — 떠날 때의 것과 견주면 그 사이 반영한 줄을 다시 '새 항목'으로 내놓았다.
+   */
   const poll = useCallback(async () => {
     const my = loadSeq.current;
+    if (loadDone.current !== my) return;
     try {
       if (view === "list") {
         const p = await logsPage(filter, Date.now());
         if (my !== loadSeq.current) return;
-        if (!page?.items.length) {
+        const cur = shown.current.page;
+        if (!cur?.items.length) {
           // 보이는 줄이 없으면 움직일 것도 없다 — 바로 보인다
           setPage({ ...p, at: Date.now() });
           setPending(NO_PENDING);
         } else {
-          setPending(pendingEntries(page.items, p.items, LOGS_PAGE));
+          setPending(pendingEntries(cur.items, p.items, LOGS_PAGE));
         }
       } else {
         const g = await logGroups(filter, Date.now());
         if (my !== loadSeq.current) return;
-        setFreshGroups(logGroupsSig(g) !== logGroupsSig(groups) ? g : null);
+        setFreshGroups(logGroupsSig(g) !== logGroupsSig(shown.current.groups) ? g : null);
       }
       setErr(null);
       setLastOk(Date.now());
     } catch (e) {
       if (my === loadSeq.current) fail(e);
     }
-  }, [view, filter, page, groups, fail]);
+  }, [view, filter, fail]);
   // 탭이 보일 때만, 다시 보이면 곧바로(PLAN §5 결정 2, web-review B12). poll 이 바뀌어도(쪽을 넘김 · 새 항목 반영) 주기를 다시 걸지 않는다(B13)
   useVisibleInterval(() => void poll(), active ? LOG_REFRESH_MS : null);
 
