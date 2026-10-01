@@ -298,7 +298,7 @@ describe("basemap overrides on the style (by layer type + OpenMapTiles source-la
     expect(landFillsAboveWater(order.map((id) => SYNTHETIC_LAYERS.find((l) => l.id === id) ?? { id, type: "line" }) as StyleLayerLike[])).toEqual([]);
   });
   it("both maps (dashboard and replay) apply it on every style.load", () => {
-    for (const f of ["../components/MapView.tsx", "../components/ReplayMap.tsx"]) {
+    for (const f of ["../components/map/useMapLifecycle.ts", "../components/ReplayMap.tsx"]) {
       const src = readFileSync(new URL(f, import.meta.url), "utf8");
       // 대시보드는 배경지도를 못 받아 대체 스타일로 그릴 때(R-01)만 건너뛴다 — 칠할 지형 층이 없다
       expect(src, f).toMatch(/on\("style\.load", \(\) => (applyBasemap\(map\)\)|\{[^}]*if \(!noBasemap\) applyBasemap\(map\);)/);
