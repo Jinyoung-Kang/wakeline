@@ -44,6 +44,7 @@ RULE_FEATURES: dict[str, str] = {
     "budget_rules": KERNEL,
     "textutil": KERNEL,
     "timeutil": KERNEL,
+    "diag": KERNEL,
     "retry": KERNEL,
     "chain_state": KERNEL,
     "ratelimit": KERNEL,
@@ -107,7 +108,7 @@ LAYERS: dict[str, str] = {m: RULES for m in RULE_FEATURES} | {
 LAYER_BY_PREFIX = {"jobs": JOBS, "providers": ADAPTERS}
 JOBS_SHARED = {"jobs", "jobs.context"}
 JOBS_DESIGNED = {("jobs.demand", "jobs.route")}  # 선택 항공기 노선 조회를 demand 가 이어 부른다(collector-review §2.1)
-AIS_SHARED = {"geo", "masking", "logsink", "publisher", "redis_retry"}
+AIS_SHARED = {"geo", "masking", "logsink", "publisher", "redis_retry", "diag"}
 
 # 허용하는 위반 — (import 하는 모듈, import 되는 것, 규칙). PLAN Phase 0 의 7건(collector-review §1.4 의 1 · 2 · 3 · 4 · 6)은 Phase 3B 에서 모두
 # 고쳤다(http_errors · send_outcome · budget_rules · publisher.envelope/entry_size · textutil · chain_state). 새 위반을 여기 더하지 않는다 — 고친다.
