@@ -1,7 +1,7 @@
 "use client";
 import { useNow, useServerNow } from "@/lib/clock";
 import { mapDemandChip, type Chip } from "@/lib/demand";
-import { countShipsIn, filterGridCells, SHIP_CATEGORIES, shipsChip, shipsGapSuffix, type ShipCategory, type ShipsChipFilter } from "@/lib/ships";
+import { countShipsIn, filterGridCells, SHIP_CATEGORIES, shipsChip, shipsChipStatus, shipsGapSuffix, type ShipCategory, type ShipsChipFilter } from "@/lib/ships";
 import { shipStates, useServerData } from "@/lib/store";
 import { isRxFresh } from "@/lib/ws-protocol";
 
@@ -56,19 +56,21 @@ export function MapChipsView({ hex, shipsOn, shipCats = SHIP_CATEGORIES, basemap
   // 끊김·일시정지·수신 없음이면 서버 임대가 곧 만료된다 — 마지막 상태를 "진행 중"처럼 보이지 않는다
   const chip = isRxFresh(conn, lastRxAt, wall) ? mapDemandChip(demand, hex, now) : null;
   // 레이어를 켰는데 아직 서버에 알리기 전(mode off)이면 수신 대기로 본다
-  const ship = shipsOn
-    ? shipsChip(ships.mode === "off" ? { ...ships, mode: "waiting" } : ships, { zoom: viewport?.zoom ?? null, bbox: viewport?.bbox ?? null, ais, filter: chipFilter(ships, shipCats), observed })
-    : null;
+  const shipView = ships.mode === "off" ? { ...ships, mode: "waiting" as const } : ships;
+  const ship = shipsOn ? shipsChip(shipView, { zoom: viewport?.zoom ?? null, bbox: viewport?.bbox ?? null, ais, filter: chipFilter(ships, shipCats), observed }) : null;
+  const gap = shipsGapSuffix(ais);
   if (!chip && !ship && !basemapFailed) return null;
+  // 칸 전체를 aria-live 로 두지 않는다 — 칩 글자의 수(척 · 칸 · N분째)가 바뀔 때마다 다시 읽혔다(web-review B7). 화면 낭독기에는 선박 상태가 바뀔 때만(결정 3)
   return (
-    <div className="flex min-w-0 flex-col items-start gap-1" data-testid="map-chips" aria-live="polite">
+    <div className="flex min-w-0 flex-col items-start gap-1" data-testid="map-chips">
       {basemapFailed ? <BasemapNotice /> : null}
       {chip ? <div className="pointer-events-auto bg-bg-1/90"><DemandBadge chip={chip} testId="demand-map-chip" /></div> : null}
       {ship ? (
         <div className="pointer-events-auto bg-bg-1/90">
           <span className={`badge normal-case! ${ship.warn ? "warn" : ""}`} data-testid="ships-chip" data-mode={ships.mode} title={ship.title}>
-            {ship.text}{shipsGapSuffix(ais)}
+            {ship.text}{gap}
           </span>
+          <span className="sr-only" role="status" data-testid="ships-chip-status">{shipsChipStatus(shipView, { bbox: viewport?.bbox ?? null, ais }, ship.warn, gap !== "")}</span>
         </div>
       ) : null}
     </div>
