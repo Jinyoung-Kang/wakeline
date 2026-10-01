@@ -184,16 +184,28 @@ async def _create_pool() -> asyncpg.Pool:
     )
 
 
+def _masked(v: Any) -> Any:
+    """품질 사례 detail 의 글자 값을 모두(중첩 포함) masking.mask 로 가린다 — 키 · 숫자 · null 은 그대로, 넘긴 값은 바꾸지 않는다."""
+    if isinstance(v, str):
+        return mask(v, None)
+    if isinstance(v, dict):
+        return {k: _masked(x) for k, x in v.items()}
+    if isinstance(v, list | tuple):
+        return [_masked(x) for x in v]
+    return v
+
+
 def quality_rows(
     events: list[tuple[str, str | None, dict[str, Any]]],
 ) -> tuple[list[tuple[str, str | None, str]], dict[str, int]]:
-    """규칙별 대표 사례 최대 20건만 개별 저장, 나머지는 건수로 집계(운영 화면은 규칙별 건수 + 최근 사례)."""
+    """규칙별 대표 사례 최대 20건만 개별 저장, 나머지는 건수로 집계(운영 화면은 규칙별 건수 + 최근 사례).
+    저장하는 사례의 detail 은 error_text 처럼 가린다(보안 검토 L-2 — 공급자 응답 앞부분 · 예외 글자가 /ops '상세(원문)' 칸에 그대로 보였다)."""
     per_rule: dict[str, int] = {}
     rows: list[tuple[str, str | None, str]] = []
     for rule, hex_, detail in events:
         per_rule[rule] = per_rule.get(rule, 0) + 1
         if per_rule[rule] <= QUALITY_SAMPLES_PER_RULE:
-            rows.append((rule, hex_, orjson.dumps(detail).decode()))
+            rows.append((rule, hex_, orjson.dumps(_masked(detail)).decode()))
     return rows, per_rule
 
 

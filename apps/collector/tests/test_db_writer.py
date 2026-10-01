@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Any
 
+import orjson
 import pytest
 
 from wakeline_collector import db as dbmod
@@ -162,6 +163,33 @@ async def test_queue_overflow_drops_oldest(monkeypatch):
 def test_quality_rows_sample_cap():
     rows, per_rule = quality_rows([("a", "h1", {"x": 1})] * 30 + [("b", None, {})])
     assert len([r for r in rows if r[0] == "a"]) == 20 and per_rule == {"a": 30, "b": 1}
+
+
+def test_quality_detail_strings_are_masked_before_they_are_stored(monkeypatch):
+    """보안 검토 L-2(2026-10-01): 품질 사례 detail 은 가리지 않고 저장돼 /ops '상세(원문)' 칸에 그대로 보였다 — 공급자 응답 앞부분 · 예외 글자가
+    실린다(예: kma_radar_parse 의 "not gzip: '<응답 80 B>'"). error_text 처럼 모든 글자 값을 masking.mask 로 가린다(중첩 값 포함 · 키 · 숫자는 그대로)."""
+    from wakeline_collector import masking
+
+    monkeypatch.setattr(masking, "_SECRETS", {"VeryS3cretKmaKey"})
+    detail = {
+        "tm": "202610010900",
+        "error": 'ValueError: not gzip: \'{"authKey": "abc123def456"} VeryS3cretKmaKey\'',
+        "raw": {"url": "https://apihub.kma.go.kr/x?authKey=k3yk3yk3y&tm=1", "heads": ["serviceKey=zzz999yyy", 7]},
+        "tries": 3,
+        "partial": None,
+    }
+    rows, per_rule = quality_rows([("kma_radar_parse", None, detail)])
+    stored = rows[0][2]
+    for secret in ("abc123def456", "VeryS3cretKmaKey", "k3yk3yk3y", "zzz999yyy"):
+        assert secret not in stored
+    assert orjson.loads(stored) == {
+        "tm": "202610010900",
+        "error": masking.mask(detail["error"], None),
+        "raw": {"url": "https://apihub.kma.go.kr/x?authKey=***&tm=1", "heads": ["serviceKey=***", 7]},
+        "tries": 3,
+        "partial": None,
+    }
+    assert per_rule == {"kma_radar_parse": 1} and detail["raw"]["heads"][0] == "serviceKey=zzz999yyy"  # 넘긴 dict 는 그대로
 
 
 def test_metrics_shape():
