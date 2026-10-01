@@ -5,7 +5,7 @@
 - **clsgn(호출부호) 파라미터는 거르지 않는다**(배포 뒤 확인 — docs/review/evidence/public-data-apis-2026-09-29.txt 마지막 절). 그래서 선택한 선박마다
   묻지 않고, 항만청 · KST 날짜 하루씩 모든 신고를 받아 색인한다(jobs/portcalls_index). api 가 AIS 호출부호로 색인을 찾는다.
 - 읽는 필드는 실제 응답으로 확인한 이름뿐이다(fixtures/portmis_info5_busan_V7A3884.xml — 전체 기록 · portmis_info5_empty.xml — 빈 응답).
-  모르는 요소는 무시하고, 없는 요소는 None. 문자열은 제어·서식 문자를 지우고 공백을 하나로 모은 뒤 길이를 자른다(route.clean_text). 코드는 모양만 검사한다.
+  모르는 요소는 무시하고, 없는 요소는 None. 문자열은 제어·서식 문자를 지우고 공백을 하나로 모은 뒤 길이를 자른다(textutil.clean_text). 코드는 모양만 검사한다.
 - 예외 메시지는 고정 문구 + 공급자가 준 resultCode·resultMsg(가린 뒤 · 자른 것) 또는 뜻밖의 XML 의 뿌리 이름·글(가린 뒤 · 자른 것)이다.
 - 호출부호 정규화(normalize_call_sign)는 api(PortCallReader.normalizeCallSign)와 같은 규칙이다 — 언어 간 벡터 schemas/vectors/call-sign-cases.v1.json.
 """
@@ -18,7 +18,7 @@ from dataclasses import dataclass, fields
 from datetime import UTC, date, datetime, timedelta, timezone
 
 from wakeline_collector.masking import mask
-from wakeline_collector.route import clean_text
+from wakeline_collector.textutil import clean_text
 
 SOURCE = "해양수산부 선박운항정보(PORT-MIS)"
 WINDOW_DAYS = 30  # 색인이 늘 덮으려는 창: 오늘(KST) − 30일 ~ 오늘

@@ -41,6 +41,7 @@ RULE_FEATURES: dict[str, str] = {
     "http_errors": KERNEL,
     "send_outcome": KERNEL,
     "budget_rules": KERNEL,
+    "textutil": KERNEL,
     "retry": KERNEL,
     "fallback": KERNEL,
     "ratelimit": KERNEL,
@@ -107,7 +108,6 @@ AIS_SHARED = {"geo", "masking", "logsink", "publisher", "redis_retry"}
 ALLOWED: set[tuple[str, str, str]] = {
     ("fallback", "status", "layer"),  # 3B-7 chain_state — 판정 상태기계가 Redis 어댑터를 품는다
     ("fallback", "chain_store", "layer"),  # 3B-7
-    ("portcalls", "route", "feature"),  # 3B-3 textutil.clean_text
 }
 
 
