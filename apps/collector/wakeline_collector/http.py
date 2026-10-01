@@ -258,6 +258,11 @@ class HttpClient:
             raise RequestTimedOut(f"{host}: no complete response within {total_s:.0f} s") from None
         latency = int((time.perf_counter() - t0) * 1000)
         pause = self.limiter.penalize(host, _retry_after_s(headers)) if status == 429 else None
+        if 300 <= status < 400:
+            # 리다이렉트는 따라가지 않는다(허용 호스트 — 위). 성공으로 해석기에 넘기면 'JSON 아님' · '모양 이상'으로 적혀 까닭을 숨겼다(F11) — HTTP 오류로.
+            # 본문 대신 Location 의 호스트만 싣는다(경로 · 쿼리에 키가 있을 수 있다)
+            target = urlparse(headers.get("location", "")).hostname or "(no Location)"
+            raise ProviderHttpError(status, f"redirect to {target} — not followed", headers, latency)
         if status >= 400:
             raise ProviderHttpError(status, body[:200].decode("utf-8", "replace"), headers, latency, pause)
         return FetchResponse(body, status, headers, datetime.now(UTC), latency)

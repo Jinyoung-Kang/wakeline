@@ -301,3 +301,34 @@ def test_one_send_classifier_for_every_job(error, outcome):
     from wakeline_collector.http import classify_send
 
     assert classify_send(error) == outcome
+
+
+@pytest.mark.parametrize("status", [301, 302, 303, 307, 308])
+async def test_a_redirect_is_an_http_error_that_names_only_the_target_host(status):
+    """F11(collector-review · PLAN C6): 리다이렉트는 따라가지 않는다(follow_redirects=False — 허용 호스트). 전에는 3xx 를 성공 응답으로 돌려줘 해석기가
+    'JSON 아님' · '모양 이상'으로 적었고 운영 last_error 가 까닭(HTTP 302)을 숨겼다. 이제 'HTTP 3xx' 오류 — Location 은 호스트만 싣는다(경로 · 쿼리는 싣지 않는다)."""
+    c = _client()
+    with respx.mock:
+        respx.get(GZ_URL).mock(
+            return_value=httpx.Response(
+                status, headers={"Location": "https://portal.example/moved/notice?page=FAKE-1"}, text="moved"
+            )
+        )
+        with pytest.raises(ProviderHttpError) as ei:
+            await c.get(GZ_URL)
+    assert ei.value.status == status and ei.value.body_head == "redirect to portal.example — not followed"
+    assert "notice" not in str(ei.value) and "FAKE-1" not in str(ei.value)
+    await c.aclose()
+
+
+async def test_a_redirect_without_a_location_says_so():
+    c = _client()
+    with respx.mock:
+        respx.get(GZ_URL).mock(return_value=httpx.Response(302))
+        with pytest.raises(ProviderHttpError) as ei:
+            await c.get(GZ_URL)
+    assert ei.value.body_head == "redirect to (no Location) — not followed"
+    from wakeline_collector.errors import describe_error
+
+    assert describe_error(ei.value) == "HTTP 302 Found — redirect to (no Location) — not followed"  # 운영 last_error · 실행 기록
+    await c.aclose()
