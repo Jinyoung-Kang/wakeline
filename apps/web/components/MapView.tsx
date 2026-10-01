@@ -2,8 +2,7 @@
 import type * as maplibregl from "maplibre-gl";
 import { useEffect, useRef, useState } from "react";
 import {
-  addBaseLayers, aircraftFeatureCollection, airportLayerFeatures, COVERAGE_PAINT, coverageTileUrl, FALLBACK_STYLE, frameDisplay, predictionFeature, predictionKey,
-  predictionTargets, RADAR_SLOT, radarTileUrl, STYLE_LOAD_TIMEOUT_MS, STYLE_URL, syncFrames, type Frame,
+  addBaseLayers, aircraftFeatureCollection, FALLBACK_STYLE, predictionFeature, predictionKey, predictionTargets, RADAR_SLOT, STYLE_LOAD_TIMEOUT_MS, STYLE_URL,
 } from "@/lib/maplayers";
 import { subscriptionBbox } from "@/lib/viewport";
 import { maplibre } from "@/lib/maplibre";
@@ -13,34 +12,17 @@ import { addShipLayers, SHIP_LAYERS, shipCategoryFilter } from "@/lib/ship-layer
 import { aisCoverageFeatures, filterGridCells, gridFeatures, selectedShipFeatures, shipCategory, shipFeatures } from "@/lib/ships";
 import { useUi } from "@/lib/ui-store";
 import { WakelineWsClient } from "@/lib/ws";
-import { sigmetLayerData } from "@/lib/sigmet";
 import { mapAttributionHtml, styleHasBasemapCredit } from "@/lib/attribution";
 import { mapAttributionControl } from "@/lib/map-attribution";
-import { krLayerId, parseKrRadar } from "@/lib/kr-radar";
-import { reportClientError } from "@/lib/errorReport";
 import { onReady, setDashboardMap, useDashboardMap } from "@/lib/map-ready";
-import { EtagPoller, POLL_NONE } from "@/lib/etag-poller";
 import { addTrafficGridLayers, TRAFFIC_LAYERS, trafficDrawable, TrafficGridPoller, trafficGridFeatures, trafficStaleAt } from "@/lib/traffic-grid";
-import type { AirportProps } from "@/lib/tooltip";
 import { useMapPointer } from "./map/useMapPointer";
 import { useSelectionTracks, type LiveFeed } from "./map/useSelectionTracks";
-import type { KrRadar, RenderState, SigmetCollection } from "@/lib/types";
+import { useWeatherLayers } from "./map/useWeatherLayers";
+import type { RenderState } from "@/lib/types";
 
 const REGION_CENTER: [number, number] = [127.8, 36.5];
 const EMPTY_FC: GeoJSON.FeatureCollection = { type: "FeatureCollection", features: [] };
-/** SIGMET 만료 재검사 주기(새 메시지가 없어도 만료된 경보를 지운다) */
-const SIGMET_EXPIRY_CHECK_MS = 30_000;
-/** 공항 비행 카테고리 레이어 재조회(GAP-14). collector METAR 주기(10분)보다 짧게. 경과(오래됨) 재계산은 1분마다 — 다시 보일 때는 마지막 확인이 그보다 오래면 곧바로 */
-const AIRPORTS_REFRESH_MS = 300_000;
-const AIRPORTS_RECHECK_MS = 60_000;
-/** 기상청 레이더 재조회 · 다시 보일 때 곧바로 부르지 않는 간격(탭을 빨리 오갈 때 몰아 부르지 않게 — 연안 교통량 · 관측 수신 범위와 같다) */
-const KR_POLL_MS = 60_000;
-const KR_VISIBLE_MIN_GAP_MS = 10_000;
-/** 감시 공항 응답(GeoJSON) → 그릴 수 있는 지점. 모양이 틀리면 null — 조회기가 마지막 목록을 둔다(전에는 비웠다) */
-const parseAirports = (fc: unknown): GeoJSON.Feature<GeoJSON.Point, AirportProps>[] | null => {
-  const features = typeof fc === "object" && fc !== null ? (fc as { features?: unknown }).features : null;
-  return Array.isArray(features) ? features.filter((f): f is GeoJSON.Feature<GeoJSON.Point, AirportProps> => typeof f?.properties?.icao === "string") : null;
-};
 /** 선박 STALE(> 15분) 재계산 주기 — 새 메시지가 없어도 오래된 선박을 반투명으로 */
 const SHIP_STALE_CHECK_MS = 30_000;
 
@@ -60,38 +42,22 @@ export function MapView({ onFirstLoad }: { onFirstLoad?: () => void }) {
   const mapRef = useRef<maplibregl.Map | null>(null);
   /** 이 지도의 실시간 피드(WS 클라이언트 · 워커 · 예측선 갱신) — 지도 생성 effect 가 채우고 정리할 때 비운다 */
   const feed = useRef<LiveFeed | null>(null);
-  const radarLayers = useRef<string[]>([]);
-  const sigmets = useServerData((d) => d.sigmets);
   const alerts = useServerData((d) => d.alerts);
-  const radar = useServerData((d) => d.radar);
-  const radarKr = useServerData((d) => d.radarKr);
   const ships = useServerData((d) => d.ships);
   const shipSelected = useServerData((d) => d.shipSelected);
   const ais = useServerData((d) => d.ais);
-  const radarSource = useUi((s) => s.radarSource);
-  const krFrameIndex = useUi((s) => s.krFrameIndex);
-  const krLayers = useRef<string[]>([]);
   const layers = useUi((s) => s.layers);
-  const radarFrameIndex = useUi((s) => s.radarFrameIndex);
-  const radarOpacity = useUi((s) => s.radarOpacity);
   const selectedHex = useUi((s) => s.selectedHex);
   const selectedShip = useUi((s) => s.selectedShip);
   const shipCats = useUi((s) => s.shipCats);
-  const radarPlaying = useUi((s) => s.radarPlaying);
   const flyTo = useUi((s) => s.flyTo);
   /** 마운트 전에 처리된 이동 요청은 다시 하지 않는다(다른 화면에서 돌아올 때) */
   const flyHandled = useRef(useUi.getState().flyTo?.id ?? 0);
   const selectedRef = useRef<string | null>(null);
   useEffect(() => { selectedRef.current = selectedHex; }, [selectedHex]);
-  const sigmetApplied = useRef<{ fc: SigmetCollection | null; key: string }>({ fc: null, key: "" });
-  /** RainViewer 커버리지 소스의 host · 기상청 레이더 경계 키 · 그린 AIS 수신 범위 키 — 위 레이더 레이어 목록 · sigmetApplied 와 함께 '이 지도에 그린 것'의 기록 */
-  const coverageHost = useRef<string | null>(null);
-  const krCoordsKey = useRef("");
+  /** 그린 AIS 수신 범위 키 — '이 지도에 그린 것'의 기록 */
   const coverageKey = useRef("");
-  const [sigClock, setSigClock] = useState(0);
   const [shipClock, setShipClock] = useState(0);
-  /** 지금 그린 감시 공항 — 공항 툴팁(포인터 Hook)이 읽는다. 지도를 만들 때 비우고 조회기가 채운다 */
-  const airports = useRef<GeoJSON.Feature<GeoJSON.Point, AirportProps>[]>([]);
 
   // ---- 지도·WS·워커 생명주기 ----
   useEffect(() => {
@@ -178,46 +144,11 @@ export function MapView({ onFirstLoad }: { onFirstLoad?: () => void }) {
       moveTimer = setTimeout(subscribeViewport, 300);
     });
 
-    // ---- 공항 레이어(GAP-14): 5분마다 재조회, 1분마다 METAR 경과로 "오래됨"(> 2 h) 재계산 ----
-    airports.current = [];
-    let airportsKey = "";
-    const applyAirports = () => {
-      const src = geo(map, "airports");
-      if (!src) return;
-      const { features, key } = airportLayerFeatures(airports.current, serverNowMs(Date.now()));
-      if (key === airportsKey) return;
-      airportsKey = key;
-      src.setData({ type: "FeatureCollection", features });
-    };
-
     // ---- 실시간 데이터(R-01): 지도 스타일(외부 호스트)을 기다리지 않고 바로 시작한다. 구독 bbox 는 지도 생성 직후부터 알 수 있다.
-    // 받은 값은 스토어·워커에 쌓이고, 지도에 그리는 일(applyRender·applyAirports·onReady)만 load 뒤에 한다.
+    // 받은 값은 스토어·워커에 쌓이고, 지도에 그리는 일(applyRender·onReady)만 load 뒤에 한다(기상청 레이더 · 감시 공항 조회는 useWeatherLayers).
     worker.postMessage({ type: "start" });
     client.connect();
     subscribeViewport();
-    // 기상청 레이더 · 감시 공항은 조회기(lib/etag-poller)로: 진행 중이면 겹쳐 부르지 않고(응답이 멈추면 쌓였다 — web-review B9), 숨긴 탭에서는 부르지 않으며,
-    // 다시 보이면 곧바로 부른다. 실패하거나 본문이 틀리면 마지막 값을 둔다. 내용이 바뀌었을 때(version)만 store · 지도에 넣는다
-    // 레이더 본문은 parseKrRadar 로 검사한다(web-review B10) — 읽을 수 없으면 WS 처럼 보고한다(시스템 로그 web-client)
-    let krSeen = 0;
-    const krPoller = new EtagPoller<KrRadar>({
-      url: "/api/v1/radar/kr", intervalMs: KR_POLL_MS, visibleMinGapMs: KR_VISIBLE_MIN_GAP_MS,
-      parse: (body) => {
-        const d = parseKrRadar(body);
-        if (!d) reportClientError({ message: "rest: malformed /api/v1/radar/kr body ignored — the last value is kept", component: "components/MapView.tsx" });
-        return d;
-      },
-    }, (st) => { if (st.version !== krSeen) { krSeen = st.version; setData({ radarKr: st.data }); } }, { ...POLL_NONE, data: getData().radarKr });
-    let apSeen = 0;
-    const apPoller = new EtagPoller({
-      url: "/api/v1/airports?watched=true", accept: "application/geo+json, application/json", parse: parseAirports,
-      intervalMs: AIRPORTS_REFRESH_MS, visibleMinGapMs: AIRPORTS_RECHECK_MS,
-    }, (st) => {
-      if (st.version !== apSeen) { apSeen = st.version; airports.current = st.data ?? []; }
-      applyAirports(); // 실패해도 — 마지막 값의 경과로 "오래됨"을 드러낸다
-    });
-    krPoller.start();
-    apPoller.start();
-    const apTimer = setInterval(() => { if (!document.hidden) applyAirports(); }, AIRPORTS_RECHECK_MS);
 
     map.on("load", () => {
       onFirstLoadRef.current?.();
@@ -230,7 +161,6 @@ export function MapView({ onFirstLoad }: { onFirstLoad?: () => void }) {
       // 지도 위 표기는 compact(ⓘ) — 좁은 지도에서는 접힌 채로 시작한다. 전체 출처는 화면 아래 SOURCES 줄에 늘 보인다(lib/map-attribution)
       map.addControl(mapAttributionControl(ml, mapAttributionHtml({ includeMap: !noBasemap && !styleHasBasemapCredit(styleCredits) })), "bottom-right");
       applyRender();
-      applyAirports();
     });
 
     const onVisibility = () => {
@@ -244,9 +174,6 @@ export function MapView({ onFirstLoad }: { onFirstLoad?: () => void }) {
       useUi.getState().setBasemapFailed(false); // 떠난 지도의 상태를 남기지 않는다
       clearTimeout(styleTimer);
       if (moveTimer) clearTimeout(moveTimer);
-      krPoller.stop();
-      apPoller.stop();
-      clearInterval(apTimer);
       client.close();
       worker.terminate();
       setDashboardMap(null); // 지우기 전에 — 조각이 지운 지도에 그리지 않게
@@ -254,113 +181,20 @@ export function MapView({ onFirstLoad }: { onFirstLoad?: () => void }) {
       mapRef.current = null;
       // '이 지도에 그린 것'의 기록은 지도와 함께 버린다 — 다음 지도(StrictMode 의 두 번째 마운트 · 다시 마운트)에는 아무것도 그려져 있지 않다.
       // 남기면 같은 SIGMET · AIS 범위를 '이미 그림'으로 건너뛰어 새 지도에 그리지 않았다(web-review B8)
-      sigmetApplied.current = { fc: null, key: "" };
       coverageKey.current = "";
-      coverageHost.current = null;
-      krCoordsKey.current = "";
-      radarLayers.current = [];
-      krLayers.current = [];
       feed.current = null;
       setData({ conn: "closed" });
     };
   }, []);
 
-  // ---- 포인터: 호버 툴팁 · 클릭(components/map/useMapPointer) — 지도는 상황판 지도 손잡이(lib/map-ready)로 받는다 ----
+  // ---- 기상 레이어(SIGMET · 레이더 · 커버리지 · 기상청 · 감시 공항 — components/map/useWeatherLayers), 포인터(호버 · 클릭 — useMapPointer).
+  // 지도는 상황판 지도 손잡이(lib/map-ready)로 받는다 ----
   const dashMap = useDashboardMap();
+  const airports = useWeatherLayers(dashMap);
   useMapPointer(dashMap, airports);
-
-  // ---- SIGMET 만료 재검사 타이머 ----
-  useEffect(() => {
-    const tick = () => setSigClock(Date.now());
-    const t = setInterval(tick, SIGMET_EXPIRY_CHECK_MS);
-    const raf = requestAnimationFrame(tick);
-    return () => { clearInterval(t); cancelAnimationFrame(raf); };
-  }, []);
-
-  // ---- SIGMET 갱신(만료 제외 · 발효 전 구분) + 안에 항공기가 있는 경보 강조 ----
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !sigmets) return;
-    // 같은 컬렉션·같은 강조·같은 만료/발효 결과면 다시 넣지 않는다(알림 배치마다 폴리곤 전체 재색인 방지 — lib/sigmet sigmetLayerData 의 key)
-    const { fc, key } = sigmetLayerData(sigmets, alerts.values(), serverNowMs(sigClock || Date.now()));
-    if (sigmetApplied.current.fc === sigmets && sigmetApplied.current.key === key) return;
-    sigmetApplied.current = { fc: sigmets, key };
-    onReady(map, "sigmets", () => geo(map, "sigmets")?.setData(fc));
-  }, [sigmets, alerts, sigClock]);
 
   // ---- 예측선: 알림(PREDICTED 추가·해제)이 바뀌면 다시 계산 ----
   useEffect(() => { feed.current?.refreshPrediction(); }, [alerts]);
-
-  // ---- 레이더(PERF-12): 현재 프레임만 visible, 재생 중에는 다음 프레임을 불투명도 0 으로 미리 받는다. 소스는 필요할 때 만든다. ----
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !radar) return;
-    const display = frameDisplay(radar.past.length, radarFrameIndex, layers.radar && radarSource === "rainviewer", radarPlaying);
-    const frames: Frame[] = radar.past.map((f) => ({
-      id: `radar-${f.time}`,
-      add: (m) => {
-        const id = `radar-${f.time}`;
-        m.addSource(id, { type: "raster", tiles: [radarTileUrl(radar.host, f.path)], tileSize: 512, maxzoom: 7 });
-        m.addLayer({ id, type: "raster", source: id, layout: { visibility: "none" }, paint: { "raster-opacity": 0, "raster-opacity-transition": { duration: 150 } } }, "sigmet-fill");
-      },
-    }));
-    onReady(map, "radar", () => { radarLayers.current = syncFrames(map, radarLayers.current, frames, display, radarOpacity); });
-  }, [radar, radarFrameIndex, radarOpacity, layers.radar, radarSource, radarPlaying]);
-
-  // ---- RainViewer 커버리지 마스크(GAP-15): 레이더가 RainViewer 일 때만. 커버리지 밖 = 회색 베일, 안 · 에코 없음 = 투명 ----
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map) return;
-    const host = radar?.host ?? null;
-    const show = layers.radar && radarSource === "rainviewer" && !!host && (radar?.past.length ?? 0) > 0;
-    onReady(map, "rv-coverage", () => {
-      if (coverageHost.current && coverageHost.current !== host && map.getSource("rv-coverage")) {
-        map.removeLayer("rv-coverage"); map.removeSource("rv-coverage"); coverageHost.current = null;
-      }
-      if (show && host && !map.getSource("rv-coverage")) {
-        map.addSource("rv-coverage", { type: "raster", tiles: [coverageTileUrl(host)], tileSize: 512, maxzoom: 7 });
-        map.addLayer({ id: "rv-coverage", type: "raster", source: "rv-coverage", layout: { visibility: "none" }, paint: { ...COVERAGE_PAINT } }, RADAR_SLOT);
-        coverageHost.current = host;
-      }
-      if (map.getLayer("rv-coverage")) map.setLayoutProperty("rv-coverage", "visibility", show ? "visible" : "none");
-    });
-  }, [radar, layers.radar, radarSource]);
-
-  // ---- 기상청 레이더(FR-31): 재투영된 PNG 를 image source 로. 좌표는 서버가 문서 기반 LCC 정의로 계산한 웹 메르카토르 경계 ----
-  // image source 는 추가하는 순간 PNG 를 받으므로 보일 프레임만 지연 추가한다(PERF-12). 경계가 바뀌면 다시 만든다.
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map) return;
-    if (!radarKr?.available || !radarKr.coordinates || radarKr.coordinates.length !== 4) {
-      // 서버가 unavailable(프레임 없음·수집 멈춤)이라고 하면 이미 그린 에코를 지운다 — 몇 시간 전 에코를 지금처럼 남기지 않는다(R-11)
-      onReady(map, "kma", () => {
-        krLayers.current = syncFrames(map, krLayers.current, [], new Map(), 0);
-        krCoordsKey.current = "";
-      });
-      return;
-    }
-    const c = radarKr.coordinates;
-    const coords: [[number, number], [number, number], [number, number], [number, number]] = [c[0], c[1], c[2], c[3]];
-    const display = frameDisplay(radarKr.frames.length, krFrameIndex, layers.radar && radarSource === "kma", radarPlaying);
-    // 레이어 id 에 영상 버전(?v=)을 붙인다 — 부분 합성 프레임을 다시 받아 바꾸면(ADR-021) 새 영상이 새 레이어로 그려지고 옛 영상 레이어는 지운다
-    const frames: Frame[] = radarKr.frames.map((f) => ({
-      id: krLayerId(f),
-      add: (m) => {
-        const id = krLayerId(f);
-        m.addSource(id, { type: "image", url: f.url, coordinates: coords });
-        m.addLayer({ id, type: "raster", source: id, layout: { visibility: "none" }, paint: { "raster-opacity": 0, "raster-opacity-transition": { duration: 150 }, "raster-resampling": "nearest" } }, "sigmet-fill");
-      },
-    }));
-    const key = JSON.stringify(coords);
-    onReady(map, "kma", () => {
-      if (krCoordsKey.current && krCoordsKey.current !== key) {
-        for (const id of krLayers.current) { if (map.getLayer(id)) map.removeLayer(id); if (map.getSource(id)) map.removeSource(id); }
-        krLayers.current = [];
-      }
-      krCoordsKey.current = key;
-      krLayers.current = syncFrames(map, krLayers.current, frames, display, Math.min(1, radarOpacity + 0.25));
-    });
-  }, [radarKr, krFrameIndex, radarSource, radarOpacity, layers.radar, radarPlaying]);
 
   // ---- 검색 등에서 요청한 지도 이동(움직임 줄이기 설정이면 바로 이동) ----
   useEffect(() => {
