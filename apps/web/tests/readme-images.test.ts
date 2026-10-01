@@ -5,10 +5,11 @@
  *   (또는 그 반대 — 실데이터로 다시 찍었는데 fixture 라고 적음) · README 가 설정에 없는 그림을 가리킴 · 설정의 그림을 README 가 쓰지 않음.
  * - 지우는 것은 docs/images 의 그림 파일(png · webp · jpg · gif · avif · svg)뿐 — 다른 파일은 두고, 지운 것을 보고한다.
  */
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { fixtureVariant } from "../scripts/guide-capture-lib.mjs";
 import { exportReadmeImages, parseReadmeConfig, readmeImageRefs, staleImages } from "../scripts/readme-images-lib.mjs";
 
 const PLAN_IDS = ["dashboard", "world", "ops"];
@@ -123,5 +124,52 @@ describe("export", () => {
   it("refuses a README that points at an image the config does not export, or leaves a configured image unused", () => {
     expect(refused({ readme: `${README}\n![old](docs/images/05-world.png)\n` })).toMatch(/README.*05-world\.png.*설정에 없음/);
     expect(refused({ readme: "![운영 — fixture 스택](docs/images/ops.webp)\n" })).toMatch(/dashboard: .*README 가 쓰지 않음/);
+  });
+});
+
+/**
+ * 커밋된 README · 설정 · 설명서 계획이 서로 맞는가(내보내기 전에도 — README 는 내보내기가 만들 고정 이름을 가리킨다).
+ * 2026-10-01: README 가 2026-09-28 에 찍은 PNG 10장(§G20 전 — UTC 표시 · 옛 상태 바)을 가리켰고, 7장은 아무도 가리키지 않았다.
+ */
+describe("the committed README, config and guide plan agree", () => {
+  const WEB = new URL("..", import.meta.url).pathname;
+  const ROOT = join(WEB, "..", "..");
+  const readme = readFileSync(join(ROOT, "README.md"), "utf8");
+  const plan = JSON.parse(readFileSync(join(WEB, "lib", "guide-shots.json"), "utf8")) as { shots: { id: string }[] };
+  const planIds = plan.shots.map((s) => s.id);
+  const config = parseReadmeConfig(JSON.parse(readFileSync(join(WEB, "lib", "readme-images.json"), "utf8")), planIds); // 모든 항목이 설명서 그림 id 를 가리킨다
+  const manifest = JSON.parse(readFileSync(join(WEB, "lib", "guide-manifest.json"), "utf8")) as { shots: Record<string, { variant: string | null }> };
+  const refs = readmeImageRefs(readme);
+  const names = config.images.map((i) => `${i.name}.webp`);
+
+  it("every docs/images reference in the README is an image the config exports, and every configured image is used", () => {
+    expect(refs.length).toBeGreaterThan(0);
+    expect(refs.map((r) => r.file).filter((f) => !names.includes(f))).toEqual([]);
+    expect(names.filter((n) => !refs.some((r) => r.file === n))).toEqual([]);
+    for (const r of refs) expect(r.alt, r.file).not.toBeNull(); // 그림 문법으로만(대체 글이 있다)
+    for (const r of refs) expect(r.alt!.trim().length, r.file).toBeGreaterThan(0);
+  });
+  it("the hero is the dashboard figure", () => {
+    expect(refs[0].file).toBe(`${config.images.find((i) => i.shot === "dashboard")!.name}.webp`);
+  });
+  it("fixture-stack figures say so in their README alt text, and the flag agrees with the capture condition of the committed capture", () => {
+    for (const img of config.images) {
+      for (const r of refs.filter((x) => x.file === `${img.name}.webp`)) expect(/fixture/i.test(r.alt ?? ""), img.name).toBe(img.fixture);
+      const m = manifest.shots[img.shot];
+      if (m) expect(fixtureVariant(m.variant), img.shot).toBe(img.fixture);
+    }
+    expect(config.images.filter((i) => i.fixture).map((i) => i.shot).sort()).toEqual(["logs", "ops"]);
+  });
+  it("docs/images holds no image the export would not write (the 2026-09-28 PNGs are gone)", () => {
+    const dir = join(ROOT, "docs", "images");
+    const files = existsSync(dir) ? readdirSync(dir) : [];
+    expect(staleImages(files, names)).toEqual([]);
+  });
+  it("the README states the guide's figure count from the plan and how to re-shoot and export", () => {
+    expect(readme).toContain(`그림 ${planIds.length}개`);
+    expect(readme).toMatch(/node scripts\/guide-screenshots\.mjs http:\/\/localhost:8700/);
+    expect(readme).toMatch(/--only ops,logs --allow-fixture/);
+    expect(readme).toMatch(/make readme-images/);
+    expect(readme).not.toMatch(/11개 그림|2026-09-28\)/);
   });
 });
