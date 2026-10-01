@@ -426,6 +426,27 @@ statement_timeout 30 s · lock_timeout 5 s)에 운영 클래스 그대로의 기
   바로 실패하게 하면 멀쩡한 DB 에서도 한 사용자의 몰림이 80 % 503 이 된다. 1 s 기다리면 몰림은 줄을 서서 모두 답하고(p95 +0.1 s), 느린 DB 에서는 1 s 뒤에
   돌려보낸다.
 
+**P1 — 전세계 항공기 메시지의 처리 시간(api-review §4 P1 · PLAN Phase 4-4)**: 처리 시간 지표 `wakeline_stream_process_seconds` 에 `kind` · `scope` 태그를 달았다
+(커밋 523cd9c — 예전에는 태그가 없어 120 s 에 한 번 오는 전세계 메시지가 관심 지역 · hot · focus 의 p95 에 묻혔다. 이제 운영에서
+`wakeline_stream_process_seconds{kind="aircraft",scope="global"}` 로 본다). 그다음 두 번 파싱(스키마 검증의 Jackson 2 파싱 + 코덱용 Jackson 3 readTree)을
+`ingest/StreamParsePerfTest` 로 쟀다 — 10,000대 전세계 고정본(리뷰와 같은 모양, JSON 3.4 MB · gzip+base64 162 kB), 단계마다 데우기 10번 뒤 21번의 가운데 값,
+세 번 돌린 범위. 한 번 파싱 후보는 검증을 그대로 다 한다(결정 8): networknt 가 문자열을 받을 때 쓰는 것과 같은 Jackson 2 매퍼로 한 번 읽어 그 트리를 검증하고,
+코덱용 Jackson 3 트리로 옮긴다(시험 안의 시제품 — 옮긴 트리가 Jackson 3 readTree 의 트리와 같고 검증 결과도 같음을 먼저 확인).
+
+| 단계 | 지금 |
+|---|---|
+| parse() 전체(봉투 · 풀기 · 검증 · 두 번째 파싱 · 코덱) | 58.3–63.2 ms |
+| 페이로드 스키마 검증(문자열) — 그중 Jackson 2 파싱 · 트리 검증 | 31.8–34.4 ms — 11.9–16.0 · 17.8–19.1 ms |
+| Jackson 3 readTree(두 번째 파싱) | 10.7–11.8 ms |
+| 코덱(10,000 상태) | 12.2–12.7 ms |
+| 검증 + 코덱용 트리: 지금 → 후보(한 번 파싱 + 트리 옮기기 3.7–4.9 ms) | 40.3–43.9 → 35.4–38.4 ms |
+| **이득** | **4.9–6.1 ms = parse() 의 8–10 %** |
+
+결정: **바꾸지 않는다.** 두 번째 파싱을 없애도 트리를 옮기는 데 그 절반 가까이를 다시 쓴다 — 120 s 에 한 번 오는 메시지에서 약 5 ms(한 코어의 0.004 %),
+뒤에 줄 선 관심 지역 메시지의 지연에도 5 ms 이고, WS 지연 예산(p95 ≤ 500 ms)에 견주면 보이지 않는다. 대신 손으로 쓴 Jackson 2 → 3 트리 변환(수 종류 ·
+새 노드 형)을 지켜야 한다. 검증(48.6 ms 라던 것 — 이 기계에서는 32–34 ms)은 결정 8 대로 건드리지 않는다. 운영에서 전세계 메시지의 p95 가 커지면
+위 태그로 보고 다시 판단한다. 리뷰의 84 ms 와의 차이는 기계 · JIT 상태다(같은 고정본).
+
 ## 재현
 ```bash
 make bench SHIPS=1               # k6 REST + WS(선박 포함), api 층 직접
@@ -442,4 +463,5 @@ bash tools/chaos.sh              # 장애 주입(개발 스택을 실제로 죽�
 (cd apps/collector && uv run --frozen python tests/perf/demand_on_loop.py)         # §11 수요 추적의 루프 위 정규화(루프 위 · 스레드)
 (cd apps/api && ./gradlew --offline perfTest --tests 'dev.wakeline.platform.data.SharedPoolStarvationPerfTest.measure')   # §13 D6 공유 풀 굶주림(약 10분 · Docker — 격벽 전: -Dwakeline.perf.pool.permits=none)
 (cd apps/api && ./gradlew --offline perfTest --tests 'dev.wakeline.platform.data.SharedPoolStarvationPerfTest.burst')     # §13 D6 멀쩡한 DB 의 몰림(격벽의 기다림)
+(cd apps/api && ./gradlew --offline perfTest --tests 'dev.wakeline.ingest.StreamParsePerfTest')       # §13 P1 전세계 메시지 해석 · 두 번 파싱
 ```
