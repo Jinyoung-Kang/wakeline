@@ -1,0 +1,79 @@
+[
+ {
+  "path": "/api/v1/ops/session",
+  "status": 200,
+  "retry_after": null,
+  "ms": 36,
+  "code": "user=qa-a"
+ },
+ {
+  "path": "/api/v1/ops/providers",
+  "status": 200,
+  "retry_after": null,
+  "ms": 36,
+  "code": "ok"
+ },
+ {
+  "path": "/api/v1/ops/runs",
+  "status": 200,
+  "retry_after": null,
+  "ms": 33,
+  "code": null
+ },
+ {
+  "path": "/api/v1/ops/quality",
+  "status": 200,
+  "retry_after": null,
+  "ms": 19,
+  "code": null
+ },
+ {
+  "path": "/api/v1/ops/dlq",
+  "status": 200,
+  "retry_after": null,
+  "ms": 13,
+  "code": null
+ },
+ {
+  "path": "/api/v1/ops/pipeline",
+  "status": 200,
+  "retry_after": null,
+  "ms": 26,
+  "code": null
+ },
+ {
+  "path": "/api/v1/ops/settings",
+  "status": 200,
+  "retry_after": null,
+  "ms": 22,
+  "code": null
+ },
+ {
+  "path": "/api/v1/ops/audit",
+  "status": 200,
+  "retry_after": null,
+  "ms": 20,
+  "code": null
+ },
+ {
+  "path": "/api/v1/ops/resolutions",
+  "status": 200,
+  "retry_after": null,
+  "ms": 15,
+  "code": "ok"
+ },
+ {
+  "path": "/api/v1/ops/logs",
+  "status": 200,
+  "retry_after": null,
+  "ms": 52,
+  "code": "ok"
+ },
+ {
+  "path": "/api/v1/ops/logs/groups",
+  "status": 200,
+  "retry_after": null,
+  "ms": 43,
+  "code": "ok"
+ }
+]

@@ -1,0 +1,79 @@
+[
+ {
+  "path": "/api/v1/ops/session",
+  "status": 500,
+  "retry_after": null,
+  "ms": 72,
+  "code": "INTERNAL_SERVER_ERROR"
+ },
+ {
+  "path": "/api/v1/ops/providers",
+  "status": 500,
+  "retry_after": null,
+  "ms": 11,
+  "code": "INTERNAL_SERVER_ERROR"
+ },
+ {
+  "path": "/api/v1/ops/runs",
+  "status": 500,
+  "retry_after": null,
+  "ms": 20,
+  "code": "INTERNAL_SERVER_ERROR"
+ },
+ {
+  "path": "/api/v1/ops/quality",
+  "status": 500,
+  "retry_after": null,
+  "ms": 14,
+  "code": "INTERNAL_SERVER_ERROR"
+ },
+ {
+  "path": "/api/v1/ops/dlq",
+  "status": 500,
+  "retry_after": null,
+  "ms": 20,
+  "code": "INTERNAL_SERVER_ERROR"
+ },
+ {
+  "path": "/api/v1/ops/pipeline",
+  "status": 500,
+  "retry_after": null,
+  "ms": 16,
+  "code": "INTERNAL_SERVER_ERROR"
+ },
+ {
+  "path": "/api/v1/ops/settings",
+  "status": 500,
+  "retry_after": null,
+  "ms": 23,
+  "code": "INTERNAL_SERVER_ERROR"
+ },
+ {
+  "path": "/api/v1/ops/audit",
+  "status": 500,
+  "retry_after": null,
+  "ms": 21,
+  "code": "INTERNAL_SERVER_ERROR"
+ },
+ {
+  "path": "/api/v1/ops/resolutions",
+  "status": 500,
+  "retry_after": null,
+  "ms": 18,
+  "code": "INTERNAL_SERVER_ERROR"
+ },
+ {
+  "path": "/api/v1/ops/logs",
+  "status": 500,
+  "retry_after": null,
+  "ms": 12,
+  "code": "INTERNAL_SERVER_ERROR"
+ },
+ {
+  "path": "/api/v1/ops/logs/groups",
+  "status": 500,
+  "retry_after": null,
+  "ms": 11,
+  "code": "INTERNAL_SERVER_ERROR"
+ }
+]

@@ -1,0 +1,176 @@
+{
+ "label": "db-down",
+ "at": "2026-10-01T18:00:18.233054+00:00",
+ "rows": [
+  {
+   "path": "/healthz",
+   "status": 200,
+   "retry_after": null,
+   "ms": 20,
+   "health": [
+    "ok",
+    null
+   ]
+  },
+  {
+   "path": "/api/v1/status",
+   "status": 200,
+   "retry_after": null,
+   "ms": 11
+  },
+  {
+   "path": "/api/v1/aircraft?bbox=124,33,132,39",
+   "status": 200,
+   "retry_after": null,
+   "ms": 28
+  },
+  {
+   "path": "/api/v1/aircraft/search?q=B-",
+   "status": 200,
+   "retry_after": null,
+   "ms": 8
+  },
+  {
+   "path": "/api/v1/aircraft/71aa64",
+   "status": 200,
+   "retry_after": null,
+   "ms": 5047,
+   "db_unavailable": true
+  },
+  {
+   "path": "/api/v1/aircraft/71aa64/track",
+   "status": 503,
+   "retry_after": "10",
+   "ms": 5067,
+   "code": "UNAVAILABLE"
+  },
+  {
+   "path": "/api/v1/ships?bbox=120,30,135,40",
+   "status": 200,
+   "retry_after": null,
+   "ms": 14
+  },
+  {
+   "path": "/api/v1/ships/search?q=44",
+   "status": 200,
+   "retry_after": null,
+   "ms": 5030,
+   "db_unavailable": true
+  },
+  {
+   "path": "/api/v1/ships/440095870",
+   "status": 200,
+   "retry_after": null,
+   "ms": 5075,
+   "db_unavailable": true
+  },
+  {
+   "path": "/api/v1/ships/440095870/track",
+   "status": 503,
+   "retry_after": "10",
+   "ms": 5070,
+   "code": "UNAVAILABLE"
+  },
+  {
+   "path": "/api/v1/ships/coverage",
+   "status": 200,
+   "retry_after": null,
+   "ms": 107
+  },
+  {
+   "path": "/api/v1/ais/gaps?from=2026-10-01T11%3A59%3A04Z",
+   "status": 503,
+   "retry_after": "10",
+   "ms": 5068,
+   "code": "UNAVAILABLE"
+  },
+  {
+   "path": "/api/v1/traffic/grid",
+   "status": 200,
+   "retry_after": null,
+   "ms": 29,
+   "stale": true
+  },
+  {
+   "path": "/api/v1/sigmets",
+   "status": 200,
+   "retry_after": null,
+   "ms": 94
+  },
+  {
+   "path": "/api/v1/sigmets/RJJJ%3AE03%3A1790875557",
+   "status": 200,
+   "retry_after": null,
+   "ms": 59
+  },
+  {
+   "path": "/api/v1/alerts",
+   "status": 200,
+   "retry_after": null,
+   "ms": 124
+  },
+  {
+   "path": "/api/v1/alerts/history",
+   "status": 503,
+   "retry_after": "10",
+   "ms": 5031,
+   "code": "UNAVAILABLE"
+  },
+  {
+   "path": "/api/v1/radar/frames",
+   "status": 200,
+   "retry_after": null,
+   "ms": 15
+  },
+  {
+   "path": "/api/v1/radar/kr",
+   "status": 200,
+   "retry_after": null,
+   "ms": 8,
+   "stale": true
+  },
+  {
+   "path": "/api/v1/airports?bbox=124,33,132,39",
+   "status": 503,
+   "retry_after": "10",
+   "ms": 5029,
+   "code": "UNAVAILABLE"
+  },
+  {
+   "path": "/api/v1/airports/RKSI/wx",
+   "status": 503,
+   "retry_after": "10",
+   "ms": 5024,
+   "code": "UNAVAILABLE"
+  },
+  {
+   "path": "/api/v1/replay?at=2026-10-01T17%3A54%3A04Z&bbox=124,33,132,39",
+   "status": 503,
+   "retry_after": "10",
+   "ms": 5049,
+   "code": "UNAVAILABLE"
+  },
+  {
+   "path": "/api/v1/stats/sigmet?from=2026-10-01&to=2026-10-01",
+   "status": 503,
+   "retry_after": "10",
+   "ms": 5058,
+   "code": "UNAVAILABLE"
+  },
+  {
+   "path": "/api/v1/stats/traffic?day=2026-10-01",
+   "status": 503,
+   "retry_after": "10",
+   "ms": 5039,
+   "code": "UNAVAILABLE"
+  },
+  {
+   "path": "/api/v1/stats/alerts?from=2026-10-01&to=2026-10-01",
+   "status": 503,
+   "retry_after": "10",
+   "ms": 5016,
+   "code": "UNAVAILABLE"
+  }
+ ],
+ "suspect": []
+}
