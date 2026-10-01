@@ -246,6 +246,17 @@ export function logGroupsUrl(f: Pick<LogFilter, "services" | "level" | "period" 
 /** 항목 하나(§C4). stream 을 주면 그 스트림에서만 — 없으면 api 가 server → client 순으로 찾는다(§G2). id 는 경로 조각("." · ".." 는 던진다 — lib/endpoints/path) */
 export const logItemUrl = (id: string, stream?: LogStreamName | null) => `${LOGS_PATH}/${pathSegment(id)}${stream ? `?stream=${stream}` : ""}`;
 
+/** 첫 필터: /logs#rid=… 는 시각을 모르므로 가장 긴 기간(7 d)으로, #fp=… 는 그 묶음만. #id=…(&stream=…) 는 그 항목의 상세를 연다 */
+export function initialLogsState(hash: string): { filter: LogFilter; openId: string | null; openStream: LogStreamName | null } {
+  const h = parseLogsHash(hash);
+  const filter: LogFilter = { ...DEFAULT_LOG_FILTER, ...(h.rid ? { rid: h.rid, period: "7d" as const } : {}), ...(h.fp ? { fp: h.fp } : {}) };
+  return { filter, openId: h.id ?? null, openStream: h.stream ?? null };
+}
+
+/** 묶음 보기의 자동 확인이 견주는 값: 묶음마다 지문 · 수 · 마지막 id · 해결(순서 포함) — 훑은 수 같은 다른 값은 보지 않는다 */
+export const logGroupsSig = (g: { groups: readonly Pick<LogGroup, "fp" | "count" | "last_id" | "resolved">[] } | null) =>
+  (g ? g.groups.map((x) => `${x.fp}:${x.count}:${x.last_id}:${x.resolved?.id ?? ""}`).join("|") : "");
+
 /** /logs#rid=… · #id=…(&stream=…) · #fp=… (오류 문구의 "로그 보기" · 항목 링크). 형식이 틀린 값은 버린다 */
 export function parseLogsHash(hash: string): { rid?: string; id?: string; stream?: LogStreamName; fp?: string } {
   const p = new URLSearchParams(hash.replace(/^#/, ""));

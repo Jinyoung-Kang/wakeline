@@ -11,6 +11,10 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 import { installMiniDom } from "./helpers/mini-dom";
 import { mounter } from "./helpers/mount";
 import { CAT_COLORS, CAT_UNKNOWN_COLOR } from "@/lib/format";
+import { topDims } from "@/lib/chart";
+import { flagOf, zoneBad } from "@/lib/stats";
+import { airportListRows } from "@/lib/airport-list";
+import { DEFAULT_LOG_FILTER, initialLogsState, logGroupsSig } from "@/lib/logs";
 
 const dom = installMiniDom();
 const m = mounter(dom);
@@ -124,5 +128,41 @@ describe("logs: groups auto-check and the #fp= start (characterization)", () => 
     await open("#rid=5f2c9a0e1b7d4c3a");
     const r = new URLSearchParams(calls.find((u) => u.startsWith("/api/v1/ops/logs?"))!.split("?")[1]);
     expect([r.get("rid"), r.get("fp"), r.get("since")]).toEqual(["5f2c9a0e1b7d4c3a", null, new Date(NOW - 7 * 86_400_000).toISOString()]);
+  });
+});
+
+describe("the moved helpers, directly (web-review §3.3)", () => {
+  it("lib/chart topDims", () => {
+    expect(topDims([{ dim: "A", value: 1 }, { dim: "B", value: 5 }, { dim: "A", value: "7" }], 2)).toEqual([{ label: "A", value: 8 }, { label: "B", value: 5 }]);
+    expect(topDims([{ dim: "A", value: 1 }, { dim: "B", value: 2 }], 1)).toEqual([{ label: "B", value: 2 }]);
+    expect(topDims([])).toEqual([]);
+  });
+  it("lib/stats flagOf · zoneBad: only a KST-day response is read; loading and failed are unknown", () => {
+    const kst = { day_zone: "Asia/Seoul", aggregated: true };
+    expect(flagOf({ status: "loaded", resp: kst })).toBe(true);
+    expect(flagOf({ status: "loaded", resp: { aggregated: true } })).toBeUndefined();
+    expect(flagOf({ status: "loading" })).toBeUndefined();
+    expect(flagOf({ status: "failed", error: new Error("x") })).toBeUndefined();
+    expect([zoneBad({ status: "loaded", resp: kst }), zoneBad({ status: "loaded", resp: {} }), zoneBad({ status: "loading" })]).toEqual([false, true, false]);
+  });
+  it("lib/airport-list airportListRows: without a known 'now' nothing is judged stale; coordinates that are not numbers are null", () => {
+    const f = (icao: string, p: Record<string, unknown>, coordinates: unknown[] = [127, 37]) =>
+      ({ type: "Feature", geometry: { type: "Point", coordinates }, properties: { icao, ...p } }) as never;
+    const rows = airportListRows([f("RKSS", { flight_cat: "VFR", obs_time: "2020-01-01T00:00:00Z" }), f("RKSI", { name: "Incheon" }, [null, 37])], 0);
+    expect(rows).toEqual([
+      { icao: "RKSI", name: "Incheon", cat: "METAR 없음", color: CAT_UNKNOWN_COLOR, stale: false, lonLat: null },
+      { icao: "RKSS", name: "", cat: "VFR", color: CAT_COLORS.VFR, stale: false, lonLat: [127, 37] },
+    ]);
+  });
+  it("lib/logs initialLogsState · logGroupsSig", () => {
+    expect(initialLogsState("")).toEqual({ filter: DEFAULT_LOG_FILTER, openId: null, openStream: null });
+    expect(initialLogsState("#rid=5f2c9a0e1b7d4c3a").filter).toEqual({ ...DEFAULT_LOG_FILTER, rid: "5f2c9a0e1b7d4c3a", period: "7d" });
+    expect(initialLogsState("#fp=0123456789abcdef").filter).toEqual({ ...DEFAULT_LOG_FILTER, fp: "0123456789abcdef" });
+    expect(initialLogsState("#id=1727480000000-0&stream=client")).toMatchObject({ openId: "1727480000000-0", openStream: "client" });
+    expect(initialLogsState("#rid=bad id")).toEqual({ filter: DEFAULT_LOG_FILTER, openId: null, openStream: null });
+    const g = (count: number, resolved: { id: number } | null = null) => ({ fp: "0123456789abcdef", count, last_id: "1-0", resolved: resolved as never });
+    expect(logGroupsSig(null)).toBe("");
+    expect(logGroupsSig({ groups: [g(3)] })).toBe("0123456789abcdef:3:1-0:");
+    expect(logGroupsSig({ groups: [g(3, { id: 9 })] })).toBe("0123456789abcdef:3:1-0:9");
   });
 });

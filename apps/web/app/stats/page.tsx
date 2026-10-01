@@ -4,10 +4,10 @@ import { alertStats, sigmetStats, trafficStats, type StatsItems, type StatsRow, 
 import { AlertStatsTable } from "@/components/AlertStatsTable";
 import { BarChart } from "@/components/BarChart";
 import { ErrorNote } from "@/components/logs/ErrorNote";
-import { HYSTERESIS_FIX_AT, HYSTERESIS_FIX_DAY, hourlyRowsKst, trafficScopeLabel } from "@/lib/chart";
+import { HYSTERESIS_FIX_AT, HYSTERESIS_FIX_DAY, hourlyRowsKst, topDims, trafficScopeLabel } from "@/lib/chart";
 import {
-  aggregatedFlag, alertStatsRows, STATS_FAILED_NOTE, STATS_FAILED_TEXT, STATS_LOADING_TEXT, STATS_RUN_KST, STATS_ZONE_ERROR, STATS_ZONE_PANEL, statsEmptyText, statsPanelState,
-  statsZoneOk, todayKst, TRAFFIC_SOURCE, yesterdayKst, type StatsLoad, type StatsPanelState,
+  alertStatsRows, flagOf, STATS_FAILED_NOTE, STATS_FAILED_TEXT, STATS_LOADING_TEXT, STATS_RUN_KST, STATS_ZONE_ERROR, STATS_ZONE_PANEL, statsEmptyText, statsPanelState,
+  statsZoneOk, todayKst, TRAFFIC_SOURCE, yesterdayKst, zoneBad, type StatsLoad, type StatsPanelState,
 } from "@/lib/stats";
 import { serverNowMs } from "@/lib/store";
 import { KstTime } from "@/components/KstTime";
@@ -39,7 +39,6 @@ export default function StatsPage() {
   const agg = { fir: flagOf(fir.load), haz: flagOf(haz.load), traffic: flagOf(traffic.load), alerts: flagOf(alerts.load) };
   /** KST 날짜로 셌다고 밝히지 않은 응답(옛 api)이 있었는가 — 있으면 그 패널을 그리지 않고 위에서 한 번 말한다 */
   const zoneErr = [fir, haz, traffic, alerts].some((p) => zoneBad(p.load));
-  const top = (rows: StatsRow[]) => { const m = new Map<string, number>(); for (const r of rows) m.set(r.dim, (m.get(r.dim) ?? 0) + Number(r.value)); return [...m].map(([label, value]) => ({ label, value })).sort((a, b) => b.value - a.value).slice(0, 24); };
   const firRows = rowsOf(fir.load), hazRows = rowsOf(haz.load), trafficRows = rowsOf(traffic.load);
   const hours = hourlyRowsKst(trafficRows, day);
   const t = traffic.load.status === "loaded" ? traffic.load.resp : null;
@@ -54,10 +53,10 @@ export default function StatsPage() {
       {zoneErr ? <div className="mb-3 text-[11px] text-warn" role="alert" data-testid="stats-zone-error">{STATS_ZONE_ERROR}</div> : null}
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
         <Panel id="fir" head={<h2 className="label mb-2">SIGMET by FIR (7d, top 24)</h2>} p={fir} drawable={firRows.length > 0} empty={statsEmptyText(agg.fir, null, today)}>
-          <BarChart id="chart-fir" title="최근 7일 FIR별 SIGMET 발표 건수(상위 24)" rows={top(firRows)} />
+          <BarChart id="chart-fir" title="최근 7일 FIR별 SIGMET 발표 건수(상위 24)" rows={topDims(firRows)} />
         </Panel>
         <Panel id="hazard" head={<h2 className="label mb-2">SIGMET by hazard (7d)</h2>} p={haz} drawable={hazRows.length > 0} empty={statsEmptyText(agg.haz, null, today)}>
-          <BarChart id="chart-hazard" title="최근 7일 위험 유형별 SIGMET 발표 건수" rows={top(hazRows)} color="#f59e0b" />
+          <BarChart id="chart-hazard" title="최근 7일 위험 유형별 SIGMET 발표 건수" rows={topDims(hazRows)} color="#f59e0b" />
         </Panel>
         <Panel id="traffic" p={traffic} drawable={trafficRows.length > 0} empty={statsEmptyText(agg.traffic, day, today, { ...TRAFFIC_SOURCE, nowMs: openedAt })}
           head={<div className="mb-2 flex items-center justify-between gap-2"><h2 className="label">Distinct aircraft by hour (KST)</h2><input type="date" value={day} max={maxDay} onChange={(e) => { if (e.target.value) setDay(e.target.value); }} aria-label="집계 날짜(KST)" title="집계 날짜 = 한국 표준시 날짜(00:00–24:00 KST)" /></div>}>
@@ -76,15 +75,6 @@ export default function StatsPage() {
       </div>
     </div>
   );
-}
-
-/** 받은 응답의 집계 여부(R-45 aggregated) — KST 날짜로 셌다고 밝힌 응답만, 그 밖(받는 중 · 실패 · 옛 응답)은 undefined(모름) */
-function flagOf(l: StatsLoad<StatsItems>): boolean | undefined {
-  return l.status === "loaded" && statsZoneOk(l.resp) ? aggregatedFlag(l.resp) : undefined;
-}
-/** 받았지만 KST 날짜로 셌다고 밝히지 않은 응답(옛 api — UTC 날짜 집계) */
-function zoneBad(l: StatsLoad<StatsItems>): boolean {
-  return l.status === "loaded" && !statsZoneOk(l.resp);
 }
 
 /**
