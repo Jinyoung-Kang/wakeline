@@ -1,13 +1,14 @@
 """앱 Dockerfile 정책 시험 — 이미지를 빌드하지 않는다(빌드한 이미지 검사는 infra/tests/image_test.sh).
 
 - R-25: api 힙 상한 = 컨테이너 메모리 한도의 40 %(ADR-017 §4) — compose 한도 1g 에서 약 410 MiB, NFR-03 예산 512 MB 안
-- S11 · L-8: 수집기 이미지는 uv.lock 그대로 설치(uv sync --locked)
+- S11 · L-8: 수집기 이미지는 uv.lock 그대로 설치(uv sync --locked), 저장소 루트를 빌드 컨텍스트로 쓰는 이미지는 루트 .dockerignore 로 비밀값 · 큰 산출물을 뺀다
 
 실행: python3 -m unittest discover -s infra/tests -v
 """
 from __future__ import annotations
 
 import re
+import subprocess
 import unittest
 from pathlib import Path
 
@@ -124,6 +125,68 @@ class CollectorLockedInstallTest(unittest.TestCase):
             with self.subTest(run=s):
                 self.assertRegex(s, r"\s--locked\b", "lock 이 pyproject 와 어긋나면 실패(다시 풀지 않는다)")
                 self.assertRegex(s, r"\s--no-dev\b")
+
+
+def dockerignore_excludes(path: str, patterns: list[str]) -> bool:
+    """루트 .dockerignore 규칙으로 path(컨텍스트 기준)가 빠지는지 — Docker 규칙의 필요한 부분만(* · ? · ** · ! · 디렉터리면 그 아래 전부)."""
+    def rx(pat: str) -> re.Pattern[str]:
+        out, i = "", 0
+        while i < len(pat):
+            if pat.startswith("**/", i):
+                out, i = out + "(?:.*/)?", i + 3
+            elif pat.startswith("**", i):
+                out, i = out + ".*", i + 2
+            elif pat[i] == "*":
+                out, i = out + "[^/]*", i + 1
+            elif pat[i] == "?":
+                out, i = out + "[^/]", i + 1
+            else:
+                out, i = out + re.escape(pat[i]), i + 1
+        return re.compile(out)
+
+    parts = path.split("/")
+    excluded = False
+    for p in patterns:
+        neg = p.startswith("!")
+        r = rx(p.lstrip("!").strip("/"))
+        if any(r.fullmatch("/".join(parts[:i])) for i in range(1, len(parts) + 1)):
+            excluded = not neg
+    return excluded
+
+
+class RootDockerignoreTest(unittest.TestCase):
+    """S11 · L-8: collector · ais 는 저장소 루트를 빌드 컨텍스트로 쓴다(compose context: ..). 루트 .dockerignore 가 비밀값(.env · 백업)과
+    큰 산출물을 빼서, 나중에 넓은 COPY 를 써도 이미지에 들어가지 않게 한다 — 그러면서 Dockerfile 이 COPY 하는 경로는 빼지 않는다."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        f = ROOT / ".dockerignore"
+        cls.patterns = [ln.strip() for ln in f.read_text().splitlines() if ln.strip() and not ln.lstrip().startswith("#")] if f.exists() else []
+
+    def test_secrets_vcs_and_bulk_are_excluded(self):
+        for path in (".env", ".env.local", "apps/web/.env.local", "infra/.env", "backups/wakeline-20260101T000000Z.dump", ".git/config",
+                     "apps/web/node_modules/next/package.json", "apps/collector/.venv/bin/python", "apps/api/build/libs/app.jar",
+                     "apps/api/.gradle/x", "apps/web/.next/BUILD_ID", "apps/web/test-results/x.png", "apps/web/playwright-report/index.html",
+                     "apps/collector/wakeline_collector/__pycache__/x.pyc", "apps/collector/.pytest_cache/x", "apps/collector/htmlcov/index.html",
+                     "perf/results/k6.log", "data/raw/x.json", "raw/x.json", ".claude/settings.local.json"):
+            with self.subTest(path=path):
+                self.assertTrue(dockerignore_excludes(path, self.patterns), "빌드 컨텍스트에서 빠져야 한다")
+
+    def test_repo_root_build_inputs_are_kept(self):
+        compose = (ROOT / "infra" / "compose.yml").read_text()
+        root_dockerfiles = re.findall(r"(?m)^\s+context:\s*\.\.\s*\n\s+dockerfile:\s*(\S+)", compose)
+        self.assertEqual(root_dockerfiles, ["apps/collector/Dockerfile"], "저장소 루트 컨텍스트를 쓰는 Dockerfile")
+        tracked = subprocess.run(["git", "ls-files"], cwd=ROOT, capture_output=True, text=True, check=True).stdout.splitlines()
+        for df in root_dockerfiles:
+            sources = [s for ln in (ROOT / df).read_text().splitlines()
+                       if re.match(r"COPY\s", ln) and "--from=" not in ln
+                       for s in [w for w in ln.split()[1:-1] if not w.startswith("--")]]
+            self.assertTrue(sources)
+            for src in sources:
+                files = [f for f in tracked if f == src or f.startswith(src + "/")]
+                with self.subTest(dockerfile=df, source=src):
+                    self.assertTrue(files, "COPY 원본이 저장소에 있다")
+                    self.assertFalse([f for f in files if dockerignore_excludes(f, self.patterns)], "COPY 하는 파일을 빼면 빌드가 깨진다")
 
 
 if __name__ == "__main__":
