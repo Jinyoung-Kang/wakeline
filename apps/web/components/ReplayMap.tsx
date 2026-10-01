@@ -3,7 +3,7 @@ import * as maplibregl from "maplibre-gl";
 import { memo, useEffect, useRef } from "react";
 import { subscriptionBbox } from "@/lib/viewport";
 import { addBaseLayers, MAPLIBRE_WORKER_URL, radarTileUrl, STYLE_URL } from "@/lib/maplayers";
-import { applyBasemap } from "@/lib/basemap";
+import { watchBasemapStyle } from "@/lib/basemap-fallback";
 import { mapAttributionHtml, styleHasBasemapCredit } from "@/lib/attribution";
 import { mapAttributionControl } from "@/lib/map-attribution";
 import { renderTip } from "@/lib/tooltip";
@@ -18,21 +18,26 @@ export type ReplayPick = { kind: "aircraft"; hex: string } | { kind: "sigmet"; i
  * 클릭하면 onPick(항공기/SIGMET), 호버하면 툴팁.
  * 조회 영역은 서버 면적 상한(2500 sq°) 안으로 줄여 보낸다 — 줄였으면 점선 상자로 조회한 영역을 그린다(R-05). frame 이 null 이면 지도를 비운다.
  * memo: 슬라이더를 끄는 동안 재생 화면은 입력마다 다시 그려지지만(시각 라벨), 지도는 frame · 레이더 · 콜백이 바뀔 때만.
+ * 배경지도 스타일(외부 호스트)을 받지 못하면 상황판과 같은 규칙(R-01 — lib/basemap-fallback)으로 로컬 대체 스타일에 그 시각의 기록을 그리고
+ * onBasemapFailed(true) 로 알린다(재생 화면이 "배경지도를 불러오지 못함"을 띄운다). 전에는 'load' 가 오지 않아 지도가 빈 채로 알림도 없었다(QA-301).
  */
-export const ReplayMap = memo(function ReplayMap({ frame, onBbox, onPick, showRadar }: { frame: ReplayFrame | null; onBbox: (bbox: string, clamped: boolean) => void; onPick: (p: ReplayPick) => void; showRadar: boolean }) {
+export const ReplayMap = memo(function ReplayMap({ frame, onBbox, onPick, showRadar, onBasemapFailed }: {
+  frame: ReplayFrame | null; onBbox: (bbox: string, clamped: boolean) => void; onPick: (p: ReplayPick) => void; showRadar: boolean; onBasemapFailed?: (failed: boolean) => void;
+}) {
   const el = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const frameRef = useRef<ReplayFrame | null>(frame);
   const pickRef = useRef(onPick);
-  useEffect(() => { frameRef.current = frame; pickRef.current = onPick; });
+  const basemapRef = useRef(onBasemapFailed);
+  useEffect(() => { frameRef.current = frame; pickRef.current = onPick; basemapRef.current = onBasemapFailed; });
   useEffect(() => {
     if (!el.current) return;
     maplibregl.setWorkerUrl(MAPLIBRE_WORKER_URL);
     const map = new maplibregl.Map({ container: el.current, style: STYLE_URL, center: [127.8, 36.5], zoom: 6, minZoom: 2, maxZoom: 12, attributionControl: false });
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-left");
     mapRef.current = map;
-    // 배경지도 시인성(계약 v4 §E) — 상황판 지도와 같은 색
-    map.on("style.load", () => applyBasemap(map));
+    // 배경지도 시인성(계약 v4 §E — 상황판 지도와 같은 색) · 스타일을 받지 못하면(오류 · 시간 제한) 로컬 대체 스타일로 한 번 바꾸고 알린다(R-01 — 상황판과 같은 규칙)
+    const basemap = watchBasemapStyle(map, () => basemapRef.current?.(true));
     // REST 는 −180~180 만 받는다: 날짜변경선을 넘으면 화면 중심 쪽만. 재생은 minZoom 2 라 화면이 면적 상한을 넘을 수 있다 → 가운데만 조회(R-05)
     const emit = () => {
       const b = map.getBounds(), c = map.getCenter();
@@ -75,7 +80,7 @@ export const ReplayMap = memo(function ReplayMap({ frame, onBbox, onPick, showRa
       map.addSource("replay-query", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
       map.addLayer({ id: "replay-query", type: "line", source: "replay-query", paint: { "line-color": "#f2b33d", "line-width": 1.5, "line-dasharray": [3, 2] } });
       const styleCredits = Object.keys(map.getStyle().sources ?? {}).map((id) => (map.getSource(id) as { attribution?: string } | undefined)?.attribution);
-      map.addControl(mapAttributionControl(maplibregl, mapAttributionHtml({ extra: "Replay: 로컬 PostGIS 기록", includeMap: !styleHasBasemapCredit(styleCredits) })), "bottom-right");
+      map.addControl(mapAttributionControl(maplibregl, mapAttributionHtml({ extra: "Replay: 로컬 PostGIS 기록", includeMap: !basemap.failed && !styleHasBasemapCredit(styleCredits) })), "bottom-right");
       emit();
       map.on("mousemove", (e: maplibregl.MapMouseEvent) => { last = e; if (!raf) raf = requestAnimationFrame(hover); });
       map.on("mouseout", () => { popup.remove(); last = null; });
@@ -86,7 +91,7 @@ export const ReplayMap = memo(function ReplayMap({ frame, onBbox, onPick, showRa
       });
     });
     map.on("moveend", emit);
-    return () => { if (raf) cancelAnimationFrame(raf); popup.remove(); map.remove(); mapRef.current = null; };
+    return () => { if (raf) cancelAnimationFrame(raf); popup.remove(); basemap.dispose(); basemapRef.current?.(false); map.remove(); mapRef.current = null; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   useEffect(() => {

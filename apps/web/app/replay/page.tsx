@@ -32,6 +32,8 @@ export default function ReplayPage() {
   const [pick, setPick] = useState<ReplayPick>(null);
   const [showRadar, setShowRadar] = useState(true);
   const [showList, setShowList] = useState(false);
+  /** 배경지도 스타일을 받지 못해 로컬 대체 스타일로 그림(R-01 — ReplayMap 이 알린다) */
+  const [basemapFailed, setBasemapFailed] = useState(false);
   const { min, max } = range;
   // 기록 시각은 서버 시계 — 상황판에서 추정한 오프셋이 있으면 쓴다(없으면 브라우저 시계)
   useEffect(() => { const h = setTimeout(() => { const now = serverNowMs(Date.now()); setRange(replayRange(now)); setAt(now - 10 * 60_000); }, 0); return () => clearTimeout(h); }, []);
@@ -97,11 +99,13 @@ export default function ReplayPage() {
         </div>
       </div>
       <div className="relative min-h-0 flex-1">
-        <ReplayMap frame={frame} onBbox={onBbox} onPick={setPick} showRadar={showRadar} />
+        <ReplayMap frame={frame} onBbox={onBbox} onPick={setPick} showRadar={showRadar} onBasemapFailed={setBasemapFailed} />
         {/* 오고 가는 알림(조회 실패 · 면적 상한)은 지도 위에 띄운다 — 위 줄에 넣으면 줄이 접혀 지도 높이가 바뀌고, 바뀐 영역으로 다시 조회했다
             (E2E 2026-10-01: 503 알림이 뜨고 사라질 때마다 bbox 가 33.243 ↔ 33.234 로 흔들려 같은 시각을 새로 조회). 오른쪽 아래 출처 표시는 가리지 않는다. */}
-        {err || clamped ? (
+        {err || clamped || basemapFailed ? (
           <div className="pointer-events-none absolute bottom-3 left-3 z-10 flex max-w-[min(560px,calc(100%-7rem))] flex-col items-start gap-1 leading-snug" data-testid="replay-notes">
+            {/* 배경지도 실패(R-01 — 상황판과 같은 알림, QA-301): 누르기를 받지 않는다(그 밑의 지도를 끌 수 있게) */}
+            {basemapFailed ? <span className="panel px-2 py-1 text-warn" role="status" data-testid="basemap-failed">배경지도를 불러오지 못함 — 그 시각의 기록은 그대로 그립니다(새로고침하면 다시 시도)</span> : null}
             {err ? <span className="panel pointer-events-auto px-2 py-1 text-bad" role="alert" data-testid="replay-error">{err}{rid ? <RequestIdCopy id={rid} /> : null}</span> : null}
             {clamped ? <span className="panel pointer-events-auto px-2 py-1 text-warn" data-testid="replay-clamped" title={`서버 조회 면적 상한 ${REPLAY_MAX_AREA_SQDEG.toLocaleString()} sq°`}>화면이 넓어 가운데 점선 상자만 조회 — 상자 밖 기록은 표시 안 함(확대하면 전체)</span> : null}
           </div>
