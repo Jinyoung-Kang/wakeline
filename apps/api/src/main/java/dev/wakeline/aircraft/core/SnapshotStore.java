@@ -1,6 +1,5 @@
-package dev.wakeline.ingest;
+package dev.wakeline.aircraft.core;
 
-import dev.wakeline.domain.AircraftState;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;

@@ -1,5 +1,7 @@
 package dev.wakeline.ingest;
 
+import dev.wakeline.aircraft.core.Snapshot;
+import dev.wakeline.aircraft.core.SnapshotStore;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.health.contributor.Status;

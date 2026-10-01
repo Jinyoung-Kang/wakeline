@@ -3,7 +3,7 @@ package dev.wakeline.it;
 import dev.wakeline.engine.EngineService;
 import dev.wakeline.ingest.RadarStore;
 import dev.wakeline.ingest.SigmetStore;
-import dev.wakeline.ingest.SnapshotStore;
+import dev.wakeline.aircraft.core.SnapshotStore;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIf;
 import org.springframework.beans.factory.annotation.Autowired;

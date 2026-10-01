@@ -1,6 +1,6 @@
 package dev.wakeline.engine;
 
-import dev.wakeline.domain.AircraftState;
+import dev.wakeline.aircraft.core.AircraftState;
 import dev.wakeline.geo.GeoJson;
 import dev.wakeline.domain.SigmetRecord;
 import org.locationtech.jts.geom.Coordinate;

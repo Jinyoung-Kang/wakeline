@@ -2,10 +2,10 @@ package dev.wakeline.ws;
 
 import dev.wakeline.demand.DemandLeases;
 import dev.wakeline.demand.DemandStats;
-import dev.wakeline.domain.AircraftState;
+import dev.wakeline.aircraft.core.AircraftState;
 import dev.wakeline.domain.HotCell;
 import dev.wakeline.domain.ShipStatic;
-import dev.wakeline.ingest.Snapshot;
+import dev.wakeline.aircraft.core.Snapshot;
 import dev.wakeline.settings.RegionSettings;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.JsonNode;

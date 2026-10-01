@@ -1,7 +1,7 @@
-package dev.wakeline.persist;
+package dev.wakeline.aircraft.data;
 
-import dev.wakeline.domain.AircraftState;
-import dev.wakeline.ingest.IngestEvents;
+import dev.wakeline.aircraft.core.AircraftEvents;
+import dev.wakeline.aircraft.core.AircraftState;
 import dev.wakeline.platform.data.DbErrors;
 import dev.wakeline.platform.data.OrderedWriter;
 import dev.wakeline.platform.support.Receipt;
@@ -142,13 +142,13 @@ public class TrackWriter implements SmartLifecycle {
     }
 
     @EventListener
-    public void onSnapshot(IngestEvents.SnapshotUpdated e) {
+    public void onSnapshot(AircraftEvents.SnapshotUpdated e) {
         enqueue(e.current().states().values(), e.receipt());
     }
 
     /** 재시작·재시도로 밀린 백로그(실시간 상태엔 반영하지 않은 과거 엔트리)도 항적으로는 이어서 저장한다(REL-8). */
     @EventListener
-    public void onBacklog(IngestEvents.AircraftBacklog e) {
+    public void onBacklog(AircraftEvents.AircraftBacklog e) {
         enqueue(e.states(), e.receipt());
     }
 

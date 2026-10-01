@@ -1,4 +1,4 @@
-package dev.wakeline.domain;
+package dev.wakeline.aircraft.core;
 
 import java.time.Instant;
 

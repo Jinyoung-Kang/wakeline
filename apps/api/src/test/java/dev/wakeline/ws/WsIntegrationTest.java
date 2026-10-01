@@ -4,7 +4,7 @@ import dev.wakeline.platform.config.AppProperties;
 import dev.wakeline.engine.EngineService;
 import dev.wakeline.ingest.RadarStore;
 import dev.wakeline.ingest.SigmetStore;
-import dev.wakeline.ingest.SnapshotStore;
+import dev.wakeline.aircraft.core.SnapshotStore;
 import dev.wakeline.status.StatusService;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -247,16 +247,16 @@ class WsIntegrationTest {
         long closedAtMs = -1;
         long startMs = System.currentTimeMillis();
         for (int round = 0; round < 60 && closedAtMs < 0; round++) {
-            Map<String, dev.wakeline.domain.AircraftState> m = new java.util.HashMap<>();
+            Map<String, dev.wakeline.aircraft.core.AircraftState> m = new java.util.HashMap<>();
             for (int i = 0; i < 20_000; i++) {   // 전세계 2만 대 ≈ 2 MB/스냅샷 — 소켓 버퍼를 금방 채운다
                 String hex = String.format("%06x", i);
                 m.put(hex, WsTestKit.ac(hex, -80 + (i % 160) + round * 0.01, -170 + (i / 160) * 2.5, 30000, t, "opensky"));
             }
             m.put("aaa001", WsTestKit.ac("aaa001", 36 + round * 0.01, 127, 30000, t, "adsb_lol")); // 건강한 세션의 bbox 안
-            var snap = new dev.wakeline.ingest.Snapshot(store.nextVersion(), "global", "opensky", t.plusSeconds(round + 1), t, "-", Map.copyOf(m));
+            var snap = new dev.wakeline.aircraft.core.Snapshot(store.nextVersion(), "global", "opensky", t.plusSeconds(round + 1), t, "-", Map.copyOf(m));
             var prev = store.replace(snap);
             long p0 = System.nanoTime();
-            hub.onSnapshot(new dev.wakeline.ingest.IngestEvents.SnapshotUpdated(prev, snap));
+            hub.onSnapshot(new dev.wakeline.aircraft.core.AircraftEvents.SnapshotUpdated(prev, snap));
             maxPublishMs = Math.max(maxPublishMs, (System.nanoTime() - p0) / 1_000_000);
             if (round > 0) healthy.next("diff"); // 다른 세션은 계속 받는다
             if (hub.count() == base + 1) closedAtMs = System.currentTimeMillis() - startMs;

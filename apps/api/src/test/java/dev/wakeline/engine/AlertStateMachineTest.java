@@ -1,6 +1,6 @@
 package dev.wakeline.engine;
 
-import dev.wakeline.domain.AircraftState;
+import dev.wakeline.aircraft.core.AircraftState;
 import dev.wakeline.domain.Alert;
 import dev.wakeline.domain.SigmetRecord;
 import org.junit.jupiter.api.Test;

@@ -1,7 +1,7 @@
 package dev.wakeline.route;
 
 import dev.wakeline.platform.config.RedisConfig;
-import dev.wakeline.domain.AircraftState;
+import dev.wakeline.aircraft.core.AircraftState;
 import dev.wakeline.platform.support.SingleFlight;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;

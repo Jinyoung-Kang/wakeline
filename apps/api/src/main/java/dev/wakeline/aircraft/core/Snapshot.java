@@ -1,6 +1,4 @@
-package dev.wakeline.ingest;
-
-import dev.wakeline.domain.AircraftState;
+package dev.wakeline.aircraft.core;
 
 import java.time.Instant;
 import java.util.Map;

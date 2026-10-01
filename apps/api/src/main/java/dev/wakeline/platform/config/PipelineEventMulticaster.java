@@ -67,7 +67,7 @@ public class PipelineEventMulticaster extends SimpleApplicationEventMulticaster 
     /** @EventListener 메서드면 "클래스#메서드", 아니면 리스너 클래스 이름. 지표 태그라서 짧고 유한해야 한다. */
     static String listenerName(ApplicationListener<?> listener) {
         if (listener instanceof org.springframework.context.event.ApplicationListenerMethodAdapter a) {
-            String id = a.getListenerId(); // 예: dev.wakeline.persist.TrackWriter.onSnapshot(dev.wakeline.ingest.IngestEvents$SnapshotUpdated)
+            String id = a.getListenerId(); // 예: dev.wakeline.aircraft.data.TrackWriter.onSnapshot(dev.wakeline.aircraft.core.AircraftEvents$SnapshotUpdated)
             int paren = id.indexOf('(');
             String head = paren < 0 ? id : id.substring(0, paren);
             int dot = head.lastIndexOf('.');

@@ -1,11 +1,12 @@
 package dev.wakeline.engine;
 
-import dev.wakeline.domain.AircraftState;
+import dev.wakeline.aircraft.core.AircraftEvents;
+import dev.wakeline.aircraft.core.AircraftState;
+import dev.wakeline.aircraft.core.Snapshot;
+import dev.wakeline.aircraft.core.SnapshotStore;
 import dev.wakeline.domain.SigmetRecord;
 import dev.wakeline.ingest.IngestEvents;
 import dev.wakeline.ingest.SigmetStore;
-import dev.wakeline.ingest.Snapshot;
-import dev.wakeline.ingest.SnapshotStore;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 
@@ -39,7 +40,7 @@ class EngineServiceTest {
         for (AircraftState a : states) m.put(a.hex(), a);
         Snapshot s = new Snapshot(snapshots.nextVersion(), scope, scope.equals("global") ? "opensky" : "adsb_lol", fetchedAt, fetchedAt, "-", Map.copyOf(m));
         Snapshot prev = snapshots.replace(s);
-        engine.onSnapshot(new IngestEvents.SnapshotUpdated(prev, s));
+        engine.onSnapshot(new AircraftEvents.SnapshotUpdated(prev, s));
     }
 
     List<AlertStateMachine.EventType> alertEvents() {
@@ -90,7 +91,7 @@ class EngineServiceTest {
             Snapshot f = new Snapshot(snapshots.nextVersion(), "focus", "adsb_fi", now.minusSeconds(10 - 5L * i), now, "-",
                     Map.of("e00002", at("e00002", 36, 127 + i * 0.01, now.minusSeconds(10 - 5L * i), "adsb_fi")));
             Snapshot prev = snapshots.applyFocus(f);
-            engine.onSnapshot(new IngestEvents.SnapshotUpdated(prev, f));
+            engine.onSnapshot(new AircraftEvents.SnapshotUpdated(prev, f));
         }
         assertThat(alertEvents()).containsExactly(AlertStateMachine.EventType.ENTERED);
     }
@@ -175,13 +176,13 @@ class EngineServiceTest {
         SimpleMeterRegistry meters = new SimpleMeterRegistry();
         EngineService e = new EngineService(flaky, sigmets, events::add, meters);
         Instant now = Instant.now();
-        org.assertj.core.api.Assertions.assertThatCode(() -> e.onSnapshot(new IngestEvents.SnapshotUpdated(Snapshot.empty("region"), Snapshot.empty("region"))))
+        org.assertj.core.api.Assertions.assertThatCode(() -> e.onSnapshot(new AircraftEvents.SnapshotUpdated(Snapshot.empty("region"), Snapshot.empty("region"))))
                 .doesNotThrowAnyException();
         org.assertj.core.api.Assertions.assertThatCode(() -> e.onSigmets(new IngestEvents.SigmetsUpdated(sigmets.replace(now, "awc_isigmet", Map.of()))))
                 .doesNotThrowAnyException();
         assertThat(meters.counter("wakeline_engine_errors_total").count()).isEqualTo(2.0);
         explode.set(false);
-        e.onSnapshot(new IngestEvents.SnapshotUpdated(Snapshot.empty("region"), Snapshot.empty("region")));
+        e.onSnapshot(new AircraftEvents.SnapshotUpdated(Snapshot.empty("region"), Snapshot.empty("region")));
         assertThat(meters.counter("wakeline_engine_errors_total").count()).isEqualTo(2.0);
     }
 }

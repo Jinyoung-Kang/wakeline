@@ -1,12 +1,13 @@
 package dev.wakeline.rest;
 
-import dev.wakeline.platform.web.ProblemAdvice;
+import dev.wakeline.aircraft.web.AircraftControllerTest;
 import dev.wakeline.domain.AisGap;
 import dev.wakeline.domain.ShipState;
 import dev.wakeline.domain.ShipStatic;
 import dev.wakeline.ingest.AisStatus;
 import dev.wakeline.ingest.ShipStore;
 import dev.wakeline.persist.ShipRepository;
+import dev.wakeline.platform.web.ProblemAdvice;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -152,7 +153,7 @@ class ShipControllerTest {
     void setUp() {
         store.apply(List.of(pos("440000001", 35.1, 129.1, T.minusSeconds(5)), pos("440000002", 35.2, 129.2, T.minusSeconds(5))),
                 List.of(stat("440000001", "HANJIN BUSAN", 70)), T, "aisstream", System.currentTimeMillis());
-        mvc = MockMvcBuilders.standaloneSetup(new ShipController(store, repo, ais, dev.wakeline.rest.AircraftControllerTest.PROPS))
+        mvc = MockMvcBuilders.standaloneSetup(new ShipController(store, repo, ais, dev.wakeline.aircraft.web.AircraftControllerTest.PROPS))
                 .setControllerAdvice(new ProblemAdvice()).build();
     }
 
@@ -725,7 +726,7 @@ class ShipControllerTest {
             sc.add(full(m, "SHIP " + i, "C" + i, null, 70));
         }
         big.apply(st, sc, T, "aisstream", System.currentTimeMillis());
-        MockMvc m = MockMvcBuilders.standaloneSetup(new ShipController(big, repo, ais, dev.wakeline.rest.AircraftControllerTest.PROPS))
+        MockMvc m = MockMvcBuilders.standaloneSetup(new ShipController(big, repo, ais, dev.wakeline.aircraft.web.AircraftControllerTest.PROPS))
                 .setControllerAdvice(new ProblemAdvice()).build();
         StringBuilder out = new StringBuilder("MEASURE ship search over " + ShipStore.MAX_SHIPS + " live ships:");
         for (String q : new String[]{"SHIP 1234", "200", "200012345"}) {

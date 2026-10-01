@@ -1,6 +1,9 @@
 package dev.wakeline.ingest;
 
-import dev.wakeline.domain.AircraftState;
+import dev.wakeline.aircraft.core.AircraftEvents;
+import dev.wakeline.aircraft.core.AircraftState;
+import dev.wakeline.aircraft.core.Snapshot;
+import dev.wakeline.aircraft.core.SnapshotStore;
 import dev.wakeline.domain.AisGap;
 import dev.wakeline.domain.HotCell;
 import dev.wakeline.domain.ShipState;
@@ -23,8 +26,8 @@ import org.springframework.data.redis.connection.stream.MapRecord;
 import org.springframework.data.redis.connection.stream.PendingMessage;
 import org.springframework.data.redis.connection.stream.PendingMessages;
 import org.springframework.data.redis.connection.stream.ReadOffset;
-import org.springframework.data.redis.connection.stream.StreamOffset;
 import org.springframework.data.redis.connection.stream.StreamInfo;
+import org.springframework.data.redis.connection.stream.StreamOffset;
 import org.springframework.data.redis.connection.stream.StreamReadOptions;
 import org.springframework.data.redis.core.StreamOperations;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -743,7 +746,7 @@ public class StreamConsumer implements SmartLifecycle {
             backlog(scope, fetchedAt, states, receipt);
             return;
         }
-        events.publishEvent(new IngestEvents.SnapshotUpdated(prev, snap, receipt));
+        events.publishEvent(new AircraftEvents.SnapshotUpdated(prev, snap, receipt));
     }
 
     /** hot: 셀별 fetched_at 단조. 받아들이면 SnapshotUpdated(이전 = 그 셀의 이전 메시지), 아니면 백로그(항적만). */
@@ -754,7 +757,7 @@ public class StreamConsumer implements SmartLifecycle {
             backlog(SnapshotStore.HOT, fetchedAt, states, receipt);
             return;
         }
-        events.publishEvent(new IngestEvents.SnapshotUpdated(prev, snap, receipt));
+        events.publishEvent(new AircraftEvents.SnapshotUpdated(prev, snap, receipt));
     }
 
     /**
@@ -769,13 +772,13 @@ public class StreamConsumer implements SmartLifecycle {
             backlog(SnapshotStore.FOCUS, fetchedAt, states, receipt);
             return;
         }
-        events.publishEvent(new IngestEvents.SnapshotUpdated(prev, snap, receipt));
+        events.publishEvent(new AircraftEvents.SnapshotUpdated(prev, snap, receipt));
     }
 
     private void backlog(String scope, Instant fetchedAt, Map<String, AircraftState> states, Receipt receipt) {
         staleSkipped.increment();
         log.debug("aircraft/{} entry fetched_at={} is not newer than the current snapshot — history only", scope, fetchedAt);
-        events.publishEvent(new IngestEvents.AircraftBacklog(scope, fetchedAt, List.copyOf(states.values()), receipt));
+        events.publishEvent(new AircraftEvents.AircraftBacklog(scope, fetchedAt, List.copyOf(states.values()), receipt));
     }
 
     private void sigmet(Map<String, String> f, Map<String, SigmetRecord> set, Instant fetchedAt, Receipt receipt, boolean persistHistory) {

@@ -1,24 +1,25 @@
 package dev.wakeline.ws;
 
+import dev.wakeline.aircraft.core.AircraftEvents;
+import dev.wakeline.aircraft.core.AircraftState;
+import dev.wakeline.aircraft.core.SnapshotStore;
 import dev.wakeline.aircraft.web.AircraftJson;
-import dev.wakeline.platform.config.AppProperties;
-import dev.wakeline.platform.config.RedisConfig;
-import dev.wakeline.domain.AircraftState;
 import dev.wakeline.domain.Alert;
-import dev.wakeline.geo.Bbox;
 import dev.wakeline.domain.SigmetRecord;
 import dev.wakeline.engine.AlertStateMachine;
 import dev.wakeline.engine.EngineEvents;
 import dev.wakeline.engine.EngineService;
 import dev.wakeline.engine.PredictionAvailability;
+import dev.wakeline.geo.Bbox;
 import dev.wakeline.ingest.IngestEvents;
 import dev.wakeline.ingest.RadarStore;
 import dev.wakeline.ingest.SigmetStore;
-import dev.wakeline.ingest.SnapshotStore;
-import dev.wakeline.weather.web.SigmetGeoJson;
-import dev.wakeline.status.StatusService;
+import dev.wakeline.platform.config.AppProperties;
+import dev.wakeline.platform.config.RedisConfig;
 import dev.wakeline.route.RouteInfo;
 import dev.wakeline.route.RouteReader;
+import dev.wakeline.status.StatusService;
+import dev.wakeline.weather.web.SigmetGeoJson;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
@@ -403,7 +404,7 @@ public class WsHub implements SmartLifecycle {
     /** 엔진(EngineService#onSnapshot — HIGHEST_PRECEDENCE)이 그 스냅샷의 판정 주기를 끝낸 뒤에 팬아웃 · selected 를 예약한다(명시 — 예전에는 클래스 스캔 순서였다, ListenerWiringIT). */
     @EventListener
     @Order(Ordered.LOWEST_PRECEDENCE)
-    public void onSnapshot(IngestEvents.SnapshotUpdated e) {
+    public void onSnapshot(AircraftEvents.SnapshotUpdated e) {
         String scope = e.current().scope();
         if (SnapshotStore.HOT.equals(scope) || SnapshotStore.FOCUS.equals(scope)) onDemandSnapshot(e, SnapshotStore.FOCUS.equals(scope));
         else for (WsSession s : sessions.values()) if (s.subscribed() && wantsAircraft(s)) requestFanout(s);
@@ -416,7 +417,7 @@ public class WsHub implements SmartLifecycle {
      * hot·focus 메시지: 바뀐 항공기의 이전·현재 위치를 감싸는 범위와 겹치는 구독 세션만 팬아웃(diff 는 병합 뷰 기준이라 빠짐이 없다 —
      * 범위 밖 세션은 다음 region/global 팬아웃에서 같은 결과를 받는다). focus 는 그 hex 를 선택한 세션에 selected 를 따로 예약한다.
      */
-    private void onDemandSnapshot(IngestEvents.SnapshotUpdated e, boolean focus) {
+    private void onDemandSnapshot(AircraftEvents.SnapshotUpdated e, boolean focus) {
         Bbox area = envelope(e.previous().states().values(), e.current().states().values());
         for (WsSession s : sessions.values()) {
             if (!s.subscribed()) continue;

@@ -1,6 +1,6 @@
 package dev.wakeline.it;
 
-import dev.wakeline.ingest.SnapshotStore;
+import dev.wakeline.aircraft.core.SnapshotStore;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIf;

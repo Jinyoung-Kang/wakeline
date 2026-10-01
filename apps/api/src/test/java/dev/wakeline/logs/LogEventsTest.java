@@ -156,7 +156,7 @@ class LogEventsTest {
     void logbackEventIsMaskedAndCarriesRequestIdAndMdcContext() {
         LogMasker.registerSecrets("db-password-value");
         var ctx = new LoggerContext();
-        var logger = ctx.getLogger("dev.wakeline.persist.TrackWriter");
+        var logger = ctx.getLogger("dev.wakeline.aircraft.data.TrackWriter");
         var cause = new java.sql.SQLException("auth failed for db-password-value");
         var top = new IllegalStateException("connect redis://u:pw123@redis:6379 failed", cause);
         var e = new LoggingEvent("fqcn", logger, Level.ERROR, "batch failed password={} after {} ms", top, new Object[]{"hunter2", 1500});

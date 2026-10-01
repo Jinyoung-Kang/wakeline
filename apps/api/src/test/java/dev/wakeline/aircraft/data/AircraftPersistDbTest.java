@@ -1,9 +1,9 @@
-package dev.wakeline.persist;
+package dev.wakeline.aircraft.data;
 
 import dev.wakeline.DbTestSupport;
-import dev.wakeline.domain.AircraftState;
+import dev.wakeline.aircraft.core.AircraftEvents;
+import dev.wakeline.aircraft.core.AircraftState;
 import dev.wakeline.geo.Bbox;
-import dev.wakeline.ingest.IngestEvents;
 import dev.wakeline.platform.data.Sql;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
@@ -76,9 +76,9 @@ class AircraftPersistDbTest {
         tw.start();
         Instant seen = Instant.now().minusSeconds(30);
         var states = Map.of("aaa001", ac("aaa001", 36, 127, seen, "HL1"), "aaa002", ac("aaa002", 36.1, 127.1, seen, null));
-        var snap = new dev.wakeline.ingest.Snapshot(1, "region", "adsb_lol", seen, seen, "-", states);
-        tw.onSnapshot(new IngestEvents.SnapshotUpdated(dev.wakeline.ingest.Snapshot.empty("region"), snap));
-        tw.onBacklog(new IngestEvents.AircraftBacklog("region", seen.minusSeconds(10),
+        var snap = new dev.wakeline.aircraft.core.Snapshot(1, "region", "adsb_lol", seen, seen, "-", states);
+        tw.onSnapshot(new AircraftEvents.SnapshotUpdated(dev.wakeline.aircraft.core.Snapshot.empty("region"), snap));
+        tw.onBacklog(new AircraftEvents.AircraftBacklog("region", seen.minusSeconds(10),
                 List.of(ac("aaa003", 36.2, 127.2, seen.minusSeconds(10), null))));
         long deadline = System.currentTimeMillis() + 10_000;
         while (System.currentTimeMillis() < deadline

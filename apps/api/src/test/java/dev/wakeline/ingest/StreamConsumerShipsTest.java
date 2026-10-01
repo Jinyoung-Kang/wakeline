@@ -1,5 +1,6 @@
 package dev.wakeline.ingest;
 
+import dev.wakeline.aircraft.core.SnapshotStore;
 import dev.wakeline.platform.support.Receipt;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;

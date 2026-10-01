@@ -1,4 +1,4 @@
-package dev.wakeline.persist;
+package dev.wakeline.aircraft.data;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -43,7 +43,7 @@ class TrackWriterTest {
             }
         };
         AircraftRepository aircraft = new AircraftRepository(null, null) {
-            @Override public int touch(java.util.Collection<dev.wakeline.domain.AircraftState> states) { return states.size(); }
+            @Override public int touch(java.util.Collection<dev.wakeline.aircraft.core.AircraftState> states) { return states.size(); }
         };
         var meters = new io.micrometer.core.instrument.simple.SimpleMeterRegistry();
         TrackWriter tw = new TrackWriter(jdbc, aircraft, meters, 5, 10);
@@ -89,14 +89,14 @@ class TrackWriterTest {
                 if (firstFails instanceof RuntimeException r) throw r;
                 if (firstFails instanceof Error err) throw err;
             }
-            for (T a : args) written.add(((dev.wakeline.domain.AircraftState) a).hex());
+            for (T a : args) written.add(((dev.wakeline.aircraft.core.AircraftState) a).hex());
             return new int[0][];
         }
     }
 
     static TrackWriter trackWriter(GateJdbc jdbc, io.micrometer.core.instrument.MeterRegistry meters, long backoffStartMs, long backoffMaxMs) {
         AircraftRepository aircraft = new AircraftRepository(null, null) {
-            @Override public int touch(java.util.Collection<dev.wakeline.domain.AircraftState> states) { return states.size(); }
+            @Override public int touch(java.util.Collection<dev.wakeline.aircraft.core.AircraftState> states) { return states.size(); }
         };
         return new TrackWriter(jdbc, aircraft, meters, backoffStartMs, backoffMaxMs);
     }
@@ -182,8 +182,8 @@ class TrackWriterTest {
         assertThat(out.getAll()).contains("track flush on shutdown: 2 rows written");
     }
 
-    static dev.wakeline.domain.AircraftState ac(String hex) {
-        return new dev.wakeline.domain.AircraftState(hex, null, null, null, null, 36, 127, 30000, null, null, null, false, null, NOW, "adsb_lol", NOW, 0, false);
+    static dev.wakeline.aircraft.core.AircraftState ac(String hex) {
+        return new dev.wakeline.aircraft.core.AircraftState(hex, null, null, null, null, 36, 127, 30000, null, null, null, false, null, NOW, "adsb_lol", NOW, 0, false);
     }
 
     /** DB 가 오래 죽어 있으면 ACK 를 기다리는 표식은 상한(MAX_MARKS)에서 가장 오래된 것부터 놓는다 — 그 메시지는 스트림에서 이미 지워졌다. */
@@ -202,7 +202,7 @@ class TrackWriterTest {
         for (int i = 0; i <= TrackWriter.MAX_MARKS; i++) {
             dev.wakeline.platform.support.Receipt r = new dev.wakeline.platform.support.Receipt(acked::incrementAndGet);
             rs.add(r);
-            tw.enqueue(java.util.List.of(new dev.wakeline.domain.AircraftState(String.format("%06x", i), null, null, null, null, 36, 127, 30000,
+            tw.enqueue(java.util.List.of(new dev.wakeline.aircraft.core.AircraftState(String.format("%06x", i), null, null, null, null, 36, 127, 30000,
                     null, null, null, false, null, NOW, "adsb_lol", NOW, 0, false)), r);
             r.release();
         }
@@ -230,7 +230,7 @@ class TrackWriterTest {
             }
         };
         AircraftRepository aircraft = new AircraftRepository(null, null) {
-            @Override public int touch(java.util.Collection<dev.wakeline.domain.AircraftState> states) { return states.size(); }
+            @Override public int touch(java.util.Collection<dev.wakeline.aircraft.core.AircraftState> states) { return states.size(); }
         };
         var meters = new io.micrometer.core.instrument.simple.SimpleMeterRegistry();
         TrackWriter tw = new TrackWriter(jdbc, aircraft, meters, 1, 1);

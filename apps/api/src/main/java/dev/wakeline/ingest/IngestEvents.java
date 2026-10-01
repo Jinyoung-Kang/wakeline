@@ -1,6 +1,5 @@
 package dev.wakeline.ingest;
 
-import dev.wakeline.domain.AircraftState;
 import dev.wakeline.domain.AisGap;
 import dev.wakeline.domain.ShipState;
 import dev.wakeline.domain.ShipStatic;
@@ -9,7 +8,6 @@ import dev.wakeline.platform.support.PipelineEvent;
 import dev.wakeline.platform.support.Receipt;
 
 import java.time.Instant;
-import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -21,10 +19,6 @@ import java.util.Set;
 public final class IngestEvents {
     private IngestEvents() {}
 
-    public record SnapshotUpdated(Snapshot previous, Snapshot current, Receipt receipt) implements PipelineEvent {
-        public SnapshotUpdated(Snapshot previous, Snapshot current) { this(previous, current, Receipt.NONE); }
-    }
-
     public record SigmetsUpdated(SigmetStore.State state) implements PipelineEvent {}
 
     /**
@@ -35,14 +29,6 @@ public final class IngestEvents {
     public record SigmetsExpired(SigmetStore.State state, Set<String> expiredIds) implements PipelineEvent {}
 
     public record RadarUpdated(RadarStore.Frames frames) implements PipelineEvent {}
-
-    /**
-     * 현재 스냅샷보다 오래된(fetched_at 이 같거나 이전) 항공기 엔트리 — 재시작·재시도 후 밀린 백로그.
-     * 실시간 상태·엔진·WS 는 되돌리지 않는다(스냅샷은 '최신만 의미'). 항적 기록(TrackWriter)만 이 이벤트로 이어서 저장한다.
-     */
-    public record AircraftBacklog(String scope, Instant fetchedAt, Collection<AircraftState> states, Receipt receipt) implements PipelineEvent {
-        public AircraftBacklog(String scope, Instant fetchedAt, Collection<AircraftState> states) { this(scope, fetchedAt, states, Receipt.NONE); }
-    }
 
     /**
      * SIGMET 세트 한 벌을 <b>스트림 순서대로</b> 이력(DB)에 남기라는 이벤트(API-CONC-1). 실시간 저장소(SigmetStore)에 반영됐는지와

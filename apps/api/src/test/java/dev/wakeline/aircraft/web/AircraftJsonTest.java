@@ -1,8 +1,8 @@
 package dev.wakeline.aircraft.web;
 
-import dev.wakeline.domain.AircraftState;
-import dev.wakeline.ingest.Snapshot;
-import dev.wakeline.ingest.SnapshotStore;
+import dev.wakeline.aircraft.core.AircraftState;
+import dev.wakeline.aircraft.core.Snapshot;
+import dev.wakeline.aircraft.core.SnapshotStore;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;

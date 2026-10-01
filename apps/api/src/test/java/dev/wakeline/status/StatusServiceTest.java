@@ -1,13 +1,13 @@
 package dev.wakeline.status;
 
-import dev.wakeline.domain.AircraftState;
+import dev.wakeline.aircraft.core.AircraftState;
 import dev.wakeline.geo.GeoJson;
 import dev.wakeline.domain.SigmetRecord;
 import dev.wakeline.engine.EngineService;
 import dev.wakeline.ingest.RadarStore;
 import dev.wakeline.ingest.SigmetStore;
-import dev.wakeline.ingest.Snapshot;
-import dev.wakeline.ingest.SnapshotStore;
+import dev.wakeline.aircraft.core.Snapshot;
+import dev.wakeline.aircraft.core.SnapshotStore;
 import dev.wakeline.weather.web.SigmetGeoJson;
 import dev.wakeline.settings.RegionSettings;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;

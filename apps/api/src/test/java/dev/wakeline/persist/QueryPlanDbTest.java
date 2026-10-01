@@ -2,6 +2,7 @@ package dev.wakeline.persist;
 
 import dev.wakeline.DbTestSupport;
 import dev.wakeline.PlanCapture;
+import dev.wakeline.aircraft.data.AircraftRepository;
 import dev.wakeline.ingest.SigmetStore;
 import dev.wakeline.platform.data.OrderedWriter;
 import dev.wakeline.platform.data.Sql;

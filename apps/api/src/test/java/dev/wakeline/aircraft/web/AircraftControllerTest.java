@@ -1,14 +1,14 @@
-package dev.wakeline.rest;
+package dev.wakeline.aircraft.web;
 
 import dev.wakeline.platform.config.AppProperties;
 import dev.wakeline.platform.web.ProblemAdvice;
-import dev.wakeline.domain.AircraftState;
+import dev.wakeline.aircraft.core.AircraftState;
 import dev.wakeline.engine.EngineService;
 import dev.wakeline.ingest.SigmetStore;
-import dev.wakeline.ingest.Snapshot;
-import dev.wakeline.ingest.SnapshotStore;
-import dev.wakeline.persist.AircraftRepository;
-import dev.wakeline.persist.TrackRepository;
+import dev.wakeline.aircraft.core.Snapshot;
+import dev.wakeline.aircraft.core.SnapshotStore;
+import dev.wakeline.aircraft.data.AircraftRepository;
+import dev.wakeline.aircraft.data.TrackRepository;
 import dev.wakeline.route.RouteInfoTest;
 import dev.wakeline.route.RouteReader;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -44,8 +44,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * 스냅샷 ETag·Cache-Control public·304. DB 없이 답한 요청(503 · db_unavailable)도 WARN 한 줄을 남기고, DB 결함은 500 이다.
  */
 @ExtendWith(OutputCaptureExtension.class)
-class AircraftControllerTest {
-    static final AppProperties PROPS = new AppProperties("", "36.5,127.8", 250, 120, 200, 5, 10, 30, 2500, 0, "classpath:schemas", 72, 30,
+public class AircraftControllerTest {
+    public static final AppProperties PROPS = new AppProperties("", "36.5,127.8", 250, 120, 200, 5, 10, 30, 2500, 0, "classpath:schemas", 72, 30,
             120, List.of("http://localhost:8700"), List.of());
 
     /** DB 가 내려간 저장소 — 조회마다 던질 예외를 고른다(기본: 연결을 얻지 못함). */
@@ -87,7 +87,7 @@ class AircraftControllerTest {
     }
 
     /** 이 클래스가 남긴 ProblemAdvice 의 WARN 줄. */
-    static List<String> warnLines(CapturedOutput out) {
+    public static List<String> warnLines(CapturedOutput out) {
         return out.getAll().lines().filter(l -> l.contains("WARN") && l.contains("ProblemAdvice")).toList();
     }
 

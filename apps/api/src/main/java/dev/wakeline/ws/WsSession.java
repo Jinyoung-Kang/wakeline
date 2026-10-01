@@ -1,7 +1,7 @@
 package dev.wakeline.ws;
 
 import dev.wakeline.aircraft.web.AircraftJson;
-import dev.wakeline.domain.AircraftState;
+import dev.wakeline.aircraft.core.AircraftState;
 import dev.wakeline.geo.Bbox;
 import dev.wakeline.domain.ShipStatic;
 import dev.wakeline.engine.PredictionAvailability;

@@ -5,7 +5,7 @@ import dev.wakeline.engine.EngineService;
 import dev.wakeline.ingest.RadarStore;
 import dev.wakeline.ingest.SchemaValidator;
 import dev.wakeline.ingest.SigmetStore;
-import dev.wakeline.ingest.SnapshotStore;
+import dev.wakeline.aircraft.core.SnapshotStore;
 import dev.wakeline.ingest.StreamConsumer;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.junit.jupiter.api.Test;

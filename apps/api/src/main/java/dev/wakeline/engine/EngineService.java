@@ -1,11 +1,12 @@
 package dev.wakeline.engine;
 
-import dev.wakeline.domain.AircraftState;
+import dev.wakeline.aircraft.core.AircraftEvents;
+import dev.wakeline.aircraft.core.AircraftState;
+import dev.wakeline.aircraft.core.SnapshotStore;
 import dev.wakeline.domain.Alert;
 import dev.wakeline.domain.SigmetRecord;
 import dev.wakeline.ingest.IngestEvents;
 import dev.wakeline.ingest.SigmetStore;
-import dev.wakeline.ingest.SnapshotStore;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
@@ -114,7 +115,7 @@ public class EngineService {
      */
     @EventListener
     @Order(Ordered.HIGHEST_PRECEDENCE)
-    public void onSnapshot(IngestEvents.SnapshotUpdated e) {
+    public void onSnapshot(AircraftEvents.SnapshotUpdated e) {
         run(Instant.now());
     }
 

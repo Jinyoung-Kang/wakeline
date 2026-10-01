@@ -2,7 +2,7 @@ package dev.wakeline.ws;
 
 import dev.wakeline.demand.CollectorDemandStatus;
 import dev.wakeline.demand.DemandStats;
-import dev.wakeline.domain.AircraftState;
+import dev.wakeline.aircraft.core.AircraftState;
 import dev.wakeline.domain.Alert;
 import dev.wakeline.domain.HotCell;
 import dev.wakeline.domain.ShipState;

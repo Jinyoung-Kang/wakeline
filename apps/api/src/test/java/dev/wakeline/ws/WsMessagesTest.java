@@ -2,8 +2,8 @@ package dev.wakeline.ws;
 
 import dev.wakeline.aircraft.web.AircraftJson;
 import dev.wakeline.engine.PredictionAvailability;
-import dev.wakeline.ingest.Snapshot;
-import dev.wakeline.ingest.SnapshotStore;
+import dev.wakeline.aircraft.core.Snapshot;
+import dev.wakeline.aircraft.core.SnapshotStore;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.JsonNode;
 
