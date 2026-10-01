@@ -469,6 +469,21 @@ statement_timeout 30 s · lock_timeout 5 s)에 운영 클래스 그대로의 기
 - 이제 `sigmet_valid` 가 `valid_to > :t` 로 범위를 좁혀, 최근 시각의 전세계 재생은 표 크기와 거의 상관없이 1–3 ms 다(전: 표 전체를 훑어 30 ms — 표가 자랄수록
   늘었다). 받는 범위 끝(30일 전)은 그 뒤에 끝난 경보를 모두 훑어 13–17 ms 로 아직 크지만 전의 절반이다.
 
+**P3 — 운영 로그 화면의 다시 훑기(api-review §4 P5 · PLAN Phase 4-6)** — `logs/LogReaderScanPerfTest`: 운영 로그 화면은 15 s 마다(web useLogFeed — 탭이 보일
+때만) 목록 첫 쪽이나 묶음을 다시 받는다. 묶음(groups)은 늘 두 스트림 전체(최대 4,200건)를, 목록은 필터에 맞는 항목이 쪽(100)을 채우지 못하면 끝까지 훑고,
+훑는 항목마다 스키마 검증 · 파싱 · 다시 가림을 한다. 항목은 리뷰와 같은 모양(서버 3,100건 — 세 건에 하나는 150줄 스택, 브라우저 오류 1,100건 — JSON
+6,608,098자). 메모리 스트림(해석만)과 실제 Redis(`redis:8-alpine`, 운영 생성자 — XREVRANGE 200건씩 · TIME), 데우기 5번 뒤 11번의 가운데 값, 두 번 돌린 범위:
+
+| 요청 | 메모리 스트림 | Redis |
+|---|---|---|
+| 목록 첫 쪽, 필터 없음(4,200 중 100) | 3.0–4.0 ms | 3.5–4.2 ms |
+| 목록, 맞는 것 없는 필터(끝까지) | 90.6–91.8 ms | 129.5–214.1 ms |
+| 묶음(끝까지) | 92.2–93.6 ms | 127.7–136.0 ms |
+| XREVRANGE 만(두 스트림 끝까지) | — | 21.0–21.5 ms |
+
+- 끝까지 훑는 요청의 약 3/4(90 ms 남짓)이 항목 해석이다 — 스트림이 거의 바뀌지 않았는데도 폴링마다 처음부터 다시 한다. 묶음 보기를 열어 두면 15 s 마다 약
+  130 ms(한 코어의 약 0.9 %), 운영자가 로그를 보는 때는 대개 장애 중이다.
+
 ## 재현
 ```bash
 make bench SHIPS=1               # k6 REST + WS(선박 포함), api 층 직접
@@ -487,4 +502,5 @@ bash tools/chaos.sh              # 장애 주입(개발 스택을 실제로 죽�
 (cd apps/api && ./gradlew --offline perfTest --tests 'dev.wakeline.platform.data.SharedPoolStarvationPerfTest.burst')     # §13 D6 멀쩡한 DB 의 몰림(격벽의 기다림)
 (cd apps/api && ./gradlew --offline perfTest --tests 'dev.wakeline.ingest.StreamParsePerfTest')       # §13 P1 전세계 메시지 해석 · 두 번 파싱
 (cd apps/api && ./gradlew --offline perfTest --tests 'dev.wakeline.weather.data.SigmetReplayPlanPerfTest')   # §13 P4 SIGMET 재생 조건(합성 200,000건 · Docker)
+(cd apps/api && ./gradlew --offline perfTest --tests 'dev.wakeline.logs.LogReaderScanPerfTest')          # §13 P3 운영 로그 다시 훑기(메모리 · Redis — Docker)
 ```
