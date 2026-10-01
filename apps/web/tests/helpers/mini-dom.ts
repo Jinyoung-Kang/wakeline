@@ -52,6 +52,12 @@ export class MiniElement extends MiniNode {
   getAttribute(k: string) { return this.attributes.get(k) ?? null; }
   hasAttribute(k: string) { return this.attributes.has(k); }
   removeAttribute(k: string) { this.attributes.delete(k); }
+  /**
+   * vitest(chai)가 실패한 기대값의 요소를 찍을 때 읽는 것: 속성 이름(넣은 순서)과 자식 요소.
+   * 없으면 실패 문구 대신 'getAttributeNames is not a function' 같은 TypeError 만 보였다.
+   */
+  getAttributeNames() { return [...this.attributes.keys()]; }
+  get children(): MiniElement[] { return this.childNodes.filter((c): c is MiniElement => c instanceof MiniElement); }
   /** 속성 선택자만("[data-x]" · "[data-x=\"v\"]", 쉼표로 여럿) — 문서 순서 */
   querySelectorAll(sel: string): MiniElement[] {
     const parts = sel.split(",").map((x) => /^\s*\[([\w-]+)(?:="([^"]*)")?\]\s*$/.exec(x));

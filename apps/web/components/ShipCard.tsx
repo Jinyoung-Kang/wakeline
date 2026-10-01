@@ -1,11 +1,11 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { apiGet } from "@/lib/api";
+import { shipDetail } from "@/lib/endpoints/ship-detail";
 import { useServerNow } from "@/lib/clock";
 import { fmtKstTitle, fmtRangeTitle } from "@/lib/time";
 import { ageS, fmtDuration, fmtSogDual } from "@/lib/format";
-import { notLiveText, GAP_BREAK_MIN_MS, isMmsi, navStatusLabel, parseDestinationInfo, parseShipState, parseShipStatic, positionBadge, ROT_LABEL, SHIP_CATEGORY_CODES, SHIP_CATEGORIES, SHIP_STALE_S, SHIP_TRACK_HOURS, shipAgeS, shipCategory, shipRotation, shipsChip, SHIPS_RULE_TEXT, sortShipRows, STORED_STATIC_LABEL, STORED_STATIC_TIME_LABEL, type DestinationInfo, type ShipCategory, type ShipSort, type ShipSortKey, type ShipState, type ShipStatic, type StaticSource } from "@/lib/ships";
-import { fmtDraught, fmtShipEta, LAST_SEEN_TITLE, fmtShipSize, fmtShipType, gapDurationS, gapSummary, imoField, pickDestinationInfo, positionSourceLabel, SHIP_SORT_DEFAULT, SHIP_TRACK_WINDOW_MS, shipDestinationLines, shipList, shipOriginText, shipRowFromLite, staticProvenance, storedPortCallsNote, STORED_STATIC_FIELDS_TEXT, STORED_STATIC_PORT_CALLS_TEXT, STORED_STATIC_PORT_CALLS_UNREAD_TEXT, STORED_STATIC_TITLE, STORED_STATIC_UNAVAILABLE_TEXT } from "@/lib/ship-card";
+import { notLiveText, GAP_BREAK_MIN_MS, isMmsi, navStatusLabel, newerLite, positionBadge, ROT_LABEL, SHIP_CATEGORY_CODES, SHIP_CATEGORIES, SHIP_STALE_S, SHIP_TRACK_HOURS, shipAgeS, shipCategory, shipRotation, shipsChip, SHIPS_RULE_TEXT, sortShipRows, STORED_STATIC_LABEL, STORED_STATIC_TIME_LABEL, type ShipCategory, type ShipSort, type ShipSortKey, type ShipState, type ShipStatic } from "@/lib/ships";
+import { fmtDraught, fmtShipEta, LAST_SEEN_TITLE, fmtShipSize, fmtShipType, gapDurationS, gapSummary, imoField, pickDestinationInfo, positionSourceLabel, SHIP_SORT_DEFAULT, SHIP_TRACK_WINDOW_MS, shipDestinationLines, shipList, shipOriginText, shipRowFromLite, staticProvenance, storedPortCallsNote, STORED_STATIC_FIELDS_TEXT, STORED_STATIC_PORT_CALLS_TEXT, STORED_STATIC_PORT_CALLS_UNREAD_TEXT, STORED_STATIC_TITLE, STORED_STATIC_UNAVAILABLE_TEXT, type ShipDetail } from "@/lib/ship-card";
 import { shipStates, useServerData } from "@/lib/store";
 import { saveLayers } from "@/lib/prefs";
 import { panIfOutside, shipPos } from "@/lib/focus";
@@ -14,43 +14,6 @@ import { ShipTable } from "./ShipTable";
 import { RequestIdCopy, RequestIdOf } from "./logs/ErrorNote";
 import { PortCallsSection } from "./PortCallsSection";
 import { KstRange, KstTime } from "./KstTime";
-
-/**
- * REST /ships/{mmsi} 상세. first_recorded_at = 이 서비스가 이 MMSI 를 처음 기록한 시각, last_position_at = DB 에 저장된 마지막 위치 시각
- * (보존 72 h 안 — 없으면 null), last_seen_at = 실시간이 아닐 때의 마지막 수신 기록(계약 v5 §G4 — 없으면 null). 계약 v5 §B3 카드 행.
- * static_source = 정적 정보의 출처(계약 v5 §G17 — live · stored, static 이 있을 때만), static_updated_at = stored 일 때 저장 행의 updated_at.
- */
-export interface ShipDetail {
-  mmsi: string; state: ShipState | null; static: ShipStatic | null; static_source: StaticSource | null; static_updated_at: string | null;
-  destination_info: DestinationInfo | null; db_unavailable: boolean;
-  first_recorded_at: string | null; last_position_at: string | null; last_seen_at: string | null;
-}
-
-const isoOrNull = (v: unknown) => (typeof v === "string" && v.length <= 40 && !Number.isNaN(Date.parse(v)) ? v : null);
-
-/** REST /ships/{mmsi} 응답 검증(모양이 다르면 null — 모르는 값을 채우지 않는다) */
-export function parseShipDetail(mmsi: string, r: unknown): ShipDetail {
-  const o = typeof r === "object" && r !== null ? (r as Record<string, unknown>) : {};
-  const st = parseShipState(typeof o.state === "object" && o.state !== null ? { mmsi, ...(o.state as object) } : null);
-  const sx = parseShipStatic(typeof o.static === "object" && o.static !== null ? { mmsi, ...(o.static as object) } : null);
-  const meta = typeof o.meta === "object" && o.meta !== null ? (o.meta as Record<string, unknown>) : {};
-  const stat = sx?.mmsi === mmsi ? sx : null;
-  // 출처는 정적 정보가 있을 때만, 시각은 stored 일 때만(REST 는 live · stored 뿐 — 그 밖은 모름)
-  const source: StaticSource | null = stat && (o.static_source === "live" || o.static_source === "stored") ? o.static_source : null;
-  return {
-    mmsi, state: st?.mmsi === mmsi ? st : null, static: stat, static_source: source,
-    static_updated_at: source === "stored" ? isoOrNull(o.static_updated_at) : null,
-    destination_info: parseDestinationInfo(o.destination_info), db_unavailable: meta.db_unavailable === true,
-    first_recorded_at: isoOrNull(o.first_recorded_at), last_position_at: isoOrNull(o.last_position_at), last_seen_at: isoOrNull(o.last_seen_at),
-  };
-}
-
-/** 관측 시각이 더 새로운 상태(같거나 비교할 수 없으면 앞의 것) */
-function newer(a: ShipState | null, b: ShipState | null): ShipState | null {
-  if (!a || !b) return a ?? b;
-  const ta = a.seen_at ? Date.parse(a.seen_at) : NaN, tb = b.seen_at ? Date.parse(b.seen_at) : NaN;
-  return !Number.isNaN(tb) && (Number.isNaN(ta) || tb > ta) ? b : a;
-}
 
 /**
  * 선박 상세(계약 v2 §B4 · v4 §B): 선박명·MMSI·호출부호·IMO·선종(코드+분류)·크기(A+B × C+D, 보고값)·흘수·출발지(보고)·목적지(보고, 원문 + UN/LOCODE 풀이)·ETA(선원 입력값, 연도 없음)·
@@ -69,11 +32,12 @@ export function ShipCard({ mmsi }: { mmsi: string }) {
   useEffect(() => {
     const have = loaded.current;
     if (gone && have?.mmsi === mmsi && have.state == null) return;
-    let alive = true;
-    apiGet<unknown>(`/api/v1/ships/${encodeURIComponent(mmsi)}`)
-      .then((r) => { if (alive) { const p = parseShipDetail(mmsi, r); loaded.current = p; setDetail(p); setError(null); } })
-      .catch((e: unknown) => { if (alive) setError({ mmsi, error: e }); });
-    return () => { alive = false; };
+    // 다른 선박 · 다시 받기 · 카드를 닫으면 떠 있는 요청을 끊고 그 답을 쓰지 않는다(web-review §3.2 — 이 규칙 있는 효과는 그대로 두고 끊기만 더한다)
+    const ctl = new AbortController();
+    shipDetail(mmsi, { signal: ctl.signal })
+      .then((p) => { if (!ctl.signal.aborted) { loaded.current = p; setDetail(p); setError(null); } })
+      .catch((e: unknown) => { if (!ctl.signal.aborted) setError({ mmsi, error: e }); });
+    return () => ctl.abort();
   }, [mmsi, gone]);
   const d = detail && detail.mmsi === mmsi ? detail : null;
   const err = error && error.mmsi === mmsi ? error.error : null;
@@ -94,8 +58,8 @@ export function ShipCardView({ mmsi, detail: d, error: err, now }: { mmsi: strin
   const lite = shipStates.get(mmsi) ?? null;
   // WS 가 "목록에 없음(state null)"이라고 했으면 그것이 가장 최신 판단
   const gone = live != null && live.state == null;
-  const full = newer(live?.state ?? null, d?.state ?? null);
-  const pos = newer(full, lite ? { ...lite, rot: null, provider: null, msg_type: null, class: null } : null);
+  const full = newerLite(live?.state ?? null, d?.state ?? null);
+  const pos = newerLite(full, lite ? { ...lite, rot: null, provider: null, msg_type: null, class: null } : null);
   // 위치·속도는 가장 새 관측, 등급·출처는 full 상태에서(지도 목록 사본 ShipLite 에는 없다)
   const s: ShipState | null = gone || !pos ? null : { ...pos, class: pos.class ?? full?.class ?? null, provider: pos.provider ?? full?.provider ?? null };
   const st: ShipStatic | null = live?.static ?? d?.static ?? null;

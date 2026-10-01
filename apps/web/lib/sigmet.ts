@@ -14,6 +14,22 @@ export function activeSigmetFeatures(fc: SigmetCollection | null | undefined, no
     .map((f) => ({ ...f, properties: { ...f.properties, pending: isPending(f.properties, nowMs) } }));
 }
 
+/**
+ * SIGMET 레이어(만료 제외 · 발효 전 구분)와 "안에 항공기(관측)" 강조. inside = 그 SIGMET 의 관측(OBSERVED) 알림이 있고 발효 중일 때만 —
+ * 엔진은 발효 전 경보로 판정하지 않으므로 발효 전이면 강조하지 않는다. key = 같은 그리기인지(그린 SIGMET 수 · 강조 id · 발효 전 id) — 알림 배치마다
+ * 폴리곤 전체를 다시 색인하지 않게 부른 쪽이 지난 컬렉션 · key 와 견준다.
+ */
+export function sigmetLayerData(sigmets: SigmetCollection, alerts: Iterable<Pick<Alert, "kind" | "sigmet_id">>, nowMs: number): { fc: GeoJSON.FeatureCollection; key: string } {
+  const inside = new Set([...alerts].filter((a) => a.kind === "OBSERVED").map((a) => a.sigmet_id));
+  const active = activeSigmetFeatures(sigmets, nowMs);
+  const ids = (pred: (f: (typeof active)[number]) => boolean) => active.filter(pred).map((f) => f.properties.id).sort().join(",");
+  const key = `${active.length}|${ids((f) => inside.has(f.properties.id))}|${ids((f) => f.properties.pending === true)}`;
+  return {
+    fc: { type: "FeatureCollection", features: active.map((f) => ({ ...f, properties: { ...f.properties, inside: !f.properties.pending && inside.has(f.properties.id) } })) as GeoJSON.Feature[] },
+    key,
+  };
+}
+
 /** 발효 전인가: valid_from 이 (서버 기준) 지금보다 뒤. 해석할 수 없으면 false(발효 전이라고 단정하지 않는다). */
 export function isPending(p: Pick<SigmetProps, "valid_from"> | null | undefined, nowMs: number): boolean {
   if (!p || typeof p.valid_from !== "string") return false;

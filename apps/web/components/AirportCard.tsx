@@ -1,7 +1,8 @@
 "use client";
 import Link from "next/link";
-import { useEffect, useState } from "react";
-import { apiGet } from "@/lib/api";
+import { airportWx } from "@/lib/endpoints/weather";
+import { useApiResource } from "@/lib/use-api-resource";
+import { isDotSegment } from "@/lib/endpoints/path";
 import { useUi } from "@/lib/ui-store";
 import { useNow } from "@/lib/clock";
 import { serverNowMs } from "@/lib/store";
@@ -9,7 +10,7 @@ import { CAT_COLORS, catSourceLabel, ceilingLabel, fmtDuration, fmtTempPair, fmt
 import { ErrorNote } from "./logs/ErrorNote";
 import { RAW_BULLETIN_LABEL, RAW_BULLETIN_TITLE } from "@/lib/time";
 import { KstTime } from "./KstTime";
-import { parseWx, WX_UNREADABLE, type AirportWx } from "@/lib/airport-wx";
+import { WX_UNREADABLE } from "@/lib/airport-wx";
 
 /**
  * 공항 기상 카드(FR-22). 실링은 ceiling_state 로 "실링 없음"(구름 자료 있음·실링층 없음)과 "—"(모름)을 구분한다(GAP-16).
@@ -18,23 +19,13 @@ import { parseWx, WX_UNREADABLE, type AirportWx } from "@/lib/airport-wx";
  * 시정은 AWC 원문 값(vis_raw, 법정마일)에 단위 SM 을 붙이고 "6+" 는 "6 SM 이상"(DH-7) — km 로 읽히지 않게.
  */
 export function AirportCard({ icao }: { icao: string }) {
-  const [wx, setWx] = useState<AirportWx | null>(null);
-  /** 마지막 오류 — ApiError 면 요청 id 까지(계약 v5 §C8). wx 처럼 icao 로 묶는다: 다음 공항을 불러오는 동안 앞 공항의 오류 · 요청 id 를 보이지 않게(web-review B5) */
-  const [failed, setFailed] = useState<{ icao: string; error: unknown } | null>(null);
+  // 공항마다의 결과(lib/use-api-resource): 다음 공항을 불러오는 동안 앞 공항의 값 · 오류 · 요청 id 를 보이지 않는다(web-review B5).
+  // 본문은 parseWx 로 검사한다(web-review B10) — 읽을 수 없으면 그리지 않고 그렇다고 말한다. 오류는 ApiError 면 요청 id 까지(계약 v5 §C8)
+  const wx = useApiResource(icao, (signal) => airportWx(icao, { signal }).then((x) => x ?? Promise.reject(new Error(WX_UNREADABLE))));
   const selectAirport = useUi((s) => s.selectAirport);
   const now = useNow(30_000);
-  useEffect(() => {
-    let live = true;
-    // 본문은 parseWx 로 검사한다(web-review B10) — 읽을 수 없으면 그리지 않고 그렇다고 말한다
-    apiGet<unknown>(`/api/v1/airports/${encodeURIComponent(icao)}/wx`).then((body) => {
-      if (!live) return;
-      const x = parseWx(body);
-      if (x) { setWx(x); setFailed(null); } else setFailed({ icao, error: new Error(WX_UNREADABLE) });
-    }).catch((e: unknown) => { if (live) setFailed({ icao, error: e }); });
-    return () => { live = false; };
-  }, [icao]);
-  const w = wx && wx.airport.icao === icao ? wx : null;
-  const err = failed && failed.icao === icao ? failed.error : null;
+  const w = wx.data && wx.data.airport.icao === icao ? wx.data : null;
+  const err = wx.error;
   const m = w?.latest;
   const nowMs = now ? serverNowMs(now) : 0;
   const age = m && nowMs ? metarAgeS(m, nowMs) : null;
@@ -42,7 +33,7 @@ export function AirportCard({ icao }: { icao: string }) {
   const catColor = m?.flight_cat && !stale ? CAT_COLORS[m.flight_cat] : undefined;
   return (
     <div className="flex h-full flex-col" data-testid="airport-card">
-      <div className="row"><span className="label">Airport · {icao}</span><div className="flex gap-1"><Link href={`/airports/${encodeURIComponent(icao)}`} className="btn">이력</Link><button className="btn" onClick={() => selectAirport(null)}>닫기</button></div></div>
+      <div className="row"><span className="label">Airport · {icao}</span><div className="flex gap-1">{isDotSegment(icao) ? null : <Link href={`/airports/${encodeURIComponent(icao)}`} className="btn">이력</Link>}<button className="btn" onClick={() => selectAirport(null)}>닫기</button></div></div>
       <div className="min-h-0 flex-1 overflow-y-auto px-2 py-1 text-[12px]">
         {err ? <div className="text-bad"><ErrorNote error={err} /></div> : null}
         {w ? <>

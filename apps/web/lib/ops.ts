@@ -1,5 +1,6 @@
 /** 운영 화면 보조(순수 함수·주입 가능한 호출). 비인가 ops 호출은 404 로 숨겨지므로(SecurityConfig) 401 과 함께 "세션 없음 후보"로 본다. */
 import { ApiError } from "./api";
+import { pathSegment } from "./endpoints/path";
 import { fmtDuration } from "./format";
 import { krMissing, type KrMissingInfo } from "./kr-radar";
 import { compareInstants, parseResolvedRef, uptoOf, type Resolution, type ResolvedRef } from "./resolutions";
@@ -9,10 +10,10 @@ export const OPS_SESSION_PATH = "/api/v1/ops/session";
 
 /**
  * 운영 쓰기 경로 — 공급자 이름 · 설정 키는 서버가 준 값이지만 경로 조각으로 인코딩한다('/' · '?' · '#' 가 든 값이 CSRF 헤더가 실린 쓰기를
- * 다른 경로로 보내지 않게, web-review B11)
+ * 다른 경로로 보내지 않게, web-review B11). "." · ".." 는 던진다(lib/endpoints/path — 인코딩해도 남는 점 조각)
  */
-export const providerSwitchPath = (name: string, action: "enable" | "disable") => `/api/v1/ops/providers/${encodeURIComponent(name)}/${action}`;
-export const settingPath = (key: string) => `/api/v1/ops/settings/${encodeURIComponent(key)}`;
+export const providerSwitchPath = (name: string, action: "enable" | "disable") => `/api/v1/ops/providers/${pathSegment(name)}/${action}`;
+export const settingPath = (key: string) => `/api/v1/ops/settings/${pathSegment(key)}`;
 
 /** 401/404 — 세션이 없을 때 ops 엔드포인트가 돌려주는 상태 */
 export function isAuthMiss(e: unknown): boolean {

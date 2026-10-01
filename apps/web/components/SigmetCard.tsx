@@ -1,6 +1,6 @@
 "use client";
-import { useEffect, useState } from "react";
-import { apiGet } from "@/lib/api";
+import { sigmetInside } from "@/lib/endpoints/weather";
+import { useApiResource } from "@/lib/use-api-resource";
 import { aircraftStates, useServerData } from "@/lib/store";
 import { useUi } from "@/lib/ui-store";
 import { useServerNow } from "@/lib/clock";
@@ -19,19 +19,13 @@ import { KstRange, KstTime } from "./KstTime";
  */
 export function SigmetCard({ id }: { id: string }) {
   const f = useServerData((d) => d.sigmets?.features.find((x) => x.properties.id === id) ?? null);
-  const [inside, setInside] = useState<{ id: string; hexes: string[] | null } | null>(null);
+  // SIGMET 마다의 결과(lib/use-api-resource) — 받는 중 · 실패 · 목록 없음은 모름(—): 0 대로 단정하지 않는다
+  const inside = useApiResource(id, (signal) => sigmetInside(id, { signal }));
   const selectSigmet = useUi((s) => s.selectSigmet);
   const now = useServerNow(30_000);
-  useEffect(() => {
-    let live = true;
-    apiGet<{ aircraft_inside?: string[] }>(`/api/v1/sigmets/${encodeURIComponent(id)}`)
-      .then((x) => { if (live) setInside({ id, hexes: Array.isArray(x.aircraft_inside) ? x.aircraft_inside : null }); })
-      .catch(() => { if (live) setInside({ id, hexes: null }); }); // 모름 — 0 대로 단정하지 않는다
-    return () => { live = false; };
-  }, [id]);
   if (!f) return <div className="p-3 text-[11px] text-fg-3">경보를 찾을 수 없습니다(만료되었거나 목록에서 빠짐).</div>;
   const p = f.properties;
-  const hexes = inside && inside.id === id ? inside.hexes : null;
+  const hexes = inside.data;
   const expired = now ? isExpired(p, now) : false;
   const pending = now ? isPending(p, now) : false;
   const startsIn = pending ? (Date.parse(p.valid_from) - now) / 1000 : null;

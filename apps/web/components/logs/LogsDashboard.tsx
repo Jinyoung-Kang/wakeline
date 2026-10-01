@@ -1,16 +1,16 @@
 "use client";
 import Link from "next/link";
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
-import { apiGet, apiSend } from "@/lib/api";
+import { logGroups, logItem, logsPage } from "@/lib/endpoints/logs";
+import { opsSession, signOutRequest } from "@/lib/endpoints/ops";
 import { copyText, downloadText } from "@/lib/copy";
 import { fmtKstClock, fmtTimeTitle } from "@/lib/time";
 import {
-  appendLogPage, applyPending, DEFAULT_LOG_FILTER, entryKey, firstLine, groupText, LOG_LEVELS, LOG_PERIOD_LABEL, LOG_PERIODS, LOG_Q_MAX,
-  LOG_SCAN_MAX, LOG_SERVICES, LOG_STREAM_KEEP, LOG_STREAM_KEY, LOG_STREAM_NODE, logGroupsUrl, logItemUrl, logsFileName, logsNdjson, logsText, logsUrl, logText, LOGS_PAGE, LOGS_PAGE_MAX,
-  parseLogEntry, parseLogGroups, parseLogPage, parseLogsHash, pendingEntries, validRid, withGroupResolutions,
-  type LogEntry, type LogFilter, type LogGroup, type LogPage, type LogPeriod, type LogStreamName,
+  appendLogPage, applyPending, DEFAULT_LOG_FILTER, entryKey, initialLogsState, logGroupsSig, firstLine, groupText, LOG_LEVELS, LOG_PERIOD_LABEL, LOG_PERIODS, LOG_Q_MAX, LOG_SCAN_MAX, LOG_SERVICES,
+  LOG_STREAM_KEEP, LOG_STREAM_KEY, LOG_STREAM_NODE, logsFileName, logsNdjson, logsText, logText, LOGS_PAGE, LOGS_PAGE_MAX, parseLogGroups, parseLogsHash, pendingEntries,
+  validRid, withGroupResolutions, type LogEntry, type LogFilter, type LogGroup, type LogPage, type LogPeriod, type LogStreamName,
 } from "@/lib/logs";
-import { classifyOpsError, isAuthMiss, OPS_SESSION_PATH, SESSION_EXPIRED_NOTE, signOut } from "@/lib/ops";
+import { classifyOpsError, isAuthMiss, SESSION_EXPIRED_NOTE, signOut } from "@/lib/ops";
 import { hiddenText, RESOLUTION_STATE_TEXT, type ResolutionState } from "@/lib/resolutions";
 import { AisGapsTable } from "./AisGapsTable";
 import { ErrorNote } from "./ErrorNote";
@@ -36,7 +36,6 @@ const n0 = (v: number) => v.toLocaleString("en-US");
 /** 두 스트림의 보관 안내(§G2) */
 const KEEP_TEXT = `서버 로그 ${LOG_STREAM_KEY.server} 는 최근 약 ${n0(LOG_STREAM_KEEP.server)}건 · 브라우저 오류 ${LOG_STREAM_KEY.client} 는 최근 약 ${n0(LOG_STREAM_KEEP.client)}건만 보관`;
 /** 묶음 목록이 바뀌었는지(지문 · 건수 · 마지막 항목 · 해결) */
-const groupsSig = (g: Groups | null) => (g ? g.groups.map((x) => `${x.fp}:${x.count}:${x.last_id}:${x.resolved?.id ?? ""}`).join("|") : "");
 /** "해결 처리로 숨김 N건"의 뜻(ADR-024) */
 const HIDDEN_TITLE = "해결 처리(운영자가 지문 묶음을 'upto 까지 해결'로 적음)로 이 보기에서 뺀 항목 수 — 훑은 범위에서 다른 필터에 맞은 것만. "
   + "지우지 않음: '해결된 항목 보기'로 다시 보고, upto 뒤의 재발은 다시 보인다(ADR-024). — = api 가 수를 주지 않음";
@@ -51,12 +50,8 @@ function HiddenLine({ show, hidden, pages, state }: { show: boolean; hidden: num
   </>;
 }
 
-/** 첫 필터: /logs#rid=… 는 시각을 모르므로 가장 긴 기간(7 d)으로, #fp=… 는 그 묶음만. #id=…(&stream=…) 는 그 항목의 상세를 연다 */
-function initialState(): { filter: LogFilter; openId: string | null; openStream: LogStreamName | null } {
-  const h = parseLogsHash(typeof window !== "undefined" ? window.location?.hash ?? "" : "");
-  const filter: LogFilter = { ...DEFAULT_LOG_FILTER, ...(h.rid ? { rid: h.rid, period: "7d" as const } : {}), ...(h.fp ? { fp: h.fp } : {}) };
-  return { filter, openId: h.id ?? null, openStream: h.stream ?? null };
-}
+/** 첫 필터 · 열 항목 — 주소의 #rid= · #fp= · #id=(lib/logs initialLogsState) */
+const initialState = () => initialLogsState(typeof window !== "undefined" ? window.location?.hash ?? "" : "");
 
 /**
  * 시스템 로그 화면(계약 v5 §C7): 필터(서비스 여러 개 · 수준 · 기간 · 글자 · 요청 id) · 보기(목록 / 지문 묶음) · 상세 · 복사 · 내려받기 · AIS 수신 공백 탭.
@@ -101,11 +96,11 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
   const fail = useCallback((e: unknown) => {
     setErr(e);
     if (!isAuthMiss(e)) return;
-    void classifyOpsError(e, () => apiGet(OPS_SESSION_PATH)).then((k) => { if (k === "expired") onLeave(SESSION_EXPIRED_NOTE); });
+    void classifyOpsError(e, () => opsSession()).then((k) => { if (k === "expired") onLeave(SESSION_EXPIRED_NOTE); });
   }, [onLeave]);
   /** 상세의 조회 · 해결 쓰기가 401/404 일 때 — 세션 확인만(문구는 부른 쪽이 보인다). 만료면 로그인으로 */
   const authMiss = useCallback(async (e: unknown) => {
-    const k = await classifyOpsError(e, () => apiGet(OPS_SESSION_PATH));
+    const k = await classifyOpsError(e, () => opsSession());
     if (k === "expired") onLeave(SESSION_EXPIRED_NOTE);
     return k;
   }, [onLeave]);
@@ -116,13 +111,13 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
     setLoading(true);
     try {
       if (v === "list") {
-        const p = parseLogPage(await apiGet<unknown>(logsUrl(f, at)));
+        const p = await logsPage(f, at);
         if (my !== loadSeq.current) return;
         setPage({ ...p, at });
         setPending(NO_PENDING);
         setSelId((s) => (s && p.items.some((e) => entryKey(e) === s) ? s : null));
       } else {
-        const g = parseLogGroups(await apiGet<unknown>(logGroupsUrl(f, at)));
+        const g = await logGroups(f, at);
         if (my !== loadSeq.current) return;
         setGroups(g);
         setFreshGroups(null);
@@ -148,7 +143,7 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
     const my = loadSeq.current;
     try {
       if (view === "list") {
-        const p = parseLogPage(await apiGet<unknown>(logsUrl(filter, Date.now())));
+        const p = await logsPage(filter, Date.now());
         if (my !== loadSeq.current) return;
         if (!page?.items.length) {
           // 보이는 줄이 없으면 움직일 것도 없다 — 바로 보인다
@@ -158,9 +153,9 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
           setPending(pendingEntries(page.items, p.items, LOGS_PAGE));
         }
       } else {
-        const g = parseLogGroups(await apiGet<unknown>(logGroupsUrl(filter, Date.now())));
+        const g = await logGroups(filter, Date.now());
         if (my !== loadSeq.current) return;
-        setFreshGroups(groupsSig(g) !== groupsSig(groups) ? g : null);
+        setFreshGroups(logGroupsSig(g) !== logGroupsSig(groups) ? g : null);
       }
       setErr(null);
       setLastOk(Date.now());
@@ -180,10 +175,8 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
     const my = ++openSeq.current;
     setDetailMiss(null);
     try {
-      const v = await apiGet<unknown>(logItemUrl(id, stream));
+      const e = await logItem(id, stream);
       if (my !== openSeq.current) return;
-      const raw = typeof v === "object" && v !== null && "item" in v ? (v as { item: unknown }).item : v;
-      const e = parseLogEntry(raw);
       if (e) setDetail(e);
       else setDetailMiss({ id, error: new Error("항목 형식이 스키마와 맞지 않음") });
     } catch (e) {
@@ -236,7 +229,7 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
   };
   /** 묶음 전체: 그 지문의 항목(기간·서비스·수준 같게, 최대 200건)을 받아 묶음 머리와 함께 */
   const copyGroup = (g: LogGroup) => copy(`묶음 ${g.fp}`, async () => {
-    const p = parseLogPage(await apiGet<unknown>(logsUrl({ ...filter, q: "", rid: "", fp: g.fp }, Date.now(), { limit: LOGS_PAGE_MAX })));
+    const p = await logsPage({ ...filter, q: "", rid: "", fp: g.fp }, Date.now(), { limit: LOGS_PAGE_MAX });
     const truncated = p.nextCursor != null || p.scanTruncated === true || (g.count != null && p.items.length < g.count);
     return groupText(g, p.items, { truncated });
   });
@@ -253,7 +246,7 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
     setMoreCursor(cursor);
     const my = loadSeq.current;
     try {
-      const p = parseLogPage(await apiGet<unknown>(logsUrl(filter, page.at, { cursor })));
+      const p = await logsPage(filter, page.at, { cursor });
       if (my !== loadSeq.current) return;
       setPage((prev) => (prev && prev.nextCursor === cursor ? { ...appendLogPage(prev, p), at: prev.at } : prev));
     } catch (e) {
@@ -299,7 +292,7 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
   }, []);
   const openEntry = useCallback((e: LogEntry) => { openSeq.current++; setDetail(e); setDetailMiss(null); }, []);
   const closeDetail = useCallback(() => { openSeq.current++; setDetail(null); setDetailMiss(null); }, []);
-  const logout = () => { void signOut(() => apiSend("DELETE", OPS_SESSION_PATH), onLeave); };
+  const logout = () => { void signOut(() => signOutRequest(), onLeave); };
 
   /** 열린 상세 — 해결 쓰기 뒤 다시 읽을 항목(콜백이 상세가 바뀔 때마다 새로 만들어지지 않게 ref) */
   const detailRef = useRef<LogEntry | null>(null);
@@ -327,10 +320,8 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
     void load(shown.current.view, shown.current.filter);
     if (open) {
       const my = ++rereadSeq.current;
-      void apiGet<unknown>(logItemUrl(open.id, open.stream)).then((v) => {
+      void logItem(open.id, open.stream).then((x) => {
         if (my !== rereadSeq.current) return;
-        const raw = typeof v === "object" && v !== null && "item" in v ? (v as { item: unknown }).item : v;
-        const x = parseLogEntry(raw);
         if (x) setDetail((d) => (d && entryKey(d) === entryKey(open) ? x : d));
       }, () => {
         if (my !== rereadSeq.current) return;

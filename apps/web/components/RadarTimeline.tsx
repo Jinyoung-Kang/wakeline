@@ -2,21 +2,10 @@
 import { useEffect, useState } from "react";
 import { KrRadarPanelPart } from "./DashboardParts";
 import { useServerNow } from "@/lib/clock";
-import { fmtKst, fmtKstMinute, fmtTimeTitle, kstWallMs } from "@/lib/time";
-import { KR_REF_WINDOW_MIN, krComposite, krMissing, krPartialSummary, krTmClock, type KrMissingInfo } from "@/lib/kr-radar";
+import { fmtKstMinute, fmtTimeTitle, kstWallMs } from "@/lib/time";
+import { KR_REF_WINDOW_MIN, krComposite, krMissing, krPartialSummary, krTmClock, krUnavailableText } from "@/lib/kr-radar";
 import { useServerData } from "@/lib/store";
-import type { KrRadar } from "@/lib/types";
 import { useUi } from "@/lib/ui-store";
-
-/**
- * 기상청을 골랐는데 쓸 수 있는 프레임이 없을 때(R-11) — 지도에 레이더가 없는 이유를 타임라인에 쓴다.
- * 서버가 준 note 와 마지막 수집 시각(meta.fetched_at)만 붙인다(모르면 붙이지 않는다).
- */
-function krUnavailableText(d: KrRadar | null, miss: KrMissingInfo | null): string {
-  if (!d) return "기상청 레이더 없음 — 상태 수신 전";
-  const last = fmtKst(d.meta?.fetched_at);
-  return `기상청 레이더 없음${d.note ? ` — ${d.note}` : ""}${miss ? ` — ${miss.text}` : ""}${last !== "—" ? ` · 마지막 수집 ${last}` : ""}`;
-}
 
 /**
  * 레이더 타임라인(FR-06): 과거 2 h · 10분 간격 프레임. 지도는 현재 프레임만 받아 그리고(PERF-12), 재생 중에만 다음 프레임을 미리 받는다.

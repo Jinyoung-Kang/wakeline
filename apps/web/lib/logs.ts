@@ -8,6 +8,7 @@
  * resolution_state. 요청은 resolved=hide|show 를 늘 명시한다(기본 hide — 해결 처리한 지문의 upto 이하 항목을 빼고 뺀 수를 알린다).
  */
 import { REQUEST_ID_RE } from "./api";
+import { pathSegment } from "./endpoints/path";
 import { isoKst } from "./kst";
 import { logHeaderLine } from "./log-line";
 import { hiddenCount, parseResolutionState, parseResolvedRef, type ResolutionState, type ResolvedMode, type ResolvedRef } from "./resolutions";
@@ -118,6 +119,11 @@ export interface LogPage {
   hiddenResolved: number | null;
   /** 해결 기록의 상태(api resolution_state) — 없으면 null */
   resolutionState: ResolutionState | null;
+}
+
+/** 항목 하나의 응답(§C4) — {item: …} 으로 싸여 오면 벗긴다(그 밖은 그대로). 스키마와 맞지 않으면 null */
+export function parseLogItemResponse(v: unknown): LogEntry | null {
+  return parseLogEntry(typeof v === "object" && v !== null && "item" in v ? (v as { item: unknown }).item : v);
 }
 
 export function parseLogPage(v: unknown): LogPage {
@@ -237,8 +243,19 @@ export function logGroupsUrl(f: Pick<LogFilter, "services" | "level" | "period" 
   return `${LOGS_PATH}/groups?${p}`;
 }
 
-/** 항목 하나(§C4). stream 을 주면 그 스트림에서만 — 없으면 api 가 server → client 순으로 찾는다(§G2) */
-export const logItemUrl = (id: string, stream?: LogStreamName | null) => `${LOGS_PATH}/${encodeURIComponent(id)}${stream ? `?stream=${stream}` : ""}`;
+/** 항목 하나(§C4). stream 을 주면 그 스트림에서만 — 없으면 api 가 server → client 순으로 찾는다(§G2). id 는 경로 조각("." · ".." 는 던진다 — lib/endpoints/path) */
+export const logItemUrl = (id: string, stream?: LogStreamName | null) => `${LOGS_PATH}/${pathSegment(id)}${stream ? `?stream=${stream}` : ""}`;
+
+/** 첫 필터: /logs#rid=… 는 시각을 모르므로 가장 긴 기간(7 d)으로, #fp=… 는 그 묶음만. #id=…(&stream=…) 는 그 항목의 상세를 연다 */
+export function initialLogsState(hash: string): { filter: LogFilter; openId: string | null; openStream: LogStreamName | null } {
+  const h = parseLogsHash(hash);
+  const filter: LogFilter = { ...DEFAULT_LOG_FILTER, ...(h.rid ? { rid: h.rid, period: "7d" as const } : {}), ...(h.fp ? { fp: h.fp } : {}) };
+  return { filter, openId: h.id ?? null, openStream: h.stream ?? null };
+}
+
+/** 묶음 보기의 자동 확인이 견주는 값: 묶음마다 지문 · 수 · 마지막 id · 해결(순서 포함) — 훑은 수 같은 다른 값은 보지 않는다 */
+export const logGroupsSig = (g: { groups: readonly Pick<LogGroup, "fp" | "count" | "last_id" | "resolved">[] } | null) =>
+  (g ? g.groups.map((x) => `${x.fp}:${x.count}:${x.last_id}:${x.resolved?.id ?? ""}`).join("|") : "");
 
 /** /logs#rid=… · #id=…(&stream=…) · #fp=… (오류 문구의 "로그 보기" · 항목 링크). 형식이 틀린 값은 버린다 */
 export function parseLogsHash(hash: string): { rid?: string; id?: string; stream?: LogStreamName; fp?: string } {

@@ -1,8 +1,9 @@
 /** 지도 레이어 정의(11.2절) — 상황판·재생 화면이 공유. */
 import type * as maplibregl from "maplibre-gl";
-import { ALT_RAMP, ALT_UNKNOWN_COLOR, CAT_COLORS, CAT_STALE_FILL, CAT_STALE_STROKE, CAT_UNKNOWN_COLOR, GND_COLOR, HAZARD_COLORS, HAZARD_DEFAULT_COLOR } from "./format";
+import { ALT_RAMP, ALT_UNKNOWN_COLOR, CAT_COLORS, CAT_STALE_FILL, CAT_STALE_STROKE, CAT_UNKNOWN_COLOR, GND_COLOR, HAZARD_COLORS, HAZARD_DEFAULT_COLOR, isMetarStale } from "./format";
 import { deadReckon, seenAtMs, thresholds } from "./interpolate";
-import type { AircraftState, Alert, SelectedInfo } from "./types";
+import type { AircraftState, Alert, RenderState, SelectedInfo } from "./types";
+import type { AirportProps } from "./tooltip";
 
 export const STYLE_URL = "https://tiles.openfreemap.org/styles/dark";
 /**
@@ -202,6 +203,51 @@ export function coverageTileUrl(host: string) {
 export const COVERAGE_PAINT = { "raster-opacity": 0.5, "raster-brightness-min": 0.4, "raster-saturation": -1 } as const;
 
 export type FrameRole = "current" | "preload";
+/** 레이더 프레임 하나: 레이어 id 와 처음 보일 때 소스 · 레이어를 만드는 함수(지연 추가 — image source 는 추가하는 순간 PNG 를 받는다) */
+export type Frame = { id: string; add: (map: maplibregl.Map) => void };
+
+/**
+ * 레이더 프레임 레이어 동기화(PERF-12). 보일 프레임(현재·재생 중 미리 받기)만 소스를 만들고(지연 추가) visible,
+ * 나머지는 visibility none — MapLibre 는 불투명도 0 레이어의 타일도 받으므로 visibility 로 끈다. 목록에서 빠진 프레임은 제거.
+ * prev = 지난번에 돌려준 id 목록, 돌려주는 값 = 이번 목록(다음 호출의 prev).
+ */
+export function syncFrames(map: maplibregl.Map, prev: string[], frames: Frame[], display: Map<number, FrameRole>, opacity: number): string[] {
+  const wanted = frames.map((f) => f.id);
+  for (const id of prev) if (!wanted.includes(id)) { if (map.getLayer(id)) map.removeLayer(id); if (map.getSource(id)) map.removeSource(id); }
+  frames.forEach((f, i) => {
+    const role = display.get(i);
+    if (!role) { if (map.getLayer(f.id)) map.setLayoutProperty(f.id, "visibility", "none"); return; }
+    if (!map.getLayer(f.id)) f.add(map);
+    map.setPaintProperty(f.id, "raster-opacity", role === "current" ? opacity : 0);
+    map.setLayoutProperty(f.id, "visibility", "visible");
+  });
+  return wanted;
+}
+
+/** 워커 렌더(보간 결과) → 항공기 레이어 지점. id = hex, selected = 지금 고른 항공기(강조) */
+export function aircraftFeatureCollection(states: readonly RenderState[], selectedHex: string | null): GeoJSON.FeatureCollection<GeoJSON.Point> {
+  return {
+    type: "FeatureCollection",
+    features: states.map((s) => ({
+      type: "Feature", id: s.hex,
+      properties: {
+        hex: s.hex, callsign: s.callsign, alt_ft: s.alt_ft, track_deg: s.track_deg, on_ground: s.on_ground, stale: s.stale, age_unknown: s.age_unknown,
+        estimated: s.estimated, emergency: s.emergency, selected: s.hex === selectedHex,
+      },
+      geometry: { type: "Point", coordinates: [s.lon, s.lat] },
+    })),
+  };
+}
+
+/**
+ * 감시 공항 레이어(GAP-14): 지점마다 METAR 경과로 "오래됨"(> 2 h — 회색 고리)을 붙인다. key = 그린 내용(ICAO · 카테고리 · 오래됨 · 관측 시각) —
+ * 지난번과 같으면 다시 넣지 않는다(1분마다 다시 계산한다)
+ */
+export function airportLayerFeatures(features: readonly GeoJSON.Feature<GeoJSON.Point, AirportProps>[], nowMs: number): { features: GeoJSON.Feature<GeoJSON.Point, AirportProps & { stale: boolean }>[]; key: string } {
+  const out = features.map((f) => ({ ...f, properties: { ...f.properties, stale: isMetarStale(f.properties, nowMs) } }));
+  const key = out.map((f) => `${f.properties.icao}:${f.properties.flight_cat ?? "-"}:${f.properties.stale ? 1 : 0}:${f.properties.obs_time ?? ""}`).join("|");
+  return { features: out, key };
+}
 /**
  * 레이더 프레임 표시(PERF-12): MapLibre 는 불투명도 0 인 레이어의 타일도 받고 텍스처를 올린다(visibility 만 봄).
  * 그래서 현재 프레임만 visible, 나머지는 visibility none. 재생 중에는 다음 `lookahead` 프레임을 불투명도 0 으로

@@ -261,3 +261,13 @@ export function parseKrRadar(v: unknown): KrRadar | null {
     meta: isObj(v.meta) ? (v.meta as KrRadar["meta"]) : null,
   } as KrRadar;
 }
+
+/**
+ * 기상청을 골랐는데 쓸 수 있는 프레임이 없을 때(R-11) — 지도에 레이더가 없는 이유를 타임라인에 쓴다.
+ * 서버가 준 note 와 '파일 없음' 연속(miss)과 마지막 수집 시각(meta.fetched_at)만 붙인다(모르면 붙이지 않는다).
+ */
+export function krUnavailableText(d: KrRadar | null, miss: KrMissingInfo | null): string {
+  if (!d) return "기상청 레이더 없음 — 상태 수신 전";
+  const last = fmtKst(d.meta?.fetched_at);
+  return `기상청 레이더 없음${d.note ? ` — ${d.note}` : ""}${miss ? ` — ${miss.text}` : ""}${last !== "—" ? ` · 마지막 수집 ${last}` : ""}`;
+}

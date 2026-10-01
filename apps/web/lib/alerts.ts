@@ -1,7 +1,7 @@
 /** 알림 표시 규칙(순수 함수): ETA 카운트다운(GAP-21)·종료 사유·근거의 고도대 출처. */
 import type { BandSource } from "./format";
 import { topAboveFromRaw } from "./sigmet";
-import type { Alert, AlertEventType, CloseReason, SigmetProps } from "./types";
+import type { Alert, AlertEventType, CloseReason, PublicStatus, SigmetProps } from "./types";
 
 /**
  * 남은 ETA(초, 추정). eta_at(서버 판정 시각 + eta_s)에서 서버 기준 현재 시각을 뺀다 — 목록의 ETA 가 다음 갱신까지 멈춰 있지 않게.
@@ -78,4 +78,23 @@ export function alertListState(conn: string, alertsVersion: number | null | unde
   if (conn === "paused") return "paused";
   if (conn === "open") return alertsVersion == null ? (incomplete ? "incomplete" : "waiting") : rxFresh ? "live" : "silent";
   return alertsVersion != null ? "disconnected" : "waiting";
+}
+
+/**
+ * 알림 패널의 목록(R-09): 관심 지역(region) = 서버 설정의 중심 · 반경 안(설정값이 없으면 전체). 위치(evidence.position [lat, lon])가 없는 알림은 전세계(world)에서만.
+ * 관심 지역 설정(status)을 아직 받지 못했으면 범위를 모른다 — 전세계 목록을 '관심 지역'으로 보이지 않고 빈 목록(부른 쪽이 기다린다고 말한다).
+ * 거리는 평면 근사(위도 1° = 60 NM, 경도는 중심 위도의 cos 로 줄임). 순서: 관측(OBSERVED) 먼저, 같은 종류는 진입 시각 최신 먼저.
+ */
+export function alertsInScope(all: readonly Alert[], scope: "region" | "world", status: Pick<PublicStatus, "region"> | null): Alert[] {
+  if (scope === "region" && status == null) return [];
+  const center = status?.region?.center, radius = status?.region?.radius_nm;
+  const inRegion = (a: Alert) => {
+    if (!center || !radius) return true;
+    const pos = (a.evidence as { position?: number[] }).position;
+    if (!pos) return false;
+    const dLat = (pos[0] - center[0]) * 60, dLon = (pos[1] - center[1]) * 60 * Math.cos((center[0] * Math.PI) / 180);
+    return Math.hypot(dLat, dLon) <= radius;
+  };
+  return all.filter((a) => scope === "world" || inRegion(a))
+    .sort((a, b) => (a.kind === b.kind ? b.entered_at.localeCompare(a.entered_at) : a.kind === "OBSERVED" ? -1 : 1));
 }

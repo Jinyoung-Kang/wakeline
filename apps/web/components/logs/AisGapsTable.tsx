@@ -1,8 +1,9 @@
 "use client";
-import { useEffect, useState } from "react";
-import { apiGet } from "@/lib/api";
+import { useState } from "react";
+import { aisGaps } from "@/lib/endpoints/logs";
+import { useApiResource } from "@/lib/use-api-resource";
 import { fmtDuration } from "@/lib/format";
-import { aisGapRows, LOG_PERIOD_LABEL, LOG_PERIODS, type LogPeriod } from "@/lib/logs";
+import { LOG_PERIOD_LABEL, LOG_PERIODS, type LogPeriod } from "@/lib/logs";
 import { ErrorNote } from "./ErrorNote";
 import { KstRange, KstTime } from "../KstTime";
 
@@ -16,19 +17,13 @@ const PERIODS = Object.keys(LOG_PERIODS) as LogPeriod[];
  */
 export function AisGapsTable({ initialPeriod, onFilterRid }: { initialPeriod: LogPeriod; onFilterRid?: (rid: string) => void }) {
   const [period, setPeriod] = useState<LogPeriod>(initialPeriod);
-  const [data, setData] = useState<ReturnType<typeof aisGapRows> | null>(null);
-  /** 마지막 실패 — 기간으로 묶는다: 다른 기간을 불러오는 동안 앞 기간의 실패(요청 id)를 보이지 않게(web-review B17, 공항 카드와 같은 규칙) */
-  const [failed, setFailed] = useState<{ period: LogPeriod; error: unknown } | null>(null);
-  const [tick, setTick] = useState(0);
-  useEffect(() => {
-    let live = true;
-    const from = new Date(Date.now() - LOG_PERIODS[period]).toISOString();
-    apiGet<unknown>(`/api/v1/ais/gaps?${new URLSearchParams({ from })}`)
-      .then((v) => { if (live) { setData(aisGapRows(v)); setFailed(null); } })
-      .catch((e: unknown) => { if (live) setFailed({ period, error: e }); });
-    return () => { live = false; };
-  }, [period, tick]);
-  const err = failed && failed.period === period ? failed.error : null;
+  /**
+   * 기간마다의 결과(lib/use-api-resource): 다른 기간을 받는 동안 앞 기간의 표 · 실패(요청 id)를 지금 고른 기간처럼 두지 않고 받는 중이라고 말한다
+   * (web-review B17, 공항 카드와 같은 규칙). 새로고침 = 같은 기간을 다시(retry — 그동안 받는 중). 기간의 시작은 보낼 때의 지금으로 정한다
+   */
+  const res = useApiResource(period, (signal) => aisGaps(new Date(Date.now() - LOG_PERIODS[period]).toISOString(), { signal }));
+  const data = res.data;
+  const err = res.error;
   const closed = data ? data.rows.filter((r) => !r.open).length : null;
   return (
     <div className="min-h-0 flex-1 overflow-auto p-3 text-[12px]" data-testid="ais-gaps">
@@ -37,7 +32,8 @@ export function AisGapsTable({ initialPeriod, onFilterRid }: { initialPeriod: Lo
         <div className="flex gap-1" role="group" aria-label="기간">
           {PERIODS.map((p) => <button key={p} type="button" className="btn normal-case!" aria-pressed={period === p} onClick={() => setPeriod(p)}>{LOG_PERIOD_LABEL[p]}</button>)}
         </div>
-        <button type="button" className="btn" onClick={() => setTick((t) => t + 1)}>새로고침</button>
+        <button type="button" className="btn" onClick={res.retry}>새로고침</button>
+        {res.status === "loading" ? <span className="text-fg-3" role="status" data-testid="ais-gaps-loading">AIS 수신 공백 불러오는 중…</span> : null}
         {data ? (
           <span className="text-fg-3">
             기간 <KstRange a={data.from} b={data.to} /> · 끝난 공백 <span className="mono">{closed}</span>건

@@ -1,13 +1,12 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { apiGet } from "@/lib/api";
+import { runsDrill } from "@/lib/endpoints/ops";
 import { isAuthMiss, RUN_STATUS_TITLE, runStatusClass } from "@/lib/ops";
-import { appendRunsPage, RUNS_DRILL_LIMIT, runsDrillPath, type RunKey } from "@/lib/ops-runs";
+import { appendRunsPage, RUNS_DRILL_LIMIT, type RunKey } from "@/lib/ops-runs";
 import { KstTime } from "@/components/KstTime";
 import { ErrorNote } from "@/components/logs/ErrorNote";
 
 type Any = Record<string, unknown>;
-interface RunsPage { items: Any[]; next_cursor?: unknown }
 
 /** 원본 칸(실행 오류 글자) — 운영 화면의 RAW_RECORD_TITLE 과 같은 말 */
 const RAW_TITLE = "원본 그대로(바꾸지 않음) — 안의 시각은 수집기가 쓴 형식 그대로(‘…Z’ 는 KST 보다 9시간 이르다), 옆 칸의 시각은 KST";
@@ -35,7 +34,7 @@ export function OpsRunsDrill({ id, k, since, onClose, onAuthMiss }: {
     const my = ++seq.current;
     setBusy(true);
     setErr(null);
-    apiGet<RunsPage>(runsDrillPath(k, since, cursor)).then(
+    runsDrill(k, since, cursor).then(
       (p) => {
         if (my !== seq.current) return;
         const got = Array.isArray(p.items) ? p.items : [];

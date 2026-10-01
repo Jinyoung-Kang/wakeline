@@ -1,11 +1,9 @@
 "use client";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
-import { ApiError, apiSend } from "@/lib/api";
+import { ApiError } from "@/lib/api";
+import { createResolution, revokeResolution } from "@/lib/endpoints/ops";
 import { isAuthMiss } from "@/lib/ops";
-import {
-  noteError, NOTE_MAX, parseResolution, RESOLUTIONS_PATH, resolutionBody, resolutionPath, resolveAll, resolveErrorText,
-  type Resolution, type ResolutionDraft, type ResolvedRef,
-} from "@/lib/resolutions";
+import { noteError, NOTE_MAX, resolveAll, resolveErrorText, type Resolution, type ResolutionDraft, type ResolvedRef } from "@/lib/resolutions";
 import { RequestIdOf } from "./logs/ErrorNote";
 
 /**
@@ -66,7 +64,7 @@ function focusLost(): boolean {
 
 /**
  * 해결 처리 · 되돌리기 확인 패널(ADR-024) — 보내기 전에 대상 · 범위(upto) · 결과를 글로 말하고, 운영자가 확인해야 보낸다.
- * - 쓰기는 lib/api apiSend(CSRF 헤더). 401/404 는 onAuthMiss 로 세션을 확인해 만료면 부모가 로그인으로 보낸다(패널은 사라진다).
+ * - 쓰기는 lib/endpoints/ops(lib/api apiSend — CSRF 헤더). 401/404 는 onAuthMiss 로 세션을 확인해 만료면 부모가 로그인으로 보낸다(패널은 사라진다).
  * - 보내는 동안 단추를 막고("처리 중…", aria-busy) 두 번 보내지 않는다. 화면(해결됨 표시)은 부모가 201/204 를 받은 뒤에만 바꾼다.
  * - 보내는 동안 패널이 사라져도(상세 닫기 · 보기 · 탭 전환 · 다른 대상의 확인) 받은 결과는 부모에게 알린다 — 서버는 이미 바뀌었다(목록을 다시 읽어야 한다).
  *   패널 자신의 상태(남은 요청 · 오류 · 요약)만 사라진 패널에는 쓰지 않는다.
@@ -112,7 +110,7 @@ export function ResolveConfirm({ id, target, onClose, onChanged, onAuthMiss, onF
     try {
       if (target.op === "revoke") {
         try {
-          await apiSend<void>("DELETE", resolutionPath(target.ref.id));
+          await revokeResolution(target.ref.id);
           onChanged({ op: "revoke", id: target.ref.id, complete: true });
         } catch (e) {
           if (await expired(e)) return;
@@ -123,7 +121,7 @@ export function ResolveConfirm({ id, target, onClose, onChanged, onAuthMiss, onF
         return;
       }
       const drafts = remaining;
-      const out = await resolveAll(drafts, async (d) => parseResolution(await apiSend<unknown>("POST", RESOLUTIONS_PATH, resolutionBody(d, note))));
+      const out = await resolveAll(drafts, (d) => createResolution(d, note));
       const err = out.stopped ?? out.failed[0]?.error ?? null;
       if (err != null && await expired(err)) return;
       // 남은 것 = 실패 + 멈춘 뒤 보내지 않은 것(뒤쪽) — 다시 시도는 이것만 보낸다(이미 저장한 해결을 두 번 만들지 않는다)

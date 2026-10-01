@@ -1,13 +1,14 @@
 "use client";
-import { use, useEffect, useState } from "react";
-import { apiGet } from "@/lib/api";
+import { use } from "react";
+import { airportWx } from "@/lib/endpoints/weather";
+import { useApiResource } from "@/lib/use-api-resource";
 import { useNow } from "@/lib/clock";
 import { serverNowMs } from "@/lib/store";
 import { airportErrorText, CAT_COLORS, catSourceLabel, ceilingLabel, fmtDuration, fmtWind, isMetarStale, metarAgeS } from "@/lib/format";
 import { RequestIdOf } from "@/components/logs/ErrorNote";
 import { KstTime } from "@/components/KstTime";
 import { RAW_BULLETIN_LABEL, RAW_BULLETIN_TITLE } from "@/lib/time";
-import { parseWx, WX_UNREADABLE, type AirportWx } from "@/lib/airport-wx";
+import { WX_UNREADABLE } from "@/lib/airport-wx";
 
 /**
  * 공항 기상 이력(FR-22). 시각은 날짜 포함 KST 만(계약 v5 §G20, lib/time — title 에 연도 · ms 까지의 KST). METAR · TAF 원문은 발표된 그대로(data-raw — 안의 "…Z" 는 발표 형식).
@@ -17,22 +18,13 @@ import { parseWx, WX_UNREADABLE, type AirportWx } from "@/lib/airport-wx";
 export default function AirportPage({ params }: { params: Promise<{ icao: string }> }) {
   const { icao } = use(params);
   const code = icao.toUpperCase();
-  const [wx, setWx] = useState<AirportWx | null>(null);
-  const [err, setErr] = useState<{ text: string; error: unknown } | null>(null);
   const now = useNow(30_000);
-  // 본문은 parseWx 로 검사한다(web-review B10) — 읽을 수 없으면 그리지 않고 그렇다고 말한다.
-  // 성공한 답은 앞선 실패를 지운다 · 떠난(정리된) 요청의 답은 쓰지 않는다 — 개발 모드는 조회를 두 번 해 첫 실패와 이력이 함께 보였다(web-review B17)
-  useEffect(() => {
-    let live = true;
-    apiGet<unknown>(`/api/v1/airports/${encodeURIComponent(code)}/wx`)
-      .then((body) => {
-        if (!live) return;
-        const x = parseWx(body);
-        if (x) { setWx(x); setErr(null); } else setErr({ text: `${WX_UNREADABLE}.`, error: null });
-      })
-      .catch((e: unknown) => { if (live) setErr({ text: airportErrorText(e, code), error: e }); });
-    return () => { live = false; };
-  }, [code]);
+  // 본문은 parseWx 로 검사한다(web-review B10) — 읽을 수 없으면(null) 그리지 않고 그렇다고 말한다. 이 화면은 코드마다 다시 마운트되고(동적 조각),
+  // 결과는 그 요청의 것만 쓴다(lib/use-api-resource — 개발 모드는 조회를 두 번 해 첫 실패와 이력이 함께 보였다, web-review B17)
+  const res = useApiResource(code, (signal) => airportWx(code, { signal }));
+  const wx = res.data;
+  const err = res.status === "failed" ? { text: airportErrorText(res.error, code), error: res.error }
+    : res.status === "loaded" && !wx ? { text: `${WX_UNREADABLE}.`, error: null } : null;
   const m = wx?.latest;
   const nowMs = now ? serverNowMs(now) : 0;
   const age = m && nowMs ? metarAgeS(m, nowMs) : null;

@@ -21,7 +21,8 @@ import { ShipTable } from "@/components/ShipTable";
 import { SearchResultsView, searchListIds } from "@/components/AircraftSearch";
 import { normalizeShipQuery, parseSearchResponse, parseShipSearchResponse, shipChoice } from "@/lib/search";
 import { MapChipsView } from "@/components/MapChips";
-import { parseShipDetail, ShipCard, ShipCardView, ShipPanelView } from "@/components/ShipCard";
+import { ShipCard, ShipCardView, ShipPanelView } from "@/components/ShipCard";
+import { parseShipDetail } from "@/lib/ship-card";
 import { preloadDashboardParts } from "./helpers/dashboard-parts";
 
 const text = (h: string) => h.replace(/<[^>]+>/g, "").replace(/&#x27;/g, "'");

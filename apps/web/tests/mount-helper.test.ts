@@ -37,3 +37,14 @@ describe("tests/helpers/mount", () => {
     expect(log).toEqual(["mount s", "cleanup s", "mount s"]);
   });
 });
+
+describe("tests/helpers/mini-dom prints in a failing expectation", () => {
+  it("a failing expect on an element reports the element, not a TypeError from the printer", () => {
+    const el = dom.document.createElement("div");
+    el.setAttribute("data-testid", "x");
+    const span = dom.document.createElement("span");
+    span.appendChild(dom.document.createTextNode("hello"));
+    el.appendChild(span);
+    expect(() => expect(el).toBeNull()).toThrow(/expected <div data-testid="x">.*<\/div> to be null/);
+  });
+});

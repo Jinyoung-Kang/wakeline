@@ -66,3 +66,51 @@ describe("the airport card's history link encodes the ICAO", () => {
     expect(m.find((e) => e.tagName === "A" && e.textContent === "이력")!.getAttribute("href")).toBe("/airports/RKSI");
   });
 });
+
+// "." · ".." 는 인코딩해도 그대로 남아 URL 의 점 조각이 된다(WHATWG URL 은 %2E%2E 도 '..' 로 본다) — 브라우저 · 프록시가 경로를 한 칸 올려
+// 다른 자원으로 보낸다(예: /api/v1/ops/settings/.. → /api/v1/ops). 서버가 준 값이 그것이면 요청하지 않고 거절한다(호출한 쪽의 오류로).
+describe("server values that are exactly '.' or '..' are refused as path segments", () => {
+  const DOTS = [".", ".."];
+  it("the ops write path builders throw instead of building a dot segment; other dotted values are kept", () => {
+    for (const v of DOTS) {
+      expect(() => ops.providerSwitchPath(v, "disable"), v).toThrow(/경로/);
+      expect(() => ops.settingPath(v), v).toThrow(/경로/);
+    }
+    expect(ops.settingPath("...")).toBe("/api/v1/ops/settings/...");
+    expect(ops.providerSwitchPath(".a", "enable")).toBe("/api/v1/ops/providers/.a/enable");
+  });
+
+  it("every endpoint function with a server-supplied segment rejects without sending a request", async () => {
+    const sent: string[] = [];
+    vi.stubGlobal("fetch", async (url: string) => { sent.push(url); return json(200, {}); });
+    const { aircraftDetail } = await import("@/lib/endpoints/aircraft");
+    const { aircraftTrack, shipTrack } = await import("@/lib/endpoints/tracks");
+    const { shipDetail } = await import("@/lib/endpoints/ship-detail");
+    const { airportWx, sigmetInside } = await import("@/lib/endpoints/weather");
+    const { saveSetting, setProviderEnabled } = await import("@/lib/endpoints/ops");
+    const { logItem } = await import("@/lib/endpoints/logs");
+    for (const v of DOTS) {
+      const calls: [string, () => Promise<unknown>][] = [
+        ["aircraftDetail", () => aircraftDetail(v)], ["aircraftTrack", () => aircraftTrack(v)], ["shipTrack", () => shipTrack(v, 0, 1)],
+        ["shipDetail", () => shipDetail(v)], ["airportWx", () => airportWx(v)], ["sigmetInside", () => sigmetInside(v)],
+        ["setProviderEnabled", () => setProviderEnabled(v, false)], ["saveSetting", () => saveSetting(v, 1, "1")], ["logItem", () => logItem(v, null)],
+      ];
+      for (const [name, call] of calls) {
+        let p: Promise<unknown> | null = null;
+        expect(() => { p = call(); }, `${name}(${v}) must not throw synchronously`).not.toThrow();
+        await expect(p, `${name}(${v})`).rejects.toThrow(/경로/);
+      }
+    }
+    expect(sent).toEqual([]);
+  });
+
+  it("the airport card offers no history link for an ICAO of '.' or '..' (it would open another page)", async () => {
+    vi.stubGlobal("fetch", () => new Promise<Response>(() => {}));
+    vi.stubGlobal("self", globalThis);
+    const { AirportCard } = await import("@/components/AirportCard");
+    for (const v of DOTS) {
+      await m.render(m.React.createElement(AirportCard, { icao: v }));
+      expect(m.find((e) => e.tagName === "A" && e.textContent === "이력"), v).toBeNull();
+    }
+  });
+});

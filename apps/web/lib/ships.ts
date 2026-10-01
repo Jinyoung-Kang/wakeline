@@ -314,8 +314,26 @@ export function shipFeatures(ships: Iterable<ShipLite>, selected: string | null,
   return { type: "FeatureCollection", features };
 }
 
-/** 관측 시각(seen_at)이 더 새로운 쪽. 같거나 비교할 수 없으면 앞의 것 */
-function newerLite<T extends ShipLite>(a: T | null, b: T | null): T | null {
+/**
+ * 선택 선박의 가장 최근 위치: WS ship_selected(같은 MMSI 일 때) → 지도 목록 사본. 구역별 AIS 공백을 가를 때 쓴다(계약 v4 §D). 모르면 null
+ */
+export function selectedShipPos(mmsi: string | null, selected: { mmsi: string; state: Pick<ShipLite, "lat" | "lon"> | null } | null,
+  listed: ReadonlyMap<string, Pick<ShipLite, "lat" | "lon">>): { lat: number; lon: number } | null {
+  if (!mmsi) return null;
+  const p = (selected && selected.mmsi === mmsi ? selected.state : null) ?? listed.get(mmsi) ?? null;
+  return p ? { lat: p.lat, lon: p.lon } : null;
+}
+
+/** 선택 선박 항적 점 툴팁의 선박 이름: WS 상태의 이름 → WS 정적 이름 → 지도 목록 사본의 이름 → "MMSI …" */
+export function selectedShipLabel(mmsi: string | null, selected: { mmsi: string; state: Pick<ShipLite, "name"> | null; static: { name?: string | null } | null } | null,
+  listed: ReadonlyMap<string, Pick<ShipLite, "name">>): string | null {
+  if (!mmsi) return null;
+  const s = selected && selected.mmsi === mmsi ? selected : null;
+  return s?.state?.name ?? s?.static?.name ?? listed.get(mmsi)?.name ?? `MMSI ${mmsi}`;
+}
+
+/** 관측 시각(seen_at)이 더 새로운 쪽. 같거나 비교할 수 없으면 앞의 것(선택 선박 표시 · 선박 카드) */
+export function newerLite<T extends ShipLite>(a: T | null, b: T | null): T | null {
   if (!a || !b) return a ?? b;
   const ta = a.seen_at ? Date.parse(a.seen_at) : NaN, tb = b.seen_at ? Date.parse(b.seen_at) : NaN;
   return !Number.isNaN(tb) && (Number.isNaN(ta) || tb > ta) ? b : a;
