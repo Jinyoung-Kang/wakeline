@@ -1,17 +1,21 @@
 """infra/redis/start.sh 가 만드는 ACL 규칙 정책 시험(계약 §6 · 계약 v2 §C · 계약 v4 §A · 계약 v5 §C3) — 컨테이너를 띄우지 않는다.
 
-start.sh 를 그대로 실행하되 PATH 앞에 가짜 redis-server(받은 인자를 한 줄에 하나씩 출력)를 두어,
-사용자별로 실제로 넘어가는 키 규칙을 읽는다. 동작 시험(명령이 실제로 거부되는지)은 redis_acl_test.sh(docker)가 한다.
+start.sh 를 그대로 실행하되 PATH 앞에 가짜 redis-server(받은 인자를 파일에 한 줄에 하나씩 적는다)를 두고 TMPDIR 을 임시 디렉터리로 바꿔,
+redis-server 가 받는 인자(argv)와 start.sh 가 쓴 ACL 파일(--aclfile)을 읽는다. 사용자별 키 · 명령 규칙은 ACL 파일에서 읽는다.
+동작 시험(명령이 실제로 거부되는지)은 redis_acl_test.sh(docker)가 한다.
 
 실행: python3 -m unittest discover -s infra/tests -v
 """
 from __future__ import annotations
 
+import hashlib
 import os
 import shutil
+import stat
 import subprocess
 import tempfile
 import unittest
+from dataclasses import dataclass
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -23,30 +27,124 @@ FAKE_ENV = {
     "REDIS_COLLECTOR_PASSWORD": "col-test-not-real",
     "REDIS_AIS_PASSWORD": "ais-test-not-real",
 }
+OWNER = {"default": "REDIS_PASSWORD", "wakeline_api": "REDIS_API_PASSWORD",
+         "wakeline_collector": "REDIS_COLLECTOR_PASSWORD", "wakeline_ais": "REDIS_AIS_PASSWORD"}
+
+
+def sha256_rule(password: str) -> str:
+    """Redis ACL 의 해시 비밀번호 규칙(#<SHA-256 소문자 16진수 64자>)."""
+    return "#" + hashlib.sha256(password.encode()).hexdigest()
+
+
+def merge_selectors(tokens: list[str]) -> list[str]:
+    """공백으로 나뉜 셀렉터 '(~a ~b +set)' 를 인자 하나로 다시 합친다(Redis 의 ACL 파일 읽기와 같다)."""
+    out: list[str] = []
+    buf: list[str] = []
+    for tok in tokens:
+        if buf or tok.startswith("("):
+            buf.append(tok)
+            if tok.endswith(")"):
+                out.append(" ".join(buf))
+                buf = []
+        else:
+            out.append(tok)
+    assert not buf, f"닫히지 않은 셀렉터: {buf}"
+    return out
+
+
+@dataclass
+class StartResult:
+    argv: list[str]          # 가짜 redis-server 가 받은 인자
+    output: str              # start.sh 의 표준 출력 + 표준 오류
+    aclfile: Path | None     # --aclfile 로 넘긴 경로(TMPDIR 안)
+    acl_text: str            # ACL 파일 내용
+    acl_mode: int            # ACL 파일 권한 비트
+    users: dict[str, list[str]]  # ACL 파일의 사용자 → 규칙(on · 비밀번호 규칙 포함, 셀렉터는 인자 하나)
+
+
+def run_start(extra_env: dict[str, str]) -> StartResult:
+    """start.sh 를 가짜 redis-server 로 실행해 argv 와 ACL 파일을 돌려준다."""
+    with tempfile.TemporaryDirectory() as tmp:
+        bin_dir = Path(tmp) / "bin"
+        bin_dir.mkdir()
+        tmpdir = Path(tmp) / "tmp"
+        tmpdir.mkdir()
+        argv_file = Path(tmp) / "argv"
+        stub = bin_dir / "redis-server"
+        stub.write_text(f'#!/bin/sh\nfor a in "$@"; do printf \'%s\\n\' "$a"; done > "{argv_file}"\n')
+        stub.chmod(0o755)
+        env = {"PATH": f"{bin_dir}:{os.environ.get('PATH', '/usr/bin:/bin')}", "TMPDIR": str(tmpdir), **extra_env}
+        r = subprocess.run(["sh", str(START)], env=env, capture_output=True, text=True, check=True)
+        argv = argv_file.read_text().splitlines()
+        aclfile = Path(argv[argv.index("--aclfile") + 1]) if "--aclfile" in argv else None
+        acl_text, acl_mode = "", 0
+        if aclfile is not None and aclfile.is_file():
+            acl_text = aclfile.read_text()
+            acl_mode = stat.S_IMODE(aclfile.stat().st_mode)
+        users: dict[str, list[str]] = {}
+        for line in acl_text.splitlines():
+            tokens = line.split()
+            if not tokens:
+                continue
+            assert tokens[0] == "user", line
+            users[tokens[1]] = merge_selectors(tokens[2:])
+        return StartResult(argv, r.stdout + r.stderr, aclfile, acl_text, acl_mode, users)
+
+
+@unittest.skipUnless(shutil.which("sh"), "sh 없음")
+class RedisSecretsTest(unittest.TestCase):
+    """S7 · L-3: 서비스 비밀번호는 redis-server 의 명령행(argv — 기동 직후 ps · /proc/<pid>/cmdline 에 보인다)에 오지 않는다.
+    start.sh 는 환경변수에서 읽어 소유자 전용(0600) ACL 파일에 SHA-256 해시(#…)로만 쓰고 redis-server 는 --aclfile 로 그 파일을 읽는다."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.result = run_start(FAKE_ENV)
+
+    def test_no_password_reaches_the_redis_server_argv(self):
+        for name, value in FAKE_ENV.items():
+            with self.subTest(secret=name):
+                self.assertFalse([a for a in self.result.argv if value in a], "비밀번호가 redis-server 의 argv 에 있다")
+        self.assertNotIn("--requirepass", self.result.argv)
+        self.assertNotIn("--user", self.result.argv, "사용자는 ACL 파일로만 만든다")
+
+    def test_users_come_from_an_owner_only_aclfile_in_tmpdir(self):
+        self.assertIn("--aclfile", self.result.argv)
+        self.assertIsNotNone(self.result.aclfile)
+        self.assertTrue(self.result.acl_text, "ACL 파일이 비어 있지 않다")
+        self.assertEqual(self.result.acl_mode, 0o600, "소유자만 읽는다(umask 077)")
+        self.assertEqual(set(self.result.users), set(OWNER), "관리용 default 와 서비스 사용자 셋")
+
+    def test_aclfile_holds_only_hashes_of_the_env_passwords(self):
+        for name, value in FAKE_ENV.items():
+            with self.subTest(secret=name):
+                self.assertNotIn(value, self.result.acl_text, "평문 비밀번호는 파일에도 남기지 않는다")
+        for user, var in OWNER.items():
+            with self.subTest(user=user):
+                rules = self.result.users[user]
+                self.assertEqual(rules[:2], ["on", sha256_rule(FAKE_ENV[var])], "환경변수 값의 SHA-256 하나만")
+                self.assertFalse([r for r in rules if r.startswith((">", "<", "!")) or r in ("nopass", "resetpass")])
+
+    def test_default_user_keeps_its_full_admin_rules(self):
+        """requirepass 가 하던 일(관리용 default 에 비밀번호)과 같은 권한 — 헬스체크 · 운영 redis-cli 용."""
+        self.assertEqual(self.result.users["default"], ["on", sha256_rule(FAKE_ENV["REDIS_PASSWORD"]), "~*", "&*", "+@all"])
+
+    def test_start_sh_prints_no_secret(self):
+        for name, value in FAKE_ENV.items():
+            with self.subTest(secret=name):
+                self.assertNotIn(value, self.result.output)
+
+    def test_password_with_spaces_or_newlines_cannot_add_acl_rules(self):
+        """ACL 파일은 줄 · 공백 단위로 읽힌다 — 평문을 쓰면 비밀번호 안의 줄바꿈 · 공백이 규칙이 된다. 해시는 늘 16진수 64자다."""
+        tricky = {**FAKE_ENV, "REDIS_API_PASSWORD": "pw with space\nuser evil on nopass ~* +@all"}
+        run = run_start(tricky)
+        self.assertEqual(set(run.users), set(OWNER))
+        self.assertEqual(run.users["wakeline_api"][:2], ["on", sha256_rule(tricky["REDIS_API_PASSWORD"])])
+        self.assertNotIn("evil", run.acl_text)
 
 
 def acl_rules(extra_env: dict[str, str]) -> dict[str, list[str]]:
-    """start.sh 가 redis-server 에 넘기는 --user 규칙 → {사용자: [규칙...]}."""
-    with tempfile.TemporaryDirectory() as tmp:
-        stub = Path(tmp) / "redis-server"
-        stub.write_text('#!/bin/sh\nfor a in "$@"; do printf \'%s\\n\' "$a"; done\n')
-        stub.chmod(0o755)
-        env = {"PATH": f"{tmp}:{os.environ.get('PATH', '/usr/bin:/bin')}", **extra_env}
-        out = subprocess.run(["sh", str(START)], env=env, capture_output=True, text=True, check=True).stdout
-    users: dict[str, list[str]] = {}
-    args = out.splitlines()
-    i = 0
-    while i < len(args):
-        if args[i] == "--user":
-            name = args[i + 1]
-            j = i + 2
-            while j < len(args) and not args[j].startswith("--"):
-                j += 1
-            users[name] = args[i + 2 : j]
-            i = j
-        else:
-            i += 1
-    return users
+    """start.sh 가 ACL 파일에 쓰는 서비스 사용자 규칙 → {사용자: [규칙...]} (관리용 default 는 RedisSecretsTest 가 본다)."""
+    return {u: r for u, r in run_start(extra_env).users.items() if u != "default"}
 
 
 @unittest.skipUnless(shutil.which("sh"), "sh 없음")
