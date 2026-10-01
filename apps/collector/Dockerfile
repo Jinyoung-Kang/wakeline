@@ -5,10 +5,11 @@ FROM python:3.13-slim@sha256:7c61056e61ac89e852de05f3dc6fa51a6dd2181797bceed46aa
 COPY --from=ghcr.io/astral-sh/uv:0.8@sha256:1d31be550ff927957472b2a491dc3de1ea9b5c2d319a9cea5b6a48021e2990a6 /uv /uvx /bin/
 WORKDIR /app
 ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=never
-COPY apps/collector/pyproject.toml apps/collector/uv.lock* ./
-RUN --mount=type=cache,target=/root/.cache/uv uv sync --no-dev --no-install-project
+# uv.lock 은 꼭 있어야 하고(글롭 없음) 그대로 설치한다(--locked — CI 와 같다): lock 이 pyproject 와 어긋나면 빌드 안에서 조용히 다시 풀지 않고 실패한다(S11)
+COPY apps/collector/pyproject.toml apps/collector/uv.lock ./
+RUN --mount=type=cache,target=/root/.cache/uv uv sync --locked --no-dev --no-install-project
 COPY apps/collector/wakeline_collector ./wakeline_collector
-RUN --mount=type=cache,target=/root/.cache/uv uv sync --no-dev
+RUN --mount=type=cache,target=/root/.cache/uv uv sync --locked --no-dev
 
 FROM python:3.13-slim@sha256:7c61056e61ac89e852de05f3dc6fa51a6dd2181797bceed46aa725dd7cb2cd3b
 # 앱은 .venv(빌드 단계에서 uv 가 만든다)만 쓴다. 기반 이미지의 시스템 pip 는 지운다 — 쓰이지 않으면서

@@ -1,6 +1,7 @@
 """앱 Dockerfile 정책 시험 — 이미지를 빌드하지 않는다(빌드한 이미지 검사는 infra/tests/image_test.sh).
 
 - R-25: api 힙 상한 = 컨테이너 메모리 한도의 40 %(ADR-017 §4) — compose 한도 1g 에서 약 410 MiB, NFR-03 예산 512 MB 안
+- S11 · L-8: 수집기 이미지는 uv.lock 그대로 설치(uv sync --locked)
 
 실행: python3 -m unittest discover -s infra/tests -v
 """
@@ -104,6 +105,25 @@ class BaseImagePinningTest(unittest.TestCase):
                 tag, digest = ref.split("@")
                 with self.subTest(app=app, tag=tag):
                     self.assertEqual(seen.setdefault(tag, digest), digest)
+
+
+class CollectorLockedInstallTest(unittest.TestCase):
+    """S11 · L-8: 이미지 빌드도 CI(uv sync --locked)처럼 uv.lock 을 그대로 설치한다. uv.lock* 글롭은 파일이 없어도 COPY 가 통과하고,
+    --locked 가 없으면 빠졌거나 pyproject 와 어긋난 lock 을 빌드 안에서 조용히 다시 풀어(resolve) 시험하지 않은 버전이 들어간다."""
+
+    def test_uv_lock_is_copied_as_a_required_file(self):
+        text = DOCKERFILES["collector"].read_text()
+        copies = [ln for ln in text.splitlines() if re.match(r"COPY\s", ln) and "uv.lock" in ln]
+        self.assertEqual(len(copies), 1)
+        self.assertRegex(copies[0], r"\sapps/collector/uv\.lock\s", "글롭(uv.lock*) 없이 — 없으면 빌드가 실패한다")
+
+    def test_every_uv_sync_is_locked(self):
+        syncs = re.findall(r"(?m)^RUN\b[^\n]*\buv sync\b[^\n]*$", DOCKERFILES["collector"].read_text())
+        self.assertEqual(len(syncs), 2, "의존성 층 + 프로젝트 층")
+        for s in syncs:
+            with self.subTest(run=s):
+                self.assertRegex(s, r"\s--locked\b", "lock 이 pyproject 와 어긋나면 실패(다시 풀지 않는다)")
+                self.assertRegex(s, r"\s--no-dev\b")
 
 
 if __name__ == "__main__":
