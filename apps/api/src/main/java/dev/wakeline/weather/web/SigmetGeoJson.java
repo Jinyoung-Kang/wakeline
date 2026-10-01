@@ -1,4 +1,4 @@
-package dev.wakeline.rest;
+package dev.wakeline.weather.web;
 
 import dev.wakeline.geo.GeoJson;
 import dev.wakeline.domain.SigmetRecord;

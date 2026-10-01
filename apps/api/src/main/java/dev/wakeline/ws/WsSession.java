@@ -1,5 +1,6 @@
 package dev.wakeline.ws;
 
+import dev.wakeline.aircraft.web.AircraftJson;
 import dev.wakeline.domain.AircraftState;
 import dev.wakeline.geo.Bbox;
 import dev.wakeline.domain.ShipStatic;
@@ -48,7 +49,7 @@ public final class WsSession {
     record Sub(Bbox bbox, int zoom, String detail) {
         /** 줌 ≤ 5: world 인코딩·120 s 재동기 */
         boolean world() { return zoom <= 5; }
-        WsMessages.Encoding encoding() { return WsMessages.encodingFor(detail, world()); }
+        AircraftJson.Encoding encoding() { return AircraftJson.encodingFor(detail, world()); }
     }
 
     /**

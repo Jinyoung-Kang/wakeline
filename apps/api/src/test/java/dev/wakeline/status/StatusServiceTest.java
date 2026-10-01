@@ -8,7 +8,7 @@ import dev.wakeline.ingest.RadarStore;
 import dev.wakeline.ingest.SigmetStore;
 import dev.wakeline.ingest.Snapshot;
 import dev.wakeline.ingest.SnapshotStore;
-import dev.wakeline.rest.SigmetGeoJson;
+import dev.wakeline.weather.web.SigmetGeoJson;
 import dev.wakeline.settings.RegionSettings;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;

@@ -1,5 +1,6 @@
 package dev.wakeline.ws;
 
+import dev.wakeline.aircraft.web.AircraftJson;
 import dev.wakeline.platform.config.AppProperties;
 import dev.wakeline.platform.config.RedisConfig;
 import dev.wakeline.domain.AircraftState;
@@ -13,9 +14,8 @@ import dev.wakeline.engine.PredictionAvailability;
 import dev.wakeline.ingest.IngestEvents;
 import dev.wakeline.ingest.RadarStore;
 import dev.wakeline.ingest.SigmetStore;
-import dev.wakeline.ingest.Snapshot;
 import dev.wakeline.ingest.SnapshotStore;
-import dev.wakeline.rest.SigmetGeoJson;
+import dev.wakeline.weather.web.SigmetGeoJson;
 import dev.wakeline.status.StatusService;
 import dev.wakeline.route.RouteInfo;
 import dev.wakeline.route.RouteReader;
@@ -90,9 +90,6 @@ public class WsHub implements SmartLifecycle {
     public static final long HELLO_TIMEOUT_MS = 5_000;
     /** 알림 배치 이력(세션이 놓친 배치를 순서대로 다시 보낼 수 있는 범위). 넘으면 전체 목록. */
     static final int ALERT_BATCH_HISTORY = 64;
-    /** 피드 stale 기준(계약 §1): 지역 60 s · 전세계 300 s */
-    static final int REGION_STALE_S = 60;
-    static final int GLOBAL_STALE_S = 300;
     /** ping 뒤 pong 이 없는 heartbeat 가 이 수를 넘으면 닫는다 — 연속 2회 무응답(설계 9.5). */
     static final int MAX_MISSED_PONGS = 2;
     /** 시험 생성자의 노선 조회 마감(바로 실행하는 실행기라 쓰이지 않는다 — 운영은 spring.data.redis.timeout). */
@@ -667,7 +664,7 @@ public class WsHub implements SmartLifecycle {
 
     private boolean sendSnapshot(WsSession s, SnapshotStore.View view, Instant now) {
         WsSession.Sub sub = s.sub;
-        WsMessages.Encoding enc = sub.encoding();
+        AircraftJson.Encoding enc = sub.encoding();
         StringBuilder arr = new StringBuilder(4096).append('[');
         boolean first = true;
         s.sent.clear();
@@ -679,7 +676,7 @@ public class WsHub implements SmartLifecycle {
             arr.append(fragments.get(a, enc));
         }
         arr.append(']');
-        String msg = toJson(new WsMessages.SnapshotMsg("snapshot", 1, version(view), now, sources(view, now),
+        String msg = toJson(new WsMessages.SnapshotMsg("snapshot", 1, version(view), now, AircraftJson.sources(view, now),
                 sigmets.state().version(), arr.toString()));
         if (send(s, msg)) {
             s.seq = 1;
@@ -727,7 +724,7 @@ public class WsHub implements SmartLifecycle {
         WsSession.SelectedSent prev = s.selectedSent;
         if (!force && prev != null && hex.equals(prev.hex()) && Objects.equals(prev.prediction(), p) && Objects.equals(prev.route(), r)
                 && (when == Resend.NEW_OBSERVATION ? prev.state() == a && a != null : sameSelected(prev.state(), a))) return;
-        String state = a == null ? null : fragments.get(a, WsMessages.Encoding.FULL);
+        String state = a == null ? null : fragments.get(a, AircraftJson.Encoding.FULL);
         String msg = toJson(new WsMessages.SelectedMsg("selected", hex, state, p, r));
         if (!force && prev != null && msg.equals(prev.json())) return; // 보이는 것이 모두 같다 — 같은 내용을 두 번 보내지 않는다
         if (send(s, msg)) s.selectedSent = new WsSession.SelectedSent(hex, a, p, r, msg);
@@ -806,7 +803,7 @@ public class WsHub implements SmartLifecycle {
         return !DiffCalculator.changed(x, y) && Objects.equals(x.seenAt(), y.seenAt());
     }
 
-    private String jsonArray(List<AircraftState> list, WsMessages.Encoding enc) {
+    private String jsonArray(List<AircraftState> list, AircraftJson.Encoding enc) {
         StringBuilder sb = new StringBuilder(64 + list.size() * 160).append('[');
         for (int i = 0; i < list.size(); i++) {
             if (i > 0) sb.append(',');
@@ -818,24 +815,6 @@ public class WsHub implements SmartLifecycle {
     /** 참고용 전역 버전 v(계약 §1) — 병합 뷰가 바뀔 때마다 오른다(region·global·hot·focus 어느 것이든). */
     static long version(SnapshotStore.View view) {
         return view.version();
-    }
-
-    /** 스냅샷 sources(계약 §1): 스코프별 provider·fetched_at·lag_s·stale. 전세계 피드가 한 번도 없으면 global = null. REST /aircraft meta 도 같은 모양을 쓴다. */
-    public static WsMessages.Sources sources(SnapshotStore.View view, Instant now) {
-        return new WsMessages.Sources(source(view.region(), now, REGION_STALE_S),
-                hasFeed(view.global()) ? source(view.global(), now, GLOBAL_STALE_S) : null);
-    }
-
-    private static boolean hasFeed(Snapshot s) {
-        return s.fetchedAt() != null && !Instant.EPOCH.equals(s.fetchedAt());
-    }
-
-    static WsMessages.Source source(Snapshot s, Instant now, int staleS) {
-        boolean known = hasFeed(s);
-        String provider = s.provider() == null || s.provider().isBlank() || "-".equals(s.provider()) ? null : s.provider();
-        if (!known) return new WsMessages.Source(provider, null, null, true); // 수집 이력 없음 = 현재 아님
-        double lag = (now.toEpochMilli() - s.fetchedAt().toEpochMilli()) / 1000.0;
-        return new WsMessages.Source(provider, s.fetchedAt(), Math.round(lag * 10) / 10.0, lag > staleS);
     }
 
     // ---- 공유 페이로드(버전마다 한 번 직렬화) ----

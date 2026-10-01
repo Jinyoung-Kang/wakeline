@@ -1,5 +1,6 @@
 package dev.wakeline.rest;
 
+import dev.wakeline.aircraft.web.AircraftJson;
 import dev.wakeline.platform.config.AppProperties;
 import dev.wakeline.platform.web.BboxParam;
 import dev.wakeline.platform.web.Etags;
@@ -15,8 +16,6 @@ import dev.wakeline.ingest.SnapshotStore;
 import dev.wakeline.persist.AircraftRepository;
 import dev.wakeline.persist.TrackRepository;
 import dev.wakeline.route.RouteReader;
-import dev.wakeline.ws.WsHub;
-import dev.wakeline.ws.WsMessages;
 import org.springframework.dao.DataAccessException;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.CacheControl;
@@ -80,7 +79,7 @@ public class AircraftController {
         fc.put("type", "FeatureCollection");
         fc.put("features", features);
         Map<String, Object> meta = Meta.of(req, view.region().provider(), view.region().fetchedAt(), 60);
-        meta.put("sources", WsHub.sources(view, now));
+        meta.put("sources", AircraftJson.sources(view, now));
         fc.put("meta", meta);
         return ResponseEntity.ok().eTag(etag).cacheControl(cc).body(fc);
     }
@@ -104,7 +103,7 @@ public class AircraftController {
                     || (a.callsign() != null && a.callsign().trim().toUpperCase(java.util.Locale.ROOT).startsWith(needle))
                     || (a.registration() != null && a.registration().toUpperCase(java.util.Locale.ROOT).startsWith(needle));
             if (m) {
-                Map<String, Object> item = new LinkedHashMap<>(WsMessages.encode(a, "lite", false));
+                Map<String, Object> item = new LinkedHashMap<>(AircraftJson.encode(a, "lite", false));
                 item.put("live", true);
                 out.add(item);
                 seen.add(a.hex());
@@ -154,7 +153,7 @@ public class AircraftController {
         if (a == null && stat == null) throw Problem.notFound("aircraft " + h + " not seen");
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("hex", h);
-        m.put("state", a == null ? null : WsMessages.encode(a, "full", false));
+        m.put("state", a == null ? null : AircraftJson.encode(a, "full", false));
         m.put("static", stat);
         m.put("route", routes.forAircraft(a));
         List<Alert> alerts = engine.activeAlerts(null).stream().filter(x -> x.hex().equals(h)).toList();
@@ -200,7 +199,7 @@ public class AircraftController {
         f.put("type", "Feature");
         f.put("id", a.hex());
         f.put("geometry", Map.of("type", "Point", "coordinates", new double[]{a.lon(), a.lat()}));
-        f.put("properties", WsMessages.encode(a, detail, false));
+        f.put("properties", AircraftJson.encode(a, detail, false));
         return f;
     }
 }

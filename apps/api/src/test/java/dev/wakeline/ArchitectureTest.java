@@ -39,16 +39,14 @@ class ArchitectureTest {
     /** Flip to true in the commit that empties ingest of state stores (end of the feature moves). */
     static final boolean INGEST_IS_ADAPTER_ONLY = false;
     /** Number of class-level imports inside package cycles today. May only go down; 0 at the end of phase 1. */
-    static final int MAX_CYCLE_EDGES = 3;
+    static final int MAX_CYCLE_EDGES = 0;
     static final Set<String> KNOWN = Set.of(
             "controller-data-access|ops.OpsController|org.springframework.data.redis.connection",
             "controller-data-access|ops.OpsController|org.springframework.data.redis.connection.stream",
             "controller-data-access|ops.OpsController|org.springframework.data.redis.core",
             "controller-data-access|ops.OpsController|org.springframework.jdbc.core.simple",
             "controller-data-access|ops.OpsPipelineController|org.springframework.data.redis.core",
-            "controller-data-access|rest.WeatherController|org.springframework.data.redis.core",
-            "only-ws-imports-ws|rest.AircraftController|ws",
-            "only-ws-imports-ws|rest.ShipController|ws");
+            "controller-data-access|rest.WeatherController|org.springframework.data.redis.core");
 
     record Src(String cls, String pkg, boolean controller, Set<String> refs) {}
 

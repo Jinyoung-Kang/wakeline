@@ -17,6 +17,7 @@ import dev.wakeline.persist.AirportRepository;
 import dev.wakeline.persist.AlertRepository;
 import dev.wakeline.weather.data.KrRadarFrames;
 import dev.wakeline.weather.data.KrRadarMissing;
+import dev.wakeline.weather.web.SigmetGeoJson;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.CacheControl;
 import org.springframework.http.ResponseEntity;

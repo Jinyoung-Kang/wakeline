@@ -16,8 +16,7 @@ import dev.wakeline.domain.ShipStatic;
 import dev.wakeline.ingest.AisStatus;
 import dev.wakeline.ingest.ShipStore;
 import dev.wakeline.persist.ShipRepository;
-import dev.wakeline.ws.ShipFanout;
-import dev.wakeline.ws.WsMessages;
+import dev.wakeline.ships.web.ShipJson;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.dao.DataAccessException;
 import org.springframework.http.CacheControl;
@@ -47,7 +46,7 @@ import java.util.regex.Pattern;
 public class ShipController {
     static final Pattern MMSI = Pattern.compile("^[0-9]{9}$");
     /** /ships 한 응답의 선박 상한(WS 한 메시지와 같다). 넘으면 capped = true 와 bbox 안 전체 수를 함께 준다. */
-    static final int MAX_FEATURES = ShipFanout.MAX_SHIPS_PER_MESSAGE;
+    static final int MAX_FEATURES = ShipJson.MAX_SHIPS_PER_MESSAGE;
     static final Duration TRACK_MAX_RANGE = Duration.ofHours(24);
     static final Duration TRACK_DEFAULT_RANGE = Duration.ofHours(6);
     /** 24 h × 60 s 창 = 1,440 점이 최대 — 여유 있는 상한. */
@@ -296,7 +295,7 @@ public class ShipController {
         ShipStore.View v = store.view();
         ShipStore.Ship live = v.get(m);
         ShipStatic stat = live != null && live.stat() != null ? live.stat() : store.staticOf(m);
-        String source = stat == null ? null : WsMessages.STATIC_LIVE;
+        String source = stat == null ? null : ShipJson.STATIC_LIVE;
         ShipRepository.StoredShip stored = null;
         Instant lastPosition = null;
         boolean dbUnavailable = false;
@@ -311,16 +310,16 @@ public class ShipController {
         }
         if (stat == null && stored != null && stored.stat() != null) {
             stat = stored.stat();
-            source = WsMessages.STATIC_STORED;
+            source = ShipJson.STATIC_STORED;
         }
         if (live == null && stat == null && stored == null) throw Problem.notFound("ship " + m + " not seen");
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("mmsi", m);
-        out.put("state", live == null ? null : WsMessages.encodeShipState(live.state()));
-        out.put("static", stat == null ? null : WsMessages.encodeShipStatic(stat));
+        out.put("state", live == null ? null : ShipJson.encodeShipState(live.state()));
+        out.put("static", stat == null ? null : ShipJson.encodeShipStatic(stat));
         // 정적 정보가 있을 때만(없으면 키 없음 — 모름 · DB 불가는 meta.db_unavailable): 메모리(live) · DB 의 마지막 저장 정적 보고(stored)
         if (source != null) out.put("static_source", source);
-        if (WsMessages.STATIC_STORED.equals(source)) out.put("static_updated_at", stat.updatedAt());
+        if (ShipJson.STATIC_STORED.equals(source)) out.put("static_updated_at", stat.updatedAt());
         out.put("destination_info", stat == null ? null : destinations.parse(stat.destination()));
         out.put("category", ShipCategory.of(stat == null ? null : stat.shipType()).key());
         // ship.last_seen 은 쓰기 증폭을 줄이려 10분 단위로만 넓히므로 그대로 내보내지 않는다 — 정확한 마지막 위치 시각은 ship_position 에서.
@@ -496,7 +495,7 @@ public class ShipController {
         f.put("type", "Feature");
         f.put("id", s.mmsi());
         f.put("geometry", Map.of("type", "Point", "coordinates", new double[]{s.state().lon(), s.state().lat()}));
-        f.put("properties", WsMessages.encodeShipLite(s.state(), s.stat()));
+        f.put("properties", ShipJson.encodeShipLite(s.state(), s.stat()));
         return f;
     }
 

@@ -4,6 +4,7 @@ import dev.wakeline.domain.ShipStatic;
 import dev.wakeline.persist.StoredStaticReader;
 import dev.wakeline.portcalls.PortCallReader;
 import dev.wakeline.portcalls.PortCallsInfo;
+import dev.wakeline.ships.web.ShipJson;
 import dev.wakeline.ws.SelectionLookups.Flight;
 import dev.wakeline.ws.SelectionLookups.Reads;
 import dev.wakeline.ws.SelectionLookups.Source;
@@ -47,7 +48,7 @@ final class ShipLookups implements AutoCloseable {
     /** 알 수 없는 출처(저장 정적 보고를 읽는 쪽이 없는 구성 — 시험뿐). */
     static final SelectedStatic UNKNOWN = new SelectedStatic(null, null);
     /** 메모리에 없고 DB 를 (제때) 읽지 못함 — 저장돼 있는지 모름. */
-    static final SelectedStatic UNAVAILABLE = new SelectedStatic(null, WsMessages.STATIC_STORED_UNAVAILABLE);
+    static final SelectedStatic UNAVAILABLE = new SelectedStatic(null, ShipJson.STATIC_STORED_UNAVAILABLE);
 
     /** ship_selected 의 정적 정보와 그 출처(계약 v5 §G17 — {@link WsMessages#STATIC_LIVE} 등, 읽는 쪽이 없는 구성에서 모르면 null). */
     record SelectedStatic(ShipStatic stat, String source) {}
@@ -94,7 +95,7 @@ final class ShipLookups implements AutoCloseable {
     /** 메모리 정적 정보(live — 있으면 그것)와 읽는 쪽의 캐시만으로 답한다(I/O 없음). 한 부분이라도 읽어야 하면 null. */
     Resolved cached(String mmsi, ShipStatic live) {
         SelectedStatic sel;
-        if (live != null) sel = new SelectedStatic(live, WsMessages.STATIC_LIVE);
+        if (live != null) sel = new SelectedStatic(live, ShipJson.STATIC_LIVE);
         else {
             Source<String, StoredStaticReader.Lookup> s = stored;
             if (s == null) sel = UNKNOWN;
@@ -123,7 +124,7 @@ final class ShipLookups implements AutoCloseable {
     }
 
     private CompletableFuture<SelectedStatic> staticPart(String mmsi, ShipStatic live, Reads r) {
-        if (live != null) return CompletableFuture.completedFuture(new SelectedStatic(live, WsMessages.STATIC_LIVE));
+        if (live != null) return CompletableFuture.completedFuture(new SelectedStatic(live, ShipJson.STATIC_LIVE));
         Source<String, StoredStaticReader.Lookup> s = stored;
         if (s == null) return CompletableFuture.completedFuture(UNKNOWN);
         StoredStaticReader.Lookup l = s.cached(mmsi);
@@ -162,8 +163,8 @@ final class ShipLookups implements AutoCloseable {
     static SelectedStatic selected(StoredStaticReader.Lookup l) {
         if (l == null) return UNKNOWN;
         return switch (l.status()) {
-            case STORED -> new SelectedStatic(l.stat(), WsMessages.STATIC_STORED);
-            case NONE -> new SelectedStatic(null, WsMessages.STATIC_NONE);
+            case STORED -> new SelectedStatic(l.stat(), ShipJson.STATIC_STORED);
+            case NONE -> new SelectedStatic(null, ShipJson.STATIC_NONE);
             case UNAVAILABLE -> UNAVAILABLE;
         };
     }
