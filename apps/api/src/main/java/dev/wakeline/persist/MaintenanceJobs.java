@@ -334,6 +334,10 @@ public class MaintenanceJobs {
         Bbox b = r.bbox();
         boolean finished = day.isBefore(todayKst());
         List<String> families = tx.execute(status -> {
+            // 같은 날의 재집계는 한 번에 하나(리뷰 cto-2026-10 D5): 03:30 정시 · 3시간 따라잡기 · 운영 POST 가 겹치면 둘 다 그날 행을 지운 뒤(서로의 커밋 전
+            // INSERT 는 보이지 않는다) 완료 표식을 넣어 뒤의 것이 기본 키에서 23505 로 실패했다(운영 POST 는 500 · 감사 행도 롤백). 트랜잭션 잠금이라
+            // 커밋 · 롤백 때 풀린다. 다른 날은 서로 기다리지 않는다.
+            db.sql("SELECT pg_advisory_xact_lock(hashtext('stats_daily'), :day)").param("day", (int) day.toEpochDay()).query((rs, i) -> 1).single();
             // traffic_by_hour 는 하루치 관심 지역 점을 (시, hex) 로 정렬한다 — 기본 work_mem(4 MB)으로는 디스크로 넘쳤다(external merge, R-27).
             // 이 트랜잭션에만 넉넉히 준다. 읽는 양(하루 파티션 순차 스캔)은 그대로다: 관심 지역 점은 전세계 점과 같은 페이지에 섞여 있어
             // 공간 인덱스로도 거의 모든 페이지를 읽게 된다(하루 1회 배치 — 요청 경로 아님).

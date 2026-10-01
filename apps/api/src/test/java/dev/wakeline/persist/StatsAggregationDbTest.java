@@ -228,4 +228,38 @@ class StatsAggregationDbTest {
     List<String> markers(LocalDate d) {
         return admin.sql("SELECT dim FROM stats_daily WHERE day = :d AND metric = 'aggregated_at'").param("d", d).query(String.class).list();
     }
+
+    /**
+     * 리뷰 cto-2026-10 D5(B8): 같은 날의 재집계 둘(03:30 정시 · 3시간 따라잡기 · 운영 POST — 스케줄러 16 스레드)이 겹친다. READ COMMITTED 에서 둘 다 그날의 행을
+     * 지운 뒤(서로의 커밋 전 INSERT 는 보이지 않는다) 완료 표식을 넣으면 뒤의 것이 (day, metric, dim) 기본 키에서 23505 로 실패했다(운영 POST 는 500).
+     * 겹침을 확실히 만든다: 시험이 stats_daily 를 EXCLUSIVE 로 잡아 두 트랜잭션을 기다리게 한 뒤(고치기 전: 둘 다 첫 DELETE 에서 · 고친 뒤: 하나는 DELETE,
+     * 하나는 그날의 트랜잭션 잠금에서) 놓는다.
+     */
+    @Test
+    void twoAggregationsOfTheSameDayAtOnceBothSucceed() throws Exception {
+        LocalDate day = LocalDate.now(MaintenanceJobs.DAY_ZONE).minusDays(1);
+        MaintenanceJobs a = jobs(), b = jobs();
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+        try (java.sql.Connection lock = java.sql.DriverManager.getConnection(DbTestSupport.jdbcUrl("wakeline"), "postgres", DbTestSupport.ROOT_PW)) {
+            lock.setAutoCommit(false);
+            try (var st = lock.createStatement()) { st.execute("LOCK TABLE stats_daily IN EXCLUSIVE MODE"); }
+            var fa = pool.submit(() -> a.aggregateDay(day));
+            var fb = pool.submit(() -> b.aggregateDay(day));
+            long until = System.currentTimeMillis() + 10_000;
+            while (waitingAggregations() < 2 && System.currentTimeMillis() < until) Thread.sleep(10);
+            assertThat(waitingAggregations()).as("both aggregations are waiting").isEqualTo(2);
+            lock.commit(); // 둘을 함께 놓는다
+            fa.get(30, java.util.concurrent.TimeUnit.SECONDS);
+            fb.get(30, java.util.concurrent.TimeUnit.SECONDS);  // 수정 전: ExecutionException ← DuplicateKeyException(23505)
+        } finally {
+            pool.shutdownNow();
+        }
+        assertThat(markers(day)).containsExactlyInAnyOrder("alerts", "sigmet", "traffic");
+    }
+
+    /** 기다리는 잠금 수: stats_daily(시험이 잡은 표) 또는 권고 잠금(그날의 재집계 차례). */
+    long waitingAggregations() {
+        return admin.sql("SELECT count(*) FROM pg_locks l LEFT JOIN pg_class c ON c.oid = l.relation"
+                + " WHERE NOT l.granted AND (c.relname = 'stats_daily' OR l.locktype = 'advisory')").query(Long.class).single();
+    }
 }
