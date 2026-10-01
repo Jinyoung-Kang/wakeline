@@ -8,6 +8,7 @@ headroom: 우선순위가 낮은 호출(focus·hot)은 한도에서 이만큼을
 (해양수산부 두 서비스 budget:mof:h:* — ADR-022 · ADR-023)이다. 어떤 24시간이든 UTC 시 창을 많아야 25개 걸치므로, 창 상한 × 25 가 포털 하루
 한도 안이면 포털이 하루를 어느 경계(KST 자정 · UTC 자정 · 지난 24시간)로 세어도 넘지 않는다 — UTC 날 예산(day_key)만으로는 KST 하루가 두 UTC 날의
 몫을 쓸 수 있다.
+예약 결과의 사용량을 모를 때의 값(UNKNOWN)과 정규 주기 몫 계산(regular_headroom)은 순수 모듈 budget_rules 에 있고 여기서 다시 내보낸다.
 """
 
 from __future__ import annotations
@@ -16,11 +17,14 @@ import logging
 import time
 from collections.abc import Iterable
 from contextvars import ContextVar
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 
 from redis.asyncio import Redis
 from redis.exceptions import NoScriptError
+
+from wakeline_collector.budget_rules import UNKNOWN as UNKNOWN
+from wakeline_collector.budget_rules import regular_headroom as regular_headroom
 
 log = logging.getLogger("budget")
 
@@ -49,7 +53,6 @@ redis.call('HINCRBY', KEYS[1], 'used', -cost)
 return 1
 """
 
-UNKNOWN = -1  # 예약 결과의 사용량을 알 수 없음(Redis 장애)
 # 공공데이터포털 세 서비스: 포털 하루 한도(ADR-023) · 입출항 색인(ADR-022 개정 — 기다리는 사람이 없는 배경 작업이라 셀 수 없으면 부르지 않는다)
 DEFAULT_STRICT = frozenset({"opensky", "kma_radar", "komsa_traffic", "mof_grid4", "portmis"})
 
@@ -71,17 +74,6 @@ HOUR_TTL_S = 2 * 3600  # 시간 창 키는 그 시가 끝난 뒤 한 시간 더 
 def hour_key(provider: str, now: datetime | None = None) -> str:
     """시간 창 예산 키(UTC 시). 하루 키 budget:{provider}:{yyyymmdd} 와 겹치지 않는다(':h:')."""
     return f"budget:{provider}:h:{(now or datetime.now(UTC)).astimezone(UTC).strftime('%Y%m%d%H')}"
-
-
-def regular_headroom(schedule: Iterable[tuple[float, int]], now: datetime) -> int:
-    """정규 주기가 예산 날(UTC — day_key)이 끝날 때까지 더 쓸 수 있는 최대 호출 수: Σ (남은 초 // 주기 + 1) × 주기당 호출 수.
-    schedule = (주기 초, 주기당 호출 수) 목록 — 지금 주기 설정으로 계산한 상한이다(잰 값이 아니다). run_periodic 은 주기가 끝난 뒤
-    주기만큼 쉬므로 남은 주기는 남은 초 // 주기 + 1(지금 돌거나 곧 시작할 주기 하나) 이하다. 우선순위가 낮은 추가 호출(기상 작업의 다시
-    부르기 · KMA 부분 합성 다시 받기)은 이 값을 headroom 으로 예약한다 — 사용량 + 1 ≤ 한도 − 이 값일 때만 부르므로 정규 주기가 예산 소진으로
-    막히지 않는다."""
-    now = now.astimezone(UTC)
-    left = ((now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0) - now).total_seconds()
-    return sum((int(left // period) + 1) * calls for period, calls in schedule)
 
 
 class Budget:

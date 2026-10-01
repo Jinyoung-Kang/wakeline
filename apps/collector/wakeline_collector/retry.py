@@ -26,7 +26,7 @@ from collections.abc import Awaitable, Callable
 
 import httpx
 
-from wakeline_collector.budget import UNKNOWN
+from wakeline_collector.budget_rules import UNKNOWN
 from wakeline_collector.errors import LIMIT, describe_error
 from wakeline_collector.http_errors import NOT_SENT_ERRORS
 from wakeline_collector.ratelimit import Throttled
@@ -38,7 +38,7 @@ RETRY_ERRORS: tuple[type[Exception], ...] = (httpx.TimeoutException, httpx.Conne
 # 보내지 않은 시도 — 예산을 돌려준다. ConnectTimeout · PoolTimeout 은 TimeoutException 하위라 다시 부르기도 한다.
 NOT_SENT: tuple[type[Exception], ...] = (*NOT_SENT_ERRORS, Throttled)
 
-Reserve = Callable[[], Awaitable[tuple[bool, int]]]  # (허용 여부, 예약 후 사용량 | budget.UNKNOWN)
+Reserve = Callable[[], Awaitable[tuple[bool, int]]]  # (허용 여부, 예약 후 사용량 | budget_rules.UNKNOWN)
 Release = Callable[[], Awaitable[None]]  # 예산 1 돌려주기(실패는 삼킨다 — budget.release)
 Sleep = Callable[[float], Awaitable[None]]
 
