@@ -5,7 +5,8 @@
 // 그림 파일(png · webp · jpg · gif · avif · svg)은 지운다 — 무엇을 썼고 무엇을 지웠는지 보고한다. 다른 파일은 건드리지 않는다.
 // 하나라도 틀리면 아무것도 바꾸지 않고 모든 이유를 적고 멈춘다(종료 코드 1): manifest 에 없는 그림(찍지 않았거나 건너뜀) · 파일이 없거나 크기가 다름 ·
 // WebP 가 아님 · fixture 스택 그림인데 설정 · README 대체 글이 밝히지 않음(또는 그 반대) · README 가 설정에 없는 그림을 가리킴 · 설정의 그림을 README 가 쓰지 않음.
-// 순서: 설명서를 찍고(guide-screenshots — 실데이터 스택 8700, 운영 · 로그는 격리 fixture 스택 8701 에서 --allow-fixture) → 이 스크립트 → README · docs/images 커밋.
+// 순서: 설명서를 찍고(guide-screenshots — 실데이터 스택 8700 에서 --skip ops,logs, 운영 · 로그는 다시 찍을 때만 격리 fixture 스택 8701 에서 --only ops,logs --allow-fixture)
+// → 이 스크립트 → README · docs/images 커밋(README 7절).
 // 종료 코드: 0 = 내보냄(또는 --dry-run 계획), 1 = 거절, 2 = 인자 오류.
 import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";

@@ -172,4 +172,26 @@ describe("the committed README, config and guide plan agree", () => {
     expect(readme).toMatch(/make readme-images/);
     expect(readme).not.toMatch(/11개 그림|2026-09-28\)/);
   });
+  /**
+   * 리뷰 2026-10-01: 1번 명령이 실데이터 스택에서 운영 · 로그까지 찍으라고 적어, 그대로 따르면 설정(fixture: true)과 어긋나 내보내기가 늘 거절했다.
+   * 실데이터 스택 명령은 설정이 fixture 로 적은 그림을 빼고(--skip), fixture 스택 명령은 바로 그 그림만(--only … --allow-fixture) 찍는다.
+   */
+  it("the re-shoot commands agree with the config: the live-stack run skips exactly the fixture figures, the fixture-stack run takes exactly them", () => {
+    const fixtureShots = config.images.filter((i) => i.fixture).map((i) => i.shot).join(",");
+    const cmds = [...readme.matchAll(/^node scripts\/guide-screenshots\.mjs (\S+) <자격 증명 파일>([^#\n]*)/gm)].map((m) => ({ base: m[1], opts: m[2].trim() }));
+    expect(cmds).toEqual([
+      { base: "http://localhost:8700", opts: `--skip ${fixtureShots}` },
+      { base: "http://localhost:8701", opts: `--only ${fixtureShots} --allow-fixture` },
+    ]);
+  });
+  /**
+   * 리뷰 2026-10-01: "지금(2026-10-01)은 14개가 찍혀 있고(실데이터 스택 12개 …)" 는 그림을 찍어 커밋하면 곧 틀리는데 시험이 없었다. 날짜에 묶인 상태 문장을 두지 않고,
+   * 찍힌 수를 적는다면 커밋된 결과(lib/guide-manifest.json)와 맞아야 한다.
+   */
+  it("a captured count the README states matches the committed manifest; no date-bound status sentence", () => {
+    const captured = Object.values(manifest.shots);
+    for (const m of readme.matchAll(/(\d+)개가 찍혀/g)) expect(Number(m[1]), m[0]).toBe(captured.length);
+    for (const m of readme.matchAll(/실데이터 스택 (\d+)개/g)) expect(Number(m[1]), m[0]).toBe(captured.filter((c) => !fixtureVariant(c.variant)).length);
+    expect(readme).not.toMatch(/지금\(\d{4}-\d{2}-\d{2}\)/);
+  });
 });
