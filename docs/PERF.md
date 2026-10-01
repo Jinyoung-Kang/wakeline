@@ -272,6 +272,18 @@ test_aircraft_job 그대로 통과).
 드문 막힘은 0.5 s 간격이면 막힌 길이의 일부만 보였다. 20 ms 를 넘는 값은 이 기계의 다른 일(개발 스택)이 더한 지연이다 — 운영에서도 지표는 루프가 실제로
 겪은 지연이다. 0.1 s 의 비용은 한 코어의 약 0.15 %.
 
+**기상청 레이더 격자의 정수 임계값(D3 · collector-review F9 — PLAN Phase 4-2)** — `tests/perf/kma_render.py`: 실제 헤더(2305 × 2881)에 합성 격자(시험의
+synthetic_grid(1)), 운영 폭 1152. 세 번 돌린 값.
+
+| | 전(`4a0fede` — float32 임계값) | 뒤(정수 임계값 dbz_threshold) |
+|---|---|---|
+| render_mercator_png 한 번 | 182–216 ms · 최고점 +73.4 MiB | 167–178 ms · 최고점 +23.3 MiB |
+| 에코 셀 수 식만(참고) | float32 16.4–32.5 ms · +57.0 MiB | int16 4.6–8.1 ms · +12.7 MiB(같은 수 659,549) |
+
+같은 결과: 모든 int16 값에서 정수 비교 = 실수 식(색 구간 · min_dbz · 경계 근처 · 범위 밖 23가지 — test_kma_grid_output), 합성 격자 세 개의 PNG
+바이트 · echo_cells · observed_cells 가 전과 같다(같은 시험의 고정값). 해석은 전용 스레드에서 돌므로(_DECODE_POOL) 이벤트 루프가 아니라 프레임당
+CPU 와 수집기 RSS 최고점(컨테이너 512 MiB)이 준다.
+
 ## 재현
 ```bash
 make bench SHIPS=1               # k6 REST + WS(선박 포함), api 층 직접
@@ -282,4 +294,5 @@ make measure-ais d=600 i=30      # AIS 수신 상태·처리량·자원(읽기 �
 bash tools/chaos.sh              # 장애 주입(개발 스택을 실제로 죽였다 살린다)
 (cd apps/collector && uv run --frozen python tests/perf/chain_disabled_reads.py)   # §11 공급자 체인의 운영자 끔 읽기(스택 없이)
 (cd apps/collector && uv run --frozen python tests/perf/loop_lag_sampling.py)      # §11 루프 지연 표본 간격의 비용 · 잡는 힘(약 13분)
+(cd apps/collector && uv run --frozen python tests/perf/kma_render.py)             # §11 기상청 격자 해석 · PNG 시간 · 최고 메모리
 ```

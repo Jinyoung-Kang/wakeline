@@ -59,3 +59,15 @@ GOLDEN = {
 @pytest.mark.parametrize(("seed", "width"), sorted(GOLDEN))
 def test_render_output_is_pinned(seed, width):
     assert render_digest(seed, width) == GOLDEN[(seed, width)]
+
+
+@pytest.mark.parametrize(
+    "min_dbz",
+    [5.0, *(lo for lo, _c in DBZ_STOPS), 0.0, -5.0, 4.995, 5.005, 0.015, 12.345, 327.67, 327.68, -327.68, -327.69, 400.0],
+)
+def test_the_integer_threshold_selects_exactly_the_cells_the_float_form_did(min_dbz):
+    """F9: grid ≥ dbz_threshold(m) 은 모든 int16 값에서 float32(grid) / 100 ≥ m(전의 식)과 같다 — 색 구간 · min_dbz · 경계 근처 · 범위 밖."""
+    from wakeline_collector.kma_grid import dbz_threshold
+
+    every = np.arange(-32768, 32768, dtype=np.int16)
+    assert np.array_equal(every >= dbz_threshold(min_dbz), every.astype(np.float32) / 100.0 >= min_dbz)
