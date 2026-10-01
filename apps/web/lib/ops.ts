@@ -482,6 +482,18 @@ export function runStatusClass(status: unknown, where: "summary" | "item"): stri
 }
 
 /**
+ * /ops/providers 의 수집기 자동 전환 기록(switches — 수집기 wakeline:events)을 api 가 읽지 못했다는 표시: 응답 맨 위 error(리뷰 cto-2026-10 A4 —
+ * 예: "redis unavailable", /ops/dlq 와 같은 모양). 그때 switches 는 빈 목록이라 그대로 두면 '전환 없음' 과 같아 보인다 — 경고 줄 글자를 돌려준다.
+ * error 가 없거나 null · 빈 글자면 null(경고 없음). 까닭은 api 가 준 글자 그대로, 글자가 아니면 '이유 모름'(지어내지 않는다).
+ */
+export function switchHistoryError(resp: unknown): string | null {
+  const e = obj(resp).error;
+  if (e == null || e === "") return null;
+  const why = typeof e === "string" ? e : "이유 모름";
+  return `수집기 자동 전환 기록을 읽지 못함(api: ${why}) — 아래 표가 비어 있어도 ‘전환 없음’이 아니다. 15 s 마다 다시 읽는다`;
+}
+
+/**
  * /ops/providers 응답을 만든 서버 시각(generated_at — 시간대가 있는 ISO 만) → ms. 없거나 틀리면 0(모름 — providerMissing 이 '확인 멈춤'을 판정하지 않는다).
  * 공급자 해시의 시각(수집기 missing_checked_at)의 나이를 브라우저 시계가 아니라 서버 기준 지금으로 잰다(계약 v5 §G22 — 브라우저 시계가 15분 넘게
  * 틀려도 상황판 칩과 같은 판정, 통합 리뷰 2026-09-30). 응답은 15 s 마다 새로 받는다 — 그 사이 지난 시간은 더하지 않는다(다음 응답이 다시 잰다).

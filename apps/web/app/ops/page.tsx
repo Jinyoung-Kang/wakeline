@@ -7,7 +7,7 @@ import { fmtBudgetLimit, fmtLatencyMs } from "@/lib/format";
 import { liveNote, mirrorDiffers, switchCell, toggleNote, type SwitchNote } from "@/lib/provider-switch";
 import {
   classifyOpsError, editSetting, isAuthMiss, parseSetting, pipelineLossCount, providerLastError, providerMissing, providersNowMs, rebaseSetting,
-  RUN_STATUS_TITLE, runStatusClass, runStatusTone, SESSION_EXPIRED_NOTE, settingConflict, qualityPartialDay, settingIfMatch, settingSpec, signOut, withProviderResolutions,
+  RUN_STATUS_TITLE, runStatusClass, runStatusTone, SESSION_EXPIRED_NOTE, settingConflict, qualityPartialDay, settingIfMatch, settingSpec, signOut, switchHistoryError, withProviderResolutions,
   type SettingEdit,
 } from "@/lib/ops";
 import { hiddenCount, hiddenText, parseResolutionState, RESOLUTION_STATE_TEXT, RESOLVE_EFFECT, type ResolvedMode } from "@/lib/resolutions";
@@ -261,6 +261,8 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
               <ResolveConfirm key={resolveOpen.n} id={resolvePanelId(resolveOpen.at)} target={resolveOpen.target} onClose={closeResolve} onChanged={(r) => resolveChanged(r, resolveOpen.n)} onAuthMiss={authMiss} />
             </td></tr> : null}</Fragment>; })}</tbody></table>
           <div className="label mt-4 mb-1" title="수집기가 스스로 한 공급자 전환(wakeline:events) — 위 표의 수동 켜고 끄기와 다르다">Provider switches (collector 자동 전환)</div>
+          {/* 읽지 못한 기록을 '전환 없음' 과 가른다(리뷰 cto-2026-10 A4 — api 가 빈 switches 와 함께 error 를 싣는다) */}
+          {(() => { const w = switchHistoryError(prov); return w ? <div className="mb-1 text-[11px] text-warn" role="alert" data-testid="switch-history-error">{w}</div> : null; })()}
           <table><thead><tr><th>at (KST)</th><th>job</th><th>from → to</th><th>reason</th></tr></thead><tbody>{prov.switches.map((s, i) => <tr key={i}><TimeCell v={s.at} /><td>{String(s.job)}</td><td className="mono">{String(s.from)} → {String(s.to)}</td><td>{String(s.reason)}</td></tr>)}</tbody></table>
           <div className="label mt-4 mb-1">Daily budget snapshot</div>
           {prov.budget_days.length && prov.budget_day_zone !== "UTC" ? <div className="mb-1 text-[11px] text-warn" role="alert" data-testid="budget-zone-unknown">{BUDGET_ZONE_UNKNOWN}</div> : null}

@@ -9,8 +9,9 @@ import { useVisibleInterval } from "@/lib/use-visible-interval";
 type Any = Record<string, unknown>;
 /** provider_switch: 켜고 끄기의 원본(DB)과 수집기가 따르는 Redis 미러(R-94) — providers[].disabled 는 미러 값 */
 /** resolution_state = 해결 기록의 상태(ok | stale | unavailable — ADR-024). providers[] 마다 last_error_resolution · last_error_resolved */
+/** error = 수집기 자동 전환(switches — wakeline:events)을 api 가 읽지 못함(리뷰 cto-2026-10 A4 — 그때 switches 는 빈 목록, lib/ops switchHistoryError) */
 export interface Providers {
-  providers: Any[]; active: Record<string, string>; collector: Record<string, string>; switches: Any[]; budget_days: Any[]; budget_day_zone?: unknown; provider_switch?: SwitchState[]; resolution_state?: unknown;
+  providers: Any[]; active: Record<string, string>; collector: Record<string, string>; switches: Any[]; error?: unknown; budget_days: Any[]; budget_day_zone?: unknown; provider_switch?: SwitchState[]; resolution_state?: unknown;
   /** 응답을 만든 서버 시각(UTC ISO) — '파일 없음' 줄의 '확인 멈춤'을 서버 기준 지금으로 판정한다(providersNowMs) */
   generated_at?: unknown;
 }

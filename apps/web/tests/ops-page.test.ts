@@ -722,3 +722,40 @@ describe("ops write failures stay until the next write or a dismiss (web-review 
     expect(byTestId("settings-error")).toBeNull();
   });
 });
+
+/**
+ * 리뷰 cto-2026-10 A4(api): 수집기 자동 전환(wakeline:events)을 Redis 장애로 읽지 못하면 /ops/providers 가 빈 switches 와 함께 "error":"redis unavailable" 를
+ * 싣는다 — 전에는 빈 목록뿐이라 '전환 없음' 과 같아 보였다. 화면은 그 사실을 경고 줄로 밝힌다(빈 표를 '전환 없음' 으로 두지 않는다).
+ */
+describe("ops providers: switch history that could not be read is a warning, not 'no switches' (api A4)", () => {
+  const mountWith = async (prov: Record<string, unknown>) => {
+    const data: Record<string, unknown> = { ...BODY, "/api/v1/ops/providers": { ...(BODY["/api/v1/ops/providers"] as object), ...prov } };
+    vi.stubGlobal("fetch", async (url: string) => new Response(JSON.stringify(url in data ? data[url] : { detail: "no such resource" }), { status: url in data ? 200 : 404, headers: { "Content-Type": "application/json" } }));
+    root = createRoot(dom.container as never);
+    await React.act(async () => { root!.render(React.createElement(OpsPage)); });
+    await settle();
+    await settle();
+  };
+  it("an error next to the switch list says the history could not be read (role=alert), with the api's reason as given", async () => {
+    await mountWith({ switches: [], error: "redis unavailable" });
+    const w = byTestId("switch-history-error");
+    expect(w).not.toBeNull();
+    expect(w!.getAttribute("role")).toBe("alert");
+    expect(w!.textContent).toBe("수집기 자동 전환 기록을 읽지 못함(api: redis unavailable) — 아래 표가 비어 있어도 ‘전환 없음’이 아니다. 15 s 마다 다시 읽는다");
+    expect(alertText()).toContain("자동 전환 기록을 읽지 못함");
+  });
+  it("an error that is not a string still warns (reason unknown — nothing is made up)", async () => {
+    await mountWith({ switches: [], error: { code: 1 } });
+    expect(byTestId("switch-history-error")!.textContent).toBe("수집기 자동 전환 기록을 읽지 못함(api: 이유 모름) — 아래 표가 비어 있어도 ‘전환 없음’이 아니다. 15 s 마다 다시 읽는다");
+  });
+  it("no error (absent, null or empty) → no warning, the list as given", async () => {
+    for (const prov of [{}, { error: null }, { error: "" }]) {
+      await mountWith({ switches: [{ at: "2026-09-28T00:59:00Z", job: "region", from: "adsb_fi", to: "adsb_lol", reason: "429" }], ...prov });
+      expect(byTestId("switch-history-error"), JSON.stringify(prov)).toBeNull();
+      expect(byTestId("ops-dashboard")!.textContent).toContain("adsb_fi → adsb_lol");
+      const r = root!;
+      root = null;
+      await React.act(async () => { r.unmount(); });
+    }
+  });
+});
