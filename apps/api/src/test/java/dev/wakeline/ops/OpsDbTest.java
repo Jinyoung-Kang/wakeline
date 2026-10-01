@@ -257,6 +257,19 @@ class OpsDbTest {
     }
 
     /**
+     * 계약 v5 §G31: DLQ 를 Redis 장애로 읽지 못하면 빈 목록과 함께 error — 화면(/ops DLQ 탭)이 '실패한 메시지 없음' 대신 '읽지 못함'을 보인다.
+     * 읽을 수 있으면 error 키가 없다(빈 DLQ 는 items 만).
+     */
+    @Test
+    void dlqSaysWhenItCouldNotBeRead() {
+        Map<String, Object> down = ops(deadRedis, audit).dlq();
+        assertThat(down).containsEntry("error", "redis unavailable");
+        assertThat((List<?>) down.get("items")).isEmpty();
+        Map<String, Object> up = ops(redis, audit).dlq();
+        assertThat(up).doesNotContainKey("error").containsKey("items");
+    }
+
+    /**
      * 리뷰 cto-2026-10 A4(B10): 수집기 자동 전환(wakeline:events)을 Redis 장애로 읽지 못하면 빈 목록과 함께 error — '전환 없음' 과 구별된다(같은 컨트롤러의
      * /ops/dlq 와 같은 모양). 예전에는 빈 목록뿐이었다.
      */
