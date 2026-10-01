@@ -219,7 +219,7 @@ public class SigmetRepository {
                     m.put("geometry", g == null ? null : json.readTree(g.toString()));
                     if (!Objects.equals(m.get("base_source"), SigmetRecord.BASE_JSON) && !Objects.equals(m.get("base_source"), SigmetRecord.BASE_ASSUMED_SURFACE))
                         m.put("base_source", null);
-                    for (String k : List.of("valid_from", "valid_to", "withdrawn_at")) m.put(k, TrackRepository.toInstant(m.get(k)));
+                    for (String k : List.of("valid_from", "valid_to", "withdrawn_at")) m.put(k, Sql.toInstant(m.get(k)));
                     return (Map<String, Object>) m;
                 }).toList();
     }

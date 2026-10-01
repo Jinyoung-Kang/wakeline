@@ -56,7 +56,7 @@ public class AirportRepository {
         m.put("airport", airport);
         m.put("latest", latest == null ? null : withAge(fix(latest), now));
         m.put("history", history.stream().map(AirportRepository::fix).toList());
-        if (latest != null) { m.put("fetched_at", TrackRepository.toInstant(latest.get("fetched_at"))); m.put("provider", latest.get("provider")); }
+        if (latest != null) { m.put("fetched_at", Sql.toInstant(latest.get("fetched_at"))); m.put("provider", latest.get("provider")); }
         return m;
     }
 
@@ -71,7 +71,7 @@ public class AirportRepository {
 
     private static Map<String, Object> fix(Map<String, Object> r) {
         var m = new java.util.LinkedHashMap<>(r);
-        for (String k : List.of("obs_time", "fetched_at")) if (m.containsKey(k)) m.put(k, TrackRepository.toInstant(m.get(k)));
+        for (String k : List.of("obs_time", "fetched_at")) if (m.containsKey(k)) m.put(k, Sql.toInstant(m.get(k)));
         return m;
     }
 }

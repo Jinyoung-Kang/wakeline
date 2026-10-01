@@ -1,5 +1,7 @@
 package dev.wakeline.rest;
 
+import dev.wakeline.platform.support.Times;
+
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -42,7 +44,7 @@ final class KrRadarMissing {
         if (since.isEmpty()) return null;
         String last = text(h.get("missing_last_tm"));
         Integer tms = positive(text(h.get("missing_tms")));
-        Instant checked = StatusService.isoInstant(blankToNull(text(h.get("missing_checked_at"))));
+        Instant checked = Times.isoInstant(blankToNull(text(h.get("missing_checked_at"))));
         if (!TM.matcher(since).matches() || !TM.matcher(last).matches() || last.compareTo(since) < 0 || tms == null || checked == null) {
             parseError.accept("missing");
             return null;

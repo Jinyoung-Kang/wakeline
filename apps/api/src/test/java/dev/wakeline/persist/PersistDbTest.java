@@ -193,7 +193,7 @@ class PersistDbTest {
         assertThat(writer.drainNow()).isEqualTo(8);
         Map<String, Object> r = alertRow(id);
         assertThat(r).containsEntry("close_reason", "signal_lost");
-        assertThat(TrackRepository.toInstant(r.get("left_at"))).isEqualTo(T0);
+        assertThat(Sql.toInstant(r.get("left_at"))).isEqualTo(T0);
         assertThat(String.valueOf(r.get("evidence"))).contains("absent_snapshots");
         Map<String, Object> pr = alertRow(id + 1);
         assertThat(pr).containsEntry("close_reason", "prediction_cleared").containsEntry("eta_s", 240);
@@ -247,7 +247,7 @@ class PersistDbTest {
         // f3: B 가 사라짐. 미국(airsigmet) 항목은 세트에 하나도 없음 → 그 공급자는 판단하지 않는다(U 는 철회로 표시하지 않음)
         sigmets.onSigmetSet(set(f3, a));
         writer.drainNow();
-        assertThat(TrackRepository.toInstant(sigmetRow("B").get("withdrawn_at"))).isEqualTo(f3);
+        assertThat(Sql.toInstant(sigmetRow("B").get("withdrawn_at"))).isEqualTo(f3);
         assertThat(sigmetRow("U").get("withdrawn_at")).isNull();
         assertThat(sigmetRow("A").get("withdrawn_at")).isNull();
         assertThat(sigmets.validAt(T0).stream().map(m -> m.get("id")).toList()).containsExactlyInAnyOrder("A", "U");
@@ -471,7 +471,7 @@ class PersistDbTest {
         events(repo, new Event(EventType.PREDICTED, p), new Event(EventType.PREDICTION_UPDATED, pu));
         writer.drainNow();
         assertThat(alertRow(id)).containsEntry("close_reason", "sigmet_ended");
-        assertThat(TrackRepository.toInstant(alertRow(id).get("left_at"))).isEqualTo(T0.minusSeconds(5));
+        assertThat(Sql.toInstant(alertRow(id).get("left_at"))).isEqualTo(T0.minusSeconds(5));
         Map<String, Object> pr = admin.sql("SELECT eta_s, alt_ft_at_entry, (evidence->>'alt_ft_at_entry')::int ev_alt FROM alert_event WHERE id = :id")
                 .param("id", id + 1).query().singleRow();
         assertThat(pr).containsEntry("eta_s", 200).containsEntry("alt_ft_at_entry", 37000).containsEntry("ev_alt", 37000);
@@ -500,12 +500,12 @@ class PersistDbTest {
         sigmets.onSigmetSet(set(f4, keep));              // X 철회
         sigmets.onSigmetSet(set(f5, keep, y));
         writer.drainNow();
-        assertThat(TrackRepository.toInstant(sigmetRow("A").get("withdrawn_at"))).isEqualTo(f3);
-        assertThat(TrackRepository.toInstant(sigmetRow("X").get("withdrawn_at"))).isEqualTo(f4);
+        assertThat(Sql.toInstant(sigmetRow("A").get("withdrawn_at"))).isEqualTo(f3);
+        assertThat(Sql.toInstant(sigmetRow("X").get("withdrawn_at"))).isEqualTo(f4);
         assertThat(sigmetRow("Y").get("withdrawn_at")).as("Y had not appeared yet in f2..f4").isNull();
         assertThat(sigmetRow("K").get("withdrawn_at")).isNull();
         Map<String, Object> firstSeen = new LinkedHashMap<>();
-        for (var r : admin.sql("SELECT id, first_seen FROM sigmet").query().listOfRows()) firstSeen.put((String) r.get("id"), TrackRepository.toInstant(r.get("first_seen")));
+        for (var r : admin.sql("SELECT id, first_seen FROM sigmet").query().listOfRows()) firstSeen.put((String) r.get("id"), Sql.toInstant(r.get("first_seen")));
         assertThat(firstSeen).containsEntry("A", f1).containsEntry("X", f2).containsEntry("Y", f5);
         // 재생: 그 시각에 유효했던 경보
         assertThat(sigmets.validAt(f2.plusSeconds(1)).stream().map(m -> m.get("id")).toList()).contains("A", "X");
@@ -514,7 +514,7 @@ class PersistDbTest {
         // 이미 저장한 세트보다 오래된 세트는 건너뛴다(이력을 과거로 되돌리지 않는다)
         sigmets.onSigmetSet(set(f2, a, x, keep));
         assertThat(writer.drainNow()).isZero();
-        assertThat(TrackRepository.toInstant(sigmetRow("A").get("withdrawn_at"))).isEqualTo(f3);
+        assertThat(Sql.toInstant(sigmetRow("A").get("withdrawn_at"))).isEqualTo(f3);
     }
 
     /** API-CONC-8: SIGMET 세트 메시지의 영수증은 저장이 커밋된 뒤에 풀린다. 건너뛴 재전달은 영수증을 잡지 않는다. */

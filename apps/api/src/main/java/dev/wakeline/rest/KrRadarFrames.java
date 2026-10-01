@@ -1,5 +1,6 @@
 package dev.wakeline.rest;
 
+import dev.wakeline.platform.support.Times;
 import tools.jackson.databind.JsonNode;
 
 import java.time.Instant;
@@ -48,7 +49,7 @@ final class KrRadarFrames {
             return null;
         }
         fr.put("echo_cells", ec == null || ec.isNull() ? 0 : ec.intValue());
-        fr.put("url", url(tm, StatusService.isoInstant(f.path("fetched_at").asString(null))));
+        fr.put("url", url(tm, Times.isoInstant(f.path("fetched_at").asString(null))));
         Integer stations = count(f, "stations", 0, MAX_STATIONS, parseError);
         if (stations != null) fr.put("stations", stations);
         List<String> ids = stationIds(f, stations, parseError);
@@ -68,7 +69,7 @@ final class KrRadarFrames {
         for (String k : List.of("refetched_at", "refetch_until")) {
             JsonNode v = f.get(k);
             if (v == null || v.isNull()) continue;
-            Instant t = v.isString() ? StatusService.isoInstant(v.asString()) : null;
+            Instant t = v.isString() ? Times.isoInstant(v.asString()) : null;
             if (t == null) parseError.accept(k);
             else fr.put(k, t);
         }

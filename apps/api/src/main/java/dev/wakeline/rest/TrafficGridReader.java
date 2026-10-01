@@ -1,5 +1,6 @@
 package dev.wakeline.rest;
 
+import dev.wakeline.platform.support.Times;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -127,7 +128,7 @@ public class TrafficGridReader {
     }
 
     private View decide(String r, Parsed p, Map<Object, Object> hb, Instant now) {
-        Instant hbAt = StatusService.isoInstant(hb.get("traffic_grid_at"));
+        Instant hbAt = Times.isoInstant(hb.get("traffic_grid_at"));
         Object state = hb.get("traffic_grid_state");
         boolean hbFresh = hbAt != null && Math.abs(Duration.between(hbAt, now).toSeconds()) <= HEARTBEAT_MAX_AGE_S;
         if (hbFresh && state instanceof String s && DISABLED_STATES.contains(s)) return new View("disabled", s, "\"td-" + s + "\"", null, hbAt);
@@ -213,7 +214,7 @@ public class TrafficGridReader {
     }
 
     static Instant instant(JsonNode v) {
-        return v != null && v.isString() ? StatusService.isoInstant(v.asString()) : null;
+        return v != null && v.isString() ? Times.isoInstant(v.asString()) : null;
     }
 
     /** reg_dt_kst 가 +09:00 이고 reg_dt_utc 와 같은 순간인가. */

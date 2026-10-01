@@ -38,4 +38,12 @@ public final class Sql {
         if (label == null || !LABEL.matcher(label).matches()) throw new IllegalArgumentException("statement label must match " + LABEL + ": " + label);
         return "/* wakeline " + label + " limit_s=" + limitS + " */ ";
     }
+
+    /** JDBC 가 돌려준 시각 값(Timestamp · OffsetDateTime · Instant) → Instant. 그 밖(null 포함)은 null. 저장소 · 운영 · 입출항 색인이 같이 쓴다. */
+    public static Instant toInstant(Object v) {
+        if (v instanceof java.sql.Timestamp t) return t.toInstant();
+        if (v instanceof java.time.OffsetDateTime o) return o.toInstant();
+        if (v instanceof Instant i) return i;
+        return null;
+    }
 }

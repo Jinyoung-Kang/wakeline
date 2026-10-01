@@ -4,6 +4,7 @@ import dev.wakeline.platform.config.AppProperties;
 import dev.wakeline.platform.web.BboxParam;
 import dev.wakeline.platform.web.Etags;
 import dev.wakeline.platform.web.Meta;
+import dev.wakeline.platform.web.Params;
 import dev.wakeline.platform.web.Problem;
 import dev.wakeline.platform.web.ProblemAdvice;
 import dev.wakeline.domain.AircraftState;
@@ -138,7 +139,7 @@ public class AircraftController {
      */
     @GetMapping("/{hex}")
     public ResponseEntity<Map<String, Object>> detail(@PathVariable String hex, HttpServletRequest req) {
-        String h = normalizeHex(hex);
+        String h = Params.hex(hex);
         AircraftState a = snapshots.find(h);
         Map<String, Object> stat = null;
         boolean dbUnavailable = false;
@@ -175,7 +176,7 @@ public class AircraftController {
     public ResponseEntity<Map<String, Object>> track(@PathVariable String hex, @RequestParam(required = false) Instant from,
                                                      @RequestParam(required = false) Instant to, @RequestParam(defaultValue = "0") int stepS,
                                                      HttpServletRequest req) {
-        String h = normalizeHex(hex);
+        String h = Params.hex(hex);
         Instant end = to == null ? Instant.now() : to;
         Instant start = from == null ? end.minus(Duration.ofHours(2)) : from;
         // 정확히 비교한다(R-71 — toHours() 절삭은 24 h 59 m 을 통과시켰다)
@@ -201,11 +202,5 @@ public class AircraftController {
         f.put("geometry", Map.of("type", "Point", "coordinates", new double[]{a.lon(), a.lat()}));
         f.put("properties", WsMessages.encode(a, detail, false));
         return f;
-    }
-
-    static String normalizeHex(String hex) {
-        String h = hex == null ? "" : hex.trim().toLowerCase();
-        if (!h.matches("^[0-9a-f]{6}$")) throw Problem.badRequest("BAD_HEX", "hex must be 6 hex chars");
-        return h;
     }
 }

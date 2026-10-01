@@ -3,6 +3,7 @@ package dev.wakeline.rest;
 import dev.wakeline.platform.config.AppProperties;
 import dev.wakeline.demand.DemandStats;
 import dev.wakeline.ops.RegionSettings;
+import dev.wakeline.platform.support.Times;
 import org.springframework.beans.factory.annotation.Autowired;
 import dev.wakeline.engine.EngineService;
 import dev.wakeline.ingest.AisStatus;
@@ -159,7 +160,7 @@ public class StatusService {
         String tm = h.get("latest_tm") == null ? null : String.valueOf(h.get("latest_tm"));
         if (tm != null && tm.matches("^[0-9]{12}$")) m.put("latest_tm", tm);
         for (String k : List.of("fetched_at", "checked_at")) {
-            Instant t = isoInstant(h.get(k));
+            Instant t = Times.isoInstant(h.get(k));
             if (t != null) m.put(k, t);
         }
         // ADR-021: 최신 프레임의 합성 지점 수 · 기준 · 부분 합성. 기준은 자기 지점 수 이상, partial 은 두 수를 알고 stations < stations_ref 와 같을 때만
@@ -181,16 +182,6 @@ public class StatusService {
         if (!s.matches("^[0-9]{1,2}$")) return null;
         int n = Integer.parseInt(s);
         return n <= KrRadarFrames.MAX_STATIONS ? n : null;
-    }
-
-    /** 시간대가 있는 ISO 시각만. 아니면 null. */
-    static Instant isoInstant(Object v) {
-        if (v == null) return null;
-        try {
-            return java.time.OffsetDateTime.parse(String.valueOf(v).trim()).toInstant();
-        } catch (java.time.format.DateTimeParseException e) {
-            return null;
-        }
     }
 
     public List<Map<String, Object>> providerStatuses() {

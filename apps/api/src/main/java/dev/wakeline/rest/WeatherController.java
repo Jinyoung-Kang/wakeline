@@ -1,9 +1,11 @@
 package dev.wakeline.rest;
 
 import dev.wakeline.platform.config.AppProperties;
+import dev.wakeline.platform.support.Times;
 import dev.wakeline.platform.web.BboxParam;
 import dev.wakeline.platform.web.Etags;
 import dev.wakeline.platform.web.Meta;
+import dev.wakeline.platform.web.Params;
 import dev.wakeline.platform.web.Problem;
 import dev.wakeline.domain.Alert;
 import dev.wakeline.geo.Bbox;
@@ -105,7 +107,7 @@ public class WeatherController {
         Instant start = from == null ? end.minusSeconds(86400) : from;
         if (!start.isBefore(end) || end.toEpochMilli() - start.toEpochMilli() > 30L * 86400_000) throw Problem.badRequest("BAD_RANGE", "range must be within 30 d");
         int lim = Math.max(1, Math.min(limit, 200));
-        var page = alertRepo.history(start, end, hex == null ? null : AircraftController.normalizeHex(hex), cursor, lim);
+        var page = alertRepo.history(start, end, hex == null ? null : Params.hex(hex), cursor, lim);
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("items", page.items());
         m.put("next_cursor", page.nextCursor());
@@ -187,7 +189,7 @@ public class WeatherController {
         if (missing != null) m.put("missing", missing);
         m.put("time_zone", "KST(UTC+9) for tm; fetched_at is UTC");
         m.put("attribution", "기상청 API허브 레이더 합성자료(HSR) · 투영·격자 정의: 기상기후데이터위키");
-        Instant fetched = h.get("fetched_at") == null ? null : StatusService.isoInstant(h.get("fetched_at"));
+        Instant fetched = h.get("fetched_at") == null ? null : Times.isoInstant(h.get("fetched_at"));
         if (h.get("fetched_at") != null && fetched == null) radarParseError("fetched_at");
         m.put("meta", Meta.of(req, "kma_apihub", fetched, 900));
         return ResponseEntity.ok().eTag(etag).cacheControl(cc).body(m);

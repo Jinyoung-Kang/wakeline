@@ -137,7 +137,7 @@ public class AlertRepository {
             var m = new java.util.LinkedHashMap<>(r);
             Object ev = m.get("evidence");
             m.put("evidence", ev == null ? null : json.readTree(ev.toString()));
-            for (String k : List.of("entered_at", "left_at", "eta_at")) m.put(k, TrackRepository.toInstant(m.get(k)));
+            for (String k : List.of("entered_at", "left_at", "eta_at")) m.put(k, Sql.toInstant(m.get(k)));
             m.put("estimated", "PREDICTED".equals(m.get("kind")));
             return (Map<String, Object>) m;
         }).toList();
