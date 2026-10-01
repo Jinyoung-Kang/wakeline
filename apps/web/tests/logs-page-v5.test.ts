@@ -386,3 +386,53 @@ describe("v5-C7 /logs: groups view and the AIS gaps tab", () => {
     expect(domUtcLeaks(dom.container)).toEqual([]);
   });
 });
+
+describe("/logs: '이전 항목 더 보기' while its page is on the way (web-review B1)", () => {
+  const PAGE1 = { items: [entry(T(1)), entry(T(2))], next_cursor: T(2), scanned: 10, scan_truncated: false, invalid: 1, hidden_resolved: 2 };
+  const OLDER = { items: [entry(T(10))], next_cursor: null, scanned: 5, scan_truncated: false, invalid: 4, hidden_resolved: 3 };
+  /** 커서가 붙은 요청(더 보기)은 응답을 붙잡아 둔다 — 단추를 두 번 누르는 사이에 도착하지 않게 */
+  function stubHeld(older: ((r: Response) => void)[], page1: unknown = PAGE1) {
+    calls.length = 0;
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      calls.push(`${init?.method ?? "GET"} ${url}`);
+      const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+      if (url === "/api/v1/ops/session") return json(200, { username: "op" });
+      if (url.startsWith("/api/v1/ops/logs?") && url.includes("cursor=")) return new Promise<Response>((r) => older.push((x) => r(x)));
+      if (url.startsWith("/api/v1/ops/logs?")) return json(200, page1);
+      return json(404, {});
+    });
+  }
+  const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+
+  it("a double click appends that page once: the hidden and skipped sums count 2 pages, not 3", async () => {
+    const older: ((r: Response) => void)[] = [];
+    stubHeld(older);
+    await open();
+    const more = button("이전 항목 더 보기")!;
+    await React.act(async () => { void propsOf(more).onClick(); void propsOf(more).onClick(); });
+    expect(calls.filter((c) => c.includes("cursor="))).toHaveLength(1);
+    for (const r of older) r(json(200, OLDER));
+    await settle();
+    expect(allByTestId("log-row")).toHaveLength(3);
+    expect(byTestId("logs-hidden-resolved")!.textContent).toBe("해결 처리로 숨김 5건(불러온 2쪽 합계)");
+    expect(byTestId("logs-skipped")!.textContent).toBe("형식 오류로 건너뜀(불러온 2쪽 합계): api 5 · 화면 0");
+  });
+
+  it("the button says it is busy (disabled · aria-busy) until that page arrives, then can load the next one", async () => {
+    const older: ((r: Response) => void)[] = [];
+    stubHeld(older);
+    await open();
+    await React.act(async () => { void propsOf(button("이전 항목 더 보기")!).onClick(); });
+    const busy = button("이전 항목 더 보기")!;
+    expect(busy.getAttribute("disabled")).not.toBeNull();
+    expect(busy.getAttribute("aria-busy")).toBe("true");
+    older[0](json(200, { ...OLDER, next_cursor: T(10) }));
+    await settle();
+    const again = button("이전 항목 더 보기")!;
+    expect(again.getAttribute("disabled")).toBeNull();
+    expect(again.getAttribute("aria-busy")).toBeNull();
+    await React.act(async () => { void propsOf(again).onClick(); });
+    expect(calls.filter((c) => c.includes("cursor="))).toHaveLength(2);
+    expect(calls.at(-1)).toContain(`cursor=${encodeURIComponent(T(10))}`);
+  });
+});

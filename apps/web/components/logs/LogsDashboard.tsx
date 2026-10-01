@@ -83,6 +83,8 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
   const [detail, setDetail] = useState<LogEntry | null>(null);
   const [detailMiss, setDetailMiss] = useState<{ id: string; error: unknown } | null>(null);
   const [loading, setLoading] = useState(false);
+  /** '이전 항목 더 보기'가 받는 중인 커서 — 단추를 바쁨으로 보인다 */
+  const [moreCursor, setMoreCursor] = useState<string | null>(null);
   const [err, setErr] = useState<unknown>(null);
   const [lastOk, setLastOk] = useState<number | null>(null);
   const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null);
@@ -90,6 +92,8 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
   const rowResolve = useResolveSlot();
   /** 목록·묶음을 새로 불러올 때마다 올린다 — 늦게 온 이전 필터의 응답(또는 그 사이의 자동 확인)을 버린다 */
   const loadSeq = useRef(0);
+  /** 받는 중인 '더 보기' 커서(같은 프레임의 두 번째 누름도 막는다 — 상태는 다음 렌더에야 보인다) */
+  const moreFor = useRef<string | null>(null);
   const rowEls = useRef(new Map<string, HTMLTableRowElement>());
 
   /** ops 호출 실패: 문구로 보이고, 401/404 면 세션을 확인해 만료일 때만 로그인으로 */
@@ -235,15 +239,21 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
     setPage((p) => (p ? { ...p, items: applyPending(p.items, pending.items) } : p));
     setPending(NO_PENDING);
   };
+  /** 다음 쪽은 커서 하나에 한 번만 — 받는 동안 다시 누르면 같은 쪽이 두 번 붙어 숨김 · 건너뜀 합계가 부풀었다. 붙일 때도 그 커서의 쪽일 때만 */
   const loadMore = async () => {
-    if (!page?.nextCursor) return;
+    const cursor = page?.nextCursor;
+    if (!page || !cursor || moreFor.current === cursor) return;
+    moreFor.current = cursor;
+    setMoreCursor(cursor);
     const my = loadSeq.current;
     try {
-      const p = parseLogPage(await apiGet<unknown>(logsUrl(filter, page.at, { cursor: page.nextCursor })));
+      const p = parseLogPage(await apiGet<unknown>(logsUrl(filter, page.at, { cursor })));
       if (my !== loadSeq.current) return;
-      setPage((prev) => (prev ? { ...appendLogPage(prev, p), at: prev.at } : prev));
+      setPage((prev) => (prev && prev.nextCursor === cursor ? { ...appendLogPage(prev, p), at: prev.at } : prev));
     } catch (e) {
-      fail(e);
+      if (my === loadSeq.current) fail(e);
+    } finally {
+      if (moreFor.current === cursor) { moreFor.current = null; setMoreCursor(null); }
     }
   };
   /** 목록 표(grid)에 초점이 있을 때만 — 다른 요소(단추 · 입력)에서 올라온 키는 그 요소의 것이다 */
@@ -477,7 +487,8 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
                 </div>
               ) : null}
               {page?.nextCursor ? (
-                <button type="button" className="btn m-2" onClick={() => void loadMore()} title={`cursor ${page.nextCursor}`}>이전 항목 더 보기</button>
+                <button type="button" className="btn m-2" onClick={() => void loadMore()} title={`cursor ${page.nextCursor}`}
+                  disabled={moreCursor === page.nextCursor} aria-busy={moreCursor === page.nextCursor || undefined}>이전 항목 더 보기</button>
               ) : page && items.length ? <div className="p-2 text-[11px] text-fg-3">끝 — 다음 커서 없음</div> : null}
             </> : groups ? (
               groups.groups.length ? (
