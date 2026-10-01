@@ -1096,4 +1096,4 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
   - 웹 dlq 탭: 경고 줄(role=alert, 주황) `스키마 검증 실패 메시지(DLQ)를 읽지 못함(api: <까닭 그대로>) — 목록이 비어 있어도 ‘없음’이 아니다. 15 s 마다 다시 읽는다`.
     까닭이 글자가 아니면 `이유 모름`(지어내지 않는다), `error` 가 없거나 null · 빈 글자면 줄이 없다. 줄이 있는 동안 빈 목록을 '스키마 검증에 실패한 메시지가 없습니다.'
     로 적지 않는다(전에는 그렇게 적어 읽지 못함이 없음과 같아 보였다 — 리뷰 cto-2026-10 최종 검토). 항목이 있으면 표는 그대로.
-  - 회귀 막기: 웹 `tests/ops-page.test.ts` · `tests/guide-page.test.ts`. api 쪽에는 이 응답을 보는 시험이 없다(`OpsDbTest` 는 §G30 의 providers 만 본다) — 따로 할 일.
+  - 회귀 막기: 웹 `tests/ops-page.test.ts` · `tests/guide-page.test.ts`. api 는 `OpsDbTest.dlqSaysWhenItCouldNotBeRead`(Redis 가 죽으면 빈 목록 + `error`, 살아 있으면 `error` 키 없음).

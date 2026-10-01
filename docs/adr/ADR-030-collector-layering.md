@@ -35,7 +35,7 @@
 3. **가드는 `apps/collector/tests/test_layering.py`.** 표준 라이브러리 `ast` 만 쓰고, 함수 안의 늦은 import 도 센다. 규칙은 여섯 가지다(가드 설명의 번호와 같다):
    1. 위 층을 import 하지 않는다.
    2. 작업 사이에는 `jobs.context` 만 쓴다(설계상 `jobs.demand → jobs.route` 는 허용).
-   3. entry 모듈은 같은 패키지의 `__main__` 만 import 한다.
+   3. entry 모듈을 import 하는 것은 같은 패키지의 `__main__` 뿐이다(`X.__main__ → X.main`).
    4. 규칙 모듈은 KERNEL 이나 같은 기능의 규칙만 import 한다(위 2).
    5. 다른 모듈의 비공개 이름(`_x`)을 import 하지 않는다.
    6. `ais` 는 격벽이라, 밖에서는 정해 둔 공유 모듈만 쓴다.
