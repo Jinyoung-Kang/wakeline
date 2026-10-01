@@ -82,9 +82,18 @@ class CoverageBootstrapDbTest {
         assertThat(CoverageGrid.lonIndex(-0.25)).isEqualTo(-1);
     }
 
+    /**
+     * 셈 시작(cut) 고르기: 지난 시의 한가운데(:30:00). 아래 시험의 두 행(cut − 3 h · cut − 3 h + 60 s)이 늘 같은 시 조각에 든다 — 벽시계 그대로 쓰면
+     * 59분에 돌 때 두 행이 다른 시로 갈라져 부트스트랩 행이 3이 됐다("expected: 2L but was: 3L", 시각에 따라 실패). 지난 시각이라 셈 시작 뒤의 행(cut + 1 s)도
+     * 이미 지난 시각이다.
+     */
+    static long aligned(long wallMs) {
+        return Math.floorDiv(wallMs, 3_600_000L) * 3_600_000L - 30 * 60_000L;
+    }
+
     @Test
     void theBootstrapMovesStoredPositionsIntoTheGrid_andLeavesRowsAfterTheLiveCutToTheLiveCount() {
-        long now = System.currentTimeMillis();
+        long now = aligned(System.currentTimeMillis());
         Instant cut = Instant.ofEpochMilli(Math.floorDiv(now, 60_000L) * 60_000L);
         insert("440000011", 35.1, 129.05, cut.minusSeconds(3 * 3_600));
         insert("440000011", 35.1, 129.06, cut.minusSeconds(3 * 3_600 - 60));
