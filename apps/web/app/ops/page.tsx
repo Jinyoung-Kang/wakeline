@@ -5,8 +5,8 @@ import { DISPLAY_TZ, fmtKst, fmtKstClock, fmtTimeTitle, utcDayWindowKst } from "
 import { fmtBudgetLimit, fmtLatencyMs } from "@/lib/format";
 import { liveNote, mirrorDiffers, switchCell, toggleNote, type SwitchNote, type SwitchState, type ToggleResult } from "@/lib/provider-switch";
 import {
-  classifyOpsError, editSetting, isAuthMiss, OPS_SESSION_PATH, parseSetting, pipelineLossCount, providerLastError, providerMissing, providersNowMs, rebaseSetting, RequestOrder, RUN_STATUS_TITLE,
-  runStatusClass, runStatusTone, SESSION_EXPIRED_NOTE, settingConflict, qualityPartialDay, settingIfMatch, settingSpec, signOut, withProviderResolutions, type SettingEdit,
+  classifyOpsError, editSetting, isAuthMiss, OPS_SESSION_PATH, parseSetting, pipelineLossCount, providerLastError, providerMissing, providersNowMs, providerSwitchPath, rebaseSetting, RequestOrder,
+  RUN_STATUS_TITLE, runStatusClass, runStatusTone, SESSION_EXPIRED_NOTE, settingConflict, qualityPartialDay, settingIfMatch, settingPath, settingSpec, signOut, withProviderResolutions, type SettingEdit,
 } from "@/lib/ops";
 import { hiddenCount, hiddenText, parseResolutionState, RESOLUTION_STATE_TEXT, RESOLVE_EFFECT, type ResolvedMode } from "@/lib/resolutions";
 import { ResolveConfirm, useResolveSlot, type ResolveResult, type ResolveTarget } from "@/components/ResolveConfirm";
@@ -270,7 +270,7 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
     if (switching.current.has(name)) return;
     switching.current.add(name);
     setBusySwitch(new Set(switching.current));
-    try { setSwitchNote(toggleNote(await apiSend<ToggleResult>("POST", `/api/v1/ops/providers/${name}/${action}`))); refresh(); } catch (e) { fail(e); }
+    try { setSwitchNote(toggleNote(await apiSend<ToggleResult>("POST", providerSwitchPath(name, action)))); refresh(); } catch (e) { fail(e); }
     finally { switching.current.delete(name); setBusySwitch(new Set(switching.current)); }
   };
   const switchMsg = liveNote(switchNote, prov?.provider_switch); // 주기 미러가 맞췄으면 경고를 내린다
@@ -423,7 +423,7 @@ function SettingsForm({ items, onSaved, onAuthMiss }: { items: Settings["items"]
     setFieldErr((f) => { const c = { ...f }; delete c[k]; return c; });
     saving.current.add(k);
     setBusy(new Set(saving.current));
-    try { await apiSend("PUT", `/api/v1/ops/settings/${k}`, { value: parsed.value }, { "If-Match": settingIfMatch(ed) }); setMsg({ ok: true, text: `${k} 저장됨 — 다음 주기부터 적용` }); drop(k); onSaved(); }
+    try { await apiSend("PUT", settingPath(k), { value: parsed.value }, { "If-Match": settingIfMatch(ed) }); setMsg({ ok: true, text: `${k} 저장됨 — 다음 주기부터 적용` }); drop(k); onSaved(); }
     catch (e) {
       if (isAuthMiss(e)) onAuthMiss(e);
       const conflict = e instanceof ApiError && e.status === 409;

@@ -7,6 +7,13 @@ import { fmtKstMinute, fmtTimeTitle, kstDayOf } from "./time";
 
 export const OPS_SESSION_PATH = "/api/v1/ops/session";
 
+/**
+ * 운영 쓰기 경로 — 공급자 이름 · 설정 키는 서버가 준 값이지만 경로 조각으로 인코딩한다('/' · '?' · '#' 가 든 값이 CSRF 헤더가 실린 쓰기를
+ * 다른 경로로 보내지 않게, web-review B11)
+ */
+export const providerSwitchPath = (name: string, action: "enable" | "disable") => `/api/v1/ops/providers/${encodeURIComponent(name)}/${action}`;
+export const settingPath = (key: string) => `/api/v1/ops/settings/${encodeURIComponent(key)}`;
+
 /** 401/404 — 세션이 없을 때 ops 엔드포인트가 돌려주는 상태 */
 export function isAuthMiss(e: unknown): boolean {
   return e instanceof ApiError && (e.status === 401 || e.status === 404);

@@ -45,7 +45,7 @@ export function AirportCard({ icao }: { icao: string }) {
   const catColor = m?.flight_cat && !stale ? CAT_COLORS[m.flight_cat] : undefined;
   return (
     <div className="flex h-full flex-col" data-testid="airport-card">
-      <div className="row"><span className="label">Airport · {icao}</span><div className="flex gap-1"><Link href={`/airports/${icao}`} className="btn">이력</Link><button className="btn" onClick={() => selectAirport(null)}>닫기</button></div></div>
+      <div className="row"><span className="label">Airport · {icao}</span><div className="flex gap-1"><Link href={`/airports/${encodeURIComponent(icao)}`} className="btn">이력</Link><button className="btn" onClick={() => selectAirport(null)}>닫기</button></div></div>
       <div className="min-h-0 flex-1 overflow-y-auto px-2 py-1 text-[12px]">
         {err ? <div className="text-bad"><ErrorNote error={err} /></div> : null}
         {w ? <>
