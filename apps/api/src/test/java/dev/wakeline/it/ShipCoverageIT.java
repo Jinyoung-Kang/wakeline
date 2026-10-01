@@ -14,7 +14,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * 관측 수신 범위(계약 v5 §G27 · ADR-027) 경로 전체를 실제 Redis(ais 수집기와 같은 ACL 사용자) · 실제 PostGIS 로: XADD wakeline:ships → 소비 → 선박 저장기가
- * 고른 60 s 표본(IngestEvents.ShipsSampled) → 격자 → 공개 GET /api/v1/ships/coverage(공개 캐시 · ETag → 304 · 요청 제한 헤더). /ships/coverage 는
+ * 고른 60 s 표본(ShipEvents.ShipsSampled) → 격자 → 공개 GET /api/v1/ships/coverage(공개 캐시 · ETag → 304 · 요청 제한 헤더). /ships/coverage 는
  * /ships/{mmsi} 로 해석되지 않는다(MMSI 형식 오류 400 이 아니다). 셈은 api 시작 분부터라 보고 시각은 지금으로 준다.
  */
 @EnabledIf("dev.wakeline.DbTestSupport#dockerAvailable")
@@ -22,7 +22,7 @@ class ShipCoverageIT extends IntegrationTest {
     static final Duration WAIT = Duration.ofSeconds(15);
 
     @Autowired ShipCoverage coverage;
-    @Autowired dev.wakeline.ingest.ShipStore ships;
+    @Autowired dev.wakeline.ships.core.ShipStore ships;
 
     static boolean hasCell(ShipCoverage.Snapshot s, double lon0, double lat0, int minShips) {
         return s.cells().stream().anyMatch(c -> c.lon0() == lon0 && c.lat0() == lat0 && c.ships() >= minShips);

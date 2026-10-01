@@ -1,6 +1,6 @@
 package dev.wakeline.it;
 
-import dev.wakeline.ingest.ShipStore;
+import dev.wakeline.ships.core.ShipStore;
 import dev.wakeline.portcalls.PortCallFixtures;
 import dev.wakeline.portcalls.PortCallReader;
 import org.junit.jupiter.api.AfterEach;

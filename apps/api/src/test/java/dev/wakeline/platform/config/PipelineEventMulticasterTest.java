@@ -1,7 +1,7 @@
 package dev.wakeline.platform.config;
 
-import dev.wakeline.ingest.IngestEvents;
 import dev.wakeline.platform.support.PipelineEvent;
+import dev.wakeline.ships.core.ShipEvents;
 import dev.wakeline.weather.core.RadarStore;
 import dev.wakeline.weather.core.WeatherEvents;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -49,12 +49,12 @@ class PipelineEventMulticasterTest {
 
     /**
      * 리뷰(2026-09-30): 선박 저장기가 스트림 소비 스레드에서 알리는 '고른 60 s 표본'(관측 수신 격자가 센다 — ADR-027)은 ShipWriter 안의 이벤트라 격리 대상이
-     * 아니었다 — 격자 리스너의 예외가 ShipWriter#onShips 로 새어 저장기 실패로 세졌다. 이제 파이프라인 이벤트(IngestEvents.ShipsSampled)라 그 리스너에 가둔다.
+     * 아니었다 — 격자 리스너의 예외가 ShipWriter#onShips 로 새어 저장기 실패로 세졌다. 이제 파이프라인 이벤트(ShipEvents.ShipsSampled)라 그 리스너에 가둔다.
      * 수정 전 실패(그런 이벤트가 없었다 — 컴파일 실패).
      */
     @Test
     void theWritersSampledPositionsArePipelineEvents_aFailingCoverageListenerIsContained() {
-        IngestEvents.ShipsSampled sampled = new IngestEvents.ShipsSampled(List.of());
+        ShipEvents.ShipsSampled sampled = new ShipEvents.ShipsSampled(List.of());
         assertThat(PipelineEventMulticaster.isPipelineEvent(new PayloadApplicationEvent<>(this, sampled))).isTrue();
         m.addApplicationListener((ApplicationListener<PayloadApplicationEvent<?>>) e -> { calls.add("coverage"); throw new IllegalStateException("grid bug"); });
         m.addApplicationListener((ApplicationListener<PayloadApplicationEvent<?>>) e -> calls.add("other"));

@@ -266,16 +266,16 @@ class MigrationDbTest {
 
         // api 계정으로 운영과 같은 문장(ShipRepository.insertGap)
         JdbcClient api = JdbcClient.create(new DriverManagerDataSource(url, "wakeline_api", DbTestSupport.API_PW));
-        dev.wakeline.persist.ShipRepository repo = new dev.wakeline.persist.ShipRepository(new org.springframework.jdbc.core.JdbcTemplate(
+        dev.wakeline.ships.data.ShipRepository repo = new dev.wakeline.ships.data.ShipRepository(new org.springframework.jdbc.core.JdbcTemplate(
                 new DriverManagerDataSource(url, "wakeline_api", DbTestSupport.API_PW)), api);
         java.time.Instant s = java.time.Instant.parse("2026-09-28T01:00:00Z");
-        assertThat(repo.insertGap(new dev.wakeline.domain.AisGap(s, s.plusSeconds(60), "dup of the legacy row", "aisstream"))).isFalse();
-        assertThat(repo.insertGap(new dev.wakeline.domain.AisGap(s, s.plusSeconds(60), "am", "aisstream",
-                dev.wakeline.domain.AisScope.parse("-90,-180,90,0")))).isTrue();
-        assertThat(repo.insertGap(new dev.wakeline.domain.AisGap(s, s.plusSeconds(90), "ap", "aisstream",
-                dev.wakeline.domain.AisScope.parse("-90,45,90,180")))).isTrue();
-        assertThat(repo.insertGap(new dev.wakeline.domain.AisGap(s, s.plusSeconds(99), "am again", "aisstream",
-                dev.wakeline.domain.AisScope.parse("-90,-180,90,0")))).isFalse();
+        assertThat(repo.insertGap(new dev.wakeline.ships.core.AisGap(s, s.plusSeconds(60), "dup of the legacy row", "aisstream"))).isFalse();
+        assertThat(repo.insertGap(new dev.wakeline.ships.core.AisGap(s, s.plusSeconds(60), "am", "aisstream",
+                dev.wakeline.ships.core.AisScope.parse("-90,-180,90,0")))).isTrue();
+        assertThat(repo.insertGap(new dev.wakeline.ships.core.AisGap(s, s.plusSeconds(90), "ap", "aisstream",
+                dev.wakeline.ships.core.AisScope.parse("-90,45,90,180")))).isTrue();
+        assertThat(repo.insertGap(new dev.wakeline.ships.core.AisGap(s, s.plusSeconds(99), "am again", "aisstream",
+                dev.wakeline.ships.core.AisScope.parse("-90,-180,90,0")))).isFalse();
         assertThat(stage.sql("SELECT count(*) FROM ingest_gap").query(Long.class).single()).isEqualTo(3);
         try (Connection c = DriverManager.getConnection(url, "wakeline_api", DbTestSupport.API_PW)) {
             assertThat(sqlState(c, "UPDATE ingest_gap SET scope = 'x'")).isEqualTo("42501");
@@ -302,9 +302,9 @@ class MigrationDbTest {
                 .isEqualTo("wakeline_migrator");
         assertThat(stage.sql("SELECT count(*) FROM pg_constraint WHERE conname = 'ingest_gap_source_started'").query(Long.class).single()).isZero();
         assertThat(stage.sql("SELECT count(*) FROM pg_indexes WHERE indexname = 'ingest_gap_source_scope_started_uq'").query(Long.class).single()).isEqualTo(1);
-        assertThat(repo.insertGap(new dev.wakeline.domain.AisGap(s, s.plusSeconds(60), "am after roll-forward", "aisstream",
-                dev.wakeline.domain.AisScope.parse("-90,-180,90,0")))).isTrue();
-        assertThat(repo.insertGap(new dev.wakeline.domain.AisGap(s, s.plusSeconds(60), "dup of the legacy row", "aisstream"))).isFalse();
+        assertThat(repo.insertGap(new dev.wakeline.ships.core.AisGap(s, s.plusSeconds(60), "am after roll-forward", "aisstream",
+                dev.wakeline.ships.core.AisScope.parse("-90,-180,90,0")))).isTrue();
+        assertThat(repo.insertGap(new dev.wakeline.ships.core.AisGap(s, s.plusSeconds(60), "dup of the legacy row", "aisstream"))).isFalse();
     }
 
     /** V9 머리 주석의 되돌리기 SQL(주석 표시 '-- ' 를 뗀 본문). 블록 경계가 바뀌면 여기서 먼저 깨진다. */

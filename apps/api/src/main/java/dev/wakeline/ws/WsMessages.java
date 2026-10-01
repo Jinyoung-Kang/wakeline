@@ -5,7 +5,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonRawValue;
 import dev.wakeline.aircraft.web.AircraftJson;
 import dev.wakeline.weather.core.Alert;
-import dev.wakeline.domain.DestinationInfo;
+import dev.wakeline.ships.core.DestinationInfo;
 import dev.wakeline.weather.core.PredictionAvailability;
 import dev.wakeline.portcalls.PortCallsInfo;
 import dev.wakeline.route.RouteInfo;
@@ -99,7 +99,7 @@ public final class WsMessages {
      * static_source(계약 v5 §G17): static 의 출처 — live · stored · none · stored_unavailable({@link dev.wakeline.ships.web.ShipJson#STATIC_LIVE} 등). null 은 저장 정적 보고를 읽는 쪽이
      * 연결되지 않은 구성(시험)에서 메모리에 없을 때뿐이다(키는 남긴다). static_updated_at: stored 일 때만 저장 행(ship)의 updated_at — DB 에 기록된 수신
      * 시각(= static.updated_at): 내용이 바뀔 때와 수집기 재시작 · 선박이 수집기 메모리에서 빠졌다(30분 무수신 · 상한) 다시 잡힐 때 새로 기록되므로 첫 수신도
-     * 마지막 수신도 아니다({@link dev.wakeline.persist.StoredStaticReader}). 저장 행은 받은 필드만 덮으므로(계약 v5 §G19) 이 시각은 마지막으로 저장한 보고의
+     * 마지막 수신도 아니다({@link dev.wakeline.ships.data.StoredStaticReader}). 저장 행은 받은 필드만 덮으므로(계약 v5 §G19) 이 시각은 마지막으로 저장한 보고의
      * 것이고, 그 보고가 싣지 않은 static 필드는 그보다 앞서 저장된 보고의 값이다. 그 밖에는 null(키는 남긴다).
      * destination_info(계약 v4 §B): 보고된 목적지의 결정적 풀이 — 목적지를 모르면 null(키는 남긴다).
      * port_calls(ADR-022 개정): 호출부호로 DB 색인에서 찾은 한국 항만 입출항(해양수산부 PORT-MIS — 수집기가 색인한다) — 늘 객체(상태로 말한다). null 은 읽는 쪽이

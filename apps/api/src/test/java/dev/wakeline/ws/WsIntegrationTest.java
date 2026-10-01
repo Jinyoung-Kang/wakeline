@@ -59,7 +59,7 @@ class WsIntegrationTest {
         @Bean SnapshotStore snapshotStore() { return new SnapshotStore(); }
         @Bean SigmetStore sigmetStore() { return new SigmetStore(); }
         @Bean RadarStore radarStore() { return new RadarStore(); }
-        @Bean dev.wakeline.ingest.ShipStore shipStore() { return new dev.wakeline.ingest.ShipStore(); }
+        @Bean dev.wakeline.ships.core.ShipStore shipStore() { return new dev.wakeline.ships.core.ShipStore(); }
         @Bean EngineService engineService(SnapshotStore s, SigmetStore g, ApplicationEventPublisher p, MeterRegistry m) { return new EngineService(s, g, p, m); }
         /** 연결 팩토리 없는 템플릿 — StatusService 는 Redis 오류를 삼키고 "redis unavailable" 로 둔다. */
         @Bean StatusService statusService(SnapshotStore s, SigmetStore g, RadarStore r, EngineService e, AppProperties props) {
@@ -84,8 +84,8 @@ class WsIntegrationTest {
             return new dev.wakeline.platform.data.ReadPool("jdbc:postgresql://127.0.0.1:1/none", "none", "", 1, 250, m);
         }
         /** 저장 정적 보고(계약 v5 §G17)도 DB 가 없는 구성 — 메모리에 정적 정보가 없는 선박은 static_source stored_unavailable. */
-        @Bean dev.wakeline.persist.StoredStaticReader storedStaticReader(MeterRegistry m) {
-            return new dev.wakeline.persist.StoredStaticReader(mmsi -> {
+        @Bean dev.wakeline.ships.data.StoredStaticReader storedStaticReader(MeterRegistry m) {
+            return new dev.wakeline.ships.data.StoredStaticReader(mmsi -> {
                 throw new org.springframework.dao.DataAccessResourceFailureException("no database in this test");
             }, System::currentTimeMillis, m);
         }

@@ -723,8 +723,8 @@ RFC3339 = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:
 
 
 JAVA_MAIN = ROOT / "apps" / "api" / "src" / "main" / "java" / "dev" / "wakeline"
-# 메시지마다 표식을 잡는 두 저장기(MAX_MARKS) — 기능 패키지로 옮겨졌다(ADR-028): 항적은 aircraft.data, 선박은 아직 persist
-JAVA_WRITERS = {"TrackWriter.java": JAVA_MAIN / "aircraft" / "data", "ShipWriter.java": JAVA_MAIN / "persist"}
+# 메시지마다 표식을 잡는 두 저장기(MAX_MARKS) — 기능 패키지에 있다(ADR-028): 항적은 aircraft.data, 선박은 ships.data
+JAVA_WRITERS = {"TrackWriter.java": JAVA_MAIN / "aircraft" / "data", "ShipWriter.java": JAVA_MAIN / "ships" / "data"}
 
 
 def _java_max_marks(name: str) -> int | None:

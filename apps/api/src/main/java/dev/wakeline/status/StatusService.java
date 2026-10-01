@@ -8,7 +8,7 @@ import dev.wakeline.weather.data.KrRadarFrames;
 import dev.wakeline.weather.data.KrRadarMissing;
 import org.springframework.beans.factory.annotation.Autowired;
 import dev.wakeline.weather.core.EngineService;
-import dev.wakeline.ingest.AisStatus;
+import dev.wakeline.ships.core.AisStatus;
 import dev.wakeline.weather.core.RadarStore;
 import dev.wakeline.weather.core.SigmetStore;
 import dev.wakeline.aircraft.core.Snapshot;

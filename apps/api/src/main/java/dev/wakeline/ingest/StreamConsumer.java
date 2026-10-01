@@ -4,11 +4,13 @@ import dev.wakeline.aircraft.core.AircraftEvents;
 import dev.wakeline.aircraft.core.AircraftState;
 import dev.wakeline.aircraft.core.Snapshot;
 import dev.wakeline.aircraft.core.SnapshotStore;
-import dev.wakeline.domain.AisGap;
 import dev.wakeline.domain.HotCell;
-import dev.wakeline.domain.ShipState;
-import dev.wakeline.domain.ShipStatic;
 import dev.wakeline.platform.support.Receipt;
+import dev.wakeline.ships.core.AisGap;
+import dev.wakeline.ships.core.ShipEvents;
+import dev.wakeline.ships.core.ShipState;
+import dev.wakeline.ships.core.ShipStatic;
+import dev.wakeline.ships.core.ShipStore;
 import dev.wakeline.weather.core.RadarStore;
 import dev.wakeline.weather.core.SigmetRecord;
 import dev.wakeline.weather.core.SigmetStore;
@@ -421,7 +423,7 @@ public class StreamConsumer implements SmartLifecycle {
             from = boundary;
             if (page.size() < SHIPS_BOOTSTRAP_PAGE) break;
         }
-        if (applied > 0) events.publishEvent(IngestEvents.ShipsUpdated.liveOnly(changed, Set.of()));
+        if (applied > 0) events.publishEvent(ShipEvents.ShipsUpdated.liveOnly(changed, Set.of()));
         log.info("ships bootstrap: {} entries applied ({} invalid skipped), {} live ships, {} gaps", applied, invalid,
                 shipStore.view().size(), shipStore.gaps().size());
         return applied;
@@ -723,14 +725,14 @@ public class StreamConsumer implements SmartLifecycle {
         ShipStore.Change c = shipStore.apply(p.ships().states(), p.ships().statics(), p.fetchedAt(), p.fields().get("provider"), System.currentTimeMillis());
         if (c.rejectedCap() > 0) shipsRejectedCap.increment(c.rejectedCap());
         if (c.rejectedFuture() > 0) shipsRejectedFuture.increment(c.rejectedFuture());
-        events.publishEvent(new IngestEvents.ShipsUpdated(p.fetchedAt(), p.fields().get("provider"), p.ships().states(), p.ships().statics(),
+        events.publishEvent(new ShipEvents.ShipsUpdated(p.fetchedAt(), p.fields().get("provider"), p.ships().states(), p.ships().statics(),
                 c.changed(), Set.of(), receipt));
     }
 
     private void aisGap(Parsed p, Receipt receipt) {
         if (p.gapScopeInvalid()) gapScopeInvalid.increment(); // 부트스트랩(다시 읽기)은 여기를 거치지 않는다 — 같은 공백을 두 번 세지 않는다
         shipStore.addGap(p.gap());
-        events.publishEvent(new IngestEvents.AisGapReceived(p.gap(), receipt));
+        events.publishEvent(new ShipEvents.AisGapReceived(p.gap(), receipt));
     }
 
     private void aircraft(Map<String, String> f, Map<String, AircraftState> states, String cell, Instant fetchedAt, Receipt receipt) {

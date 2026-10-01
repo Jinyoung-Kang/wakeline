@@ -5,6 +5,7 @@ import dev.wakeline.PlanCapture;
 import dev.wakeline.aircraft.data.AircraftRepository;
 import dev.wakeline.platform.data.OrderedWriter;
 import dev.wakeline.platform.data.Sql;
+import dev.wakeline.ships.data.ShipRepository;
 import dev.wakeline.weather.core.SigmetStore;
 import dev.wakeline.weather.data.AlertRepository;
 import dev.wakeline.weather.data.SigmetRepository;
@@ -132,7 +133,7 @@ class QueryPlanDbTest {
         admin.sql("ANALYZE ship").update();
         PlanCapture plans = new PlanCapture(DbTestSupport.apiDataSource(), "FROM ship s WHERE", PlanCapture.Mode.GENERIC);
         ShipRepository repo = new ShipRepository(null, JdbcClient.create(plans.dataSource()));
-        java.util.function.Function<String, java.util.List<String>> mmsis = q -> repo.search(dev.wakeline.domain.ShipQuery.parse(q), 20).stream()
+        java.util.function.Function<String, java.util.List<String>> mmsis = q -> repo.search(dev.wakeline.ships.core.ShipQuery.parse(q), 20).stream()
                 .map(ShipRepository.SearchRow::mmsi).toList();
 
         // 선명·호출부호 앞부분(대소문자 무시): 정확 일치(HANJIN) → last_seen 최신 순, 호출부호 HANJ1 도

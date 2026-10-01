@@ -8,7 +8,7 @@ import dev.wakeline.aircraft.core.SnapshotStore;
 import dev.wakeline.weather.core.Alert;
 import dev.wakeline.weather.core.PredictionAvailability;
 import dev.wakeline.weather.core.RadarStore;
-import dev.wakeline.ingest.ShipStore;
+import dev.wakeline.ships.core.ShipStore;
 import dev.wakeline.weather.core.SigmetStore;
 import dev.wakeline.platform.config.AppProperties;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;

@@ -4,7 +4,7 @@ import dev.wakeline.demand.DemandLeases;
 import dev.wakeline.demand.DemandStats;
 import dev.wakeline.aircraft.core.AircraftState;
 import dev.wakeline.domain.HotCell;
-import dev.wakeline.domain.ShipStatic;
+import dev.wakeline.ships.core.ShipStatic;
 import dev.wakeline.aircraft.core.Snapshot;
 import dev.wakeline.settings.RegionSettings;
 import org.junit.jupiter.api.Test;

@@ -16,7 +16,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
 
 /**
- * 수집 파이프라인 이벤트(페이로드가 {@link PipelineEvent} — IngestEvents·EngineEvents 의 record)의 리스너를 서로 격리하는 멀티캐스터(API-CONC-2).
+ * 수집 파이프라인 이벤트(페이로드가 {@link PipelineEvent} — AircraftEvents·WeatherEvents·ShipEvents·EngineEvents 의 record)의 리스너를 서로 격리하는 멀티캐스터(API-CONC-2).
  * <p>
  * Spring 기본 멀티캐스터는 리스너 하나가 예외를 던지면 그 이벤트의 나머지 리스너를 부르지 않고 예외를 발행자에게 돌려준다. 발행자는
  * 스트림 소비 스레드라서, 예를 들어 엔진이 던지면 ① 뒤의 항적 저장·WS 팬아웃이 건너뛰어지고 ② 멀쩡한 메시지가 DLQ 로 갔다.

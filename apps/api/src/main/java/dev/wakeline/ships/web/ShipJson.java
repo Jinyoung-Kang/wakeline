@@ -1,7 +1,7 @@
 package dev.wakeline.ships.web;
 
-import dev.wakeline.domain.ShipState;
-import dev.wakeline.domain.ShipStatic;
+import dev.wakeline.ships.core.ShipState;
+import dev.wakeline.ships.core.ShipStatic;
 
 import java.util.LinkedHashMap;
 import java.util.Map;

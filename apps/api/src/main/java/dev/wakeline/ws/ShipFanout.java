@@ -1,17 +1,17 @@
 package dev.wakeline.ws;
 
-import dev.wakeline.platform.config.AppProperties;
 import dev.wakeline.geo.Bbox;
-import dev.wakeline.domain.DestinationInfo;
-import dev.wakeline.domain.DestinationParser;
-import dev.wakeline.domain.ShipState;
-import dev.wakeline.domain.ShipStatic;
-import dev.wakeline.ingest.IngestEvents;
-import dev.wakeline.ingest.ShipStore;
+import dev.wakeline.platform.config.AppProperties;
 import dev.wakeline.platform.data.ReadPool;
-import dev.wakeline.persist.StoredStaticReader;
 import dev.wakeline.portcalls.PortCallReader;
 import dev.wakeline.portcalls.PortCallsInfo;
+import dev.wakeline.ships.core.DestinationInfo;
+import dev.wakeline.ships.core.DestinationParser;
+import dev.wakeline.ships.core.ShipEvents;
+import dev.wakeline.ships.core.ShipState;
+import dev.wakeline.ships.core.ShipStatic;
+import dev.wakeline.ships.core.ShipStore;
+import dev.wakeline.ships.data.StoredStaticReader;
 import dev.wakeline.ships.web.ShipJson;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -241,7 +241,7 @@ public class ShipFanout implements SmartLifecycle {
     // ---- 이벤트(스트림 소비·만료 스레드 — 예약만) ----
 
     @EventListener
-    public void onShips(IngestEvents.ShipsUpdated e) {
+    public void onShips(ShipEvents.ShipsUpdated e) {
         for (WsSession s : hub.sessionsView()) {
             String sel = s.selectedMmsi;
             if (sel != null && s.subscribed() && (e.changed().contains(sel) || e.removed().contains(sel)))

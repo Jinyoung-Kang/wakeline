@@ -1,7 +1,7 @@
 package dev.wakeline.it;
 
 import dev.wakeline.aircraft.core.AircraftEvents;
-import dev.wakeline.ingest.IngestEvents;
+import dev.wakeline.ships.core.ShipEvents;
 import dev.wakeline.weather.core.EngineEvents;
 import dev.wakeline.weather.core.WeatherEvents;
 import org.junit.jupiter.api.Test;
@@ -47,9 +47,9 @@ class ListenerWiringIT extends IntegrationTest {
             entry(WeatherEvents.RadarUpdated.class, Set.of("WsHub#onRadar")),
             entry(AircraftEvents.AircraftBacklog.class, Set.of("TrackWriter#onBacklog")),
             entry(WeatherEvents.SigmetSetReceived.class, Set.of("SigmetRepository#onSigmetSet")),
-            entry(IngestEvents.ShipsUpdated.class, Set.of("ShipWriter#onShips", "ShipFanout#onShips")),
-            entry(IngestEvents.ShipsSampled.class, Set.of("ShipCoverage#onSampled")),
-            entry(IngestEvents.AisGapReceived.class, Set.of("ShipWriter#onGap")),
+            entry(ShipEvents.ShipsUpdated.class, Set.of("ShipWriter#onShips", "ShipFanout#onShips")),
+            entry(ShipEvents.ShipsSampled.class, Set.of("ShipCoverage#onSampled")),
+            entry(ShipEvents.AisGapReceived.class, Set.of("ShipWriter#onGap")),
             entry(EngineEvents.AlertsChanged.class, Set.of("AlertRepository#onAlerts", "WsHub#onAlerts")));
 
     /** 멀티캐스터가 이 페이로드 형의 이벤트에 부르는 리스너 — 부르는 순서 그대로, dev.wakeline 의 것만(프레임워크 리스너는 뺀다). */
@@ -78,7 +78,7 @@ class ListenerWiringIT extends IntegrationTest {
     @Test
     void everyPipelineEventHasExactlyTheListenersItHasToday() throws Exception {
         Set<Class<?>> events = new TreeSet<>(java.util.Comparator.comparing(Class::getName));
-        Stream.of(AircraftEvents.class, WeatherEvents.class, IngestEvents.class, EngineEvents.class).flatMap(c -> Stream.of(c.getDeclaredClasses())).filter(Class::isRecord).forEach(events::add);
+        Stream.of(AircraftEvents.class, WeatherEvents.class, ShipEvents.class, EngineEvents.class).flatMap(c -> Stream.of(c.getDeclaredClasses())).filter(Class::isRecord).forEach(events::add);
         assertThat(events).as("every pipeline event record is listed here (a new event needs its listeners pinned)")
                 .containsExactlyInAnyOrderElementsOf(EXPECTED.keySet());
         for (Class<?> e : events)
