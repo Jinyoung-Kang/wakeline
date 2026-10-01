@@ -1,7 +1,7 @@
 package dev.wakeline.ws;
 
 import dev.wakeline.domain.AircraftState;
-import dev.wakeline.domain.Bbox;
+import dev.wakeline.geo.Bbox;
 import dev.wakeline.domain.ShipStatic;
 import dev.wakeline.engine.PredictionAvailability;
 import dev.wakeline.ingest.ShipStore;

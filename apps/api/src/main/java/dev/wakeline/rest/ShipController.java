@@ -1,12 +1,13 @@
 package dev.wakeline.rest;
 
 import dev.wakeline.platform.config.AppProperties;
+import dev.wakeline.platform.web.BboxParam;
 import dev.wakeline.platform.web.Etags;
 import dev.wakeline.platform.web.Meta;
 import dev.wakeline.platform.web.Problem;
 import dev.wakeline.platform.web.ProblemAdvice;
 import dev.wakeline.domain.AisGap;
-import dev.wakeline.domain.Bbox;
+import dev.wakeline.geo.Bbox;
 import dev.wakeline.domain.DestinationParser;
 import dev.wakeline.domain.ShipCategory;
 import dev.wakeline.domain.ShipQuery;
@@ -96,7 +97,7 @@ public class ShipController {
      */
     @GetMapping(value = "/ships", produces = "application/geo+json")
     public ResponseEntity<Map<String, Object>> shipList(@RequestParam String bbox, HttpServletRequest req) {
-        Bbox b = Bbox.parse(bbox, props.maxBboxAreaSqdeg());
+        Bbox b = BboxParam.parse(bbox, props.maxBboxAreaSqdeg());
         ShipStore.View v = store.view();
         Map<String, Object> meta = Meta.of(req, v.provider(), v.fetchedAt(), SHIPS_STALE_S);
         Map<String, Object> aisView = ais.publicView(System.currentTimeMillis());

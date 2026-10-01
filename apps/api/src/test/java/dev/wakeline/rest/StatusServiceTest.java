@@ -1,7 +1,7 @@
 package dev.wakeline.rest;
 
 import dev.wakeline.domain.AircraftState;
-import dev.wakeline.domain.GeoJson;
+import dev.wakeline.geo.GeoJson;
 import dev.wakeline.domain.SigmetRecord;
 import dev.wakeline.engine.EngineService;
 import dev.wakeline.ingest.RadarStore;

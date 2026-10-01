@@ -1,7 +1,7 @@
 package dev.wakeline.ingest;
 
 import dev.wakeline.domain.AircraftState;
-import dev.wakeline.domain.GeoJson;
+import dev.wakeline.geo.GeoJson;
 import dev.wakeline.domain.SigmetRecord;
 import tools.jackson.databind.JsonNode;
 

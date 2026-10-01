@@ -1,7 +1,7 @@
 package dev.wakeline.ws;
 
 import dev.wakeline.platform.config.AppProperties;
-import dev.wakeline.domain.Bbox;
+import dev.wakeline.geo.Bbox;
 import dev.wakeline.domain.DestinationInfo;
 import dev.wakeline.domain.DestinationParser;
 import dev.wakeline.domain.ShipState;

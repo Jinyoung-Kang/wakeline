@@ -1,9 +1,10 @@
 package dev.wakeline.rest;
 
 import dev.wakeline.platform.config.AppProperties;
+import dev.wakeline.platform.web.BboxParam;
 import dev.wakeline.platform.web.Meta;
 import dev.wakeline.platform.web.Problem;
-import dev.wakeline.domain.Bbox;
+import dev.wakeline.geo.Bbox;
 import dev.wakeline.persist.MaintenanceJobs;
 import dev.wakeline.persist.SigmetRepository;
 import dev.wakeline.persist.StatsRepository;
@@ -55,7 +56,7 @@ public class HistoryController {
      */
     @GetMapping("/replay")
     public ResponseEntity<Map<String, Object>> replay(@RequestParam Instant at, @RequestParam String bbox, HttpServletRequest req) {
-        Bbox b = Bbox.parse(bbox, props.maxBboxAreaSqdeg());
+        Bbox b = BboxParam.parse(bbox, props.maxBboxAreaSqdeg());
         Instant now = Instant.now();
         // 정확히 비교한다(R-71 — toDays() 절삭은 31일 23시간을 통과시켰다)
         if (at.isAfter(now.plusSeconds(60)) || Duration.between(at, now).compareTo(REPLAY_MAX_AGE) > 0) throw Problem.badRequest("BAD_AT", "at must be within the last 31 days");

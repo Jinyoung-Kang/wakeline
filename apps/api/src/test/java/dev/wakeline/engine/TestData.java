@@ -1,7 +1,7 @@
 package dev.wakeline.engine;
 
 import dev.wakeline.domain.AircraftState;
-import dev.wakeline.domain.GeoJson;
+import dev.wakeline.geo.GeoJson;
 import dev.wakeline.domain.SigmetRecord;
 import org.locationtech.jts.geom.Coordinate;
 import org.locationtech.jts.geom.MultiPolygon;

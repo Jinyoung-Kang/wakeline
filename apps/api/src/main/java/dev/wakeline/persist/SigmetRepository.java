@@ -1,7 +1,7 @@
 package dev.wakeline.persist;
 
-import dev.wakeline.domain.Bbox;
-import dev.wakeline.domain.GeoJson;
+import dev.wakeline.geo.Bbox;
+import dev.wakeline.geo.GeoJson;
 import dev.wakeline.domain.SigmetRecord;
 import dev.wakeline.ingest.IngestEvents;
 import dev.wakeline.platform.data.DbErrors;

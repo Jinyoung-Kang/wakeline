@@ -1,5 +1,8 @@
 package dev.wakeline.domain;
 
+import dev.wakeline.geo.Bbox;
+import dev.wakeline.geo.Geo;
+
 import java.util.Locale;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;

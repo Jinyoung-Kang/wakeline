@@ -1,4 +1,4 @@
-package dev.wakeline.domain;
+package dev.wakeline.geo;
 
 /** 구면 거리(R = 6,371 km, 1 NM = 1,852 m). 엔진(DeadReckoning)·수요(HotCell)가 같은 식을 쓴다. */
 public final class Geo {

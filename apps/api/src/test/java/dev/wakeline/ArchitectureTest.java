@@ -47,7 +47,6 @@ class ArchitectureTest {
             "controller-data-access|ops.OpsController|org.springframework.jdbc.core.simple",
             "controller-data-access|ops.OpsPipelineController|org.springframework.data.redis.core",
             "controller-data-access|rest.WeatherController|org.springframework.data.redis.core",
-            "domain-imports|domain.Bbox|platform.web",
             "only-ws-imports-ws|config.WebSocketConfig|ws",
             "only-ws-imports-ws|rest.AircraftController|ws",
             "only-ws-imports-ws|rest.HistoryController|ws",
@@ -122,7 +121,8 @@ class ArchitectureTest {
                 if (INGEST_IS_ADAPTER_ONLY && under(t, "ingest") && !Set.of("ingest", "ops", "status").contains(feature(from)))
                     v.add("ingest-is-an-adapter|" + who + "|" + t);
                 // current layout, until the technical packages are gone
-                if (from.equals("domain")) v.add("domain-imports|" + who + "|" + t);
+                // geo (Bbox · Geo · GeoJson, moved out of domain) imports nothing, so domain → geo cannot close a cycle
+                if (from.equals("domain") && !t.equals("geo")) v.add("domain-imports|" + who + "|" + t);
             }
         }
         return v;

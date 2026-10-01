@@ -1,6 +1,6 @@
 package dev.wakeline.persist;
 
-import dev.wakeline.domain.Bbox;
+import dev.wakeline.geo.Bbox;
 import dev.wakeline.platform.data.Sql;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;

@@ -1,11 +1,12 @@
 package dev.wakeline.rest;
 
 import dev.wakeline.platform.config.AppProperties;
+import dev.wakeline.platform.web.BboxParam;
 import dev.wakeline.platform.web.Etags;
 import dev.wakeline.platform.web.Meta;
 import dev.wakeline.platform.web.Problem;
 import dev.wakeline.domain.Alert;
-import dev.wakeline.domain.Bbox;
+import dev.wakeline.geo.Bbox;
 import dev.wakeline.domain.SigmetRecord;
 import dev.wakeline.engine.EngineService;
 import dev.wakeline.ingest.RadarStore;
@@ -65,7 +66,7 @@ public class WeatherController {
         String etag = "\"s" + st.version() + "-" + (active ? 1 : 0) + "\"";
         if (bbox == null && hazard == null && Etags.notModified(etag, req.getHeader("If-None-Match")))
             return ResponseEntity.status(304).eTag(etag).cacheControl(CacheControl.maxAge(60, TimeUnit.SECONDS).cachePublic()).build();
-        Bbox b = bbox == null ? null : Bbox.parse(bbox, 0);
+        Bbox b = bbox == null ? null : BboxParam.parse(bbox, 0);
         List<SigmetRecord> list = new ArrayList<>();
         for (SigmetRecord s : st.byId().values()) {
             if (hazard != null && !hazard.equalsIgnoreCase(s.hazard())) continue;
@@ -257,7 +258,7 @@ public class WeatherController {
 
     @GetMapping(value = "/airports", produces = "application/geo+json")
     public ResponseEntity<Map<String, Object>> airports(@RequestParam(required = false) String bbox, @RequestParam(defaultValue = "true") boolean watched, HttpServletRequest req) {
-        Bbox b = bbox == null ? Bbox.world() : Bbox.parse(bbox, 0);
+        Bbox b = bbox == null ? Bbox.world() : BboxParam.parse(bbox, 0);
         List<Map<String, Object>> rows = airports.withLatestMetar(b, watched);
         List<Map<String, Object>> features = new ArrayList<>();
         Instant latest = null;

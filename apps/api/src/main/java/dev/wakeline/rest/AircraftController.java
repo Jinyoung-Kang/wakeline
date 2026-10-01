@@ -1,13 +1,14 @@
 package dev.wakeline.rest;
 
 import dev.wakeline.platform.config.AppProperties;
+import dev.wakeline.platform.web.BboxParam;
 import dev.wakeline.platform.web.Etags;
 import dev.wakeline.platform.web.Meta;
 import dev.wakeline.platform.web.Problem;
 import dev.wakeline.platform.web.ProblemAdvice;
 import dev.wakeline.domain.AircraftState;
 import dev.wakeline.domain.Alert;
-import dev.wakeline.domain.Bbox;
+import dev.wakeline.geo.Bbox;
 import dev.wakeline.engine.EngineService;
 import dev.wakeline.ingest.SnapshotStore;
 import dev.wakeline.persist.AircraftRepository;
@@ -63,7 +64,7 @@ public class AircraftController {
      */
     @GetMapping(produces = "application/geo+json")
     public ResponseEntity<Map<String, Object>> snapshot(@RequestParam String bbox, @RequestParam(defaultValue = "lite") String detail, HttpServletRequest req) {
-        Bbox b = Bbox.parse(bbox, props.maxBboxAreaSqdeg());
+        Bbox b = BboxParam.parse(bbox, props.maxBboxAreaSqdeg());
         Instant now = Instant.now();
         SnapshotStore.View view = snapshots.view(now);
         String etag = "\"v" + view.version() + "-" + Long.toString(view.recheckAtMs(), 36) + "\"";

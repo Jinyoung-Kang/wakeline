@@ -1,6 +1,6 @@
 package dev.wakeline.rest;
 
-import dev.wakeline.domain.GeoJson;
+import dev.wakeline.geo.GeoJson;
 import dev.wakeline.domain.SigmetRecord;
 
 import java.time.Instant;

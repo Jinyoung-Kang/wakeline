@@ -4,7 +4,7 @@ import dev.wakeline.platform.config.AppProperties;
 import dev.wakeline.platform.config.RedisConfig;
 import dev.wakeline.domain.AircraftState;
 import dev.wakeline.domain.Alert;
-import dev.wakeline.domain.Bbox;
+import dev.wakeline.geo.Bbox;
 import dev.wakeline.domain.SigmetRecord;
 import dev.wakeline.engine.AlertStateMachine;
 import dev.wakeline.engine.EngineEvents;

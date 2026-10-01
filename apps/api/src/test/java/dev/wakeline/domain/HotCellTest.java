@@ -1,5 +1,7 @@
 package dev.wakeline.domain;
 
+import dev.wakeline.geo.Bbox;
+import dev.wakeline.geo.Geo;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;

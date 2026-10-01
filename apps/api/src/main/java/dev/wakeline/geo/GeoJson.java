@@ -1,4 +1,4 @@
-package dev.wakeline.domain;
+package dev.wakeline.geo;
 
 import org.locationtech.jts.geom.Coordinate;
 import org.locationtech.jts.geom.GeometryFactory;

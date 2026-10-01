@@ -2,7 +2,7 @@ package dev.wakeline.ingest;
 
 import dev.wakeline.domain.AisGap;
 import dev.wakeline.domain.AisScope;
-import dev.wakeline.domain.Bbox;
+import dev.wakeline.geo.Bbox;
 import dev.wakeline.domain.ShipCategory;
 import dev.wakeline.domain.ShipState;
 import dev.wakeline.domain.ShipStatic;
