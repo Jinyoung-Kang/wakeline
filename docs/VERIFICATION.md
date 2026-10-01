@@ -1167,3 +1167,4 @@
 | 성능 측정 | api `./gradlew perfTest` · web `WAKELINE_PERF=1 vitest` · collector `tests/perf/*.py` | [PERF](PERF.md) §11 · §12 · §13(#100) |
 | 보안 게이트 | `make security`(`SECURITY_OWN_IMAGES` = 브랜치 이미지 `:cto`) | PASS(2026-10-02 00:0x KST) — gitleaks 1,136 커밋 누출 0 · 자체 api · collector · web · db 고칠 수 있는 HIGH · CRITICAL 0(`abf337ee` 뒤 — 그 전에는 새로 나온 OS CVE 로 api 3 · collector 7 · db 6) · 제3자 edge · redis PASS · npm audit 0 · pip-audit 0 |
 | 독립 리뷰 | 별도 에이전트(전체 다섯 영역 + 증분) | #101 — 치명 · 높음 · 보통 0, 낮음은 고치거나 남은 위험으로 적음 |
+| 배포 뒤 확인 | `make up`(main `d5d6bdbd`) · 컨테이너 로그(`docker logs`) · `/healthz` | 2026-10-02 01:29 KST 배포 — 배포 전 새 `:local` 이미지 trivy PASS · 이미지 검사 11 · db 권한 36 · 이미지 교체 11 · 백업·복원 48. redis(ACL 파일 — AOF 80키 다시 읽음) · db(OS 보안 갱신, PostgreSQL 18.6 그대로) · api · collector · ais · web 다시 만듦, migrate 0 으로 끝. 8분 동안 api · collector · ais · web WARN · ERROR 0, `/healthz` ok(region_lag_s 6) · 스냅샷 판 10 → 112. 되돌리기: `:mainsafe` 태그 + `e0e1eba0` |
