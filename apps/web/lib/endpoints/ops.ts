@@ -5,6 +5,7 @@
  */
 import { apiGet, apiSend } from "@/lib/api";
 import { OPS_SESSION_PATH, providerSwitchPath, settingPath } from "@/lib/ops";
+import { auditPagePath, type AuditPage } from "@/lib/ops-audit";
 import { runsDrillPath, type RunKey } from "@/lib/ops-runs";
 import type { ToggleResult } from "@/lib/provider-switch";
 import { parseResolution, RESOLUTIONS_PATH, resolutionBody, resolutionPath, type Resolution, type ResolutionDraft, type ResolvedMode } from "@/lib/resolutions";
@@ -40,6 +41,11 @@ const TAB_PATH: Record<OpsTab, string> = {
 export const opsTabPath = (t: OpsTab, runsMode: ResolvedMode) => (t === "runs" ? `${TAB_PATH.runs}&resolved=${runsMode}` : TAB_PATH[t]);
 export function opsTab<T>(t: OpsTab, runsMode: ResolvedMode, o?: Opts): Promise<T> {
   return apiGet<T>(opsTabPath(t, runsMode), o);
+}
+
+/** 감사 기록의 다음 쪽(QA-307) — cursor = 앞 쪽의 next_cursor(그 id 보다 앞선 기록, 최신순 50건) */
+export function opsAuditPage(cursor: number, o?: Opts): Promise<AuditPage> {
+  return apiGet<AuditPage>(auditPagePath(cursor), o);
 }
 
 /** 요약 행을 연 실행 목록 한 쪽(errors F1) */

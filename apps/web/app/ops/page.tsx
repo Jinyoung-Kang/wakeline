@@ -15,6 +15,7 @@ import { ResolveConfirm, useResolveSlot, type ResolveResult, type ResolveTarget 
 import { OpsLogin } from "@/components/OpsLogin";
 import { useOpsSession } from "@/components/ops/useOpsSession";
 import { OPS_TABS, useOpsTabs, type Runs, type Settings } from "@/components/ops/useOpsTabs";
+import { useAuditPages } from "@/components/ops/useAuditPages";
 import { OpsSessionError } from "@/components/ops/OpsSessionError";
 import { OpsPipeline } from "@/components/OpsPipeline";
 import { ErrorNote, RequestIdOf } from "@/components/logs/ErrorNote";
@@ -24,6 +25,7 @@ import { KstTime } from "@/components/KstTime";
 import { TrafficGridFill } from "@/components/TrafficGridFill";
 import { OpsRunsDrill } from "@/components/OpsRunsDrill";
 import { drillGoneText, runKeyId, runKeyOf, summaryHasKey, summaryLastError, summarySince, type RunKey } from "@/lib/ops-runs";
+import { AUDIT_PAGE_LIMIT } from "@/lib/ops-audit";
 
 type Any = Record<string, unknown>;
 /** 연 요약 행: 열쇠와 연 때의 summary_since(목록의 창) */
@@ -151,6 +153,8 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
     if (k === "expired") onLeave(SESSION_EXPIRED_NOTE);
     return k;
   }, [onLeave]);
+  /** 감사 탭: 첫 쪽(15 s 주기) + '더 보기'로 쌓은 앞 기록(QA-307) */
+  const auditPages = useAuditPages(audit, (e) => { void authMiss(e); });
   /** 공급자 오류 해결 확인 패널(한 번에 하나 — 그 공급자 행 아래) · 마지막 해결 쓰기 결과(상태 줄) */
   const { open: resolveOpen, show: showResolve, close: closeResolve, closeIf: closeResolveIf, panelId: resolvePanelId, openerProps: resolveOpener } = useResolveSlot();
   const [resolveNote, setResolveNote] = useState<string | null>(null);
@@ -324,8 +328,22 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
         </> : null}
         {tab === "pipeline" && pipeline ? <OpsPipeline data={pipeline} /> : null}
         {tab === "settings" && settings ? <SettingsForm items={settings.items} msg={settingsMsg} setMsg={setSettingsMsg} onSaved={refresh} onAuthMiss={fail} /> : null}
-        {tab === "audit" && audit ? <table><thead><tr><th>at (KST)</th><th>user</th><th>action</th><th>target</th><th>before</th><th>after</th><th>ip</th><th>request</th></tr></thead>
-          <tbody>{audit.items.map((a) => <tr key={String(a.id)}><TimeCell v={a.at} /><td>{String(a.username ?? "")}</td><td>{String(a.action)}</td><td className="mono">{String(a.target ?? "")}</td><td className="mono text-fg-3">{String(a.before ?? "")}</td><td className="mono">{String(a.after ?? "")}</td><td className="mono">{String(a.ip ?? "")}</td><td className="mono text-fg-3">{String(a.request_id ?? "")}</td></tr>)}</tbody></table> : null}
+        {tab === "audit" && audit ? <>
+          {/* 몇 건을 보이는지 · 앞선 기록이 더 있는지(QA-307 — 전에는 첫 50건에서 말없이 잘렸다) */}
+          <div className="mb-1 text-[11px] text-fg-2" data-testid="audit-count">
+            최신순 <span className="mono">{auditPages.rows.length.toLocaleString("en-US")}</span>건 — {auditPages.next != null ? "앞선 기록이 남음(아래 단추로 이어 받음)" : "처음 기록까지 모두"}
+          </div>
+          {auditPages.reset ? <div className="mb-1 text-[11px] text-warn" role="status" data-testid="audit-reset">
+            앞서 이어 받은 기록은 접었다 — 그 사이 새 기록이 한 쪽({AUDIT_PAGE_LIMIT}건) 넘게 쌓여 사이를 이어 붙일 수 없음. 최신 {AUDIT_PAGE_LIMIT}건부터 다시 보인다
+          </div> : null}
+          <table><thead><tr><th>at (KST)</th><th>user</th><th>action</th><th>target</th><th>before</th><th>after</th><th>ip</th><th>request</th></tr></thead>
+            <tbody>{auditPages.rows.map((a) => <tr key={String(a.id)}><TimeCell v={a.at} /><td>{String(a.username ?? "")}</td><td>{String(a.action)}</td><td className="mono">{String(a.target ?? "")}</td><td className="mono text-fg-3">{String(a.before ?? "")}</td><td className="mono">{String(a.after ?? "")}</td><td className="mono">{String(a.ip ?? "")}</td><td className="mono text-fg-3">{String(a.request_id ?? "")}</td></tr>)}</tbody></table>
+          {auditPages.err ? <div className="mt-1 text-[11px] text-bad" role="alert" data-testid="audit-more-failed"><ErrorNote prefix="앞선 감사 기록을 불러오지 못함(보인 행은 그대로) — " error={auditPages.err} /></div> : null}
+          {auditPages.next != null ? (
+            <button className="btn mt-1 normal-case!" onClick={() => void auditPages.more()} disabled={auditPages.busy} aria-busy={auditPages.busy || undefined}
+              title={`cursor ${auditPages.next} — 이 id 보다 앞선 기록 ${AUDIT_PAGE_LIMIT}건`} data-testid="audit-more">더 보기(이전 {AUDIT_PAGE_LIMIT}건)</button>
+          ) : null}
+        </> : null}
         {tab === "dlq" && dlq ? (() => {
           // 읽지 못한 목록을 '없음' 과 가른다 — api 가 빈 items 와 함께 error 를 싣는다(providers 탭의 자동 전환 기록과 같은 줄)
           const w = dlqReadError(dlq);

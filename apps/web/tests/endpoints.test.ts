@@ -24,7 +24,7 @@ import { airportWx, sigmetInside, watchedAirports } from "@/lib/endpoints/weathe
 import { alertStats, sigmetStats, trafficStats } from "@/lib/endpoints/stats";
 import { replayFrame } from "@/lib/endpoints/replay";
 import {
-  createResolution, opsSession, opsTab, opsTabPath, revokeResolution, runsDrill, saveSetting, setProviderEnabled, signIn, signOutRequest,
+  createResolution, opsAuditPage, opsSession, opsTab, opsTabPath, revokeResolution, runsDrill, saveSetting, setProviderEnabled, signIn, signOutRequest,
 } from "@/lib/endpoints/ops";
 import { aisGaps, logGroups, logItem, logsPage } from "@/lib/endpoints/logs";
 import { DEFAULT_LOG_FILTER, logGroupsUrl, logsUrl } from "@/lib/logs";
@@ -170,6 +170,13 @@ describe("ops endpoints", () => {
     expect(paths()).toEqual(["/api/v1/ops/providers", "/api/v1/ops/runs?limit=50&resolved=show", "/api/v1/ops/quality", "/api/v1/ops/settings",
       "/api/v1/ops/audit", "/api/v1/ops/dlq", "/api/v1/ops/pipeline"]);
     expect(opsTabPath("runs", "hide")).toBe("/api/v1/ops/runs?limit=50&resolved=hide");
+  });
+  it("audit next page (QA-307): ids below the cursor, 50 at a time, with the caller's signal", async () => {
+    const ctl = new AbortController();
+    rec.body = { items: [], next_cursor: null };
+    await opsAuditPage(67, { signal: ctl.signal });
+    expect(paths()).toEqual(["/api/v1/ops/audit?cursor=67&limit=50"]);
+    expect((rec.calls[0].init as { signal: AbortSignal }).signal).toBe(ctl.signal);
   });
   it("runs drill: lib/ops-runs runsDrillPath", async () => {
     rec.body = { items: [] };
