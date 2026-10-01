@@ -83,3 +83,53 @@ describe.each(PAGES)("$name session gate", (page) => {
     expect(m.byTestId(page.dashboard)).not.toBeNull();
   });
 });
+
+/**
+ * 세션 확인이 401 · 404 가 아닌 까닭(500 · 망)으로 실패하면 '로그인 안 됨'이 아니라 '확인하지 못함'이다(web-review B15 · PLAN W15) —
+ * 로그인한 운영자에게 로그인 폼을 보이지 않고, 까닭(요청 id)과 '다시 시도'를 보인다. 화면을 떠나면 확인 요청을 끊는다.
+ */
+describe.each(PAGES)("$name session check that fails for another reason", (page) => {
+  const problem = (status: number) => new Response(JSON.stringify({ detail: "session store unavailable", request_id: "5e55e55e5e55e55e" }), { status, headers: { "Content-Type": "application/problem+json" } });
+
+  it("HTTP 500 shows the reason with '다시 시도', not the login form; retrying with a session opens the dashboard", async () => {
+    let answer: Session = async () => problem(500);
+    stub(() => answer());
+    await open(page);
+    await m.settle();
+    expect(m.byTestId("ops-login")).toBeNull();
+    const alert = m.byTestId("ops-session-error")!;
+    expect(alert.getAttribute("role")).toBe("alert");
+    expect(alert.textContent).toContain("세션을 확인하지 못했습니다");
+    expect(alert.textContent).toContain("session store unavailable");
+    expect(alert.textContent).toContain("5e55e55e5e55e55e");
+    expect(h1()).toBe(`${page.title} — 세션 확인 실패`);
+    answer = async () => json(200, { username: "op" });
+    await m.click(m.button("다시 시도"));
+    await m.settle();
+    expect(m.byTestId("ops-session-error")).toBeNull();
+    expect(m.byTestId(page.dashboard)).not.toBeNull();
+  });
+
+  it("a network failure is the same error; a retry that answers 404 shows the login form", async () => {
+    let answer: Session = async () => { throw new TypeError("Failed to fetch"); };
+    stub(() => answer());
+    await open(page);
+    await m.settle();
+    expect(m.byTestId("ops-login")).toBeNull();
+    expect(m.byTestId("ops-session-error")!.textContent).toContain("Failed to fetch");
+    answer = async () => json(404, { detail: "not found" });
+    await m.click(m.button("다시 시도"));
+    await m.settle();
+    expect(m.byTestId("ops-login")).not.toBeNull();
+  });
+
+  it("leaving the page while the check is on the way aborts it", async () => {
+    const signals: (AbortSignal | null | undefined)[] = [];
+    vi.stubGlobal("fetch", (_url: string, init?: RequestInit) => { signals.push(init?.signal); return new Promise<Response>(() => {}); });
+    await open(page);
+    expect(signals).toHaveLength(1);
+    expect(signals[0]?.aborted).toBe(false);
+    await m.unmount();
+    expect(signals[0]?.aborted).toBe(true);
+  });
+});

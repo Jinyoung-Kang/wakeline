@@ -12,6 +12,7 @@ import { hiddenCount, hiddenText, parseResolutionState, RESOLUTION_STATE_TEXT, R
 import { ResolveConfirm, useResolveSlot, type ResolveResult, type ResolveTarget } from "@/components/ResolveConfirm";
 import { OpsLogin } from "@/components/OpsLogin";
 import { useOpsSession } from "@/components/ops/useOpsSession";
+import { OpsSessionError } from "@/components/ops/OpsSessionError";
 import { OpsPipeline } from "@/components/OpsPipeline";
 import { ErrorNote, RequestIdOf } from "@/components/logs/ErrorNote";
 import { statsDay } from "@/lib/stats";
@@ -141,7 +142,8 @@ function ProviderErrorCell({ p, onOpen, opener }: { p: Any; onOpen: (t: ResolveT
  * 모르는 값은 "—"(0 으로 채우지 않는다 — 지연도 "— ms" 가 아니라 "—").
  */
 export default function OpsPage() {
-  const { me, checked, notice, leave, login } = useOpsSession();
+  const { me, checked, notice, error, leave, login, retry } = useOpsSession();
+  if (checked && error) return <OpsSessionError title="운영" error={error} onRetry={retry} />;
   if (!checked) return <div className="p-4 text-fg-3"><h1 className="sr-only">운영</h1>…</div>;
   return <><h1 className="sr-only">운영{me ? "" : " — 로그인"}</h1>{me ? <OpsDashboard me={me} onLeave={leave} /> : <OpsLogin onLogin={login} notice={notice} />}</>;
 }
