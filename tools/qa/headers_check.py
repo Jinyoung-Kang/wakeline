@@ -63,5 +63,79 @@ def one(hd: dict, k: str) -> str | None:
     return None if not v else v[0]
 
 
-def common(label: str, st: int, hd: dict):
+def common(label: str, hd: dict):
     for k, v in COMMON.items():
+        note(f"{label}: {k}={v}", one(hd, k) == v, got=one(hd, k))
+
+
+def main() -> int:
+    # 화면(HTML) — CSP nonce · strict-dynamic · script 에 unsafe-inline 없음
+    for path in ["/", "/logs", "/ops", "/replay", "/stats", "/about", "/guide", "/airports/RKSI"]:
+        st, hd, _ = raw("GET", path)
+        common(f"page {path}", hd)
+        csp = one(hd, "content-security-policy") or ""
+        note(f"page {path}: CSP present", "default-src 'self'" in csp, csp=csp[:80])
+        m = re.search(r"script-src ([^;]+)", csp)
+        script = m.group(1) if m else ""
+        note(f"page {path}: script-src has nonce+strict-dynamic, no unsafe-inline",
+             "'nonce-" in script and "'strict-dynamic'" in script and "'unsafe-inline'" not in script, script_src=script)
+        note(f"page {path}: object-src none · base-uri self · frame-ancestors none · form-action self",
+             all(x in csp for x in ("object-src 'none'", "base-uri 'self'", "frame-ancestors 'none'", "form-action 'self'")))
+        note(f"page {path}: html not publicly cacheable", "no-store" in (one(hd, "cache-control") or ""), cc=one(hd, "cache-control"))
+
+    # API(JSON) — default-src 'none', CSRF 쿠키 SameSite=Strict
+    st, hd, _ = raw("GET", "/api/v1/status")
+    common("api /status", hd)
+    note("api /status: CSP default-src none", (one(hd, "content-security-policy") or "").startswith("default-src 'none'"), csp=one(hd, "content-security-policy"))
+    sc = " ".join(hd.get("set-cookie", []))
+    note("api /status: CSRF cookie SameSite=Strict", "WAKELINE_CSRF" in sc and "SameSite=Strict" in sc, set_cookie=sc[:120])
+    note("api /status: rate-limit headers present", one(hd, "x-ratelimit-limit") is not None)
+
+    # 정적 — 1년 immutable
+    import urllib.request
+    html = urllib.request.urlopen(BASE + "/", timeout=30).read().decode("utf-8", "replace")
+    m = re.search(r'/_next/static/[^"\']+\.js', html)
+    if m:
+        st, hd, _ = raw("GET", m.group(0))
+        note("static: 1y immutable cache", "immutable" in (one(hd, "cache-control") or ""), cc=one(hd, "cache-control"))
+        common("static", hd)
+
+    # 인증 운영 응답 — 공개 캐시 없음
+    s = OpsSession(BASE, "qa-a")
+    st, hdd, _ = s.request("GET", "/api/v1/ops/providers")
+    cc = hdd.get("Cache-Control", "")
+    note("ops response is no-store (not publicly cached)", "no-store" in cc, status=st, cache_control=cc)
+    s.request("DELETE", "/api/v1/ops/session")
+
+    # Host 허용 목록(421) — DNS rebinding 방어
+    for host, exp in [("localhost", 200), ("127.0.0.1", 200), ("evil.example", 421), ("wakeline.dev", 421), ("localhost.evil.com", 421)]:
+        time.sleep(0.4)
+        c = http.client.HTTPConnection(U.hostname, U.port, timeout=30)
+        c.putrequest("GET", "/api/v1/status", skip_host=True, skip_accept_encoding=True)
+        c.putheader("Host", f"{host}:{U.port}")
+        c.endheaders()
+        r = c.getresponse()
+        r.read()
+        c.close()
+        note(f"Host={host} → {exp}", r.status == exp, got=r.status)
+
+    # X-Request-Id · X-Forwarded-For 위조 → edge 가 덮어쓴다(응답 · 본문에 위조 값이 아니다)
+    st, hd, _ = raw("GET", "/api/v1/status", {"X-Request-Id": "spoofed-id-123", "X-Forwarded-For": "1.2.3.4"})
+    rid = one(hd, "x-request-id")
+    note("X-Request-Id spoof overwritten by edge", rid != "spoofed-id-123", response_rid=rid)
+    st, hd, body = raw("GET", "/api/v1/ops/providers", {"X-Request-Id": "spoofed-id-123"})
+    try:
+        body_rid = json.loads(body).get("request_id")
+    except Exception:
+        body_rid = None
+    note("X-Request-Id not reflected into problem body", body_rid != "spoofed-id-123", body_rid=body_rid)
+
+    os.makedirs(OUT, exist_ok=True)
+    with open(os.path.join(OUT, "headers_check.json"), "w") as f:
+        json.dump(LOG, f, ensure_ascii=False, indent=1)
+    print(f"\nchecks={len(LOG)} failures={len(FAIL)}")
+    return 1 if FAIL else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
