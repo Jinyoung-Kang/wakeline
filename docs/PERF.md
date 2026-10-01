@@ -447,6 +447,19 @@ statement_timeout 30 s · lock_timeout 5 s)에 운영 클래스 그대로의 기
 새 노드 형)을 지켜야 한다. 검증(48.6 ms 라던 것 — 이 기계에서는 32–34 ms)은 결정 8 대로 건드리지 않는다. 운영에서 전세계 메시지의 p95 가 커지면
 위 태그로 보고 다시 판단한다. 리뷰의 84 ms 와의 차이는 기계 · JIT 상태다(같은 고정본).
 
+**P4 — SIGMET 재생 조건(api-review §4 P7 · PLAN Phase 4-5)** — `weather/data/SigmetReplayPlanPerfTest`: SIGMET 은 지우지 않아(MaintenanceJobs) 표가
+계속 자란다. 합성 200,000건(약 250일 — 하루 약 800건 · 2–6 h 유효라 같은 때 유효한 것 약 130건 = 운영 실측과 같은 크기, 5 % 철회 · 5 % 도형 없음, 도형은
+세계 곳곳의 3° × 2° 상자)을 넣고 `VACUUM ANALYZE` 한 뒤, 재생이 받는 시각(지난 31일) 넷 × bbox 둘(전세계 · 한국 주변)로 `SigmetRepository.validAt`(운영 SQL
+그대로)의 맞춤 계획 `EXPLAIN (ANALYZE, BUFFERS)`(PlanCapture) · 일반 계획(같은 연결에서 여러 번 실행한 뒤 — pgjdbc 가 다섯 번째부터 서버 준비 문장으로
+보내면 PostgreSQL 이 고를 수 있는 것) · validAt 한 번의 시간(데우기 5번 뒤 15번의 가운데 값)을 쟀다. 두 번 돌린 범위.
+
+| 조건 | 전세계 bbox: 맞춤 계획 · 실행 · 버퍼 | 전세계: validAt | 한국 bbox: 맞춤 계획 · 실행 · 버퍼 | 한국: validAt |
+|---|---|---|---|---|
+| 전 `valid_from <= :t AND coalesce(withdrawn_at, valid_to) > :t` | Seq Scan(200,000행) · 17.2–20.9 ms · 6,205 | **30.0–31.5 ms**(일반 계획 = 도형 GIST 비트맵으로 전세계) | 도형 GIST 비트맵 · 12.2–18.3 ms · 7,538–7,740 | 13.1–13.7 ms |
+
+- 결과 행은 시각마다 119–156건(전세계) · 5–13건(한국). 인덱스 `sigmet_valid (valid_to, valid_from)` 는 어느 계획도 쓰지 못한다 — 조건이 `valid_to` 를 직접
+  묶지 않는다.
+
 ## 재현
 ```bash
 make bench SHIPS=1               # k6 REST + WS(선박 포함), api 층 직접
@@ -464,4 +477,5 @@ bash tools/chaos.sh              # 장애 주입(개발 스택을 실제로 죽�
 (cd apps/api && ./gradlew --offline perfTest --tests 'dev.wakeline.platform.data.SharedPoolStarvationPerfTest.measure')   # §13 D6 공유 풀 굶주림(약 10분 · Docker — 격벽 전: -Dwakeline.perf.pool.permits=none)
 (cd apps/api && ./gradlew --offline perfTest --tests 'dev.wakeline.platform.data.SharedPoolStarvationPerfTest.burst')     # §13 D6 멀쩡한 DB 의 몰림(격벽의 기다림)
 (cd apps/api && ./gradlew --offline perfTest --tests 'dev.wakeline.ingest.StreamParsePerfTest')       # §13 P1 전세계 메시지 해석 · 두 번 파싱
+(cd apps/api && ./gradlew --offline perfTest --tests 'dev.wakeline.weather.data.SigmetReplayPlanPerfTest')   # §13 P4 SIGMET 재생 조건(합성 200,000건 · Docker)
 ```
