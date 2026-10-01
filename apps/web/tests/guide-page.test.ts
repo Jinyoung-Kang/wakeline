@@ -387,6 +387,8 @@ describe("world (2.2) and hot (2.5) figures", () => {
     expect(t).toMatch(/0\.5° 격자/);
     expect(t).toMatch(/화면 대각선의 절반을 50 NM 단위로 올린 값\(50–250 NM\)/);
     expect(t).toMatch(/마지막 성공이 주기 × 3\(적어도 15 s\) 안/);
+    // ‘갱신’은 그 칸의 조회가 성공했다는 서버 보고까지다 — 받은 항공기가 0 대여도 active(collector jobs/demand.py _run_hot). 리뷰 2026-10-01
+    expect(t).toContain("조회한 칸에 항공기가 없어도 ‘갱신’입니다");
     expect(t).toMatch(/어느 수집\(관심 지역 · 핫 리전 · 전세계\)으로 받았는지는 따로 적지 않습니다/);
   });
 });
