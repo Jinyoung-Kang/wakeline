@@ -233,14 +233,24 @@ public class WeatherController {
         }
     }
 
+    /**
+     * 프레임 영상(ADR-012). 없으면 404. Redis 오류는 삼키지 않는다 — 일시 장애는 ProblemAdvice 가 503 + Retry-After(계약 §2 · 리뷰 cto-2026-10 A3 결정 6:
+     * 예전에는 '없음' 404 로 답했다). 깨진 값(base64 아님)은 없는 것(404)으로 답하고 센다(R-72 — 예전에는 500).
+     */
     @GetMapping(value = "/radar/kr/{tm}.png")
     public ResponseEntity<byte[]> radarKrFrame(@PathVariable String tm) {
         if (!tm.matches("^\\d{12}$")) throw Problem.badRequest("BAD_TM", "tm must be YYYYMMDDHHMM");
-        String b64;
-        try { b64 = redis.opsForValue().get("wakeline:radar_kr:frame:" + tm); } catch (RuntimeException e) { b64 = null; }
+        String b64 = redis.opsForValue().get("wakeline:radar_kr:frame:" + tm);
         if (b64 == null) throw Problem.notFound("no KMA radar frame " + tm);
+        byte[] png;
+        try {
+            png = java.util.Base64.getDecoder().decode(b64);
+        } catch (IllegalArgumentException e) {
+            radarParseError("frame_png");
+            throw Problem.notFound("no KMA radar frame " + tm);
+        }
         return ResponseEntity.ok().cacheControl(CacheControl.maxAge(3600, TimeUnit.SECONDS).cachePublic())
-                .header("Content-Type", "image/png").body(java.util.Base64.getDecoder().decode(b64));
+                .header("Content-Type", "image/png").body(png);
     }
 
     @GetMapping(value = "/airports", produces = "application/geo+json")
