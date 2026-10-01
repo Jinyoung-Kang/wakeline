@@ -1,13 +1,14 @@
 "use client";
 import { useRef, useState, type ReactNode } from "react";
 import { useApiResource } from "@/lib/use-api-resource";
+import { ScrollRegion } from "@/components/ScrollRegion";
 import { alertStats, sigmetStats, trafficStats, type StatsItems, type StatsRow, type TrafficStats } from "@/lib/endpoints/stats";
 import { AlertStatsTable } from "@/components/AlertStatsTable";
 import { BarChart } from "@/components/BarChart";
 import { ErrorNote } from "@/components/logs/ErrorNote";
 import { HYSTERESIS_FIX_AT, HYSTERESIS_FIX_DAY, hourlyRowsKst, topDims, trafficScopeLabel } from "@/lib/chart";
 import {
-  alertStatsRows, flagOf, STATS_FAILED_NOTE, STATS_FAILED_TEXT, STATS_LOADING_TEXT, STATS_RUN_KST, STATS_ZONE_ERROR, STATS_ZONE_PANEL, statsEmptyText, statsPanelState,
+  alertStatsRows, daysOf, flagOf, STATS_FAILED_NOTE, STATS_FAILED_TEXT, STATS_LOADING_TEXT, STATS_RUN_KST, STATS_ZONE_ERROR, STATS_ZONE_PANEL, statsEmptyText, statsPanelState, statsPickDay, statsWeekEmptyText, STATS_FUTURE_DAY_NOTE,
   statsZoneOk, todayKst, TRAFFIC_SOURCE, yesterdayKst, zoneBad, type StatsLoad, type StatsPanelState,
 } from "@/lib/stats";
 import { serverNowMs } from "@/lib/store";
@@ -33,11 +34,14 @@ export default function StatsPage() {
   const [openedAt] = useState(() => serverNowMs(Date.now()));
   // 오늘은 아직 집계되지 않는다(매일 03:30 KST 에 전날을 집계) — 기본·최대는 어제(KST 날짜)
   const [day, setDay] = useState(() => yesterdayKst(openedAt));
+  /** 날짜 칸에 미래 날짜가 들어와 최근 집계 날짜로 되돌렸는가(QA-309 — 다음 바른 입력까지 안내) */
+  const [clamped, setClamped] = useState(false);
   // 날짜를 빨리 바꾸면 늦게 온 이전 날짜 응답은 버린다(useLoad — 열쇠가 바뀌면 그 응답을 쓰지 않는다)
   const traffic = useLoad<TrafficStats>(`traffic|${day}`, (signal) => trafficStats(day, { signal }));
   // KST 날짜라고 밝힌 응답의 행만 — 밝히지 않은 응답은 그리지 않고 집계 여부도 모름으로 둔다(빈 상태가 "자료 없음" 으로 단정하지 않게)
   const rowsOf = (l: StatsLoad<StatsItems>): StatsRow[] => (l.status === "loaded" && statsZoneOk(l.resp) ? l.resp.items : []);
-  const agg = { fir: flagOf(fir.load), haz: flagOf(haz.load), traffic: flagOf(traffic.load), alerts: flagOf(alerts.load) };
+  // 집계 여부: 교통량(하루)은 응답의 aggregated, 최근 7일 패널은 날짜별 days[].aggregated(QA-308 — 7일 응답에 최상위 aggregated 는 없다)
+  const agg = { traffic: flagOf(traffic.load) };
   /** KST 날짜로 셌다고 밝히지 않은 응답(옛 api)이 있었는가 — 있으면 그 패널을 그리지 않고 위에서 한 번 말한다 */
   const zoneErr = [fir, haz, traffic, alerts].some((p) => zoneBad(p.load));
   const firRows = rowsOf(fir.load), hazRows = rowsOf(haz.load), trafficRows = rowsOf(traffic.load);
@@ -49,24 +53,30 @@ export default function StatsPage() {
   const today = todayKst(openedAt);
   const maxDay = yesterdayKst(openedAt);
   return (
-    <div className="h-full overflow-y-auto p-4">
-      <div className="mb-3 flex items-center gap-3"><h1 className="label">Statistics</h1><span className="text-[11px] text-fg-3" title="api 집계 작업은 매일 03:30 KST 에 돈다 — 날짜는 한국 표준시 날짜(00:00–24:00 KST)">매일 {STATS_RUN_KST} 에 전날(KST 날짜) 집계 · 최근 7일 · 빈 칸은 집계 전·자료 없음을 구분해 표시</span></div>
+    <ScrollRegion label="통계 본문" main className="h-full overflow-y-auto p-4">
+      <div className="mb-3 flex items-center gap-3"><h1 className="label" lang="en">Statistics</h1><span className="text-[11px] text-fg-3" title="api 집계 작업은 매일 03:30 KST 에 돈다 — 날짜는 한국 표준시 날짜(00:00–24:00 KST)">매일 {STATS_RUN_KST} 에 전날(KST 날짜) 집계 · 최근 7일 · 빈 칸은 집계 전·자료 없음을 구분해 표시</span></div>
       {zoneErr ? <div className="mb-3 text-[11px] text-warn" role="alert" data-testid="stats-zone-error">{STATS_ZONE_ERROR}</div> : null}
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-        <Panel id="fir" head={<h2 className="label mb-2">SIGMET by FIR (7d, top 24)</h2>} p={fir} drawable={firRows.length > 0} empty={statsEmptyText(agg.fir, null, today)}>
+        <Panel id="fir" head={<h2 className="label mb-2" lang="en">SIGMET by FIR (7d, top 24)</h2>} p={fir} drawable={firRows.length > 0} empty={statsWeekEmptyText(daysOf(fir.load, today), today)}>
           <BarChart id="chart-fir" title="최근 7일 FIR별 SIGMET 발표 건수(상위 24)" rows={topDims(firRows)} />
         </Panel>
-        <Panel id="hazard" head={<h2 className="label mb-2">SIGMET by hazard (7d)</h2>} p={haz} drawable={hazRows.length > 0} empty={statsEmptyText(agg.haz, null, today)}>
+        <Panel id="hazard" head={<h2 className="label mb-2" lang="en">SIGMET by hazard (7d)</h2>} p={haz} drawable={hazRows.length > 0} empty={statsWeekEmptyText(daysOf(haz.load, today), today)}>
           <BarChart id="chart-hazard" title="최근 7일 위험 유형별 SIGMET 발표 건수" rows={topDims(hazRows)} color="#f59e0b" />
         </Panel>
         <Panel id="traffic" p={traffic} drawable={trafficRows.length > 0} empty={statsEmptyText(agg.traffic, day, today, { ...TRAFFIC_SOURCE, nowMs: openedAt })}
-          head={<div className="mb-2 flex items-center justify-between gap-2"><h2 className="label">Distinct aircraft by hour (KST)</h2><input type="date" value={day} max={maxDay} onChange={(e) => { if (e.target.value) setDay(e.target.value); }} aria-label="집계 날짜(KST)" title="집계 날짜 = 한국 표준시 날짜(00:00–24:00 KST)" /></div>}>
+          head={<>
+            <div className="mb-2 flex items-center justify-between gap-2"><h2 className="label" lang="en">Distinct aircraft by hour (KST)</h2><input type="date" value={day} max={maxDay} aria-label="집계 날짜(KST)" title="집계 날짜 = 한국 표준시 날짜(00:00–24:00 KST) · 어제까지" aria-describedby={clamped ? "stats-day-note" : undefined}
+              onChange={(e) => { const p = statsPickDay(e.target.value, maxDay); if (p) { setDay(p.day); setClamped(p.clamped); } }} /></div>
+            {/* 미래 날짜는 조회하지 않는다 — 최근 집계 날짜로 되돌리고 그렇다고 말한다(QA-309). 패널 상태와 상관없이 머리에.
+                role=status 가 아니라 aria-live: 패널의 status 는 받기 상태('불러오는 중') 하나다 */}
+            <div aria-live="polite" className="text-[11px] text-warn" id="stats-day-note" data-testid="stats-day-clamped">{clamped ? STATS_FUTURE_DAY_NOTE : ""}</div>
+          </>}>
           <div className={`mb-1 text-[11px] ${scope.known ? "text-fg-2" : "text-warn"}`} data-testid="traffic-scope">범위: {scope.text}</div>
           <BarChart id="chart-traffic" title={`${day}(KST 날짜) 시각별(KST) 고유 항공기 수 — ${scope.text}`} rows={hours} color="#3ec98f" />
           <div className="mt-1 text-[10px] text-fg-2" data-testid="traffic-hours-note">KST 날짜 {day}(00:00–24:00 KST) · 눈금 = KST 시</div>
           <div className="mt-1 text-[10px] text-fg-3">점선 “—” = 그 시간 자료 없음(수집 중단 또는 집계 전 — 0 대와 구분 불가)</div>
         </Panel>
-        <Panel id="alerts" head={<h2 className="label mb-2">Alerts by kind (7d) · avg dwell</h2>} p={alerts} drawable={alertRows.length > 0} empty={statsEmptyText(agg.alerts, null, today)}>
+        <Panel id="alerts" head={<h2 className="label mb-2" lang="en">Alerts by kind (7d) · avg dwell</h2>} p={alerts} drawable={alertRows.length > 0} empty={statsWeekEmptyText(daysOf(alerts.load, today), today)}>
           <AlertStatsTable rows={alertRows} />
           {caveat ? <div className="mt-1 text-[10px] text-warn" data-testid="hysteresis-caveat">
             † <KstTime v={HYSTERESIS_FIX_AT} /> 이전에 생성된 관측(OBSERVED) 알림은 수정 전 히스테리시스(엔진 주기를 관측으로 셈 — 위치 보고 1건으로 진입·이탈 확정 가능)로 판정됐습니다.
@@ -74,7 +84,7 @@ export default function StatsPage() {
           </div> : null}
         </Panel>
       </div>
-    </div>
+    </ScrollRegion>
   );
 }
 

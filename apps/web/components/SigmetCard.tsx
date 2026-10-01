@@ -47,7 +47,7 @@ export function SigmetCard({ id }: { id: string }) {
           <span className="font-semibold">{p.hazard}{p.qualifier ? ` ${p.qualifier}` : ""}</span>
           <span className="mono text-fg-3">{p.fir_id} {p.series_id}</span>
           {expired ? <span className="badge warn" data-testid="sigmet-expired">만료됨</span> : null}
-          {pending ? <span className="badge" data-testid="sigmet-pending" title={`발효 ${fmtKstTitle(p.valid_from)}`}>발효 전 · {fmtDuration(startsIn)} 뒤</span> : null}
+          {pending ? <span className="badge" data-testid="sigmet-pending" title={`발효 ${fmtKstTitle(p.valid_from)}`}>발효 전 · <span className="normal-case">{fmtDuration(startsIn)}</span> 뒤</span> : null}
         </div>
         {rows.map(([k, v]) => (
           <div key={k} className="flex justify-between gap-2 border-b border-line py-1"><span className="shrink-0 text-fg-3">{k}</span><span className="text-right">{v}</span></div>

@@ -50,7 +50,9 @@ export function Shell({ children }: { children: React.ReactNode }) {
           <div className="label hidden xl:block">portfolio · non-commercial · local</div>
         </div>
       </header>
-      <main id="main" tabIndex={-1} className="min-h-0 flex-1 outline-none">{children}</main>
+      {/* '본문으로 건너뛰기'(#main)로 온 초점은 그 화면의 본문 스크롤 상자로 넘긴다(components/ScrollRegion main) — main 은 스크롤하지 않아 PageDown 이 듣지 않았다(QA-305) */}
+      <main id="main" tabIndex={-1} className="min-h-0 flex-1 outline-none"
+        onFocus={(e) => { if (e.target === e.currentTarget) e.currentTarget.querySelector<HTMLElement>("[data-main-scroll]")?.focus(); }}>{children}</main>
       <AttributionFooter />
     </div>
   );

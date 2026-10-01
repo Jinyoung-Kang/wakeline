@@ -4,6 +4,7 @@ import { runsDrill } from "@/lib/endpoints/ops";
 import { isAuthMiss, RUN_STATUS_TITLE, runStatusClass } from "@/lib/ops";
 import { appendRunsPage, RUNS_DRILL_LIMIT, type RunKey } from "@/lib/ops-runs";
 import { KstTime } from "@/components/KstTime";
+import { useFocusRescue } from "@/lib/use-focus-rescue";
 import { ErrorNote } from "@/components/logs/ErrorNote";
 
 type Any = Record<string, unknown>;
@@ -17,6 +18,8 @@ const RAW_TITLE = "원본 그대로(바꾸지 않음) — 안의 시각은 수�
  * (그렇다고 적는다). next_cursor 가 있으면 '더 보기'.
  * 목록은 증거라 해결 처리와 상관없이 모두 싣는다(요약의 n 은 해결 표시를 따른다 — 수가 다를 수 있다). 15 s 새로고침과 따로 — 연 때와 '다시 불러오기' 때만 부른다.
  * 실패는 패널에 요청 id 와 함께(몇 건인지 모르면 수를 적지 않는다). 401/404 는 세션 확인(onAuthMiss).
+ * 받는 동안 '다시 불러오기' · '더 보기'는 aria-disabled(누름은 busyRef 가 막는다) — disabled 면 누른 단추의 초점이 body 로 떨어졌다(QA-304).
+ * 끝 쪽을 받아 '더 보기'가 사라지면 초점을 이 목록(영역)으로 옮긴다(lib/use-focus-rescue — 잃었을 때만).
  */
 export function OpsRunsDrill({ id, k, since, onClose, onAuthMiss }: {
   id: string; k: RunKey; since: string | null; onClose: () => void; onAuthMiss: (e: unknown) => void;
@@ -24,7 +27,11 @@ export function OpsRunsDrill({ id, k, since, onClose, onAuthMiss }: {
   const [items, setItems] = useState<Any[] | null>(null);
   const [next, setNext] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
+  /** 받는 중(같은 프레임의 두 번째 누름도 막는다 — 상태는 다음 렌더에야 보인다) */
+  const busyRef = useRef(false);
   const [err, setErr] = useState<unknown>(null);
+  const region = useRef<HTMLDivElement>(null);
+  const rescue = useFocusRescue(10_000);
   /** 요청 번호 — 다시 불러오기 · 닫기 뒤에 온 옛 응답은 버린다 */
   const seq = useRef(0);
   /** 세션 확인 콜백은 ref 로 — 부모가 그릴 때마다 새 함수를 줘도 목록을 다시 부르지 않는다(15 s 새로고침) */
@@ -32,6 +39,7 @@ export function OpsRunsDrill({ id, k, since, onClose, onAuthMiss }: {
   useEffect(() => { authRef.current = onAuthMiss; }, [onAuthMiss]);
   const load = useCallback((cursor: number | null) => {
     const my = ++seq.current;
+    busyRef.current = true;
     setBusy(true);
     setErr(null);
     runsDrill(k, since, cursor).then(
@@ -40,6 +48,7 @@ export function OpsRunsDrill({ id, k, since, onClose, onAuthMiss }: {
         const got = Array.isArray(p.items) ? p.items : [];
         setItems((prev) => (cursor == null || prev == null ? got : appendRunsPage(prev, got)));
         setNext(typeof p.next_cursor === "number" ? p.next_cursor : null);
+        busyRef.current = false;
         setBusy(false);
       },
       (e: unknown) => {
@@ -47,19 +56,26 @@ export function OpsRunsDrill({ id, k, since, onClose, onAuthMiss }: {
         // 첫 쪽(다시 불러오기)이 실패하면 앞서 받은 목록을 지운다 — 옛 목록이 새 요청의 답처럼 남지 않게. '더 보기' 실패는 받은 쪽을 그대로 둔다
         if (cursor == null) { setItems(null); setNext(null); }
         setErr(e);
+        busyRef.current = false;
         setBusy(false);
         if (isAuthMiss(e)) authRef.current(e);
       });
   }, [k, since]);
   /** 떠 있는 응답을 버린다(닫기 · 열쇠가 바뀜) */
-  const drop = useCallback(() => { seq.current++; }, []);
+  const drop = useCallback(() => { seq.current++; busyRef.current = false; }, []);
+  /** 단추로 부름: 받는 중이면 무시, 누른 단추가 사라지면(끝 쪽) 초점을 목록으로 */
+  const press = (cursor: number | null) => {
+    if (busyRef.current) return;
+    rescue(() => [region.current]);
+    load(cursor);
+  };
   useEffect(() => {
     const t = setTimeout(() => load(null), 0);
     return () => { clearTimeout(t); drop(); };
   }, [load, drop]);
   const label = `${k.job} · ${k.provider} · ${k.status}`;
   return (
-    <div id={id} role="region" aria-label={`실행 목록: ${label}`} className="border-l-2 border-line-2 py-1 pl-2" data-testid="runs-drill">
+    <div id={id} ref={region} tabIndex={-1} role="region" aria-label={`실행 목록: ${label}`} className="border-l-2 border-line-2 py-1 pl-2" data-testid="runs-drill">
       <div className="mb-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]">
         <span className="label normal-case!">Runs · <span className="mono">{k.job} · {k.provider} · </span><span className={`mono ${runStatusClass(k.status, "item")}`} title={RUN_STATUS_TITLE[k.status]}>{k.status}</span></span>
         <span className="text-fg-3" data-testid="runs-drill-window" title={since ? "요약은 15 s 마다 새로 받아 창이 앞으로 가지만, 이 목록의 창은 연 때 그대로다(다시 불러오기도 같은 창) — 닫고 다시 열면 그때의 창" : undefined}>
@@ -68,7 +84,7 @@ export function OpsRunsDrill({ id, k, since, onClose, onAuthMiss }: {
         </span>
         {items ? <span className="mono text-fg-2" data-testid="runs-drill-count">{items.length.toLocaleString("en-US")}건 · {next != null ? "더 있음" : "끝"}</span> : null}
         {busy ? <span className="text-fg-3" role="status">불러오는 중…</span> : null}
-        <button className="btn normal-case!" onClick={() => load(null)} disabled={busy} title="첫 쪽부터 다시 받는다(창의 시작은 연 때 그대로)">다시 불러오기</button>
+        <button className="btn normal-case!" onClick={() => press(null)} aria-disabled={busy || undefined} aria-busy={busy || undefined} title="첫 쪽부터 다시 받는다(창의 시작은 연 때 그대로)">다시 불러오기</button>
         <button className="btn normal-case!" onClick={onClose} data-testid="runs-drill-close">닫기</button>
       </div>
       {err ? <div className="mb-1 text-[11px] text-bad" role="alert" data-testid="runs-drill-failed"><ErrorNote prefix="실행 목록을 불러오지 못함 — " error={err} /></div> : null}
@@ -90,7 +106,7 @@ export function OpsRunsDrill({ id, k, since, onClose, onAuthMiss }: {
         </table>
       ) : null}
       {items && next != null ? (
-        <button className="btn mt-1 normal-case!" onClick={() => load(next)} disabled={busy} data-testid="runs-drill-more">더 보기(다음 {RUNS_DRILL_LIMIT}건)</button>
+        <button className="btn mt-1 normal-case!" onClick={() => press(next)} aria-disabled={busy || undefined} aria-busy={busy || undefined} data-testid="runs-drill-more">더 보기(다음 {RUNS_DRILL_LIMIT}건)</button>
       ) : null}
     </div>
   );

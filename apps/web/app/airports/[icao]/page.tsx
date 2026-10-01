@@ -1,6 +1,7 @@
 "use client";
 import { use } from "react";
 import { airportWx } from "@/lib/endpoints/weather";
+import { ScrollRegion } from "@/components/ScrollRegion";
 import { useApiResource } from "@/lib/use-api-resource";
 import { useNow } from "@/lib/clock";
 import { serverNowMs } from "@/lib/store";
@@ -31,15 +32,16 @@ export default function AirportPage({ params }: { params: Promise<{ icao: string
   const stale = m && nowMs ? isMetarStale(m, nowMs) : false;
   const catColor = m?.flight_cat && !stale ? CAT_COLORS[m.flight_cat] : undefined;
   return (
-    <div className="h-full overflow-y-auto p-4">
-      <h1 className="label mb-2">Airport weather · {code}</h1>
+    <ScrollRegion label={`${code} 공항 기상 이력`} main className="h-full overflow-y-auto p-4">
+      <h1 className="label mb-2" lang="en">Airport weather · {code}</h1>
       {err ? <div className="text-bad" role="alert">{err.text}<RequestIdOf error={err.error} /></div> : null}
       {!wx && !err ? <div className="text-fg-3" role="status" data-testid="airport-wx-loading">{code} 기상 이력 불러오는 중…</div> : null}
       {wx ? <>
         <div className="mb-3 text-sm font-semibold">{wx.airport.name ?? code} <span className="mono text-[11px] text-fg-3">({wx.airport.lat?.toFixed(3) ?? "—"}, {wx.airport.lon?.toFixed(3) ?? "—"}) · elev {wx.airport.elev_ft ?? "—"} ft</span></div>
         {m ? <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
           <section className="panel p-3">
-            <div className="label mb-1">METAR · <KstTime v={m.obs_time} />{age != null ? ` · ${fmtDuration(age)} 전` : ""} · {m.provider ?? "—"}</div>
+            {/* 경과(분 · 초)는 이름표의 대문자에서 뺀다 — "35M 19S 전" 은 미터 m 과 헷갈린다(QA-310) */}
+            <div className="label mb-1">METAR · <KstTime v={m.obs_time} />{age != null ? <> · <span className="normal-case">{fmtDuration(age)}</span> 전</> : ""} · {m.provider ?? "—"}</div>
             {/* 원문 이름표는 보이게(TAF · 공항 카드와 같게) — 위 줄의 KST 시각 바로 아래 "…Z" 가 발표 형식(KST 와 9시간 차이)이라는 것이 툴팁 없이도 읽히도록 */}
             <div className="label mt-1" title={RAW_BULLETIN_TITLE}>METAR ({RAW_BULLETIN_LABEL})</div>
             <pre className="mono whitespace-pre-wrap text-[11px]" title={RAW_BULLETIN_TITLE} data-raw="bulletin">{m.raw}</pre>
@@ -66,6 +68,6 @@ export default function AirportPage({ params }: { params: Promise<{ icao: string
             {wx.history.some((h) => h.vis_raw == null && h.vis_sm != null) ? " * = 원문 없이 파싱한 숫자(하한 표기 “+” 를 잃었을 수 있음)." : ""}</div>
         </section>
       </> : null}
-    </div>
+    </ScrollRegion>
   );
 }
