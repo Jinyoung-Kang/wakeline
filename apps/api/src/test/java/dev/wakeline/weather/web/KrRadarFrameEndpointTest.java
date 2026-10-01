@@ -1,6 +1,7 @@
 package dev.wakeline.weather.web;
 
 import dev.wakeline.platform.web.ProblemAdvice;
+import dev.wakeline.weather.data.KrRadarReader;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.RedisConnectionFailureException;
@@ -39,7 +40,7 @@ class KrRadarFrameEndpointTest {
         StringRedisTemplate redis = new StringRedisTemplate() {
             @Override public ValueOperations<String, String> opsForValue() { return values; }
         };
-        WeatherController c = new WeatherController(null, null, null, null, null, null, redis, JsonMapper.builder().build(), meters);
+        WeatherController c = new WeatherController(null, null, null, null, null, null, new KrRadarReader(redis), JsonMapper.builder().build(), meters);
         return MockMvcBuilders.standaloneSetup(c).setControllerAdvice(new ProblemAdvice()).build();
     }
 

@@ -17,6 +17,7 @@ import dev.wakeline.weather.data.AirportRepository;
 import dev.wakeline.weather.data.AlertRepository;
 import dev.wakeline.weather.data.KrRadarFrames;
 import dev.wakeline.weather.data.KrRadarMissing;
+import dev.wakeline.weather.data.KrRadarReader;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.CacheControl;
 import org.springframework.http.ResponseEntity;
@@ -33,7 +34,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
-/** SIGMET · 알림 · 레이더 · 공항 REST v1. */
+/** SIGMET · 알림 · 레이더 · 공항 REST v1. 기상청 레이더의 Redis 읽기는 {@link KrRadarReader}(ADR-028 — 컨트롤러는 Redis 를 쓰지 않는다). */
 @org.springframework.context.annotation.Profile("!cli & !migrate")
 @RestController
 @RequestMapping("/api/v1")
@@ -44,14 +45,14 @@ public class WeatherController {
     private final AirportRepository airports;
     private final AlertRepository alertRepo;
     private final AppProperties props;
-    private final org.springframework.data.redis.core.StringRedisTemplate redis;
+    private final KrRadarReader radarKr;
     private final tools.jackson.databind.ObjectMapper json;
     private final io.micrometer.core.instrument.MeterRegistry meters;
 
     public WeatherController(SigmetStore sigmets, EngineService engine, RadarStore radar, AirportRepository airports, AlertRepository alertRepo, AppProperties props,
-                             org.springframework.data.redis.core.StringRedisTemplate redis, tools.jackson.databind.ObjectMapper json,
+                             KrRadarReader radarKr, tools.jackson.databind.ObjectMapper json,
                              io.micrometer.core.instrument.MeterRegistry meters) {
-        this.redis = redis;
+        this.radarKr = radarKr;
         this.json = json;
         this.meters = meters;
         this.sigmets = sigmets;
@@ -145,10 +146,9 @@ public class WeatherController {
      */
     @GetMapping("/radar/kr")
     public ResponseEntity<Map<String, Object>> radarKr(HttpServletRequest req) {
-        Map<Object, Object> h;
-        String framesJson;
-        try { h = redis.opsForHash().entries("wakeline:radar_kr:meta"); framesJson = redis.opsForValue().get("wakeline:radar_kr:frames"); }
-        catch (RuntimeException e) { h = Map.of(); framesJson = null; }
+        KrRadarReader.Listing listing = radarKr.listing(); // Redis 오류면 빈 해시 · 목록 없음(모름)
+        Map<Object, Object> h = listing.meta();
+        String framesJson = listing.framesJson();
         List<Map<String, Object>> frames = new ArrayList<>();
         tools.jackson.databind.JsonNode listedNode = framesJson == null ? null : parseJson("frames", framesJson);
         if (listedNode != null && listedNode.isArray()) {
@@ -157,7 +157,7 @@ public class WeatherController {
                 Map<String, Object> fr = KrRadarFrames.frame(f, this::radarParseError); // tm 이 틀리면 null · 부분 합성 필드는 검증한 값만(ADR-021)
                 if (fr != null) listed.add(fr);
             }
-            List<Boolean> exists = framesExist(listed.stream().map(fr -> (String) fr.get("tm")).toList());
+            List<Boolean> exists = radarKr.framesExist(listed.stream().map(fr -> (String) fr.get("tm")).toList());
             for (int i = 0; i < listed.size(); i++) if (i < exists.size() && Boolean.TRUE.equals(exists.get(i))) frames.add(listed.get(i));
         }
         // 수집기가 쓴 값을 믿지 않는다(R-72): 형식이 틀린 필드는 null(모름)로 두고 센다 — 500 이 되지 않는다.
@@ -224,22 +224,6 @@ public class WeatherController {
         meters.counter("wakeline_radar_kr_parse_errors_total", "field", field).increment();
     }
 
-    /** 프레임 PNG 키가 남아 있는지 한 번의 파이프라인(EXISTS × n)으로 확인한다. Redis 오류면 빈 목록(없다고 본다). */
-    private List<Boolean> framesExist(List<String> tms) {
-        if (tms.isEmpty()) return List.of();
-        try {
-            List<Object> r = redis.executePipelined((org.springframework.data.redis.core.RedisCallback<Object>) conn -> {
-                for (String tm : tms) conn.keyCommands().exists(("wakeline:radar_kr:frame:" + tm).getBytes(java.nio.charset.StandardCharsets.UTF_8));
-                return null;
-            });
-            List<Boolean> out = new ArrayList<>(r.size());
-            for (Object o : r) out.add(o instanceof Boolean b ? b : o instanceof Number n && n.longValue() > 0);
-            return out;
-        } catch (RuntimeException e) {
-            return List.of();
-        }
-    }
-
     /**
      * 프레임 영상(ADR-012). 없으면 404. Redis 오류는 삼키지 않는다 — 일시 장애는 ProblemAdvice 가 503 + Retry-After(계약 §2 · 리뷰 cto-2026-10 A3 결정 6:
      * 예전에는 '없음' 404 로 답했다). 깨진 값(base64 아님)은 없는 것(404)으로 답하고 센다(R-72 — 예전에는 500).
@@ -247,7 +231,7 @@ public class WeatherController {
     @GetMapping(value = "/radar/kr/{tm}.png")
     public ResponseEntity<byte[]> radarKrFrame(@PathVariable String tm) {
         if (!tm.matches("^\\d{12}$")) throw Problem.badRequest("BAD_TM", "tm must be YYYYMMDDHHMM");
-        String b64 = redis.opsForValue().get("wakeline:radar_kr:frame:" + tm);
+        String b64 = radarKr.frame(tm);
         if (b64 == null) throw Problem.notFound("no KMA radar frame " + tm);
         byte[] png;
         try {
