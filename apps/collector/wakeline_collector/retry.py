@@ -28,9 +28,9 @@ import httpx
 
 from wakeline_collector.budget import UNKNOWN
 from wakeline_collector.errors import LIMIT, describe_error
-from wakeline_collector.http import classify_send
 from wakeline_collector.http_errors import NOT_SENT_ERRORS
 from wakeline_collector.ratelimit import Throttled
+from wakeline_collector.send_outcome import classify_send
 
 RETRY_DELAY_S = 5.0  # 일시 오류 뒤 다시 부르기 전 기다림(선택값). 다시 부르기는 실패한 호출마다 한 번
 # 다시 불러 볼 만한 일시 오류. RequestTimedOut(전체 상한 초과)은 httpx.TimeoutException 하위라 여기 든다.
@@ -87,7 +87,7 @@ async def call_retry_once[T](
     release 가 있으면 보내지 않은 시도(NOT_SENT)마다 한 번 부른다(예산을 쓰지 않는 fixture 모드는 None)."""
 
     async def give_back(e: BaseException) -> None:
-        if release is not None and classify_send(e) != "sent":  # 보내지 않았다(NOT_SENT 와 같은 판정 — http.classify_send)
+        if release is not None and classify_send(e) != "sent":  # 보내지 않았다(NOT_SENT 와 같은 판정 — classify_send)
             await release()
 
     t0 = time.monotonic()

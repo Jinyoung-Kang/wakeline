@@ -16,7 +16,7 @@ from wakeline_collector.budget import UNKNOWN
 from wakeline_collector.config import settings
 from wakeline_collector.errors import describe_error
 from wakeline_collector.fallback import ProviderChain
-from wakeline_collector.http import PreSendFailed, ProviderHttpError, classify_send
+from wakeline_collector.http import PreSendFailed, ProviderHttpError
 from wakeline_collector.jobs.context import JobContext
 from wakeline_collector.models import AircraftState
 from wakeline_collector.normalize import Rejected, normalize_opensky, normalize_readsb, readsb_reference_time
@@ -24,6 +24,7 @@ from wakeline_collector.publisher import STREAM_AIRCRAFT
 from wakeline_collector.quality import AircraftGate, Quarantine
 from wakeline_collector.ratelimit import Throttled
 from wakeline_collector.raw_store import archive
+from wakeline_collector.send_outcome import classify_send
 from wakeline_collector.status import newest_age_s
 
 log = logging.getLogger("job.aircraft")

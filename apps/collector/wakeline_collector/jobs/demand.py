@@ -36,7 +36,7 @@ from wakeline_collector.budget import UNKNOWN
 from wakeline_collector.config import settings
 from wakeline_collector.demand import Demand, DemandPoller, DemandStatus, HotCell, status_value
 from wakeline_collector.errors import describe_error
-from wakeline_collector.http import ProviderHttpError, classify_send
+from wakeline_collector.http import ProviderHttpError
 from wakeline_collector.jobs.context import JobContext
 from wakeline_collector.jobs.route import RouteLookup
 from wakeline_collector.models import AircraftState, ProviderResult
@@ -46,6 +46,7 @@ from wakeline_collector.quality import AircraftGate, Quarantine
 from wakeline_collector.ratelimit import RateLimiter, Throttled
 from wakeline_collector.raw_store import archive
 from wakeline_collector.route import normalize_callsign
+from wakeline_collector.send_outcome import classify_send
 from wakeline_collector.status import newest_age_s
 
 log = logging.getLogger("job.demand")
@@ -398,7 +399,7 @@ class DemandTracker:
         except Exception as e:  # noqa: BLE001 — 공급자 실패는 상태로 드러내고 다음 주기에 다시
             kind = classify_send(e)
             if kind != "sent":
-                await self._release()  # 보내지 않았다(속도 상한 · 연결 실패 · 연결 풀 대기 초과 등 — http.classify_send, R-65)
+                await self._release()  # 보내지 않았다(속도 상한 · 연결 실패 · 연결 풀 대기 초과 등 — classify_send, R-65)
             if kind == "throttled":
                 self.counts["throttled"] += 1
                 return None, "throttled", _err(e), started

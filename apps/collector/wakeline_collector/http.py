@@ -8,7 +8,8 @@ ProviderHttpError.pause_s 로 호출자에게 알린다(로그 · 실행 기록�
 본문을 다 읽을 때까지 전체에 호출자별 상한(total_s, 기본 DEFAULT_TOTAL_S)을 건다. 넘으면 RequestTimedOut — 보낸 호출로 센다(R-67).
 속도 상한 대기(wait_s)는 이 상한에 들어가지 않는다(그 자체로 상한이 있다).
 크기 상한(http_max_bytes)은 푼 바이트로 잰다 — gzip · deflate 본문은 httpx 에 맡기지 않고 직접 풀며, 푸는 동안 상한 + 1 바이트에서 멈춘다(_Inflate).
-실패의 종류(HostNotAllowed · ProviderHttpError · NOT_SENT_ERRORS …)는 순수 모듈 http_errors 에 있고 여기서 같은 이름으로 다시 내보낸다.
+실패의 종류(HostNotAllowed · ProviderHttpError · NOT_SENT_ERRORS …)는 순수 모듈 http_errors, 보내기 판정(classify_send)은 send_outcome 에 있고
+여기서 같은 이름으로 다시 내보낸다.
 """
 
 from __future__ import annotations
@@ -19,7 +20,6 @@ import zlib
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
-from typing import Literal
 from urllib.parse import urlparse
 
 import httpx
@@ -33,7 +33,9 @@ from wakeline_collector.http_errors import ProviderHttpError as ProviderHttpErro
 from wakeline_collector.http_errors import RequestTimedOut as RequestTimedOut
 from wakeline_collector.http_errors import ResponseTooLarge as ResponseTooLarge
 from wakeline_collector.http_errors import SendCancelled as SendCancelled
-from wakeline_collector.ratelimit import PRIORITY_FIXED, RateLimiter, Throttled, default_limiter
+from wakeline_collector.ratelimit import PRIORITY_FIXED, RateLimiter, default_limiter
+from wakeline_collector.send_outcome import SendOutcome as SendOutcome
+from wakeline_collector.send_outcome import classify_send as classify_send
 
 DEFAULT_WAIT_S = 10.0  # 속도 상한 대기 기본 상한(주기 작업). focus·hot·관심 지역은 호출자가 더 짧게 준다.
 DEFAULT_TOTAL_S = 30.0  # 요청 전체(보내기 ~ 본문 끝) 기본 상한. 관심 지역·KMA 는 호출자가 따로 준다(R-67).
@@ -57,26 +59,6 @@ ALLOWED_HOSTS = frozenset(
 # 받는 Content-Encoding — 상한 안에서 직접 푸는 것만 부른다(_Inflate). httpx 기본값과 같다(brotli · zstandard 가 없을 때) — 그것들이 깔려도
 # 부르는 인코딩이 늘지 않게 적어 둔다
 ACCEPT_ENCODING = "gzip, deflate"
-
-
-SendOutcome = Literal["sent", "failed_before_send", "not_sent", "throttled"]
-
-
-def classify_send(e: BaseException) -> SendOutcome:
-    """공급자 호출 하나의 실패를 가른다 — 모든 작업이 이 판정을 쓴다(R-65 · F7: 전에는 작업마다 달라 연결 풀 대기 초과를 공급자 실패로 세고 예산을
-    돌려주지 않았고, 기상 작업은 속도 상한을 공급자 실패로 적었다).
-    - throttled: 속도 상한(Throttled)이 막았다 — 보내지 않았다. 예산을 돌려주고 공급자 실패가 아니다(실행 'throttled').
-    - not_sent: 우리 쪽 까닭으로 보내지 않았다(NOT_SENT_LOCAL) — 예산을 돌려주고 공급자 실패가 아니다.
-    - failed_before_send: 공급자 쪽이 보내기 전에 실패했다(연결 실패 · 연결 시간 초과 · 준비 호출 PreSendFailed) — 예산을 돌려주되 공급자 실패로
-      센다(폴백 · 3번 쉬기가 그대로 일한다).
-    - sent: 그 밖 — 보낸 것으로 센다(예산 그대로 · 공급자 실패)."""
-    if isinstance(e, Throttled):
-        return "throttled"
-    if isinstance(e, NOT_SENT_LOCAL):
-        return "not_sent"
-    if isinstance(e, NOT_SENT_ERRORS):
-        return "failed_before_send"
-    return "sent"
 
 
 BeforeSend = Callable[[], Awaitable[bool]]
