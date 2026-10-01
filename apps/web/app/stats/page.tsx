@@ -1,5 +1,6 @@
 "use client";
-import { useEffect, useEffectEvent, useRef, useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
+import { useApiResource } from "@/lib/use-api-resource";
 import { alertStats, sigmetStats, trafficStats, type StatsItems, type StatsRow, type TrafficStats } from "@/lib/endpoints/stats";
 import { AlertStatsTable } from "@/components/AlertStatsTable";
 import { BarChart } from "@/components/BarChart";
@@ -25,15 +26,15 @@ import { KstTime } from "@/components/KstTime";
  * 빈 상태 문구는 받은 응답에만. 패널마다 data-state(loading · ready · empty · error). SIGMET · 알림(최근 7일)은 한 번, 교통량은 날짜마다 받는다.
  */
 export default function StatsPage() {
-  const fir = useLoad("fir", () => sigmetStats("fir"));
-  const haz = useLoad("hazard", () => sigmetStats("hazard"));
-  const alerts = useLoad("alerts", () => alertStats());
+  const fir = useLoad("fir", (signal) => sigmetStats("fir", { signal }));
+  const haz = useLoad("hazard", (signal) => sigmetStats("hazard", { signal }));
+  const alerts = useLoad("alerts", (signal) => alertStats({ signal }));
   /** 화면을 연 시각(서버 기준 추정) — 오늘·어제(KST 날짜 — 집계 단위) 계산용 */
   const [openedAt] = useState(() => serverNowMs(Date.now()));
   // 오늘은 아직 집계되지 않는다(매일 03:30 KST 에 전날을 집계) — 기본·최대는 어제(KST 날짜)
   const [day, setDay] = useState(() => yesterdayKst(openedAt));
   // 날짜를 빨리 바꾸면 늦게 온 이전 날짜 응답은 버린다(useLoad — 열쇠가 바뀌면 그 응답을 쓰지 않는다)
-  const traffic = useLoad<TrafficStats>(`traffic|${day}`, () => trafficStats(day));
+  const traffic = useLoad<TrafficStats>(`traffic|${day}`, (signal) => trafficStats(day, { signal }));
   // KST 날짜라고 밝힌 응답의 행만 — 밝히지 않은 응답은 그리지 않고 집계 여부도 모름으로 둔다(빈 상태가 "자료 없음" 으로 단정하지 않게)
   const rowsOf = (l: StatsLoad<StatsItems>): StatsRow[] => (l.status === "loaded" && statsZoneOk(l.resp) ? l.resp.items : []);
   const agg = { fir: flagOf(fir.load), haz: flagOf(haz.load), traffic: flagOf(traffic.load), alerts: flagOf(alerts.load) };
@@ -78,24 +79,13 @@ export default function StatsPage() {
 }
 
 /**
- * 요청 하나의 받기 상태(패널마다 따로). 열쇠(무엇을 받는가 — 패널 · 날짜)가 바뀌거나 다시 시도하면 새로 받고, 그동안은 곧바로 '받는 중'이다 — 끝난 결과는
- * 그 요청의 열쇠(시도 번호 · 열쇠)와 함께 두어, 열쇠가 다르면(이전 날짜 · 이전 시도) 쓰지 않는다. 늦게 온 이전 응답은 버린다.
- * request 는 그때의 열쇠로 부르는 lib/endpoints/stats 함수(렌더마다 새 함수여도 열쇠가 같으면 다시 받지 않는다).
+ * 요청 하나의 받기 상태(패널마다 따로 — lib/use-api-resource). 열쇠(무엇을 받는가 — 패널 · 날짜)가 바뀌거나 다시 시도하면 새로 받고, 그동안은 곧바로
+ * '받는 중'이다 — 이전 날짜 · 이전 시도의 결과는 쓰지 않고, 떠 있던 요청은 끊는다. request 는 그때의 열쇠로 부르는 lib/endpoints/stats 함수.
  */
-function useLoad<T>(what: string, request: () => Promise<T>): { load: StatsLoad<T>; retry: () => void } {
-  const [attempt, setAttempt] = useState(0);
-  const key = `${attempt}|${what}`;
-  const [done, setDone] = useState<{ key: string; load: StatsLoad<T> } | null>(null);
-  const send = useEffectEvent(request);
-  useEffect(() => {
-    let live = true;
-    send().then(
-      (resp) => { if (live) setDone({ key, load: { status: "loaded", resp } }); },
-      (error: unknown) => { if (live) setDone({ key, load: { status: "failed", error } }); },
-    );
-    return () => { live = false; };
-  }, [key]);
-  return { load: done?.key === key ? done.load : { status: "loading" }, retry: () => setAttempt((n) => n + 1) };
+function useLoad<T>(what: string, request: (signal: AbortSignal) => Promise<T>): { load: StatsLoad<T>; retry: () => void } {
+  const r = useApiResource(what, request);
+  const load: StatsLoad<T> = r.status === "loaded" ? { status: "loaded", resp: r.data as T } : r.status === "failed" ? { status: "failed", error: r.error } : { status: "loading" };
+  return { load, retry: r.retry };
 }
 
 /**
