@@ -506,6 +506,14 @@ statement_timeout 30 s · lock_timeout 5 s)에 운영 클래스 그대로의 기
 - 스트림 마지막 id 로 통째로 캐시하는 길(계획의 문구)은 쓰지 않았다 — Redis 읽기 약 20 ms 를 더 아끼지만 두 스트림의 사본 · 트림 · 이어 읽기 규칙을 따로
   맞춰야 한다. 남은 비용이 폴링당 약 30 ms 라 거기서 멈췄다.
 
+**선택 항목 — 항공기 조각 캐시의 적중 카운터(api-review §4 P4)** — `ws/AircraftJsonCachePerfTest`: WS 팬아웃은 세션마다 항공기 조각을 이어 붙이며
+`AircraftJsonCache.get` 이 항공기마다 적중 카운터(`wakeline_cache_requests_total{cache="aircraft_json"}`)를 올린다. 운영과 같은 Prometheus 레지스트리로, 세션
+하나의 전세계 스냅샷 이어 붙이기(10,000대 · 조각은 이미 캐시에 — 리뷰와 같은 모양)와 그 안의 카운터 증가 10,000번(가운데 값, 세 번):
+전세계 스냅샷 1.49–2.09 ms 중 카운터 0.119–0.121 ms(**6–8 %**). 매 틱의 diff(10 % 바뀜)에서는 그 1/10 이다. 결정: **바꾸지 않는다** — 전체 스냅샷은 구독 ·
+줌이 바뀔 때만 가고, 틱마다의 몫은 세션당 약 0.01 ms 다. 운영 프로파일(JFR — 리뷰의 방법)에서 보이면 팬아웃마다 한 번 세도록 바꾼다.
+TrackWriter 의 바뀌지 않은 행(api-review §4 P6)은 재지 않았다 — 판단에 필요한 것은 운영의 충돌 비율(`wakeline_track_rows_total{result="written"}` 대
+`pg_stat_user_tables.n_tup_ins`)이고 저장소 안에서는 만들 수 없다.
+
 ## 재현
 ```bash
 make bench SHIPS=1               # k6 REST + WS(선박 포함), api 층 직접
@@ -525,4 +533,5 @@ bash tools/chaos.sh              # 장애 주입(개발 스택을 실제로 죽�
 (cd apps/api && ./gradlew --offline perfTest --tests 'dev.wakeline.ingest.StreamParsePerfTest')       # §13 P1 전세계 메시지 해석 · 두 번 파싱
 (cd apps/api && ./gradlew --offline perfTest --tests 'dev.wakeline.weather.data.SigmetReplayPlanPerfTest')   # §13 P4 SIGMET 재생 조건(합성 200,000건 · Docker)
 (cd apps/api && ./gradlew --offline perfTest --tests 'dev.wakeline.logs.LogReaderScanPerfTest')          # §13 P3 운영 로그 다시 훑기(메모리 · Redis — Docker)
+(cd apps/api && ./gradlew --offline perfTest --tests 'dev.wakeline.ws.AircraftJsonCachePerfTest')         # §13 조각 캐시 적중 카운터의 몫
 ```
