@@ -8,7 +8,7 @@ import { BarChart } from "@/components/BarChart";
 import { ErrorNote } from "@/components/logs/ErrorNote";
 import { HYSTERESIS_FIX_AT, HYSTERESIS_FIX_DAY, hourlyRowsKst, topDims, trafficScopeLabel } from "@/lib/chart";
 import {
-  alertStatsRows, daysOf, flagOf, STATS_FAILED_NOTE, STATS_FAILED_TEXT, STATS_LOADING_TEXT, STATS_RUN_KST, STATS_ZONE_ERROR, STATS_ZONE_PANEL, statsEmptyText, statsPanelState, statsWeekEmptyText,
+  alertStatsRows, daysOf, flagOf, STATS_FAILED_NOTE, STATS_FAILED_TEXT, STATS_LOADING_TEXT, STATS_RUN_KST, STATS_ZONE_ERROR, STATS_ZONE_PANEL, statsEmptyText, statsPanelState, statsPickDay, statsWeekEmptyText, STATS_FUTURE_DAY_NOTE,
   statsZoneOk, todayKst, TRAFFIC_SOURCE, yesterdayKst, zoneBad, type StatsLoad, type StatsPanelState,
 } from "@/lib/stats";
 import { serverNowMs } from "@/lib/store";
@@ -34,6 +34,8 @@ export default function StatsPage() {
   const [openedAt] = useState(() => serverNowMs(Date.now()));
   // 오늘은 아직 집계되지 않는다(매일 03:30 KST 에 전날을 집계) — 기본·최대는 어제(KST 날짜)
   const [day, setDay] = useState(() => yesterdayKst(openedAt));
+  /** 날짜 칸에 미래 날짜가 들어와 최근 집계 날짜로 되돌렸는가(QA-309 — 다음 바른 입력까지 안내) */
+  const [clamped, setClamped] = useState(false);
   // 날짜를 빨리 바꾸면 늦게 온 이전 날짜 응답은 버린다(useLoad — 열쇠가 바뀌면 그 응답을 쓰지 않는다)
   const traffic = useLoad<TrafficStats>(`traffic|${day}`, (signal) => trafficStats(day, { signal }));
   // KST 날짜라고 밝힌 응답의 행만 — 밝히지 않은 응답은 그리지 않고 집계 여부도 모름으로 둔다(빈 상태가 "자료 없음" 으로 단정하지 않게)
@@ -62,7 +64,12 @@ export default function StatsPage() {
           <BarChart id="chart-hazard" title="최근 7일 위험 유형별 SIGMET 발표 건수" rows={topDims(hazRows)} color="#f59e0b" />
         </Panel>
         <Panel id="traffic" p={traffic} drawable={trafficRows.length > 0} empty={statsEmptyText(agg.traffic, day, today, { ...TRAFFIC_SOURCE, nowMs: openedAt })}
-          head={<div className="mb-2 flex items-center justify-between gap-2"><h2 className="label">Distinct aircraft by hour (KST)</h2><input type="date" value={day} max={maxDay} onChange={(e) => { if (e.target.value) setDay(e.target.value); }} aria-label="집계 날짜(KST)" title="집계 날짜 = 한국 표준시 날짜(00:00–24:00 KST)" /></div>}>
+          head={<>
+            <div className="mb-2 flex items-center justify-between gap-2"><h2 className="label">Distinct aircraft by hour (KST)</h2><input type="date" value={day} max={maxDay} aria-label="집계 날짜(KST)" title="집계 날짜 = 한국 표준시 날짜(00:00–24:00 KST) · 어제까지" aria-describedby={clamped ? "stats-day-note" : undefined}
+              onChange={(e) => { const p = statsPickDay(e.target.value, maxDay); if (p) { setDay(p.day); setClamped(p.clamped); } }} /></div>
+            {/* 미래 날짜는 조회하지 않는다 — 최근 집계 날짜로 되돌리고 그렇다고 말한다(QA-309). 패널 상태와 상관없이 머리에 */}
+            <div role="status" className="text-[11px] text-warn" id="stats-day-note" data-testid="stats-day-clamped">{clamped ? STATS_FUTURE_DAY_NOTE : ""}</div>
+          </>}>
           <div className={`mb-1 text-[11px] ${scope.known ? "text-fg-2" : "text-warn"}`} data-testid="traffic-scope">범위: {scope.text}</div>
           <BarChart id="chart-traffic" title={`${day}(KST 날짜) 시각별(KST) 고유 항공기 수 — ${scope.text}`} rows={hours} color="#3ec98f" />
           <div className="mt-1 text-[10px] text-fg-2" data-testid="traffic-hours-note">KST 날짜 {day}(00:00–24:00 KST) · 눈금 = KST 시</div>

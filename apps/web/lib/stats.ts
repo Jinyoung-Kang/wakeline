@@ -55,6 +55,17 @@ export function yesterdayKst(nowMs: number): string {
 }
 
 /**
+ * 통계 날짜 칸에 넣은 값 → 조회할 날짜(QA-309 — 칸은 max = 어제(KST)인데 입력을 검사하지 않아, ↑ 키나 직접 입력으로 한 달 뒤 날짜를 넣으면 그 날로
+ * 조회하고 "다음 03:30 KST 집계 뒤 채워집니다"라고 약속했다). 달력 날짜가 아니면 null(바꾸지 않는다), max 보다 뒤면 max(가장 최근 집계 날짜).
+ */
+export function statsPickDay(value: string, max: string): { day: string; clamped: boolean } | null {
+  if (!isCalendarDay(value)) return null;
+  return max && value > max ? { day: max, clamped: true } : { day: value, clamped: false };
+}
+/** 날짜 칸이 미래 날짜를 받아 최근 집계 날짜로 되돌렸을 때의 안내 */
+export const STATS_FUTURE_DAY_NOTE = "아직 오지 않았거나 끝나지 않은 날짜는 고를 수 없습니다 — 가장 최근 집계 날짜(어제 · KST)로 맞춤";
+
+/**
  * 빈 상태 문구. day = 조회한 날짜(KST — 이 화면에서는 교통량만 날짜로 묻는다, 최근 7일 묶음이면 null), today = 오늘(KST 날짜).
  * (따라잡기 창 밖의 SIGMET · 알림 날은 api 가 원본이 남은 만큼 채운다 — MaintenanceJobs.backfillStats. 이 화면은 그 계열을 최근 7일 묶음으로만 묻는다.)
  * 집계 전이면 채워질 때를 말하되, 따라잡기 범위 밖의 지난 날짜에는 "다음 집계"를 약속하지 않는다.
@@ -64,6 +75,8 @@ export function yesterdayKst(nowMs: number): string {
  */
 export function statsEmptyText(aggregated: boolean | undefined, day: string | null, today: string, source?: { name: string; retentionH: number; nowMs: number }): string {
   if (aggregated === true) return day ? "이 날짜에 자료가 없습니다(집계됨 · 해당 기록 없음)." : "최근 7일 자료가 없습니다(집계됨 · 해당 기록 없음).";
+  // 오늘(KST)보다 뒤 — 집계할 날이 아직 오지 않았다: '다음 집계 뒤 채워집니다'를 약속하지 않는다(QA-309)
+  if (day != null && today && day > today) return "아직 오지 않은 날짜입니다 — 집계할 기록이 없습니다(통계 날짜는 어제(KST)까지).";
   const why = "서비스 기록 전 · 집계가 빠진 날 · KST 날짜 집계로 바꾸기 전 날짜";
   if (aggregated === false) {
     const oldest = addDays(today, -STATS_CATCH_UP_DAYS);
