@@ -749,7 +749,10 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
     kma `_fail` 과 같은 규칙. 따옴표 안에 두면 ReadTimeout · ConnectError · HTTP 502 가 한 묶음이 되어 로그 화면 · 해결 표시(ADR-024 — 지문 단위)가 가르지 못한다).
     전에는 로그 화면에 오는 이 두 WARN 에 까닭이 없었다(한 번의 실패는 INFO — 운영 2026-09-30 17:57:43 · 17:58:01 UTC `region: adsb_fi failed (ReadTimeout …)`).
     시험 `test_aircraft_job`(+3 — 고치기 전 실패: 까닭 · 종류마다 지문 · 성공 뒤 '없음', 기존 공급자 없음 두 시험의 글자 · 지문). api 는 이 해시를 그대로 싣는다(`/status` · WS `status` 의 `active_providers` — 문자열 맵, 스키마 그대로 · `/ops/providers`
-    의 `active`) — api 코드 변경 없음.
+    의 `active`) — api 코드 변경 없음. (2026-10-01 · 리뷰 cto-2026-10 S13) api 는 해시 전체가 아니라 허용 목록 필드만 싣는다: 작업 `region` · `global` 의
+    `{job}` · `{job}_since` · `{job}_reason` · `{job}_none_since` · `{job}_none_reason` · `{job}_none_next` · `{job}_none_retry`(`StatusService.activeProviders` — 수집기가
+    쓴 순서 그대로, Redis 를 읽지 못하면 전처럼 `{"error":"redis unavailable"}`). 전에는 수집기가 이 해시에 새 필드를 쓰면 저절로 공개됐다 — 새 작업 · 필드를 공개하려면
+    api 허용 목록과 이 문서를 함께 고친다(WS 표본 `status.populated` 의 시험용 `hot` 필드는 빠졌다).
   - 웹(`lib/active-provider` — KST 만, 값 그대로, 모르면 쓰지 않는다): 운영 공급자 탭 위쪽 작업 배지가 공급자 없음이면 빨강 `region: 공급자 없음 · 12:16:32 KST 부터`(다시 시도
     중이면 뒤에 `· adsb_fi 다시 시도 중`, title 앞머리에도 `adsb_fi 다시 시도 중(쉬는 공급자 — 다른 공급자가 없어 주기마다)` · title =
     `공급자 없음 · … 부터 — 건너뜀: … · 가장 먼저 풀리는 때 12:21:22 KST(수집기 체인 상태) · 마지막으로 쓴 공급자 adsb_lol`, 때를 모르면 `풀리는 때 모름(운영자가 켜거나
