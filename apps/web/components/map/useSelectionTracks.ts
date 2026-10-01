@@ -81,10 +81,11 @@ export function useSelectionTracks(map: maplibregl.Map | null, feed: FeedRef): v
     if (!map) return;
     onReady(map, "ship-track", () => drawShipTrack(map, { segs: [], gaps: [] }));
     if (!selectedShip) return;
-    let cancelled = false;
+    // 다른 선박 · 기간을 고르거나 지도가 바뀌거나 떠나면 요청을 끊는다(끊은 요청의 답 · 오류는 쓰지 않는다)
+    const ctl = new AbortController();
     const finish = (track: ShipTrack, error: string | null, requestId: string | null = null) => {
       const ref = shipTrack.current;
-      if (cancelled || ref.mmsi !== selectedShip) return;
+      if (ctl.signal.aborted || ref.mmsi !== selectedShip) return;
       // REST 공백(scope 포함)과 상태 공백을 이 선박 위치로 가른다 — 다른 구역의 공백은 이 선박 카드·연결선에 넣지 않는다(계약 v4 §G)
       mergeStatusGaps(track, getData().ais, ref.sinceMs, shipPos(selectedShip));
       for (const p of ref.pending) appendShipTrack(track, p, ref.anchor);
@@ -92,11 +93,11 @@ export function useSelectionTracks(map: maplibregl.Map | null, feed: FeedRef): v
       setData({ shipTrack: { mmsi: selectedShip, loaded: true, error, requestId, gaps: track.gaps.slice(), gapsTruncated: track.gapsTruncated === true, segments: track.segs.length, fromMs: from, hours: shipTrackHours } });
       onReady(map, "ship-track", () => drawShipTrack(map, track));
     };
-    fetchShipTrack(selectedShip, from, to)
+    fetchShipTrack(selectedShip, from, to, { signal: ctl.signal })
       .then((t) => finish(t, null))
       // 기록이 없거나 DB 장애 → 실시간 관측만으로 잇는다. 요청 id 는 카드의 문구에(계약 v5 §G5)
       .catch((e: unknown) => { const t = trackError(e); finish({ segs: [], gaps: [] }, t.error, t.requestId); });
-    return () => { cancelled = true; };
+    return () => ctl.abort();
   }, [map, selectedShip, shipTrackHours]);
 
   useEffect(() => {
@@ -131,17 +132,18 @@ export function useSelectionTracks(map: maplibregl.Map | null, feed: FeedRef): v
     if (!map) return;
     onReady(map, "tracks", () => { geo(map, "tracks")?.setData(EMPTY_FC); feed.current?.refreshPrediction(); });
     if (!selectedHex) return;
-    let cancelled = false;
+    // 다른 항공기를 고르거나 지도가 바뀌거나 떠나면 요청을 끊는다(끊은 요청의 답은 쓰지 않는다)
+    const ctl = new AbortController();
     const finish = (rest: TrackPt[]) => {
-      if (cancelled || track.current.hex !== selectedHex) return;
+      if (ctl.signal.aborted || track.current.hex !== selectedHex) return;
       const pts = mergeTrack(rest, track.current.pending);
       track.current = { hex: selectedHex, pts, pending: [], loaded: true };
       onReady(map, "tracks", () => geo(map, "tracks")?.setData(trackFeatureCollection(pts)));
     };
-    aircraftTrack(selectedHex)
+    aircraftTrack(selectedHex, { signal: ctl.signal })
       .then((pts) => finish(pts))
       .catch(() => finish([])); // DB 기록이 없거나(전세계 항공기) DB 장애 → 실시간 관측만으로 잇는다
-    return () => { cancelled = true; };
+    return () => ctl.abort();
   }, [map, feed, selectedHex]);
 
   useEffect(() => {
