@@ -1087,3 +1087,13 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
   - 웹 providers 탭: 'Provider switches (collector 자동 전환)' 아래 경고 줄(role=alert, 주황) `수집기 자동 전환 기록을 읽지 못함(api: <까닭 그대로>) — 아래 표가 비어
     있어도 ‘전환 없음’이 아니다. 15 s 마다 다시 읽는다`. 까닭이 글자가 아니면 `이유 모름`(지어내지 않는다), `error` 가 없거나 null · 빈 글자면 줄이 없다.
     회귀 막기: 웹 `tests/ops-page.test.ts` · `tests/guide-page.test.ts`.
+
+## G. 21차 개정(2026-10-01 · CTO 리뷰 cto-2026-10 최종 검토 · 레인 web — /ops 의 DLQ 탭이 '읽지 못함'을 '없음'과 가른다)
+- G31(§G30 · 리뷰 cto-2026-10 최종 검토) **`GET /api/v1/ops/dlq` 의 `error` — DLQ 를 읽지 못함**
+  - api 는 전부터 DLQ(`wakeline:dlq`)를 Redis 오류로 읽지 못하면 `{"items": [], "error": "redis unavailable"}` 으로 답한다(`OpsController.dlq` — 이 개정은 동작을
+    바꾸지 않고 계약에 올린다. §G30 이 '`/ops/dlq` 와 같은 모양'이라고만 적었고 이 필드 자체는 어느 계약에도 없었다). 읽었으면 `error` 키가 없고 `items` 는 최근 50개,
+    새것부터(항목마다 `stream_id`). 다른 키 · 의미는 그대로.
+  - 웹 dlq 탭: 경고 줄(role=alert, 주황) `스키마 검증 실패 메시지(DLQ)를 읽지 못함(api: <까닭 그대로>) — 목록이 비어 있어도 ‘없음’이 아니다. 15 s 마다 다시 읽는다`.
+    까닭이 글자가 아니면 `이유 모름`(지어내지 않는다), `error` 가 없거나 null · 빈 글자면 줄이 없다. 줄이 있는 동안 빈 목록을 '스키마 검증에 실패한 메시지가 없습니다.'
+    로 적지 않는다(전에는 그렇게 적어 읽지 못함이 없음과 같아 보였다 — 리뷰 cto-2026-10 최종 검토). 항목이 있으면 표는 그대로.
+  - 회귀 막기: 웹 `tests/ops-page.test.ts` · `tests/guide-page.test.ts`. api 쪽에는 이 응답을 보는 시험이 없다(`OpsDbTest` 는 §G30 의 providers 만 본다) — 따로 할 일.
