@@ -289,6 +289,19 @@ CI 의 web job 이 운영 빌드 뒤 `npm run check:first-js -- --in-image`(빌�
 
 - 작다(틱당 약 0.2 ms) — 늘 마운트된 자리라 없앴다. 재현: `cd apps/web && WAKELINE_PERF=1 npx vitest run tests/perf-search-clock.test.ts -t measure`. 전 = 커밋 `c6e22c0`.
 
+**P6 — 범례(`MapLegend`)의 `hasCoverage` 선택자: 재고 바꾸지 않음.** 스토어가 바뀔 때마다(`setData` — WS diff 마다) 선택자가 AIS 수신 범위의 GeoJSON 을 만들어
+불(참/거짓)만 본다(값이 같으면 다시 그리지 않는다 — 일은 선택자 안에서만). 범례가 열려 있을 때만 마운트된다.
+`tests/perf/map-legend.bench.ts`(`vitest bench` — `vitest run` 은 집지 않는다), 한 번 부를 때의 평균(두 번 돌림):
+
+| 수신 범위 상자 | GeoJSON 을 만드는 지금 | 참조만 읽을 때(바꾼다면) |
+|---|---|---|
+| 1개(`.env.example` AIS_BBOXES) | 1.4 · 1.4 µs | 0.00003 µs |
+| 2개(운영 설정 예 — 두 연결) | 1.5 · 1.6 µs | 〃 |
+| 5개 | 6.3 · 6.9 µs | 〃 |
+
+- 스토어 변경 한 번에 약 1.5 µs — 같은 변경에 상태 바 한 번 다시 그리기가 0.12 ms(web-review §4 P6)라 그 1 % 남짓이다. 줄일 것이 없다고 보고 **바꾸지 않았다**
+  (계획 Phase 4: 이득이 측정되지 않으면 하지 않는다). 재현: `cd apps/web && npx vitest bench --run --reporter=verbose tests/perf/map-legend.bench.ts`.
+
 ## 재현
 ```bash
 make bench SHIPS=1               # k6 REST + WS(선박 포함), api 층 직접
@@ -296,5 +309,7 @@ make measure-ais d=600 i=30      # AIS 수신 상태·처리량·자원(읽기 �
 (cd apps/web && npm run build && npm run check:first-js -- --in-image)      # 첫 화면 JS 예산(빌드 결과에서 계산 · 웹 이미지의 Node — CI 와 같다. 호스트 Node 로는 인자 없이)
 (cd apps/web && npm run build && npm run measure:first-js -- --serve 8790)   # 첫 화면 JS(브라우저 측정, 운영 빌드를 127.0.0.1:8790 에)
 (cd apps/web && npm run measure:first-js -- http://localhost:8700)          # 첫 화면 JS(배포 스택 — 페이지만 연다)
+(cd apps/web && WAKELINE_PERF=1 npx vitest run tests/perf-ship-list.test.ts tests/perf-alert-panel.test.ts tests/perf-search-clock.test.ts -t measure)   # §11 웹 렌더 작업(시간)
+(cd apps/web && npx vitest bench --run --reporter=verbose tests/perf/map-legend.bench.ts)                                                              # §11 P6(범례 선택자)
 bash tools/chaos.sh              # 장애 주입(개발 스택을 실제로 죽였다 살린다)
 ```
