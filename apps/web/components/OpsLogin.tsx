@@ -1,7 +1,7 @@
 "use client";
 import { useRef, useState } from "react";
-import { apiSend } from "@/lib/api";
-import { loginErrorText, OPS_SESSION_PATH, validateLogin } from "@/lib/ops";
+import { signIn } from "@/lib/endpoints/ops";
+import { loginErrorText, validateLogin } from "@/lib/ops";
 import { RequestIdOf } from "./logs/ErrorNote";
 
 /**
@@ -19,7 +19,7 @@ export function OpsLogin({ onLogin, notice }: { onLogin: (u: { username: string 
     const bad = validateLogin(u, p);
     if (bad) { setErr(bad); (bad.field === "user" ? userRef : passRef).current?.focus(); return; }
     setErr(null); setBusy(true);
-    try { onLogin(await apiSend<{ username: string }>("POST", OPS_SESSION_PATH, { username: u, password: p })); }
+    try { onLogin(await signIn(u, p)); }
     catch (x) { setErr({ field: null, text: loginErrorText(x), error: x }); setTimeout(() => errRef.current?.focus(), 0); }
     finally { setBusy(false); }
   };

@@ -1,12 +1,14 @@
 "use client";
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
-import { ApiError, apiGet, apiSend } from "@/lib/api";
+import { ApiError } from "@/lib/api";
+import { opsSession, opsTab, opsTabPath, saveSetting, setProviderEnabled, signOutRequest, type OpsTab } from "@/lib/endpoints/ops";
 import { DISPLAY_TZ, fmtKst, fmtKstClock, fmtTimeTitle, utcDayWindowKst } from "@/lib/time";
 import { fmtBudgetLimit, fmtLatencyMs } from "@/lib/format";
-import { liveNote, mirrorDiffers, switchCell, toggleNote, type SwitchNote, type SwitchState, type ToggleResult } from "@/lib/provider-switch";
+import { liveNote, mirrorDiffers, switchCell, toggleNote, type SwitchNote, type SwitchState } from "@/lib/provider-switch";
 import {
-  classifyOpsError, editSetting, isAuthMiss, OPS_SESSION_PATH, parseSetting, pipelineLossCount, providerLastError, providerMissing, providersNowMs, providerSwitchPath, rebaseSetting, RequestOrder,
-  RUN_STATUS_TITLE, runStatusClass, runStatusTone, SESSION_EXPIRED_NOTE, settingConflict, qualityPartialDay, settingIfMatch, settingPath, settingSpec, signOut, withProviderResolutions, type SettingEdit,
+  classifyOpsError, editSetting, isAuthMiss, parseSetting, pipelineLossCount, providerLastError, providerMissing, providersNowMs, rebaseSetting, RequestOrder,
+  RUN_STATUS_TITLE, runStatusClass, runStatusTone, SESSION_EXPIRED_NOTE, settingConflict, qualityPartialDay, settingIfMatch, settingSpec, signOut, withProviderResolutions,
+  type SettingEdit,
 } from "@/lib/ops";
 import { hiddenCount, hiddenText, parseResolutionState, RESOLUTION_STATE_TEXT, RESOLVE_EFFECT, type ResolvedMode } from "@/lib/resolutions";
 import { ResolveConfirm, useResolveSlot, type ResolveResult, type ResolveTarget } from "@/components/ResolveConfirm";
@@ -41,15 +43,9 @@ interface Drill { k: RunKey; since: string | null }
 /** counted_since = V16 이 격리 수를 KST 날짜로 세기 시작한 순간(UTC ISO) — 그 KST 날짜는 부분 값(lib/ops qualityPartialDay) */
 interface Quality { rule_counts: Any[]; recent: Any[]; day_zone?: unknown; counted_since?: unknown }
 interface Settings { items: { key: string; value: unknown; version: number; updated_by?: string; updated_at?: string }[] }
-type Tab = "providers" | "runs" | "quality" | "settings" | "audit" | "dlq" | "pipeline";
+/** 탭 = 엔드포인트 하나(경로는 lib/endpoints/ops — 실행 요약은 해결 표시를 늘 명시한다) */
+type Tab = OpsTab;
 const TABS: readonly Tab[] = ["providers", "runs", "quality", "settings", "audit", "dlq", "pipeline"];
-/** 탭마다 불러오는 엔드포인트 — 마지막 성공 시각·실패를 탭마다 따로 둔다(R-12) */
-const TAB_PATH: Record<Tab, string> = {
-  providers: "/api/v1/ops/providers", runs: "/api/v1/ops/runs?limit=50", quality: "/api/v1/ops/quality", settings: "/api/v1/ops/settings",
-  audit: "/api/v1/ops/audit", dlq: "/api/v1/ops/dlq", pipeline: "/api/v1/ops/pipeline",
-};
-/** 실제 요청 경로 — 실행 요약은 해결 표시(resolved=hide|show, 기본 hide)를 늘 명시한다(ADR-024) */
-const tabPath = (t: Tab, runsMode: ResolvedMode) => (t === "runs" ? `${TAB_PATH.runs}&resolved=${runsMode}` : TAB_PATH[t]);
 /** 탭마다 요청 순서(lib/ops RequestOrder) — 대시보드마다 하나 */
 const newOrders = () => Object.fromEntries(TABS.map((t) => [t, new RequestOrder()])) as Record<Tab, RequestOrder>;
 /** 해결 처리 뒤 다시 읽는 탭: 공급자(해결됨 표시) · 실행 요약(오류 행) · 감사(RESOLVE · UNRESOLVE) */
@@ -181,11 +177,11 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
   /** 오류 처리: 세션 만료면 로그인으로(대시보드 상태는 언마운트로 사라진다), 아니면 오류 문구 */
   const fail = useCallback((e: unknown) => {
     if (!isAuthMiss(e)) { setErr(e); return; }
-    void classifyOpsError(e, () => apiGet(OPS_SESSION_PATH)).then((k) => (k === "expired" ? onLeave(SESSION_EXPIRED_NOTE) : setErr(e)));
+    void classifyOpsError(e, () => opsSession()).then((k) => (k === "expired" ? onLeave(SESSION_EXPIRED_NOTE) : setErr(e)));
   }, [onLeave]);
   /** 해결 쓰기의 401/404: 세션 확인만(문구는 확인 패널이 보인다) — 만료면 로그인으로 */
   const authMiss = useCallback(async (e: unknown) => {
-    const k = await classifyOpsError(e, () => apiGet(OPS_SESSION_PATH));
+    const k = await classifyOpsError(e, () => opsSession());
     if (k === "expired") onLeave(SESSION_EXPIRED_NOTE);
     return k;
   }, [onLeave]);
@@ -202,7 +198,7 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
       if (periodic && ord.busy) return;
       const mode = runsModeRef.current;
       const my = ord.begin(!periodic);
-      void apiGet<T>(tabPath(t, mode)).then(
+      void opsTab<T>(t, mode).then(
         (v) => { if (!ord.settle(my)) return; set(v, mode); setLastOk((o) => ({ ...o, [t]: Date.now() })); setTabErr((m) => { const c = { ...m }; delete c[t]; return c; }); },
         (e: unknown) => {
           if (!ord.settle(my)) return;
@@ -210,7 +206,7 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
           setTabErr((m) => ({ ...m, [t]: e }));
           if (!isAuthMiss(e) || authMiss) return;
           authMiss = true;
-          void classifyOpsError(e, () => apiGet(OPS_SESSION_PATH)).then((k) => { if (k === "expired") onLeave(SESSION_EXPIRED_NOTE); });
+          void classifyOpsError(e, () => opsSession()).then((k) => { if (k === "expired") onLeave(SESSION_EXPIRED_NOTE); });
         });
     };
     load<Providers>("providers", setProv);
@@ -256,7 +252,7 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
     }
     reload(RESOLVE_AFFECTS);
   }, [reload, closeResolveIf]);
-  const logout = () => { void signOut(() => apiSend("DELETE", OPS_SESSION_PATH), onLeave); };
+  const logout = () => { void signOut(() => signOutRequest(), onLeave); };
   const losses = pipelineLossCount(pipeline);
   /** 마지막 토글 결과(R-94): DB 원본에 커밋됐어도 Redis 미러에 실패했으면(mirrored=false) 수집기는 아직 이전 값을 따른다 — 경고로 보인다 */
   const [switchNote, setSwitchNote] = useState<SwitchNote | null>(null);
@@ -276,7 +272,7 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
     switching.current.add(name);
     setBusySwitch(new Set(switching.current));
     setSwitchErr(null);
-    try { setSwitchNote(toggleNote(await apiSend<ToggleResult>("POST", providerSwitchPath(name, action)))); refresh(); }
+    try { setSwitchNote(toggleNote(await setProviderEnabled(name, action === "enable"))); refresh(); }
     catch (e) { setSwitchErr({ name, action, error: e }); if (isAuthMiss(e)) void authMiss(e); }
     finally { switching.current.delete(name); setBusySwitch(new Set(switching.current)); }
   };
@@ -295,7 +291,7 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
           </button>
         ))}</div>
         <button className="btn" onClick={refresh} title="모든 탭을 지금 다시 받는다(15 s 주기와 따로)">새로고침</button>
-        <span className={`mono text-[11px] ${tabErr[tab] ? "text-warn" : "text-fg-3"}`} title={`이 탭(${tabPath(tab, runsMode)})의 마지막 성공 응답 시각(KST) — 15 s 마다 다시 요청${lastOk[tab] ? ` · ${fmtTimeTitle(lastOk[tab])}` : ""}`} data-testid="ops-last-ok">갱신 {fmtKstClock(lastOk[tab])}</span>
+        <span className={`mono text-[11px] ${tabErr[tab] ? "text-warn" : "text-fg-3"}`} title={`이 탭(${opsTabPath(tab, runsMode)})의 마지막 성공 응답 시각(KST) — 15 s 마다 다시 요청${lastOk[tab] ? ` · ${fmtTimeTitle(lastOk[tab])}` : ""}`} data-testid="ops-last-ok">갱신 {fmtKstClock(lastOk[tab])}</span>
         {err || TABS.some((t) => tabErr[t]) ? (
           <span className="text-[11px] text-bad" role="alert">
             {TABS.filter((t) => tabErr[t]).map((t, i) => <span key={t}>{i ? " · " : ""}<ErrorNote prefix={`${t}: `} error={tabErr[t]} /></span>)}
@@ -436,7 +432,7 @@ function SettingsForm({ items, onSaved, onAuthMiss }: { items: Settings["items"]
     setFieldErr((f) => { const c = { ...f }; delete c[k]; return c; });
     saving.current.add(k);
     setBusy(new Set(saving.current));
-    try { await apiSend("PUT", settingPath(k), { value: parsed.value }, { "If-Match": settingIfMatch(ed) }); setMsg({ ok: true, text: `${k} 저장됨 — 다음 주기부터 적용` }); drop(k); onSaved(); }
+    try { await saveSetting(k, parsed.value, settingIfMatch(ed)); setMsg({ ok: true, text: `${k} 저장됨 — 다음 주기부터 적용` }); drop(k); onSaved(); }
     catch (e) {
       if (isAuthMiss(e)) onAuthMiss(e);
       const conflict = e instanceof ApiError && e.status === 409;

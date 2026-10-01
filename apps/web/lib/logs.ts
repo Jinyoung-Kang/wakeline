@@ -120,6 +120,11 @@ export interface LogPage {
   resolutionState: ResolutionState | null;
 }
 
+/** 항목 하나의 응답(§C4) — {item: …} 으로 싸여 오면 벗긴다(그 밖은 그대로). 스키마와 맞지 않으면 null */
+export function parseLogItemResponse(v: unknown): LogEntry | null {
+  return parseLogEntry(typeof v === "object" && v !== null && "item" in v ? (v as { item: unknown }).item : v);
+}
+
 export function parseLogPage(v: unknown): LogPage {
   const r = isObj(v) ? v : {};
   const raw = Array.isArray(r.items) ? r.items : [];

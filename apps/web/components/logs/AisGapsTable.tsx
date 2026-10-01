@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { apiGet } from "@/lib/api";
+import { aisGaps } from "@/lib/endpoints/logs";
 import { fmtDuration } from "@/lib/format";
 import { aisGapRows, LOG_PERIOD_LABEL, LOG_PERIODS, type LogPeriod } from "@/lib/logs";
 import { ErrorNote } from "./ErrorNote";
@@ -23,8 +23,8 @@ export function AisGapsTable({ initialPeriod, onFilterRid }: { initialPeriod: Lo
   useEffect(() => {
     let live = true;
     const from = new Date(Date.now() - LOG_PERIODS[period]).toISOString();
-    apiGet<unknown>(`/api/v1/ais/gaps?${new URLSearchParams({ from })}`)
-      .then((v) => { if (live) { setData(aisGapRows(v)); setFailed(null); } })
+    aisGaps(from)
+      .then((rows) => { if (live) { setData(rows); setFailed(null); } })
       .catch((e: unknown) => { if (live) setFailed({ period, error: e }); });
     return () => { live = false; };
   }, [period, tick]);

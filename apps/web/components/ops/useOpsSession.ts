@@ -1,9 +1,9 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
-import { apiGet } from "@/lib/api";
-import { isAuthMiss, OPS_SESSION_PATH } from "@/lib/ops";
+import { opsSession, type OpsUser } from "@/lib/endpoints/ops";
+import { isAuthMiss } from "@/lib/ops";
 
-export interface OpsUser { username: string }
+export type { OpsUser };
 
 /**
  * 운영 세션(R-12) — 운영 화면(/ops)과 시스템 로그 화면(/logs)이 같은 세션을 같은 규칙으로 본다.
@@ -20,7 +20,7 @@ export function useOpsSession() {
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     const ctl = new AbortController();
-    apiGet<OpsUser>(OPS_SESSION_PATH, { signal: ctl.signal }).then(
+    opsSession({ signal: ctl.signal }).then(
       (u) => { if (!ctl.signal.aborted) { setMe(u); setChecked(true); } },
       (e: unknown) => {
         if (ctl.signal.aborted) return;

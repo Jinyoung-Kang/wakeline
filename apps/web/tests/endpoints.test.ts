@@ -4,10 +4,16 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const rec = vi.hoisted(() => ({ calls: [] as { path: string; init: unknown }[], body: undefined as unknown, error: null as unknown }));
+const rec = vi.hoisted(() => ({
+  calls: [] as { path: string; init: unknown }[], sends: [] as { method: string; path: string; body: unknown; headers: unknown }[], body: undefined as unknown, error: null as unknown,
+}));
 vi.mock("@/lib/api", async (orig) => ({
   ...(await orig<typeof import("@/lib/api")>()),
   apiGet: (path: string, init?: unknown) => { rec.calls.push({ path, init }); return rec.error ? Promise.reject(rec.error) : Promise.resolve(rec.body); },
+  apiSend: (method: string, path: string, body?: unknown, headers?: unknown) => {
+    rec.sends.push({ method, path, body, headers });
+    return rec.error ? Promise.reject(rec.error) : Promise.resolve(rec.body);
+  },
 }));
 
 import { aircraftDetail } from "@/lib/endpoints/aircraft";
@@ -17,8 +23,13 @@ import { shipDetail } from "@/lib/endpoints/ship-detail";
 import { airportWx, sigmetInside, watchedAirports } from "@/lib/endpoints/weather";
 import { alertStats, sigmetStats, trafficStats } from "@/lib/endpoints/stats";
 import { replayFrame } from "@/lib/endpoints/replay";
+import {
+  createResolution, opsSession, opsTab, opsTabPath, revokeResolution, runsDrill, saveSetting, setProviderEnabled, signIn, signOutRequest,
+} from "@/lib/endpoints/ops";
+import { aisGaps, logGroups, logItem, logsPage } from "@/lib/endpoints/logs";
+import { DEFAULT_LOG_FILTER, logGroupsUrl, logsUrl } from "@/lib/logs";
 
-beforeEach(() => { rec.calls.length = 0; rec.body = undefined; rec.error = null; });
+beforeEach(() => { rec.calls.length = 0; rec.sends.length = 0; rec.body = undefined; rec.error = null; });
 const paths = () => rec.calls.map((c) => c.path);
 
 describe("aircraft endpoints", () => {
@@ -139,5 +150,85 @@ describe("replay endpoint", () => {
     await replayFrame({ at: Date.parse("2026-09-28T15:10:00Z"), bbox: "124,33,132,39" }, { signal: ctl.signal });
     expect(paths()).toEqual(["/api/v1/replay?at=2026-09-28T15%3A10%3A00.000Z&bbox=124%2C33%2C132%2C39"]);
     expect((rec.calls[0].init as { signal: AbortSignal }).signal).toBe(ctl.signal);
+  });
+});
+
+describe("ops endpoints", () => {
+  it("session: GET with the caller's signal; sign-in POST with the credentials; sign-out DELETE", async () => {
+    const ctl = new AbortController();
+    rec.body = { username: "op" };
+    expect(await opsSession({ signal: ctl.signal })).toEqual({ username: "op" });
+    await signIn("op", "secret-pw");
+    await signOutRequest();
+    expect(paths()).toEqual(["/api/v1/ops/session"]);
+    expect((rec.calls[0].init as { signal: AbortSignal }).signal).toBe(ctl.signal);
+    expect(rec.sends.map((x) => [x.method, x.path, x.body])).toEqual([["POST", "/api/v1/ops/session", { username: "op", password: "secret-pw" }], ["DELETE", "/api/v1/ops/session", undefined]]);
+  });
+  it("tab paths: runs carries the resolved mode, the others are fixed", async () => {
+    rec.body = {};
+    for (const t of ["providers", "runs", "quality", "settings", "audit", "dlq", "pipeline"] as const) await opsTab(t, "show");
+    expect(paths()).toEqual(["/api/v1/ops/providers", "/api/v1/ops/runs?limit=50&resolved=show", "/api/v1/ops/quality", "/api/v1/ops/settings",
+      "/api/v1/ops/audit", "/api/v1/ops/dlq", "/api/v1/ops/pipeline"]);
+    expect(opsTabPath("runs", "hide")).toBe("/api/v1/ops/runs?limit=50&resolved=hide");
+  });
+  it("runs drill: lib/ops-runs runsDrillPath", async () => {
+    rec.body = { items: [] };
+    await runsDrill({ job: "kma radar", provider: "kma", status: "error" }, "2026-09-28T00:00:00Z", 50);
+    expect(paths()).toEqual(["/api/v1/ops/runs?job=kma+radar&provider=kma&status=error&since=2026-09-28T00%3A00%3A00Z&limit=50&cursor=50"]);
+  });
+  it("writes: provider switch and setting paths are encoded; the setting save sends If-Match", async () => {
+    rec.body = { provider: "a/b", disabled: true, version: 2, updated_at: "2026-09-28T01:00:05Z", mirrored: true };
+    await setProviderEnabled("a/b", false);
+    await setProviderEnabled("adsbdb", true);
+    await saveSetting("x/y", 2, "3");
+    expect(rec.sends.map((x) => [x.method, x.path, x.body, x.headers])).toEqual([
+      ["POST", "/api/v1/ops/providers/a%2Fb/disable", undefined, undefined],
+      ["POST", "/api/v1/ops/providers/adsbdb/enable", undefined, undefined],
+      ["PUT", "/api/v1/ops/settings/x%2Fy", { value: 2 }, { "If-Match": "3" }],
+    ]);
+  });
+  it("resolutions: POST body from the draft and note, 201 parsed (null when the shape is wrong); DELETE by id", async () => {
+    rec.body = { id: 7, kind: "log_group", key: "fp1", upto: "2026-09-28T01:00:00.123456Z", resolved_at: "2026-09-28T01:01:00Z", resolved_by: "op", note: null };
+    const r = await createResolution({ kind: "log_group", key: "fp1", upto: "2026-09-28T01:00:00.123456Z" }, "  fixed ");
+    expect(r).toMatchObject({ id: 7, key: "fp1", resolved_by: "op" });
+    rec.body = { id: "x" };
+    expect(await createResolution({ kind: "provider_error", key: "kma", upto: null }, "")).toBeNull();
+    rec.body = undefined;
+    await revokeResolution(7);
+    expect(rec.sends.map((x) => [x.method, x.path, x.body])).toEqual([
+      ["POST", "/api/v1/ops/resolutions", { kind: "log_group", key: "fp1", upto: "2026-09-28T01:00:00.123456Z", note: "fixed" }],
+      ["POST", "/api/v1/ops/resolutions", { kind: "provider_error", key: "kma" }],
+      ["DELETE", "/api/v1/ops/resolutions/7", undefined],
+    ]);
+  });
+});
+
+describe("logs endpoints", () => {
+  const AT = Date.parse("2026-09-28T02:00:00Z");
+  const entry = { id: "1727480000000-0", ts: "2026-09-28T01:59:00Z", service: "api", level: "ERROR", message: "boom" };
+  it("page and groups use lib/logs logsUrl · logGroupsUrl and parse; signal passed through", async () => {
+    const ctl = new AbortController();
+    rec.body = { items: [entry, { id: "bad" }], next_cursor: null };
+    const p = await logsPage(DEFAULT_LOG_FILTER, AT, { limit: 200 }, { signal: ctl.signal });
+    expect(p.items.map((e) => e.id)).toEqual(["1727480000000-0"]);
+    rec.body = { groups: [] };
+    expect((await logGroups(DEFAULT_LOG_FILTER, AT)).groups).toEqual([]);
+    expect(paths()).toEqual([logsUrl(DEFAULT_LOG_FILTER, AT, { limit: 200 }), logGroupsUrl(DEFAULT_LOG_FILTER, AT)]);
+    expect((rec.calls[0].init as { signal: AbortSignal }).signal).toBe(ctl.signal);
+  });
+  it("one item: the id is encoded, {item} is unwrapped, a bare entry is read as is, a body of the wrong shape is null", async () => {
+    rec.body = { item: entry };
+    expect((await logItem("1727480000000-0", "client"))?.message).toBe("boom");
+    rec.body = entry;
+    expect((await logItem("1727480000000-0", null))?.id).toBe("1727480000000-0");
+    rec.body = { item: { id: "nope" } };
+    expect(await logItem("a/b", null)).toBeNull();
+    expect(paths()).toEqual(["/api/v1/ops/logs/1727480000000-0?stream=client", "/api/v1/ops/logs/1727480000000-0", "/api/v1/ops/logs/a%2Fb"]);
+  });
+  it("AIS gaps: from as a query value; rows through aisGapRows", async () => {
+    rec.body = { to: "2026-09-28T02:00:00Z", items: [] };
+    const r = await aisGaps("2026-09-28T01:00:00.000Z");
+    expect(paths()).toEqual(["/api/v1/ais/gaps?from=2026-09-28T01%3A00%3A00.000Z"]);
+    expect(r).toMatchObject({ rows: [], to: "2026-09-28T02:00:00Z" });
   });
 });

@@ -1,10 +1,10 @@
 "use client";
 import { useEffect, useState } from "react";
-import { apiGet } from "@/lib/api";
+import { logGroups, logsPage } from "@/lib/endpoints/logs";
 import { fmtIsoKst } from "@/lib/time";
 import {
-  DEFAULT_LOG_FILTER, entryKey, exceptionTypeText, firstLine, groupCountText, logGroupsUrl, logJson, logLinkHash, LOG_PERIOD_LABEL, LOG_STREAM_KEEP, LOG_STREAM_KEY,
-  LOG_STREAM_LABEL, logsUrl, logText, parseLogGroups, parseLogPage, type LogEntry, type LogGroup, type LogPeriod,
+  DEFAULT_LOG_FILTER, entryKey, exceptionTypeText, firstLine, groupCountText, logJson, logLinkHash, LOG_PERIOD_LABEL, LOG_STREAM_KEEP, LOG_STREAM_KEY, LOG_STREAM_LABEL,
+  logText, type LogEntry, type LogGroup, type LogPeriod,
 } from "@/lib/logs";
 import { isAuthMiss } from "@/lib/ops";
 import { uptoOf, type ResolvedMode } from "@/lib/resolutions";
@@ -50,8 +50,8 @@ export function LogDetail({ entry, period, resolvedMode, onClose, onOpen, onFilt
   useEffect(() => {
     if (!rid) return;
     let live = true;
-    apiGet<unknown>(logsUrl({ ...DEFAULT_LOG_FILTER, period: RELATED_PERIOD, rid, resolved: "show" }, Date.now(), { limit: RELATED_LIMIT }))
-      .then((v) => { if (!live) return; const p = parseLogPage(v); setRelated({ items: p.items.filter((x) => entryKey(x) !== key), more: p.nextCursor != null || p.scanTruncated === true }); setRelatedErr(null); })
+    logsPage({ ...DEFAULT_LOG_FILTER, period: RELATED_PERIOD, rid, resolved: "show" }, Date.now(), { limit: RELATED_LIMIT })
+      .then((p) => { if (!live) return; setRelated({ items: p.items.filter((x) => entryKey(x) !== key), more: p.nextCursor != null || p.scanTruncated === true }); setRelatedErr(null); })
       .catch((e: unknown) => { if (!live) return; setRelatedErr(e); if (isAuthMiss(e)) onAuthMiss(e); });
     return () => { live = false; };
   }, [key, rid, resolvedId, onAuthMiss]);
@@ -59,8 +59,8 @@ export function LogDetail({ entry, period, resolvedMode, onClose, onOpen, onFilt
   useEffect(() => {
     if (!fp) return;
     let live = true;
-    apiGet<unknown>(logGroupsUrl({ services: [service], level, period, resolved: resolvedMode }, Date.now()))
-      .then((v) => { if (!live) return; const g = parseLogGroups(v); setFpStats({ g: g.groups.find((x) => x.fp === fp) ?? null, scanTruncated: g.scanTruncated }); setFpErr(null); })
+    logGroups({ services: [service], level, period, resolved: resolvedMode }, Date.now())
+      .then((g) => { if (!live) return; setFpStats({ g: g.groups.find((x) => x.fp === fp) ?? null, scanTruncated: g.scanTruncated }); setFpErr(null); })
       .catch((e: unknown) => { if (!live) return; setFpErr(e); if (isAuthMiss(e)) onAuthMiss(e); });
     return () => { live = false; };
   }, [fp, service, level, period, resolvedMode, resolvedId, onAuthMiss]);
