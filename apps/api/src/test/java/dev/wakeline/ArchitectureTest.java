@@ -52,7 +52,7 @@ class ArchitectureTest {
         List<Src> out = new ArrayList<>();
         try (Stream<Path> files = Files.walk(MAIN)) {
             for (Path p : files.filter(f -> f.toString().endsWith(".java")).sorted().toList()) {
-                String code = Files.readString(p, StandardCharsets.UTF_8).replaceAll("(?s)/\\*.*?\\*/", "").replaceAll("(?m)//.*$", "");
+                String code = stripComments(Files.readString(p, StandardCharsets.UTF_8));
                 String cls = MAIN.relativize(p).toString().replace('\\', '/').replace('/', '.').replaceAll("\\.java$", "");
                 Set<String> refs = new TreeSet<>();
                 Matcher m = IMPORT.matcher(code);
@@ -63,6 +63,11 @@ class ArchitectureTest {
             }
         }
         return out;
+    }
+
+    /** 블록 · 줄 주석을 뺀다(주석 속 이름은 의존이 아니다). */
+    static String stripComments(String code) {
+        return code.replaceAll("(?s)/\\*.*?\\*/", "").replaceAll("(?m)//.*$", "");
     }
 
     /** a.b.Cls / a.b.Cls.member / a.b → a.b */
