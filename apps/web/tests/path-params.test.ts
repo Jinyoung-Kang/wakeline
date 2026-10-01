@@ -114,3 +114,45 @@ describe("server values that are exactly '.' or '..' are refused as path segment
     }
   });
 });
+
+// 빈 값도 경로 조각이 될 수 없다 — 인코딩해도 "" 그대로라 "/api/v1/aircraft//track" · "/api/v1/ops/settings/" 처럼 '//' 나 끝 '/' 가 되어
+// 다른 자원(목록 · 상위 경로)으로 간다. 서버가 빈 이름 · 키 · id 를 주면 요청하지 않고 거절한다("." · ".." 와 같은 길).
+describe("an empty server value is refused as a path segment (it would build '//' or a trailing '/')", () => {
+  it("the ops write path builders and the log item path throw instead of building an empty segment", async () => {
+    const { logItemUrl } = await import("@/lib/logs");
+    expect(() => ops.providerSwitchPath("", "disable")).toThrow(/경로/);
+    expect(() => ops.settingPath("")).toThrow(/경로/);
+    expect(() => logItemUrl("")).toThrow(/경로/);
+    expect(ops.settingPath(" ")).toBe("/api/v1/ops/settings/%20"); // 빈 값만 — 공백 하나는 인코딩된 값이다
+  });
+
+  it("every endpoint function with a server-supplied segment rejects an empty value without sending a request", async () => {
+    const sent: string[] = [];
+    vi.stubGlobal("fetch", async (url: string) => { sent.push(url); return json(200, {}); });
+    const { aircraftDetail } = await import("@/lib/endpoints/aircraft");
+    const { aircraftTrack, shipTrack } = await import("@/lib/endpoints/tracks");
+    const { shipDetail } = await import("@/lib/endpoints/ship-detail");
+    const { airportWx, sigmetInside } = await import("@/lib/endpoints/weather");
+    const { saveSetting, setProviderEnabled } = await import("@/lib/endpoints/ops");
+    const { logItem } = await import("@/lib/endpoints/logs");
+    const calls: [string, () => Promise<unknown>][] = [
+      ["aircraftDetail", () => aircraftDetail("")], ["aircraftTrack", () => aircraftTrack("")], ["shipTrack", () => shipTrack("", 0, 1)],
+      ["shipDetail", () => shipDetail("")], ["airportWx", () => airportWx("")], ["sigmetInside", () => sigmetInside("")],
+      ["setProviderEnabled", () => setProviderEnabled("", false)], ["saveSetting", () => saveSetting("", 1, "1")], ["logItem", () => logItem("", null)],
+    ];
+    for (const [name, call] of calls) {
+      let p: Promise<unknown> | null = null;
+      expect(() => { p = call(); }, `${name}("") must not throw synchronously`).not.toThrow();
+      await expect(p, `${name}("")`).rejects.toThrow(/경로/);
+    }
+    expect(sent).toEqual([]);
+  });
+
+  it("the airport card offers no history link for an empty ICAO (it would open /airports/)", async () => {
+    vi.stubGlobal("fetch", () => new Promise<Response>(() => {}));
+    vi.stubGlobal("self", globalThis);
+    const { AirportCard } = await import("@/components/AirportCard");
+    await m.render(m.React.createElement(AirportCard, { icao: "" }));
+    expect(m.find((e) => e.tagName === "A" && e.textContent === "이력")).toBeNull();
+  });
+});
