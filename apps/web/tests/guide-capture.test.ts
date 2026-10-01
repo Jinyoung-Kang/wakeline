@@ -6,24 +6,52 @@
  * - 파일 이름: <id>.<sha-256 앞 10자>.<webp|png> — 페이지의 GUIDE_FILE_RE 와 같은 모양. 결과 합치기 · 고아 파일 · 크기 보고.
  */
 import { readFileSync } from "node:fs";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import {
-  anchorPoint, checkLocalBase, chipCount, credentialFileWarning, findColumn, fixtureVariant, hashedName, hotVariant, isHotActive, maskedVariant, mergeManifest, parseArgs, parseCredentials,
-  realDataVerdict, sizeReport, stackNote, staleFiles, statsPanelsVerdict, withStackNote, worldVariant,
+  anchorPoint, awaitReading, checkLocalBase, checkStack, chipCount, credentialFileWarning, Fatal, findColumn, fixtureVariant, hashedName, HOT_WAIT_MS, hotReading, hotVariant, isHotActive,
+  MAP_PROBE, mapProbeInPage, maskedVariant, mergeManifest, parseArgs, parseCredentials, READ_TRIES, READINGS, realDataVerdict, selectShots, shootStable, sizeReport, Skip, STACK_UNCHECKED,
+  stableRead, stackNote, stackTransition, staleFiles, statsPanelsVerdict, until, withStackNote, worldReading, worldVariant,
 } from "../scripts/guide-capture-lib.mjs";
 import manifestJson from "@/lib/guide-manifest.json";
+import { DemandBadge } from "@/components/MapChips";
+import { StatusBarView } from "@/components/StatusBar";
 import { FOCUS_STATES, focusChip, HOT_STATES, hotChip } from "@/lib/demand";
 import { GUIDE_FILE_RE, parseManifest, PLAN } from "@/lib/guide";
-import { statusChips } from "@/lib/statusbar";
+import { statusChips, type StatusInput } from "@/lib/statusbar";
+import { WS_INVALID_NONE } from "@/lib/store";
+import type { FeedInfo } from "@/lib/types";
 import { HOT_MIN_ZOOM } from "@/lib/viewport";
+import { GLOBAL_STALE_S } from "@/lib/ws-protocol";
+import { byTestId, classes, findAll, parseHtml, textOf, type HNode } from "./helpers/html-tree";
+import { oneLine, scriptCode } from "./helpers/script-code";
 
 const SECRET = "correct-horse-battery";
 
 describe("arguments", () => {
   it("base URL + credentials file path, options --only / --out-dir / --quality", () => {
-    expect(parseArgs(["http://localhost:8700", "/tmp/cred.json"])).toEqual({ baseUrl: "http://localhost:8700", credFile: "/tmp/cred.json", only: null, outDir: null, quality: 0.86, allowFixture: false });
+    expect(parseArgs(["http://localhost:8700", "/tmp/cred.json"])).toEqual({ baseUrl: "http://localhost:8700", credFile: "/tmp/cred.json", only: null, skip: null, outDir: null, quality: 0.86, allowFixture: false });
     expect(parseArgs(["http://127.0.0.1:8700/", "c.txt", "--only", "stats,airport", "--out-dir", "/tmp/o", "--quality", "0.9"]))
-      .toMatchObject({ only: ["stats", "airport"], outDir: "/tmp/o", quality: 0.9 });
+      .toMatchObject({ only: ["stats", "airport"], skip: null, outDir: "/tmp/o", quality: 0.9 });
+  });
+  /**
+   * --skip(리뷰 2026-10-01): README 내보내기 설정은 운영 · 로그를 fixture 스택 그림으로 적는다(readme-images.json fixture: true). 실데이터 스택에서 모든 그림을
+   * 찍으면 운영 · 로그도 실데이터로 바뀌어 내보내기가 거절했다 — 그 둘을 빼고 찍는다(--skip ops,logs). --only 와 함께 쓰지 않는다.
+   */
+  it("--skip id,… leaves those shots out; --only and --skip together, or either one empty, are refused", () => {
+    expect(parseArgs(["http://localhost:8700", "c.json", "--skip", "ops, logs"])).toMatchObject({ only: null, skip: ["ops", "logs"] });
+    expect(() => parseArgs(["http://localhost:8700", "c.json", "--skip"])).toThrow(/--skip 뒤에/);
+    expect(() => parseArgs(["http://localhost:8700", "c.json", "--only", "stats", "--skip", "ops"])).toThrow(/함께/);
+  });
+  it("selectShots: plan order; --only keeps, --skip drops; an id the plan does not have, or nothing left, is refused", () => {
+    const ids = ["dashboard", "world", "stats", "ops", "logs"];
+    expect(selectShots(ids, { only: null, skip: null })).toEqual(ids);
+    expect(selectShots(ids, { only: ["logs", "world"], skip: null })).toEqual(["world", "logs"]);
+    expect(selectShots(ids, { only: null, skip: ["ops", "logs"] })).toEqual(["dashboard", "world", "stats"]);
+    expect(() => selectShots(ids, { only: ["world", "nosuch"], skip: null })).toThrow(/--only: 계획에 없는 스크린샷 nosuch \(있는 것: dashboard, world, stats, ops, logs\)/);
+    expect(() => selectShots(ids, { only: null, skip: ["opz"] })).toThrow(/--skip: 계획에 없는 스크린샷 opz/);
+    expect(() => selectShots(ids, { only: null, skip: ids })).toThrow(/찍을 스크린샷이 없음/);
   });
   it("refuses credentials as argument values and anything unknown; the message never echoes the value", () => {
     for (const bad of [["--password", SECRET], ["--user", "admin"], [`--password=${SECRET}`], ["--token", SECRET]]) {
@@ -87,13 +115,63 @@ describe("a stack not confirmed live (--allow-fixture) is named in every capture
     expect(fixtureVariant(committed.dashboard?.variant)).toBe(false);
     expect(fixtureVariant(null)).toBe(false);
   });
-  it("the script asks /api/v1/status even with --allow-fixture and prefixes every condition with the note", () => {
-    const src = readFileSync(new URL("../scripts/guide-screenshots.mjs", import.meta.url), "utf8");
-    const at = src.indexOf("async function assertRealData(");
-    const fn = src.slice(at, src.indexOf("\n}\n", at));
-    expect(fn).not.toMatch(/if \(args\.allowFixture\) return;\n\s*let code/); // 묻기 전에 돌아가지 않는다
-    expect(fn).toMatch(/stackNote\(code, body\)/);
-    expect(src).toMatch(/maskedVariant\(withStackNote\(stack, condition\)/);
+
+  /**
+   * 리뷰 2026-10-01: 이 판단이 스크립트 안에 있어 소스 글자만 시험했고, 스택 바뀜 확인을 지우거나 --allow-fixture 면 묻지 않고 돌아가게 바꿔도 통과했다.
+   * 이제 checkStack(lib)이 판단하고 동작으로 시험한다 — 스크립트의 assertRealData 는 그것을 부르기만 한다(아래 코드 모양 시험).
+   */
+  const asking = (answers: { code: number; body: unknown }[] | Error) => {
+    const calls = { n: 0 };
+    const fetchStatus = async () => {
+      calls.n += 1;
+      if (answers instanceof Error) throw answers;
+      return answers[Math.min(calls.n, answers.length) - 1];
+    };
+    return { calls, fetchStatus };
+  };
+  const fixture = { code: 200, body: { ...real, fixture_mode: true } };
+  const live = { code: 200, body: real };
+  it("checkStack asks /api/v1/status every time — also with --allow-fixture — and keeps the note for every capture condition", async () => {
+    const a = asking([live]);
+    expect(await checkStack({ fetchStatus: a.fetchStatus, allowFixture: false, state: STACK_UNCHECKED, when: "찍기 전 확인" })).toEqual({ note: null, checked: true });
+    expect(a.calls.n).toBe(1);
+    const b = asking([fixture]);
+    expect(await checkStack({ fetchStatus: b.fetchStatus, allowFixture: true, state: STACK_UNCHECKED, when: "찍기 전 확인" })).toEqual({ note: "fixture 스택(가짜 자료)", checked: true });
+    expect(b.calls.n).toBe(1); // --allow-fixture 여도 물어서 표시를 정한다
+    const c = asking(new Error("ECONNREFUSED"));
+    expect(await checkStack({ fetchStatus: c.fetchStatus, allowFixture: true, state: STACK_UNCHECKED, when: "찍기 전 확인" })).toEqual({ note: "수집 모드 모름(fixture 허용으로 찍음)", checked: true });
+  });
+  it("checkStack stops (Fatal) on a stack not confirmed live without --allow-fixture, naming when and why", async () => {
+    for (const [answers, why] of [[[fixture], /FIXTURE MODE/], [[{ code: 200, body: { ...real, collector_mode_known: false } }], /모름/], [new Error("ECONNREFUSED"), /응답 없음/]] as const) {
+      const a = asking(answers as never);
+      const p = checkStack({ fetchStatus: a.fetchStatus, allowFixture: false, state: STACK_UNCHECKED, when: "다 찍은 뒤 확인" });
+      await expect(p).rejects.toBeInstanceOf(Fatal);
+      await expect(p).rejects.toThrow(why);
+      await expect(p).rejects.toThrow(/^다 찍은 뒤 확인: /);
+    }
+  });
+  it("stackTransition / checkStack: the second check must see the same stack as the first — a change between them stops", async () => {
+    expect(stackTransition(null, "fixture 스택(가짜 자료)", false)).toBeNull(); // 첫 확인
+    expect(stackTransition(null, null, true)).toBeNull();
+    expect(stackTransition("fixture 스택(가짜 자료)", "fixture 스택(가짜 자료)", true)).toBeNull();
+    expect(stackTransition(null, "fixture 스택(가짜 자료)", true)).toMatch(/스택 상태가 바뀜\(실데이터 → fixture 스택\(가짜 자료\)\)/);
+    expect(stackTransition("수집 모드 모름(fixture 허용으로 찍음)", null, true)).toMatch(/바뀜\(수집 모드 모름\(fixture 허용으로 찍음\) → 실데이터\)/);
+    const first = await checkStack({ fetchStatus: asking([live]).fetchStatus, allowFixture: true, state: STACK_UNCHECKED, when: "찍기 전 확인" });
+    await expect(checkStack({ fetchStatus: asking([fixture]).fetchStatus, allowFixture: true, state: first, when: "다 찍은 뒤 확인" })).rejects.toThrow(/다 찍은 뒤 확인: 찍는 사이에 스택 상태가 바뀜/);
+    expect(await checkStack({ fetchStatus: asking([live]).fetchStatus, allowFixture: false, state: first, when: "다 찍은 뒤 확인" })).toEqual(first);
+  });
+  it("the script's assertRealData only hands its status request to checkStack, and every condition is prefixed with the kept note (code without comments)", () => {
+    const S = scriptCode(new URL("../scripts/guide-screenshots.mjs", import.meta.url));
+    expect(oneLine(S.fn("assertRealData"))).toBe("async function assertRealData(when) { stack = await checkStack({ fetchStatus, allowFixture: args.allowFixture, state: stack, when }); }");
+    expect(oneLine(S.constant("stack"))).toBe("let stack = STACK_UNCHECKED;");
+    const ask = oneLine(S.constant("fetchStatus"));
+    expect(ask).toContain("page.request.get(`${BASE}/api/v1/status`");
+    expect(ask).not.toMatch(/allowFixture/);
+    expect(S.code).toMatch(/maskedVariant\(withStackNote\(stack\.note, /);
+    // 건너뜀 · 멈춤은 lib 의 같은 클래스(lib 함수가 던진 Skip 을 스크립트가 알아본다)
+    expect(S.code).not.toMatch(/class (Skip|Fatal)\b/);
+    expect(S.code).toMatch(/import \{[^}]*\bSkip\b[^}]*\} from "\.\/guide-capture-lib\.mjs"/);
+    expect(S.code).toMatch(/import \{[^}]*\bFatal\b[^}]*\} from "\.\/guide-capture-lib\.mjs"/);
   });
 });
 
@@ -193,11 +271,12 @@ describe("files and manifest", () => {
   });
 });
 
+/** 캡처 스크립트의 코드(주석 없음 — tests/helpers/script-code) */
+const SCRIPT = scriptCode(new URL("../scripts/guide-screenshots.mjs", import.meta.url));
+
 describe("capture recipes (scripts/guide-screenshots.mjs)", () => {
   // 계획(lib/guide-shots.json)의 스크린샷마다 캡처 방법(RECIPES 의 키)이 있어야 한다 — 없으면 스크립트가 그 그림을 늘 건너뛴다(자리표시로 남는다)
-  const src = readFileSync(new URL("../scripts/guide-screenshots.mjs", import.meta.url), "utf8");
-  const body = src.slice(src.indexOf("const RECIPES = {"), src.indexOf("\n};\n", src.indexOf("const RECIPES = {")));
-  const keys = [...body.matchAll(/^ {2}(?:async )?(?:"([a-z0-9-]+)"|([a-z0-9]+))\(shot\)/gm)].map((m) => m[1] ?? m[2]);
+  const keys = SCRIPT.recipeIds;
   it("every planned shot has a recipe and every recipe a planned shot", () => {
     expect(keys.length).toBeGreaterThan(0);
     expect([...keys].sort()).toEqual(PLAN.shots.map((s) => s.id).sort());
@@ -219,12 +298,7 @@ describe("capture recipes (scripts/guide-screenshots.mjs)", () => {
  *   ([data-testid="legend-reception"])이 기록되지 않았다. 이제 연안 교통량을 끄고, 번호를 재기 전에 그 절을 범례 창 안으로 굴린다.
  */
 describe("capture recipes: stats waits for every panel; reception turns the coastal traffic layer off and brings the legend section into view", () => {
-  const src = readFileSync(new URL("../scripts/guide-screenshots.mjs", import.meta.url), "utf8");
-  const recipe = (id: string) => {
-    const i = src.search(new RegExp(`^ {2}async (?:"${id}"|${id})\\(shot\\) \\{`, "m"));
-    expect(i, id).toBeGreaterThan(0);
-    return src.slice(i, src.indexOf("\n  },\n", i));
-  };
+  const recipe = (id: string) => SCRIPT.recipe(id);
   it("statsPanelsVerdict: waits while any panel is loading, skips with the panel and its reason on error or a missing panel, else shoots", () => {
     const p = (id: string, state: string, text = "") => ({ id, state, text });
     expect(statsPanelsVerdict([p("fir", "ready"), p("hazard", "loading"), p("traffic", "ready"), p("alerts", "empty")])).toEqual({ wait: true, skip: null });
@@ -241,12 +315,12 @@ describe("capture recipes: stats waits for every panel; reception turns the coas
   });
   it("stats: waits on the panels' data-state (not a fixed 4 s) and skips with the reason when a panel failed", () => {
     const r = recipe("stats");
-    expect(r).not.toMatch(/wait\(4_000\)/);
+    expect(r).not.toMatch(/wait\(4000\)/);
     expect(r).toContain("data-stats-panel");
     expect(r).toContain("data-state");
     expect(r).toMatch(/statsPanelsVerdict\(/);
     expect(r).toMatch(/throw new Skip\(/);
-    expect(src).toMatch(/import \{[^}]*statsPanelsVerdict[^}]*\} from "\.\/guide-capture-lib\.mjs"/);
+    expect(SCRIPT.code).toMatch(/import \{[^}]*statsPanelsVerdict[^}]*\} from "\.\/guide-capture-lib\.mjs"/);
   });
   it("reception: the coastal traffic layer is off (openMap) and the legend's reception section is scrolled into view before the callouts are measured", () => {
     const r = recipe("reception");
@@ -263,21 +337,16 @@ describe("capture recipes: stats waits for every panel; reception turns the coas
    * 시작한다 — 레시피 하나를 고치는 대신. 수정 전 실패.
    */
   it("openMap turns every overlay layer off once the map is open, so a layer an earlier shot turned on is not carried into the next shot", () => {
-    const at = src.indexOf("async function openMap(");
-    expect(at).toBeGreaterThan(0);
-    const open = src.slice(at, src.indexOf("\n}\n", at));
-    const list = /const OVERLAY_LAYERS = \[([^\]]*)\]/.exec(src);
-    expect(list, "OVERLAY_LAYERS").not.toBeNull();
-    const overlays = [...list![1].matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+    const open = oneLine(SCRIPT.fn("openMap"));
+    const overlays = SCRIPT.stringArray("OVERLAY_LAYERS");
     expect(overlays).toEqual(expect.arrayContaining(["layer-traffic", "layer-reception"]));
-    expect(open).toMatch(/for \(const id of OVERLAY_LAYERS\) await setPressed\(id, false\)/);
+    expect(open).toMatch(/for \(const id of OVERLAY_LAYERS\) await setPressed\(id, false\);/);
     // 실시간 연결이 열린 뒤(LayerPanel 이 저장된 켜짐을 읽은 뒤) 끈다 — 그 전이면 저장값이 다시 켠다
     expect(open.indexOf("OVERLAY_LAYERS")).toBeGreaterThan(open.indexOf('getByTestId("conn")'));
   });
   it("a recipe turns on only the ships layer (set by every map recipe) or an overlay that openMap resets — traffic only in 'traffic', reception only in 'reception'", () => {
-    const list = /const OVERLAY_LAYERS = \[([^\]]*)\]/.exec(src);
-    const overlays = [...(list?.[1] ?? "").matchAll(/"([^"]+)"/g)].map((m) => m[1]);
-    const ids = [...src.matchAll(/^ {2}async (?:"([\w-]+)"|(\w+))\(shot\) \{/gm)].map((m) => m[1] ?? m[2]);
+    const overlays = SCRIPT.stringArray("OVERLAY_LAYERS");
+    const ids = SCRIPT.recipeIds;
     expect(ids).toEqual(expect.arrayContaining(["world", "traffic", "reception", "search", "aircraft", "hot", "ship", "port-calls", "alerts", "radar"]));
     for (const id of ids) {
       const r = recipe(id);
@@ -290,7 +359,7 @@ describe("capture recipes: stats waits for every panel; reception turns the coas
   });
   it("the other recipes are unchanged in what they wait for (traffic still turns its own layer on)", () => {
     expect(recipe("traffic")).toMatch(/setPressed\("layer-traffic", true\)/);
-    expect(recipe("dashboard")).toMatch(/wait\(10_000\)/);
+    expect(recipe("dashboard")).toMatch(/wait\(10000\)/);
   });
 });
 
@@ -299,17 +368,16 @@ describe("capture recipes: stats waits for every panel; reception turns the coas
  * README · 설명서의 두 그림(2026-10-01): 전세계 보기(world)와 관심 지역 밖 핫 리전(hot).
  * - world: 줌 5 이하(서버가 넓은 구독을 받는 줌) · 핫 리전 줌 미만. 상태 바 world 칩이 정상(전세계 피드가 있고 오래되지 않음 — data-health "ok")이고
  *   aircraft 칩이 1 이상일 때만 찍는다(관심 지역만 찍힌 '전세계' 그림을 싣지 않는다).
- * - hot: 줌 ≥ HOT_MIN_ZOOM 으로 관심 지역 밖(도쿄)을 열고 아무것도 고르지 않는다. 지도 칩이 핫 리전 '갱신'(서버 상태 active — 수집기가 그 칸을 조회해 발행한 뒤에만
- *   쓰고, api 는 마지막 성공이 max(15 s, 주기 × 3) 안일 때만 active 로 보낸다)일 때만 찍는다. 그 판정(isHotActive)은 lib/demand 가 그리는 칩 글자와 시험으로 묶는다.
+ * - hot: 줌 ≥ HOT_MIN_ZOOM 으로 관심 지역 밖(도쿄)을 열고 아무것도 고르지 않는다. 지도 칩이 핫 리전 '갱신'(서버 상태 active)일 때만 찍는다. active 는 수집기가
+ *   그 칸의 조회에 성공해 발행했다는 서버 보고다(collector jobs/demand.py _run_hot — 받은 항공기가 0 대여도 active, api 는 마지막 성공이 max(15 s, 주기 × 3)
+ *   안일 때만 active 로 보낸다). 지도의 어느 항공기가 핫 리전으로 받은 것인지는 증명하지 않는다 — 상태 바 aircraft 는 여러 피드를 합친 목록의 수다.
  * - 두 그림의 캡처 조건은 화면에서 읽은 값(칩 글자 · 항공기 수)이다 — 찍기 전후 두 번 읽어 같을 때만 싣는다(차분이 10 s 마다 와 수가 바뀔 수 있다).
+ * 리뷰 2026-10-01: 판정 · 기다림 · 전후 읽기가 스크립트 안에 있어 소스 글자만 시험했고, 확인을 지우거나 기다리지 않게 바꿔도 통과했다. 이제 판정(worldReading ·
+ * hotReading) · 상한 있는 기다림(until · awaitReading — 시계를 넘긴다) · 전후 읽기(stableRead · shootStable)를 lib 의 함수로 옮겨 동작으로 시험하고,
+ * 화면에서 읽는 함수(mapProbeInPage — 브라우저에서 page.evaluate 로 도는 그 함수)는 화면 코드의 실제 마크업(서버 렌더)으로 시험한다.
+ * 스크립트는 그것들을 부르기만 한다(맨 아래 — 주석을 뺀 코드 모양).
  */
 describe("world and hot figures: what proves real data is on screen", () => {
-  const src = readFileSync(new URL("../scripts/guide-screenshots.mjs", import.meta.url), "utf8");
-  const recipe = (id: string) => {
-    const i = src.search(new RegExp(`^ {2}async (?:"${id}"|${id})\\(shot\\) \\{`, "m"));
-    expect(i, id).toBeGreaterThan(0);
-    return src.slice(i, src.indexOf("\n  },\n", i));
-  };
   const zoomOf = (path: string) => Number(/^\/#([\d.]+)\//.exec(path)?.[1]);
   const shot = (id: string) => PLAN.shots.find((s) => s.id === id)!;
 
@@ -359,41 +427,218 @@ describe("world and hot figures: what proves real data is on screen", () => {
     expect(longest?.length).toBeLessThanOrEqual(120);
   });
 
-  it("world: waits for a healthy world chip and a counted aircraft list, skips otherwise, and returns a reader (no ships, no overlays, no selection)", () => {
-    const r = recipe("world");
-    expect(r).toMatch(/await openMap\(shot\.path\)/);
-    expect(r).toMatch(/setPressed\("layer-ships", false\)/);
-    expect(r).toContain('"global-lag-badge"');
-    expect(r).toContain('"data-health"');
-    expect(r).toMatch(/[!=]== "ok"/);
-    expect(r).toContain('"aircraft-count"');
-    expect(r).toMatch(/chipCount\(/);
-    expect(r).toMatch(/throw new Skip\(/);
-    expect(r).not.toMatch(/press\("\/"\)|keyboard\.press\("Enter"\)/);
-    expect(r).toMatch(/return read;/);
+});
+
+/** 서버 렌더한 마크업 위의 최소 document — mapProbeInPage 가 쓰는 두 선택자 모양([data-testid="…"] · .클래스)만 받는다(다른 모양이면 시험이 깨진다) */
+function markupDocument(root: HNode) {
+  const el = (n: HNode | null): unknown => n && {
+    getAttribute: (a: string) => n.attrs[a] ?? null,
+    get textContent() { return textOf(n); },
+    querySelector(sel: string) {
+      const m = /^\.([\w-]+)$/.exec(sel);
+      if (!m) throw new Error(`시험 문서가 모르는 선택자 ${sel}`);
+      return el(findAll(n, (x) => classes(x).has(m[1]))[0] ?? null);
+    },
+  };
+  return {
+    querySelector(sel: string) {
+      const m = /^\[data-testid="([\w-]+)"\]$/.exec(sel);
+      if (!m) throw new Error(`시험 문서가 모르는 선택자 ${sel}`);
+      return el(byTestId(root, m[1]));
+    },
+  };
+}
+/** 화면 코드의 마크업에서 mapProbeInPage(MAP_PROBE) — 캡처 때 브라우저 안에서 도는 바로 그 함수 */
+function probeMarkup(html: string) {
+  const g = globalThis as { document?: unknown };
+  const before = g.document;
+  g.document = markupDocument(parseHtml(html));
+  try { return mapProbeInPage(MAP_PROBE); } finally { g.document = before; }
+}
+
+describe("world and hot: the page probe and the decisions, on the screen code's real markup", () => {
+  const at = Date.parse("2026-10-01T03:00:00Z");
+  const feed = (lag_s: number | null, stale: boolean | null): FeedInfo => ({ provider: "adsb.lol", fetched_at: "2026-10-01T02:59:58Z", lag_s, stale, received_at: at });
+  const input = (global: FeedInfo | null, aircraftCount: number | null): StatusInput => ({
+    conn: "open", reconnectAttempt: 0, lastRxAt: at, nowMs: at, srvNowMs: at, feeds: { region: feed(2, false), global }, aircraftCount, status: null,
+    sigmetsProvider: "", sigmetsFetchedAt: null, radar: null, radarKr: null, ais: null, snapshotVersion: 1,
+  });
+  const bar = (i: StatusInput) => renderToStaticMarkup(createElement(StatusBarView, { input: i, inv: WS_INVALID_NONE }));
+  const hot = (state: (typeof HOT_STATES)[number], interval_s: number | null = 30) => hotChip({ hot: { cell: "35.5:140.0:250", radius_nm: 100, state, interval_s }, focus: null, received_at: 0 })!;
+  const badge = (chip: ReturnType<typeof hotChip>) => renderToStaticMarkup(createElement(DemandBadge, { chip: chip!, testId: "demand-map-chip" }));
+  const WORLD = "/#1.6/30/60", TOKYO = "/#8.2/35.55/139.9";
+
+  it("world: a fresh world feed and a counted list pass with the count read from the page; no world feed, a stale one, no count or no status bar skip with the reason", () => {
+    expect(worldReading(probeMarkup(bar(input(feed(3, false), 4321))), WORLD)).toEqual({ variant: "전세계 #1.6/30/60 · 상태 바 aircraft 4321(구독 영역 안)" });
+    expect(worldReading(probeMarkup(bar(input(null, 4321))), WORLD)).toEqual({ skip: "상태 바 world 칩이 정상이 아님(unknown) — 전세계 피드가 없거나 오래됨" });
+    expect(worldReading(probeMarkup(bar(input(feed(3, true), 4321))), WORLD).skip).toMatch(/정상이 아님\(bad\)/); // 서버 판정 오래됨
+    expect(worldReading(probeMarkup(bar(input(feed(GLOBAL_STALE_S + 1, false), 4321))), WORLD).skip).toMatch(/정상이 아님\(bad\)/); // 기준 초과
+    expect(worldReading(probeMarkup(bar(input(feed(3, false), 0))), WORLD)).toEqual({ skip: "상태 바 aircraft 수가 1 이상이 아님(0)" });
+    expect(worldReading(probeMarkup(bar(input(feed(3, false), null))), WORLD)).toEqual({ skip: "상태 바 aircraft 수가 1 이상이 아님(—)" });
+    expect(worldReading(probeMarkup("<main></main>"), WORLD).skip).toMatch(/칩 없음/);
   });
 
-  it("hot: waits (bounded) for the hot-region chip to say active, then one WS diff period, re-checks at the shot, never selects an aircraft", () => {
-    const r = recipe("hot");
-    expect(r).toMatch(/await openMap\(shot\.path\)/);
-    expect(r).toMatch(/setPressed\("layer-ships", false\)/);
-    expect(r).toContain('"demand-map-chip"');
-    expect(r).toMatch(/isHotActive\(c\?\.kind, c\?\.text\)/); // 칩의 종류(data-kind)와 글자 — 집중 추적 칩을 핫 리전으로 읽지 않는다
-    expect(r).toMatch(/HOT_WAIT_MS/);
-    expect(r).toMatch(/throw new Skip\(/);
-    expect(r).not.toMatch(/press\("\/"\)|keyboard\.press\("Enter"\)|aircraft-search/);
-    expect(r).toMatch(/return read;/);
-    // 칩이 active 가 된 뒤 WS 차분 한 주기(api ws-diff-interval-s 10 s)를 넘게 기다린다 — 핫 리전 자료가 지도에 그려진 뒤
-    expect(r).toMatch(/await wait\(12_000\)/);
+  it("hot: only the active hot-region chip with a counted list passes, quoting the chip as drawn; any other hot state, the focus chip, no chip or no count skip", () => {
+    const page = (chip: ReturnType<typeof hotChip> | null, n: number | null) => probeMarkup((chip ? badge(chip) : "") + bar(input(feed(3, false), n)));
+    expect(hotReading(page(hot("active"), 87), TOKYO)).toEqual({ variant: `도쿄 #8.2/35.55/139.9 · 지도 칩 ‘${hot("active").text}’ · 상태 바 aircraft 87` });
+    expect(hot("active").text).toBe("핫 리전 30초 갱신(반경 100 NM)");
+    for (const state of HOT_STATES.filter((x) => x !== "active")) {
+      const r = hotReading(page(hot(state, null), 87), TOKYO);
+      expect(r.skip, state).toBe(`지도 칩이 핫 리전 ‘갱신’이 아님 — hot ‘${hot(state, null).text}’`);
+    }
+    const focus = focusChip({ hot: null, focus: { hex: "abc123", state: "active", interval_s: 5, since: null }, received_at: 0 }, "abc123", 0);
+    expect(hotReading(page(focus, 87), TOKYO).skip).toMatch(/핫 리전 ‘갱신’이 아님 — focus /);
+    expect(hotReading(page(null, 87), TOKYO).skip).toMatch(/칩 없음/);
+    expect(hotReading(page(hot("active"), 0), TOKYO)).toEqual({ skip: "상태 바 aircraft 수가 1 이상이 아님(0)" });
+    expect(hotReading(page(hot("active"), null), TOKYO)).toEqual({ skip: "상태 바 aircraft 수가 1 이상이 아님(—)" });
+  });
+});
+
+/** 가짜 시계 — sleep 이 시각을 그만큼 옮긴다. 10분을 넘게 기다리면 던진다(상한이 없는 기다림이 시험을 멈춰 세우지 않고 실패하게) */
+const fakeClock = () => {
+  let t = 0;
+  const sleeps: number[] = [];
+  const sleep = async (ms: number) => {
+    sleeps.push(ms);
+    t += ms;
+    if (t > 10 * 60_000) throw new Error(`가짜 시계: ${t} ms 를 기다림 — 상한이 없다`);
+  };
+  return { now: () => t, sleep, sleeps };
+};
+
+describe("bounded waiting (until · awaitReading) on an injected clock", () => {
+  it("until retries a Skip every second until it passes; at the limit it throws the last Skip; any other error at once", async () => {
+    const c = fakeClock();
+    let n = 0;
+    expect(await until(async () => { if (++n < 4) throw new Skip(`아직 ${n}`); return "ok"; }, 30_000, c)).toBe("ok");
+    expect(c.sleeps).toEqual([1000, 1000, 1000]);
+    const d = fakeClock();
+    let m = 0;
+    await expect(until(async () => { throw new Skip(`아직 ${++m}`); }, 5_000, d)).rejects.toThrow("아직 6");
+    expect(d.now()).toBe(5_000);
+    const e = fakeClock();
+    await expect(until(async () => { throw new Error("페이지 닫힘"); }, 5_000, e)).rejects.toThrow("페이지 닫힘");
+    expect(e.now()).toBe(0);
   });
 
-  it("a recipe that returns a reader is read just before and just after the screenshot; a change means another try, then a skip", () => {
-    const loop = src.slice(src.indexOf("for (const shot of fatal ? [] : shots)"), src.indexOf("// 찍는 사이에 스택이 FIXTURE 로"));
-    const shotAt = loop.indexOf("page.screenshot(");
-    expect(shotAt).toBeGreaterThan(0);
-    expect(loop.lastIndexOf("await read()", shotAt)).toBeGreaterThan(0); // 찍기 전
-    expect(loop.indexOf("await read()", shotAt)).toBeGreaterThan(shotAt); // 찍은 뒤
-    expect(loop).toMatch(/READ_TRIES/);
-    expect(loop).toMatch(/throw new Skip\(`찍는 동안 화면 값이 바뀜/);
+  /** probe 가 시각 t 에 돌려줄 값을 정한다 */
+  const timed = (c: ReturnType<typeof fakeClock>, at: (t: number) => unknown) => async () => at(c.now());
+  const ACTIVE = { health: "ok", chip: { kind: "hot", text: "핫 리전 30초 갱신(반경 100 NM)" }, count: "87" };
+  const PENDING = { ...ACTIVE, chip: { kind: "hot", text: "핫 리전 대기(반경 100 NM)" } };
+
+  it("hot: waits up to HOT_WAIT_MS for the chip to say active, then the settle time, and returns a reader that judges the page again", async () => {
+    const c = fakeClock();
+    let page: unknown = null;
+    const read = await awaitReading(READINGS.hot, { path: "/#8.2/35.55/139.9", clock: c, probe: timed(c, (t) => (page = t < HOT_WAIT_MS - 1_000 ? PENDING : ACTIVE)) });
+    expect(c.now()).toBe(HOT_WAIT_MS - 1_000 + READINGS.hot.settleMs); // 칩이 바뀐 때 + 정착
+    expect(await read()).toBe("도쿄 #8.2/35.55/139.9 · 지도 칩 ‘핫 리전 30초 갱신(반경 100 NM)’ · 상태 바 aircraft 87");
+    expect(page).toBe(ACTIVE);
+    const later = await awaitReading(READINGS.hot, { path: "/#8.2/35.55/139.9", clock: fakeClock(), probe: async () => ACTIVE });
+    expect(await later()).toMatch(/^도쿄/);
+    // 찍을 때 다시 판정한다 — 그 사이 칩이 바뀌었으면 건너뛴다
+    let now = ACTIVE as typeof ACTIVE;
+    const again = await awaitReading(READINGS.hot, { path: "/#8.2/35.55/139.9", clock: fakeClock(), probe: async () => now });
+    now = PENDING;
+    await expect(again()).rejects.toBeInstanceOf(Skip);
+  });
+
+  it("hot never active → a Skip with the last chip text once HOT_WAIT_MS has passed (no settle, no reader)", async () => {
+    const c = fakeClock();
+    const p = awaitReading(READINGS.hot, { path: "/#8.2/35.55/139.9", clock: c, probe: async () => PENDING });
+    await expect(p).rejects.toBeInstanceOf(Skip);
+    await expect(p).rejects.toThrow(/핫 리전 ‘갱신’이 아님 — hot ‘핫 리전 대기\(반경 100 NM\)’/);
+    expect(c.now()).toBe(HOT_WAIT_MS);
+  });
+
+  it("world: waits up to its own limit for a healthy world chip, then settles; never healthy → Skip at the limit", async () => {
+    const c = fakeClock();
+    const read = await awaitReading(READINGS.world, { path: "/#1.6/30/60", clock: c, probe: timed(c, (t) => (t < 4_000 ? { ...ACTIVE, health: "unknown" } : ACTIVE)) });
+    expect(c.now()).toBe(4_000 + READINGS.world.settleMs);
+    expect(await read()).toBe("전세계 #1.6/30/60 · 상태 바 aircraft 87(구독 영역 안)");
+    const d = fakeClock();
+    await expect(awaitReading(READINGS.world, { path: "/#1.6/30/60", clock: d, probe: async () => ({ ...ACTIVE, health: "bad" }) })).rejects.toThrow(/world 칩이 정상이 아님\(bad\)/);
+    expect(d.now()).toBe(READINGS.world.limitMs);
+    expect(READINGS.world.decide).toBe(worldReading);
+    expect(READINGS.hot.decide).toBe(hotReading);
+  });
+
+  it("the bounds come from the system: the hot wait covers the collector's slowest hot cycle, the settle time is longer than one WS diff period", () => {
+    const demand = readFileSync(new URL("../../collector/wakeline_collector/jobs/demand.py", import.meta.url), "utf8");
+    const levels = /^HOT_LEVELS_S = \(([\d, ]+)\)$/m.exec(demand);
+    expect(levels, "collector HOT_LEVELS_S").not.toBeNull();
+    const slowest = Math.max(...levels![1].split(",").map(Number));
+    expect(READINGS.hot.limitMs).toBe(HOT_WAIT_MS);
+    expect(HOT_WAIT_MS).toBeGreaterThanOrEqual(slowest * 1000);
+    const api = readFileSync(new URL("../../api/src/main/resources/application.yml", import.meta.url), "utf8");
+    const diff = /^\s*ws-diff-interval-s:\s*(\d+)\s*$/m.exec(api);
+    expect(diff, "api ws-diff-interval-s").not.toBeNull();
+    expect(READINGS.hot.settleMs).toBeGreaterThan(Number(diff![1]) * 1000);
+  });
+});
+
+describe("before/after read around the shot (stableRead · shootStable)", () => {
+  /** read 가 차례로 돌려줄 값 · 찍은 횟수를 기록하는 가짜 */
+  const fake = (values: (string | Error)[]) => {
+    const log: string[] = [];
+    let i = 0;
+    const read = async () => {
+      const v = values[Math.min(i++, values.length - 1)];
+      log.push(`read ${v instanceof Error ? "!" : v}`);
+      if (v instanceof Error) throw v;
+      return v;
+    };
+    let shots = 0;
+    const shoot = async () => { shots += 1; log.push(`shoot ${shots}`); return { png: `png${shots}` }; };
+    return { read, shoot, log };
+  };
+  it("stableRead: same → done; different → try again, and at the last try a Skip with both values", () => {
+    expect(stableRead("a", "a", 1)).toBe(true);
+    expect(stableRead("a", "b", 1)).toBe(false);
+    expect(stableRead("a", "b", READ_TRIES - 1)).toBe(false);
+    expect(() => stableRead("a", "b", READ_TRIES)).toThrow(Skip);
+    expect(() => stableRead("a", "b", READ_TRIES)).toThrow(`찍는 동안 화면 값이 바뀜(${READ_TRIES}번 — 마지막 a → b)`);
+  });
+  it("no reader: one shot, no reading", async () => {
+    const f = fake([]);
+    expect(await shootStable(null, f.shoot)).toEqual({ shot: { png: "png1" }, reading: null });
+    expect(f.log).toEqual(["shoot 1"]);
+  });
+  it("reads just before and just after each shot; the condition is the value read after a shot whose two reads agree", async () => {
+    const f = fake(["87", "87"]);
+    expect(await shootStable(f.read, f.shoot)).toEqual({ shot: { png: "png1" }, reading: "87" });
+    expect(f.log).toEqual(["read 87", "shoot 1", "read 87"]);
+    const g = fake(["87", "88", "88", "88"]);
+    expect(await shootStable(g.read, g.shoot)).toEqual({ shot: { png: "png2" }, reading: "88" });
+    expect(g.log).toEqual(["read 87", "shoot 1", "read 88", "read 88", "shoot 2", "read 88"]);
+  });
+  it("values that keep changing → a Skip after READ_TRIES shots; a reader that skips at the shot is not swallowed", async () => {
+    const f = fake(["1", "2", "3", "4", "5", "6", "7"]);
+    await expect(shootStable(f.read, f.shoot)).rejects.toThrow(`찍는 동안 화면 값이 바뀜(${READ_TRIES}번 — 마지막 5 → 6)`);
+    expect(f.log.filter((l) => l.startsWith("shoot"))).toHaveLength(READ_TRIES);
+    const g = fake(["87", new Skip("지도 칩이 핫 리전 ‘갱신’이 아님 — hot ‘핫 리전 대기’") as Error]);
+    await expect(shootStable(g.read, g.shoot)).rejects.toBeInstanceOf(Skip);
+  });
+});
+
+/**
+ * 스크립트는 위 함수들을 부르기만 한다 — 주석을 뺀 코드 모양으로 본다(주석의 같은 글자로는 통과하지 않는다).
+ */
+describe("the capture script calls them (code without comments)", () => {
+  it("world and hot open the map with ships off and the legend closed, then hand the page probe to awaitReading with their own READINGS — no search, no selection", () => {
+    for (const id of ["world", "hot"] as const) {
+      const r = oneLine(SCRIPT.recipe(id));
+      expect(r, id).toBe(`async ${id}(shot) { await openMap(shot.path); await setPressed("layer-ships", false); await setLegend(false); return awaitReading(READINGS.${id}, { path: shot.path, probe: probeMap }); }`);
+    }
+    expect(oneLine(SCRIPT.constant("probeMap"))).toBe("const probeMap = () => page.evaluate(mapProbeInPage, MAP_PROBE);");
+  });
+  it("the capture loop shoots through shootStable with the recipe's reader; the condition is the reading (or the recipe's text), after the stack note", () => {
+    const loop = oneLine(SCRIPT.statement("for (const shot of fatal ? [] : shots)"));
+    expect(loop).toContain('const read = typeof got === "function" ? got : null;');
+    expect(loop).toContain('const { shot: taken, reading } = await shootStable(read, async () => ({ positions: await measure(shot.callouts), png: await page.screenshot({ type: "png", mask, maskColor: MASK_COLOR }) }));');
+    expect(loop).toContain("const variant = maskedVariant(withStackNote(stack.note, read ? reading : got), (shot.masks ?? []).map((m) => m.label));");
+    expect(loop.split("page.screenshot(")).toHaveLength(2); // 찍기는 shootStable 에 넘긴 한 곳뿐
+  });
+  it("the shots to take come from selectShots (--only / --skip)", () => {
+    expect(SCRIPT.code).toMatch(/selectShots\(planIds, args\)/);
   });
 });

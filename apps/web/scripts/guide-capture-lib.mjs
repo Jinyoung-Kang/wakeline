@@ -2,6 +2,14 @@
 // 형식 규칙은 페이지(lib/guide.ts)와 같다: 파일 이름 <id>.<sha-256 앞 10자>.<webp|png>, manifest version 1.
 import { createHash } from "node:crypto";
 
+/** 이 스크린샷을 건너뛴다(이유와 함께) — 다른 스크린샷은 계속. lib 함수(until · awaitReading · shootStable)도 던진다 */
+export class Skip extends Error {}
+/** 전체를 멈춘다(이번 결과를 버린다) */
+export class Fatal extends Error {}
+
+/** 실제 시계 — 기다리는 함수는 시계를 받는다(시험은 sleep 이 시각을 옮기는 가짜 시계를 넘긴다) */
+export const REAL_CLOCK = Object.freeze({ now: () => Date.now(), sleep: (ms) => new Promise((r) => setTimeout(r, ms)) });
+
 /** 페이지의 GUIDE_FILE_RE 와 같은 모양(시험이 둘을 맞춰 본다) */
 export const FILE_RE = /^([a-z0-9]+(?:-[a-z0-9]+)*)\.([0-9a-f]{10})\.(webp|png)$/;
 export const DEFAULT_QUALITY = 0.86;
@@ -13,7 +21,7 @@ const INSET = 12;
 const EDGE_MIN = 1.5, EDGE_MAX = 98.5;
 
 export const USAGE =
-  "사용법: node scripts/guide-screenshots.mjs <기준 주소(로컬 스택)> <자격 증명 파일> [--only id,…] [--out-dir 폴더] [--quality 0–1] [--allow-fixture]\n" +
+  "사용법: node scripts/guide-screenshots.mjs <기준 주소(로컬 스택)> <자격 증명 파일> [--only id,… | --skip id,…] [--out-dir 폴더] [--quality 0–1] [--allow-fixture]\n" +
   "  자격 증명 파일: JSON {\"username\":\"…\",\"password\":\"…\"} 또는 두 줄(username, password) — chmod 600 권장";
 
 const isObj = (v) => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -24,11 +32,17 @@ const CRED_OPT = /^--?(pass(word)?|pw|pwd|user(name)?|login|token|secret|cred(en
 /** 명령행 인자 → 설정. 틀리면 Error(문구에 사용법) */
 export function parseArgs(argv) {
   const pos = [];
-  const out = { baseUrl: "", credFile: "", only: null, outDir: null, quality: DEFAULT_QUALITY, allowFixture: false };
+  const out = { baseUrl: "", credFile: "", only: null, skip: null, outDir: null, quality: DEFAULT_QUALITY, allowFixture: false };
+  const ids = (opt, v) => {
+    const list = (v ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+    if (!list.length) throw new Error(`${opt} 뒤에 스크린샷 id 목록\n${USAGE}`);
+    return list;
+  };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (CRED_OPT.test(a)) throw new Error(`자격 증명은 파일로만 받습니다 — 인자 값 · 환경 변수는 프로세스 목록과 셸 기록에 남습니다.\n${USAGE}`);
-    if (a === "--only") { const v = argv[++i]; if (!v) throw new Error(`--only 뒤에 스크린샷 id 목록\n${USAGE}`); out.only = v.split(",").map((s) => s.trim()).filter(Boolean); }
+    if (a === "--only") out.only = ids(a, argv[++i]);
+    else if (a === "--skip") out.skip = ids(a, argv[++i]);
     else if (a === "--out-dir") { const v = argv[++i]; if (!v) throw new Error(`--out-dir 뒤에 폴더\n${USAGE}`); out.outDir = v; }
     else if (a === "--quality") {
       const q = Number(argv[++i]);
@@ -38,8 +52,23 @@ export function parseArgs(argv) {
     else if (a.startsWith("-")) throw new Error(`알 수 없는 옵션 ${a.split("=")[0]}\n${USAGE}`);
     else pos.push(a);
   }
+  if (out.only && out.skip) throw new Error(`--only 와 --skip 은 함께 쓰지 않습니다\n${USAGE}`);
   if (pos.length !== 2) throw new Error(USAGE);
   [out.baseUrl, out.credFile] = pos;
+  return out;
+}
+
+/**
+ * 이번에 찍을 스크린샷 id(계획 순서) — --only 는 그것만, --skip 은 그것을 빼고. 계획에 없는 id 나 남는 것이 없으면 Error(인자 오류).
+ * --skip 은 README 내보내기 설정이 fixture 스택 그림으로 적은 운영 · 로그를 실데이터 스택에서 덮어 찍지 않게 쓴다(README 7절).
+ */
+export function selectShots(planIds, { only, skip }) {
+  for (const [opt, list] of [["--only", only], ["--skip", skip]]) {
+    const unknown = (list ?? []).filter((id) => !planIds.includes(id));
+    if (unknown.length) throw new Error(`${opt}: 계획에 없는 스크린샷 ${unknown.join(", ")} (있는 것: ${planIds.join(", ")})`);
+  }
+  const out = planIds.filter((id) => (!only || only.includes(id)) && !(skip ?? []).includes(id));
+  if (!out.length) throw new Error("찍을 스크린샷이 없음(--only · --skip 을 확인)");
   return out;
 }
 
@@ -88,6 +117,31 @@ export function withStackNote(note, variant) {
   return parts.length ? parts.join(" · ") : null;
 }
 
+/** 확인하기 전 스택 상태(checkStack 의 state) */
+export const STACK_UNCHECKED = Object.freeze({ note: null, checked: false });
+
+/** 두 번째 확인의 스택 표시가 첫 확인과 다른가(찍는 사이에 스택이 바뀜) — 다르면 멈출 이유, 같거나 첫 확인이면 null */
+export function stackTransition(prev, next, checked) {
+  if (!checked || prev === next) return null;
+  return `찍는 사이에 스택 상태가 바뀜(${prev ?? "실데이터"} → ${next ?? "실데이터"}) — 캡처 조건이 그림과 어긋나지 않게 이번 결과를 버리고 멈춤`;
+}
+
+/**
+ * 실데이터 스택인지 확인(찍기 전 · 다 찍은 뒤) — fetchStatus() 는 GET /api/v1/status 의 { code, body } 를 돌려준다(던지면 응답 없음 = code 0).
+ * --allow-fixture 여도 늘 묻는다(표시를 정하려고). 실데이터가 아니면 Fatal(--allow-fixture 면 멈추지 않고 표시 — stackNote), 첫 확인과 표시가 다르면 Fatal.
+ * state = 이전 결과(처음은 STACK_UNCHECKED) → 새 state { note, checked: true }. note 는 모든 캡처 조건 맨 앞에 붙는다(withStackNote).
+ */
+export async function checkStack({ fetchStatus, allowFixture, state, when }) {
+  let code = 0, body = null;
+  try { ({ code, body } = await fetchStatus()); } catch { /* 응답 없음 → code 0 */ }
+  const why = realDataVerdict(code, body);
+  if (why && !allowFixture) throw new Fatal(`${when}: ${why} — 가짜 자료가 설명서에 실리지 않게 이번 결과를 버리고 멈춤(실데이터 스택에서 다시 찍거나 --allow-fixture)`);
+  const note = stackNote(code, body);
+  const change = stackTransition(state.note, note, state.checked);
+  if (change) throw new Fatal(`${when}: ${change}`);
+  return { note, checked: true };
+}
+
 /**
  * 이 캡처 조건이 실데이터가 아닌 스택의 그림인가 — "fixture" 가 들어 있으면(stackNote 의 두 표시 · 예전에 손으로 붙인 '격리 fixture 스택').
  * README 내보내기(scripts/readme-images.mjs)가 이것으로 fixture 그림을 알아보고, README 캡션이 밝히지 않으면 내보내지 않는다.
@@ -98,8 +152,9 @@ export function fixtureVariant(variant) {
 
 /**
  * 지도 칩(data-testid demand-map-chip)이 '핫 리전이 지금 조회되고 있다'고 말하는가 — lib/demand hotChip 의 active 글자("핫 리전 30초 갱신(반경 100 NM)" ·
- * 주기 · 반경을 서버가 보고하지 않으면 그 부분 없이)만. active 는 수집기가 그 칸을 조회해 발행한 뒤에만 쓰고(collector jobs/demand.py), api 는 마지막 성공이
- * max(15 s, 주기 × 3) 안일 때만 active 로 보낸다(CollectorDemandStatus.activeAt). 대기 · 지연 · 오류 · 꺼짐 · 제한 · 관심 지역 안 · 집중 추적 칩은 아니다.
+ * 주기 · 반경을 서버가 보고하지 않으면 그 부분 없이)만. active 는 수집기가 그 칸의 조회에 성공해 발행한 뒤에만 쓰고(collector jobs/demand.py _run_hot — 받은
+ * 항공기가 0 대여도 active), api 는 마지막 성공이 max(15 s, 주기 × 3) 안일 때만 active 로 보낸다(CollectorDemandStatus.activeAt). 그러니 이 칸의 핫 리전 조회가
+ * 최근에 성공했다는 증명이지, 지도의 어느 항공기가 핫 리전으로 받은 것이라는 증명은 아니다. 대기 · 지연 · 오류 · 꺼짐 · 제한 · 관심 지역 안 · 집중 추적 칩은 아니다.
  * 글자 모양은 시험(tests/guide-capture.test.ts)이 hotChip 의 모든 상태와 견준다.
  */
 const HOT_ACTIVE_RE = /^핫 리전(?: \d+(?:\.\d)?초)? 갱신(?:\(반경 \d+ NM\))?$/;
@@ -124,6 +179,126 @@ export function worldVariant(path, aircraft) {
 /** 핫 리전 그림의 캡처 조건 — 지도 위치(도쿄 — 계획의 경로) · 찍을 때 지도 칩 글자 그대로 · 상태 바 항공기 수 */
 export function hotVariant(path, chipText, aircraft) {
   return `도쿄 ${where(path)} · 지도 칩 ‘${chipText}’ · 상태 바 aircraft ${aircraft}`;
+}
+
+/**
+ * 지도 화면에서 world · hot 의 판정 재료를 읽는 자리(화면 코드의 data-testid — StatusBar ChipView · MapChips DemandBadge).
+ * mapProbeInPage 가 이것으로 읽고, 시험은 그 화면 코드의 실제 마크업(서버 렌더)으로 같은 함수를 부른다.
+ */
+export const MAP_PROBE = Object.freeze({
+  health: Object.freeze({ testId: "global-lag-badge", attr: "data-health" }),
+  chip: Object.freeze({ testId: "demand-map-chip", attr: "data-kind" }),
+  count: Object.freeze({ testId: "aircraft-count", value: ".chip-v" }),
+});
+
+/**
+ * 지도 화면에서 읽는다: world 칩의 상태(data-health) · 지도 칩의 종류(data-kind)와 글자 · 상태 바 aircraft 칩의 값 글자. 없으면 null — 판정은 worldReading · hotReading.
+ * 브라우저 안에서 page.evaluate(mapProbeInPage, MAP_PROBE) 로 돈다 — 글자로 옮겨지므로 인자와 document 말고 바깥 이름을 쓰지 않는다.
+ */
+export function mapProbeInPage(p) {
+  const q = (id) => document.querySelector(`[data-testid="${id}"]`);
+  const chip = q(p.chip.testId);
+  return {
+    health: q(p.health.testId)?.getAttribute(p.health.attr) ?? null,
+    chip: chip ? { kind: chip.getAttribute(p.chip.attr), text: (chip.textContent ?? "").trim() } : null,
+    count: q(p.count.testId)?.querySelector(p.count.value)?.textContent ?? null,
+  };
+}
+
+/** 상태 바 aircraft 칩이 1 이상인가 — 아니면 건너뛸 이유(읽은 그대로 — 수가 아니면 —) */
+function countSkip(n) {
+  return n > 0 ? null : `상태 바 aircraft 수가 1 이상이 아님(${n ?? "—"})`;
+}
+
+/**
+ * 전세계 보기를 찍을 수 있는가(probe = mapProbeInPage 의 값) — world 칩이 정상(data-health "ok": 전세계 피드가 있고 서버 · 브라우저 판정 모두 오래되지 않음)이고
+ * aircraft 가 1 이상일 때만 { variant }(캡처 조건 — 읽은 수), 아니면 { skip }(이유). 관심 지역만 찍힌 '전세계' 그림을 싣지 않는다.
+ */
+export function worldReading(probe, path) {
+  const health = probe?.health ?? null;
+  if (health !== "ok") return { skip: `상태 바 world 칩이 정상이 아님(${health ?? "칩 없음"}) — 전세계 피드가 없거나 오래됨` };
+  const n = chipCount(probe.count);
+  const skip = countSkip(n);
+  return skip ? { skip } : { variant: worldVariant(path, n) };
+}
+
+/**
+ * 핫 리전 그림을 찍을 수 있는가 — 지도 칩이 핫 리전 '갱신'(isHotActive — 이 칸의 핫 리전 조회가 최근에 성공했다는 서버 보고)이고 aircraft 가 1 이상일 때만
+ * { variant }(칩 글자 그대로 · 읽은 수), 아니면 { skip }(마지막 칩 종류 · 글자).
+ */
+export function hotReading(probe, path) {
+  const c = probe?.chip ?? null;
+  if (!isHotActive(c?.kind, c?.text)) return { skip: `지도 칩이 핫 리전 ‘갱신’이 아님 — ${c ? `${c.kind} ‘${c.text}’` : "칩 없음"}` };
+  const n = chipCount(probe.count);
+  const skip = countSkip(n);
+  return skip ? { skip } : { variant: hotVariant(path, c.text.trim(), n) };
+}
+
+/**
+ * fn 이 Skip 없이 돌아올 때까지 stepMs 마다 다시(상한 ms — clock 기준). 끝까지 Skip 이면 마지막 Skip 을 던진다. Skip 이 아닌 오류는 곧바로 던진다.
+ */
+export async function until(fn, ms, clock = REAL_CLOCK, stepMs = 1_000) {
+  const end = clock.now() + ms;
+  for (;;) {
+    try { return await fn(); } catch (e) { if (!(e instanceof Skip) || clock.now() >= end) throw e; }
+    await clock.sleep(stepMs);
+  }
+}
+
+/**
+ * 핫 리전 칩이 '갱신'이 되기를 기다리는 상한 — 새 칸의 첫 조회는 수집기 전체에서 30 s 에 2칸까지만 곧바로이고 나머지는 한 주기(30 s) 뒤,
+ * 호출 여유가 모자라면 주기가 60 · 120 s 로 는다(collector jobs/demand.py HOT_NEW_BURST · HOT_LEVELS_S — 시험이 가장 긴 주기 이상인지 본다). api 는 수집기 상태를 10 s 마다 읽는다.
+ */
+export const HOT_WAIT_MS = 120_000;
+/** world 칩이 정상이 되기를 기다리는 상한(전세계 피드는 연결 직후 status 메시지로 온다 — 고른 값) */
+export const WORLD_WAIT_MS = 30_000;
+
+/**
+ * 화면 값으로 캡처 조건을 정하는 그림의 판정 · 기다림. settleMs = 찍을 수 있게 된 뒤 더 기다리는 시간:
+ * world — 기호 · 레이더 타일 그리기, hot — WS 차분 한 주기(api ws-diff-interval-s 10 s)를 넘게(시험이 api 설정과 견준다) 그 사이 받은 차분까지 그린 뒤.
+ */
+export const READINGS = Object.freeze({
+  world: Object.freeze({ decide: worldReading, limitMs: WORLD_WAIT_MS, settleMs: 6_000 }),
+  hot: Object.freeze({ decide: hotReading, limitMs: HOT_WAIT_MS, settleMs: 12_000 }),
+});
+
+/**
+ * 화면 값으로 캡처 조건을 정하는 그림(world · hot): probe() 가 읽은 값을 spec.decide 로 판정해 찍을 수 있을 때까지 기다리고(상한 spec.limitMs — 끝까지 아니면
+ * 마지막 이유로 Skip), spec.settleMs 더 기다린 뒤 읽기 함수를 돌려준다 — 찍기 직전 · 직후에 그 함수로 다시 판정한다(shootStable). 아니게 됐으면 Skip.
+ */
+export async function awaitReading(spec, { probe, path, clock = REAL_CLOCK }) {
+  const read = async () => {
+    const r = spec.decide(await probe(), path);
+    if (r.skip != null) throw new Skip(r.skip);
+    return r.variant;
+  };
+  await until(read, spec.limitMs, clock);
+  await clock.sleep(spec.settleMs);
+  return read;
+}
+
+/** 화면 값을 캡처 조건에 적는 그림: 찍기 전후 두 번 읽은 값이 다르면 다시 찍는 횟수(WS 차분이 10 s 마다 와 값이 바뀔 수 있다) */
+export const READ_TRIES = 3;
+
+/** 찍기 전후에 읽은 값 → 같으면 true(이 그림을 싣는다), 다르면 false(다시 찍는다) — tries 번째도 다르면 Skip */
+export function stableRead(before, after, attempt, tries = READ_TRIES) {
+  if (after === before) return true;
+  if (attempt >= tries) throw new Skip(`찍는 동안 화면 값이 바뀜(${tries}번 — 마지막 ${before} → ${after})`);
+  return false;
+}
+
+/**
+ * 찍기 — read 가 있으면(캡처 조건이 화면 값) 찍기 직전과 직후에 읽어 같을 때만 싣고, 다르면 다시 찍는다(stableRead). read 가 던지는 Skip 은 그대로 올린다.
+ * read 가 없으면 한 번 찍는다. shoot() = 번호 위치 재기 · 스크린샷. 돌려주는 값 { shot, reading } — reading = 직후에 읽은 값(read 가 없으면 null).
+ */
+export async function shootStable(read, shoot, tries = READ_TRIES) {
+  for (let attempt = 1; ; attempt++) {
+    const before = read ? await read() : null;
+    const shot = await shoot();
+    if (!read) return { shot, reading: null };
+    const after = await read();
+    if (stableRead(before, after, attempt, tries)) return { shot, reading: after };
+  }
 }
 
 /** 통계 화면의 패널 수(app/stats/page.tsx — FIR · 위험 유형 · 시간대별 항공기 · 알림) */

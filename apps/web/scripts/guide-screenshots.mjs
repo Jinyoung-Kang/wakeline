@@ -1,4 +1,4 @@
-// 설명서(/guide) 스크린샷: node scripts/guide-screenshots.mjs <기준 주소> <자격 증명 파일> [--only id,…] [--out-dir 폴더] [--quality 0–1] [--allow-fixture]
+// 설명서(/guide) 스크린샷: node scripts/guide-screenshots.mjs <기준 주소> <자격 증명 파일> [--only id,… | --skip id,…] [--out-dir 폴더] [--quality 0–1] [--allow-fixture]
 //
 // 배포된 실데이터 스택(예: http://localhost:8700)에서 lib/guide-shots.json 의 스크린샷을 1440×900(배율 1)으로 찍어
 // public/guide/<id>.<내용 해시>.webp 로 저장하고(브라우저가 WebP 로 못 바꾸면 PNG), lib/guide-manifest.json 을 갱신한다. 그다음 web 을 다시 빌드해야 화면에 나온다.
@@ -13,22 +13,19 @@
 //   로거 · 메시지 · 요청 id)을 회색 상자로 가려 찍고, 무엇을 가렸는지 캡처 조건에 적는다. 가릴 자리를 하나라도 찾지 못하면 그 스크린샷을 싣지 않는다.
 // - 못 찍은 스크린샷은 이전 결과를 그대로 두고(있으면) 이유를 보고한다. 이번에 바뀐 결과가 더 가리키지 않는 옛 파일은 지운다.
 // - 화면에서 읽은 값을 캡처 조건에 적는 그림(world · hot — 칩 글자 · 항공기 수)은 찍기 직전과 직후에 두 번 읽어 같을 때만 싣는다(READ_TRIES 번까지 다시).
+// - 판정 · 상한 있는 기다림 · 전후 읽기 · 스택 확인은 guide-capture-lib.mjs 의 함수가 한다(시험이 동작으로 본다) — 이 파일은 브라우저를 움직이고 그 함수를 부른다.
 // - 끝에 크기 보고. 종료 코드: 0 = 모두 찍음, 3 = 일부 건너뜀, 2 = 인자 오류, 1 = 그 밖의 실패.
 import { chromium } from "@playwright/test";
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  anchorPoint, checkLocalBase, chipCount, credentialFileWarning, ERROR_MARKS, findColumn, hashedName, hotVariant, isHotActive, maskedVariant, mergeManifest, parseArgs, parseCredentials,
-  realDataVerdict, sizeReport, stackNote, staleFiles, statsPanelsVerdict, withStackNote, worldVariant,
+  anchorPoint, awaitReading, checkLocalBase, checkStack, credentialFileWarning, ERROR_MARKS, Fatal, findColumn, hashedName, MAP_PROBE, mapProbeInPage, maskedVariant, mergeManifest, parseArgs,
+  parseCredentials, READINGS, selectShots, shootStable, sizeReport, Skip, STACK_UNCHECKED, staleFiles, statsPanelsVerdict, withStackNote,
 } from "./guide-capture-lib.mjs";
 
 const WEB = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
-/** 이 스크린샷을 건너뛴다(이유와 함께) — 다른 스크린샷은 계속 */
-class Skip extends Error {}
-/** 전체를 멈춘다 */
-class Fatal extends Error {}
 
 let args;
 try { args = parseArgs(process.argv.slice(2)); } catch (e) { console.error(e.message); process.exit(2); }
@@ -36,11 +33,8 @@ try { args = parseArgs(process.argv.slice(2)); } catch (e) { console.error(e.mes
 const BASE = (() => { try { return checkLocalBase(args.baseUrl); } catch (e) { console.error(e.message); process.exit(2); } })();
 const plan = JSON.parse(readFileSync(join(WEB, "lib/guide-shots.json"), "utf8"));
 const planIds = plan.shots.map((s) => s.id);
-if (args.only) {
-  const unknown = args.only.filter((id) => !planIds.includes(id));
-  if (unknown.length) { console.error(`--only: 계획에 없는 스크린샷 ${unknown.join(", ")} (있는 것: ${planIds.join(", ")})`); process.exit(2); }
-}
-const shots = plan.shots.filter((s) => !args.only || args.only.includes(s.id));
+const picked = (() => { try { return selectShots(planIds, args); } catch (e) { console.error(e.message); process.exit(2); } })();
+const shots = plan.shots.filter((s) => picked.includes(s.id));
 const VP = plan.viewport;
 const OUT = args.outDir ? resolve(args.outDir) : join(WEB, "public/guide");
 const MANIFEST = args.outDir ? join(OUT, "guide-manifest.json") : join(WEB, "lib/guide-manifest.json");
@@ -92,27 +86,20 @@ async function openMap(path) {
   for (const id of OVERLAY_LAYERS) await setPressed(id, false);
 }
 /**
- * --allow-fixture 로 실데이터가 아닌 스택을 찍을 때의 표시(stackNote — 예 "fixture 스택(가짜 자료)"). 모든 캡처 조건 맨 앞에 붙는다:
- * 설명서 그림 아래와 README 캡션이 그 그림이 가짜 자료임을 밝히게(README 내보내기가 이 표시로 확인한다). 전에는 manifest 를 손으로 고쳐 붙였다.
+ * 스택 확인 결과(checkStack — lib). stack.note = --allow-fixture 로 실데이터가 아닌 스택을 찍을 때의 표시(예 "fixture 스택(가짜 자료)") — 모든 캡처 조건 맨 앞에
+ * 붙는다: 설명서 그림 아래와 README 캡션이 그 그림이 가짜 자료임을 밝히게(README 내보내기가 이 표시로 확인한다).
  */
-let stack = null, stackChecked = false;
+let stack = STACK_UNCHECKED;
+/** GET /api/v1/status — 답을 그대로 넘긴다(판단은 checkStack) */
+const fetchStatus = async () => {
+  const r = await page.request.get(`${BASE}/api/v1/status`, { timeout: 15_000 });
+  return { code: r.status(), body: await r.json().catch(() => null) };
+};
 /**
- * 실데이터 스택인지 /api/v1/status 로 확인(찍기 전 · 다 찍은 뒤). 아니면 전체를 멈춘다 — --allow-fixture 면 멈추지 않고 표시(stack)를 정한다.
- * 두 번의 표시가 다르면(찍는 사이에 스택이 바뀜) 캡처 조건이 그림과 어긋나므로 멈춘다.
+ * 실데이터 스택인지 확인(찍기 전 · 다 찍은 뒤) — checkStack: --allow-fixture 여도 묻고, 아니면 Fatal(--allow-fixture 면 표시), 두 번의 표시가 다르면 Fatal.
  */
 async function assertRealData(when) {
-  let code = 0, body = null;
-  try {
-    const r = await page.request.get(`${BASE}/api/v1/status`, { timeout: 15_000 });
-    code = r.status();
-    body = await r.json().catch(() => null);
-  } catch { /* 응답 없음 → code 0 */ }
-  const why = realDataVerdict(code, body);
-  if (why && !args.allowFixture) throw new Fatal(`${when}: ${why} — 가짜 자료가 설명서에 실리지 않게 이번 결과를 버리고 멈춤(실데이터 스택에서 다시 찍거나 --allow-fixture)`);
-  const note = stackNote(code, body);
-  if (stackChecked && note !== stack) throw new Fatal(`${when}: 찍는 사이에 스택 상태가 바뀜(${stack ?? "실데이터"} → ${note ?? "실데이터"}) — 캡처 조건이 그림과 어긋나지 않게 이번 결과를 버리고 멈춤`);
-  stack = note;
-  stackChecked = true;
+  stack = await checkStack({ fetchStatus, allowFixture: args.allowFixture, state: stack, when });
 }
 async function setPressed(testId, on) {
   const b = page.getByTestId(testId);
@@ -122,23 +109,8 @@ async function setLegend(open) {
   const b = page.getByTestId("legend-toggle");
   if ((await b.getAttribute("aria-expanded")) !== String(open)) await b.click();
 }
-/** 상태 바 칩의 값 글자(data-testid — lib/statusbar 의 칩). 칩이 없으면 null */
-const chipValue = (testId) => page.evaluate((id) => document.querySelector(`[data-testid="${id}"] .chip-v`)?.textContent ?? null, testId);
-/** fn 이 Skip 없이 돌아올 때까지 1 s 마다 다시(상한 ms) — 끝까지 Skip 이면 마지막 이유로 건너뛴다 */
-async function until(fn, ms) {
-  const end = Date.now() + ms;
-  for (;;) {
-    try { return await fn(); } catch (e) { if (!(e instanceof Skip) || Date.now() >= end) throw e; }
-    await wait(1_000);
-  }
-}
-/**
- * 핫 리전 칩이 '갱신'이 되기를 기다리는 상한 — 새 칸의 첫 조회는 수집기 전체에서 30 s 에 2칸까지만 곧바로이고 나머지는 한 주기(30 s) 뒤,
- * 호출 여유가 모자라면 주기가 60 · 120 s 로 는다(collector jobs/demand.py HOT_NEW_BURST · HOT_LEVELS_S). api 는 수집기 상태를 10 s 마다 읽는다.
- */
-const HOT_WAIT_MS = 120_000;
-/** 화면 값을 캡처 조건에 적는 그림: 찍기 전후 두 번 읽은 값이 다르면 다시 찍는 횟수 */
-const READ_TRIES = 3;
+/** 지도 화면의 판정 재료(world 칩 상태 · 지도 칩 · aircraft 수) — 브라우저 안에서 lib 의 mapProbeInPage 를 돌린다(판정은 lib 의 worldReading · hotReading) */
+const probeMap = () => page.evaluate(mapProbeInPage, MAP_PROBE);
 
 /** 한반도 지도 영역의 실시간 항공기(서버가 준 값 그대로) */
 async function koreaAircraft() {
@@ -177,21 +149,12 @@ const RECIPES = {
   },
   async world(shot) {
     // 전세계 보기(줌 1.6 — 서버가 넓은 구독을 받는 줌 5 이하, 핫 리전 줌 미만): 서버는 구독 영역의 병합 목록(전세계 · 관심 지역 피드 등)을 보낸다.
-    // 상태 바 world 칩이 정상(data-health ok — 전세계 피드가 있고 서버 · 브라우저 판정 모두 오래되지 않음)이고 aircraft 칩이 1 이상일 때까지 기다린다(상한 30 s).
-    // 피드가 없거나(공급자 설정 없음) 오래됐으면 건너뛴다 — 관심 지역만 찍힌 '전세계' 그림을 싣지 않는다. 캡처 조건 = 찍기 전후에 읽은 항공기 수(같을 때만)
+    // 상태 바 world 칩이 정상(전세계 피드가 있고 오래되지 않음)이고 aircraft 가 1 이상일 때까지 기다리고(READINGS.world — 상한 · 정착 시간),
+    // 아니면 건너뛴다(worldReading). 캡처 조건 = 찍기 전후에 읽은 항공기 수(같을 때만 — 돌려준 읽기 함수로 shootStable 이 본다)
     await openMap(shot.path);
     await setPressed("layer-ships", false);
     await setLegend(false);
-    const read = async () => {
-      const health = await page.evaluate(() => document.querySelector('[data-testid="global-lag-badge"]')?.getAttribute("data-health") ?? null);
-      if (health !== "ok") throw new Skip(`상태 바 world 칩이 정상이 아님(${health ?? "칩 없음"}) — 전세계 피드가 없거나 오래됨`);
-      const n = chipCount(await chipValue("aircraft-count"));
-      if (!(n > 0)) throw new Skip(`상태 바 aircraft 수가 1 이상이 아님(${n ?? "—"})`);
-      return worldVariant(shot.path, n);
-    };
-    await until(read, 30_000);
-    await wait(6_000); // 기호 · 레이더 타일 그리기
-    return read;
+    return awaitReading(READINGS.world, { path: shot.path, probe: probeMap });
   },
   async traffic(shot) {
     // 연안 교통량(ADR-023): 레이어를 켜면 곧바로 조회한다 — 상태 줄이 '불러오는 중'을 벗어날 때까지 기다리고, 칸을 그리는 상태(기준 …)일 때만 찍는다
@@ -258,26 +221,14 @@ const RECIPES = {
     return `${String(t.callsign).trim()} (${t.hex}) — 한반도 영역에서 가장 높이 나는 항공기`;
   },
   async hot(shot) {
-    // 핫 리전(ADR-013): 관심 지역 밖(도쿄)을 줌 ≥ 7 로 열고 아무것도 고르지 않으면 서버가 화면 중심 칸을 수집기에 맡긴다. 지도 칩이 '핫 리전 … 갱신'(isHotActive —
-    // 수집기가 그 칸을 조회해 발행한 뒤에만 active, api 는 마지막 성공이 max(15 s, 주기 × 3) 안일 때만 active 로 보낸다)이 될 때까지 기다리고(상한 HOT_WAIT_MS),
-    // WS 차분 한 주기(api ws-diff-interval-s 10 s)를 넘게 더 기다려 핫 리전 자료가 지도에 그려진 뒤 찍는다. 대기 · 지연 · 오류 · 꺼짐 · 제한 · 관심 지역 안이면
-    // 마지막 칩 글자와 함께 건너뛴다. 캡처 조건 = 찍기 전후에 읽은 칩 글자 · 항공기 수(같을 때만 — 찍을 때도 '갱신'인지 다시 본다)
+    // 핫 리전(ADR-013): 관심 지역 밖(도쿄)을 줌 ≥ 7 로 열고 아무것도 고르지 않으면 서버가 화면 중심 칸을 수집기에 맡긴다. 지도 칩이 '핫 리전 … 갱신'이 되고
+    // aircraft 가 1 이상일 때까지 기다리고(READINGS.hot — 상한 HOT_WAIT_MS, 그 뒤 WS 차분 한 주기를 넘게 정착), 대기 · 지연 · 오류 · 꺼짐 · 제한 · 관심 지역
+    // 안이면 마지막 칩 글자와 함께 건너뛴다(hotReading). '갱신'이 증명하는 것은 이 칸의 핫 리전 조회가 최근에 성공했다는 서버 보고까지다(받은 항공기가 0 대여도
+    // active) — 지도의 어느 항공기가 핫 리전으로 받은 것인지는 아니다(aircraft 는 여러 피드를 합친 목록의 수). 캡처 조건 = 찍기 전후에 읽은 칩 글자 · 항공기 수(같을 때만)
     await openMap(shot.path);
     await setPressed("layer-ships", false);
     await setLegend(false);
-    const read = async () => {
-      const c = await page.evaluate(() => {
-        const el = document.querySelector('[data-testid="demand-map-chip"]');
-        return el ? { kind: el.getAttribute("data-kind"), text: (el.textContent ?? "").trim() } : null;
-      });
-      if (!isHotActive(c?.kind, c?.text)) throw new Skip(`지도 칩이 핫 리전 ‘갱신’이 아님 — ${c ? `${c.kind} ‘${c.text}’` : "칩 없음"}`);
-      const n = chipCount(await chipValue("aircraft-count"));
-      if (!(n > 0)) throw new Skip(`상태 바 aircraft 수가 1 이상이 아님(${n ?? "—"})`);
-      return hotVariant(shot.path, c.text, n);
-    };
-    await until(read, HOT_WAIT_MS);
-    await wait(12_000);
-    return read;
+    return awaitReading(READINGS.hot, { path: shot.path, probe: probeMap });
   },
   async ship(shot) {
     // 계획의 위치(부산항 부근)에 선박이 없으면 수신국이 많은 도쿄만으로 — 어디서 찍었는지 조건에 적는다
@@ -534,22 +485,14 @@ for (const shot of fatal ? [] : shots) {
     if (!recipe) throw new Skip("이 스크립트에 캡처 방법이 없음(RECIPES)");
     console.log(`… ${shot.id}`);
     const got = await recipe(shot);
-    // 레시피가 읽기 함수를 돌려주면 캡처 조건은 화면 값이다(칩 글자 · 항공기 수) — 찍기 직전과 직후에 읽어 같을 때만 싣는다(WS 차분이 10 s 마다 와 값이 바뀔 수 있다)
+    // 레시피가 읽기 함수를 돌려주면 캡처 조건은 화면 값이다(칩 글자 · 항공기 수) — 찍기 직전과 직후에 읽어 같을 때만 싣는다(shootStable — WS 차분이 10 s 마다 와 값이 바뀔 수 있다)
     const read = typeof got === "function" ? got : null;
     await assertNoErrors();
     const mask = await maskLocators(shot);
     await page.evaluate(() => document.fonts?.ready);
-    let condition = read ? null : got, positions, png;
-    for (let attempt = 1; ; attempt++) {
-      const before = read ? await read() : null;
-      positions = await measure(shot.callouts);
-      png = await page.screenshot({ type: "png", mask, maskColor: MASK_COLOR });
-      if (!read) break;
-      const after = await read();
-      if (after === before) { condition = after; break; }
-      if (attempt >= READ_TRIES) throw new Skip(`찍는 동안 화면 값이 바뀜(${READ_TRIES}번 — 마지막 ${before} → ${after})`);
-    }
-    const variant = maskedVariant(withStackNote(stack, condition), (shot.masks ?? []).map((m) => m.label));
+    const { shot: taken, reading } = await shootStable(read, async () => ({ positions: await measure(shot.callouts), png: await page.screenshot({ type: "png", mask, maskColor: MASK_COLOR }) }));
+    const { positions, png } = taken;
+    const variant = maskedVariant(withStackNote(stack.note, read ? reading : got), (shot.masks ?? []).map((m) => m.label));
     const enc = await encode(png);
     const file = hashedName(shot.id, enc.bytes, enc.format);
     writeFileSync(join(OUT, file), enc.bytes);
