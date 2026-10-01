@@ -61,9 +61,10 @@ import java.util.concurrent.atomic.AtomicLong;
  *       폭주 동안 쓴 항적 · 선박 행과 순서 큐 작업(넣은 수와 함께), 큐 최대, 따라잡는 데 걸린 시간, 버린 행(result=dropped), Hikari 에서 연결을
  *       기다린 스레드 최대, 공개 조회 결과(성공 · 3 s 취소 · 5 s 연결 대기 초과).</li>
  * </ul>
- * 실행: {@code ./gradlew --offline perfTest --tests 'dev.wakeline.platform.data.SharedPoolStarvationPerfTest'}
- * (선택: -Dwakeline.perf.pool.rates=0,4,8,16 · -Dwakeline.perf.pool.storm-s=60 · -Dwakeline.perf.pool.sleep-s=10). 결과는 표준 출력과
- * build/perf/pool-starvation.txt.
+ * 공개 조회는 운영과 같은 길(앱의 JdbcClient = SharedJdbcClient → 공개 조회 격벽 PublicReadGate)로 낸다. 격벽 전과 견주려면 -Dwakeline.perf.pool.permits=none.
+ * 실행: {@code ./gradlew --offline perfTest --tests 'dev.wakeline.platform.data.SharedPoolStarvationPerfTest.measure'}
+ * (선택: -Dwakeline.perf.pool.rates=0,4,8,16 · -Dwakeline.perf.pool.storm-s=60 · -Dwakeline.perf.pool.sleep-s=10 · -Dwakeline.perf.pool.permits=6|none ·
+ * -Dwakeline.perf.pool.wait-ms=1000). 결과는 표준 출력과 build/perf/pool-starvation.txt. DB 가 멀쩡할 때의 몰림은 {@link #burst}.
  */
 @Tag("perf")
 @EnabledIf("dev.wakeline.DbTestSupport#dockerAvailable")
@@ -82,6 +83,21 @@ class SharedPoolStarvationPerfTest {
 
     record Scenario(double readsPerSecond, double sleepS, long stormMs) {}
 
+    /**
+     * 공개 조회 격벽(운영 기본 — PublicReadGate.DEFAULT_PERMITS · DEFAULT_WAIT_MS). -Dwakeline.perf.pool.permits=none 이면 격벽 없이(바꾸기 전과 같은 길),
+     * 숫자면 그 허가 수 · -Dwakeline.perf.pool.wait-ms 의 기다림.
+     */
+    static PublicReadGate gate(MeterRegistry meters) {
+        String permits = System.getProperty("wakeline.perf.pool.permits", String.valueOf(PublicReadGate.DEFAULT_PERMITS));
+        if ("none".equals(permits)) return null;
+        return new PublicReadGate(Integer.parseInt(permits), Long.getLong("wakeline.perf.pool.wait-ms", PublicReadGate.DEFAULT_WAIT_MS), POOL_SIZE, meters);
+    }
+
+    static String gateLabel() {
+        String permits = System.getProperty("wakeline.perf.pool.permits", String.valueOf(PublicReadGate.DEFAULT_PERMITS));
+        return "none".equals(permits) ? "no gate" : "gate " + permits + " permits · wait " + Long.getLong("wakeline.perf.pool.wait-ms", PublicReadGate.DEFAULT_WAIT_MS) + " ms";
+    }
+
     @Test
     void measure() throws Exception {
         DbTestSupport.reset();
@@ -90,6 +106,7 @@ class SharedPoolStarvationPerfTest {
         long stormMs = Long.getLong("wakeline.perf.pool.storm-s", 60) * 1000;
         double sleepS = Double.parseDouble(System.getProperty("wakeline.perf.pool.sleep-s", "10"));
         List<String> lines = new ArrayList<>();
+        lines.add(gateLabel());
         lines.add(header());
         for (double r : rates) {
             String line = run(new Scenario(r, sleepS, stormMs));
@@ -102,17 +119,70 @@ class SharedPoolStarvationPerfTest {
         System.out.println(String.join("\n", lines));
     }
 
+    /**
+     * DB 가 멀쩡할 때의 몰림(격벽의 기다림을 고른 근거): edge 가 IP 하나에 한 번에 30건(burst 30, nodelay)을 들인다 — 재생 요청 30개가 한꺼번에, 요청마다
+     * 문장 셋(각 30 ms)을 차례로. 2 s 간격으로 5번. 격벽 없음 · 기다림 0(바로 실패) · 기다림 기본값을 잰다(기록기 없이 — 풀은 비어 있다).
+     * 실행: {@code ./gradlew --offline perfTest --tests 'dev.wakeline.platform.data.SharedPoolStarvationPerfTest.burst'}
+     */
+    @Test
+    void burst() throws Exception {
+        DbTestSupport.reset();
+        List<String> lines = new ArrayList<>();
+        lines.add("healthy DB burst: 5 x 30 concurrent replay-like requests (3 statements x 30 ms each) | requests 503 | request p50/p95/max ms");
+        for (String variant : List.of("none", PublicReadGate.DEFAULT_PERMITS + ":0", PublicReadGate.DEFAULT_PERMITS + ":" + PublicReadGate.DEFAULT_WAIT_MS)) {
+            SimpleMeterRegistry meters = new SimpleMeterRegistry();
+            HikariDataSource pool = pool(meters);
+            JdbcClient readers;
+            if ("none".equals(variant)) readers = JdbcClient.create(pool);
+            else {
+                String[] pw = variant.split(":");
+                PublicReadGate g = new PublicReadGate(Integer.parseInt(pw[0]), Long.parseLong(pw[1]), POOL_SIZE, meters);
+                readers = new SharedJdbcClient(JdbcClient.create(pool), JdbcClient.create(g.guard(pool)));
+            }
+            ConcurrentLinkedQueue<long[]> out = new ConcurrentLinkedQueue<>();
+            for (int round = 0; round < 5; round++) {
+                List<Thread> ts = new ArrayList<>();
+                for (int i = 0; i < 30; i++) {
+                    ts.add(Thread.ofVirtual().start(() -> {
+                        long t0 = System.nanoTime();
+                        int failed = 0;
+                        for (int k = 0; k < 3 && failed == 0; k++) if (read(readers, 0.03)[0] != 0) failed = 1;
+                        out.add(new long[]{failed, (System.nanoTime() - t0) / 1_000_000});
+                    }));
+                }
+                for (Thread t : ts) t.join(30_000);
+                sleep(2_000);
+            }
+            pool.close();
+            List<Long> ms = new ArrayList<>();
+            int failed = 0;
+            for (long[] r : out) {
+                ms.add(r[1]);
+                failed += (int) r[0];
+            }
+            String label = "none".equals(variant) ? "no gate" : "gate " + variant.replace(":", " permits · wait ") + " ms";
+            lines.add(String.format(Locale.ROOT, "%-32s | %3d of %d | %d/%d/%d", label, failed, out.size(), percentile(ms, 0.5), percentile(ms, 0.95),
+                    ms.stream().mapToLong(Long::longValue).max().orElse(0)));
+        }
+        lines.forEach(System.out::println);
+        Path p = Path.of("build/perf/pool-burst.txt");
+        Files.createDirectories(p.getParent());
+        Files.write(p, lines);
+    }
+
     static String header() {
         return "reads/s | writer conn wait p50/p95/max ms (n) | writer conn timeouts track/ship/ordered | written during storm: track rows/ship rows/ordered tasks"
                 + " (enqueued) | queue max track/ship/ordered | caught up after storm s | dropped track/ship/ordered | hikari waiting max"
-                + " | reads ok/cancelled 3 s/pool timeout 5 s/other · p95 ms";
+                + " | reads ok/cancelled 3 s/pool timeout 5 s/rejected by the gate · p95 ms";
     }
 
     String run(Scenario s) throws Exception {
         SimpleMeterRegistry meters = new SimpleMeterRegistry();
         HikariDataSource pool = pool(meters);
         Timed trackDs = new Timed(pool), shipDs = new Timed(pool), orderedDs = new Timed(pool);
-        JdbcClient readers = JdbcClient.create(pool);
+        PublicReadGate gate = gate(meters);
+        // 공개 조회는 운영과 같은 길: 앱의 JdbcClient(SharedJdbcClient)를 거친 Sql.publicRead — 격벽이 있으면 그것을 지난다
+        JdbcClient readers = gate == null ? JdbcClient.create(pool) : new SharedJdbcClient(JdbcClient.create(pool), JdbcClient.create(gate.guard(pool)));
         TrackWriter tw = new TrackWriter(new JdbcTemplate(trackDs), new AircraftRepository(JdbcClient.create(trackDs), DbTestSupport.JSON), meters);
         OrderedWriter ordered = new OrderedWriter(meters);
         ShipWriter sw = new ShipWriter(new ShipRepository(new JdbcTemplate(shipDs), JdbcClient.create(shipDs)), ordered, meters, e -> {});
@@ -189,7 +259,7 @@ class SharedPoolStarvationPerfTest {
         tw.stop();
         pool.close();
 
-        int ok = 0, cancelled = 0, poolTimeout = 0, other = 0;
+        int ok = 0, cancelled = 0, poolTimeout = 0, rejected = 0, other = 0;
         List<Long> readMs = new ArrayList<>();
         for (long[] r : reads) {
             readMs.add(r[1]);
@@ -197,6 +267,7 @@ class SharedPoolStarvationPerfTest {
                 case 0 -> ok++;
                 case 1 -> cancelled++;
                 case 2 -> poolTimeout++;
+                case 3 -> rejected++;
                 default -> other++;
             }
         }
@@ -208,7 +279,7 @@ class SharedPoolStarvationPerfTest {
                 trackQueueMax.get(), shipQueueMax.get(), orderedQueueMax.get(),
                 Double.isNaN(caughtUpS) ? ">" + RECOVERY_MAX_MS / 1000 : String.format(Locale.ROOT, "%.1f", caughtUpS),
                 last.trackDropped(), last.shipDropped(), last.orderedDropped(), pendingMax.get(),
-                ok, cancelled, poolTimeout, other, percentile(readMs, 0.95));
+                ok, cancelled, poolTimeout, rejected, percentile(readMs, 0.95)) + (other > 0 ? " · other " + other : "");
     }
 
     /** 넣은 수(입력기가 센다). */
@@ -292,11 +363,17 @@ class SharedPoolStarvationPerfTest {
         } catch (QueryTimeoutException e) {
             outcome = 1;
         } catch (CannotGetJdbcConnectionException e) {
-            outcome = 2;
+            outcome = String.valueOf(rootCause(e).getMessage()).startsWith("public read limit reached") ? 3 : 2;
         } catch (RuntimeException e) {
-            outcome = "57014".equals(sqlState(e)) ? 1 : 3;
+            outcome = "57014".equals(sqlState(e)) ? 1 : 4;
         }
         return new long[]{outcome, (System.nanoTime() - t0) / 1_000_000};
+    }
+
+    static Throwable rootCause(Throwable e) {
+        Throwable c = e;
+        while (c.getCause() != null && c.getCause() != c) c = c.getCause();
+        return c;
     }
 
     static String sqlState(Throwable e) {

@@ -25,9 +25,12 @@ public final class Sql {
      * 문장이 실패하면 Spring 이 예외 메시지('SQL [...]')에 이 SQL 을 그대로 싣고, 503 WARN 이 거기서 이름과 이 문장의 한도를 읽는다
      * (ProblemAdvice.statement — 조사 2026-10-01 오류 F3: 재생은 이런 문장 3~4개를 차례로 내는데 어느 것이 끊겼는지 알 수 없었다). 같은 이름이
      * PostgreSQL 로그 · pg_stat_activity 의 문장 앞머리에도 보인다.
+     * <p>db 가 앱의 공유 풀 JdbcClient({@link SharedJdbcClient})면 연결은 공개 조회 격벽({@link PublicReadGate} — 리뷰 cto-2026-10 D6)을 지나 빌린다:
+     * 공개 조회가 공유 풀을 다 잡아 기록기를 굶기지 못한다. 그 밖의 JdbcClient(선택 조회 읽기 풀 · 시험)는 그대로다.</p>
      */
     public static JdbcClient.StatementSpec publicRead(JdbcClient db, String label, String sql) {
-        return db.sql(tag(label, PUBLIC_READ_TIMEOUT_S) + sql).withQueryTimeout(PUBLIC_READ_TIMEOUT_S);
+        JdbcClient target = db instanceof SharedJdbcClient shared ? shared.publicReads() : db;
+        return target.sql(tag(label, PUBLIC_READ_TIMEOUT_S) + sql).withQueryTimeout(PUBLIC_READ_TIMEOUT_S);
     }
 
     /** 문장 이름의 모양 — SQL 주석 안에 들어가므로 주석을 닫거나 로그 줄을 깨는 글자는 받지 않는다. */

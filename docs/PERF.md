@@ -387,6 +387,45 @@ statement_timeout 30 s · lock_timeout 5 s)에 운영 클래스 그대로의 기
   (result=dropped — 선박 큐 22,000 · 순서 큐 105 는 상한 아래). 공개 조회는 3 s 취소 2,172 · 5 s 대기 초과 6,469(p95 7.9 s).
 - **확인됨** — 다음 커밋에서 공개 조회의 동시 수를 제한한다(격벽).
 
+**D6 뒤 — 공개 조회 격벽(`platform.data.PublicReadGate`, 허가 6 · 기다림 1 s)**: 공개 조회(`Sql.publicRead` 가 앱의 JdbcClient — `SharedJdbcClient` — 로
+낼 때)는 허가를 얻어야 공유 풀에서 연결을 빌리고, 연결을 돌려줄 때 놓는다. 1 s 안에 허가를 못 얻으면 연결을 빌리지 않고 503 + Retry-After(풀 대기 초과 ·
+문장 상한과 같은 답). 같은 시험(공개 조회는 운영과 같은 길 — SharedJdbcClient → 격벽):
+
+| 공개 조회 / s | 기록기 연결 대기 p50 / p95 / 최대 | 기록기 연결 대기 초과 | 폭주 60 s 동안 쓴 것 | 폭주 뒤 따라잡기 | 공개 조회: 3 s 취소(연결을 얻음) · 격벽이 돌려보냄 · 5 s 대기 초과 · p95 |
+|---|---|---|---|---|---|
+| 0 | 1 / 1 / 2 ms | 0 | 모두 | 0 s | — |
+| 2 | 0 / 1 / 3 ms | 0 | 모두 | 0 s | 121 · 0 · 0 · 3.3 s |
+| 4 | 0 / 1 / 1 ms | 0 | 모두 | 0 s | 124 · 117 · 0 · 4.0 s |
+| 8 | 1 / 6 / 12 ms | 0 | 모두 | 0 s | 126 · 355 · 0 · 3.9 s |
+| 16 | 0 / **11** / 15 ms | **0** | **모두**(항적 11,200 · 선박 2,400 · 순서 12) | **0 s** | 126 · 835 · **0** · 4.0 s |
+
+- 기록기는 폭주와 상관없이 연결을 곧바로 얻는다(p95 ≤ 11 ms — 전: 5,002 ms · 대기 초과 16번 · 항적 2 %만 씀). 돌려보낸 공개 조회는 연결을 빌리지 않고
+  기다림 1 s 뒤에 503 이 된다(전: 연결 대기 5 s + 문장 3 s). 허가를 얻은 공개 조회의 처리량은 6개 / 3 s = 초당 2건(느린 DB 에서 — 전에는 초당 4건이었지만
+  그 위로는 기록기와 함께 무너졌다).
+- 허가 수(초당 16건 · 60 s, 기다림 1 s):
+
+  | 허가 | 기록기 연결 대기 p95 · 대기 초과 | 폭주 동안 쓴 것 | 연결을 얻은 공개 조회(3 s 취소) · 돌려보냄 |
+  |---|---|---|---|
+  | 4 | 2 ms · 0 | 모두 | 84 · 877 |
+  | 6(고른 값) | 11 ms · 0 | 모두 | 126 · 835 |
+  | 8 | 3 ms · 0 | 모두 | 168 · 793 |
+  | 10 | 4 ms · 0 | 모두 | 210 · 751 |
+
+  이 시험의 기록기 셋(스레드 하나씩 — 동시에 연결 셋 이하)은 허가 10 까지도 굶지 않는다 — 측정이 더 작은 값을 강요하지는 않는다. 운영에서는 같은 풀을
+  정기 작업(스케줄러 16 스레드 — 집계 · 보존 · 파티션), 운영 화면 · 로그인 · 설정 쓰기, DB 헬스 확인도 쓴다. 그래서 6: 기록기 셋의 두 배(6)를 남기고,
+  느린 DB 에서 공개 조회 처리량은 초당 2건(허가 10 이면 3.3건)으로 준다. 바꾸려면 `wakeline.public-reads.permits`(1–11) ·
+  `wakeline.public-reads.wait-ms`(0–3,000).
+- 기다림 1 s 를 고른 까닭 — `burst`(DB 가 멀쩡할 때 edge 의 IP 당 burst 30: 재생 같은 요청 30개 × 문장 셋(각 30 ms), 2 s 간격으로 5번, 기록기 없음):
+
+| | 503 | 요청 p50 / p95 / 최대 |
+|---|---|---|
+| 격벽 없음(전) | 0 / 150 | 211 / 462 / 510 ms |
+| 허가 6 · 기다림 0(바로 실패) | **120 / 150** | 0 / 113 / 188 ms |
+| 허가 6 · 기다림 1 s(고른 값) | 0 / 150 | 440 / 560 / 594 ms |
+
+  바로 실패하게 하면 멀쩡한 DB 에서도 한 사용자의 몰림이 80 % 503 이 된다. 1 s 기다리면 몰림은 줄을 서서 모두 답하고(p95 +0.1 s), 느린 DB 에서는 1 s 뒤에
+  돌려보낸다.
+
 ## 재현
 ```bash
 make bench SHIPS=1               # k6 REST + WS(선박 포함), api 층 직접
@@ -401,5 +440,6 @@ bash tools/chaos.sh              # 장애 주입(개발 스택을 실제로 죽�
 (cd apps/collector && uv run --frozen python tests/perf/loop_lag_sampling.py)      # §11 루프 지연 표본 간격의 비용 · 잡는 힘(약 13분)
 (cd apps/collector && uv run --frozen python tests/perf/kma_render.py)             # §11 기상청 격자 해석 · PNG 시간 · 최고 메모리
 (cd apps/collector && uv run --frozen python tests/perf/demand_on_loop.py)         # §11 수요 추적의 루프 위 정규화(루프 위 · 스레드)
-(cd apps/api && ./gradlew --offline perfTest --tests 'dev.wakeline.platform.data.SharedPoolStarvationPerfTest')   # §13 D6 공유 풀 굶주림(약 10분 · Docker)
+(cd apps/api && ./gradlew --offline perfTest --tests 'dev.wakeline.platform.data.SharedPoolStarvationPerfTest.measure')   # §13 D6 공유 풀 굶주림(약 10분 · Docker — 격벽 전: -Dwakeline.perf.pool.permits=none)
+(cd apps/api && ./gradlew --offline perfTest --tests 'dev.wakeline.platform.data.SharedPoolStarvationPerfTest.burst')     # §13 D6 멀쩡한 DB 의 몰림(격벽의 기다림)
 ```
