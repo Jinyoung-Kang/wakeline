@@ -1,5 +1,3 @@
-import pytest
-
 from wakeline_collector.config import Settings
 from wakeline_collector.main import build_limits, make_redis
 
@@ -554,7 +552,6 @@ def test_portmis_params_are_validated_before_they_reach_the_url():
     assert not PortMisProvider(HttpClient(), "  ").configured
 
 
-@pytest.mark.xfail(strict=True, reason="D0: the collector heartbeat has no event-loop-lag fields yet")
 async def test_the_collector_heartbeat_reports_its_event_loop_lag(monkeypatch):
     """collector-review §4 'Enabler (D0)' · PLAN Phase 4-1: 수집기에는 이벤트 루프 지연 지표가 없어 루프를 막는 작업(전세계 정규화의 GIL 멈춤 · 루프 위
     demand 정규화)을 운영에서 판단할 수 없었다. heartbeat(wakeline:collector)에 ais 상태 해시와 같은 이름으로 싣는다: loop_lag_max_s(최근 60 s 의 최댓값,

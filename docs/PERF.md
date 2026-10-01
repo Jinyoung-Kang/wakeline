@@ -261,6 +261,17 @@ AUX_TIMEOUT_S 1.5 s 로 끊기는 HGET 의 모형). 관심 지역 체인(공급�
 최악 약 4.6 s → 1.5 s(1.5 s × 3 → × 1). 평상시에는 HGET 이 주기당 1 → 2(함께 — 기다림은 같다). 고르는 결과는 같다(test_fallback · test_chain_store ·
 test_aircraft_job 그대로 통과).
 
+**수집기 이벤트 루프 지연 지표(D0 — PLAN Phase 4-1)** — `tests/perf/loop_lag_sampling.py`: 수집기 heartbeat 의 loop_lag_max_s · loop_stalls_total · loop_tick_s
+(diag.LoopLag — ais 와 같은 측정)의 표본 간격을 골랐다. 표본기는 늦게 깬 만큼을 재므로 막힘이 깨는 순간에 걸려야 보인다.
+
+| 표본 간격 | 표본기 비용(빈 루프) | 20 ms 막힘이 약 0.5 s 마다 — 60 s 창의 최댓값(씨앗 셋) | 약 5 s 마다(demand focus 주기 모형) |
+|---|---|---|---|
+| 0.5 s(ais) | 0.26 CPU ms/s | 37.0 · 19.9 · 20.1 ms | 7.2 · 7.3 · 17.1 ms |
+| 0.1 s(수집기 — 고른 값) | 1.23–1.51 CPU ms/s | 19.1 · 24.1 · 21.0 ms | 13.5 · 10.2 · 28.5 ms |
+
+드문 막힘은 0.5 s 간격이면 막힌 길이의 일부만 보였다. 20 ms 를 넘는 값은 이 기계의 다른 일(개발 스택)이 더한 지연이다 — 운영에서도 지표는 루프가 실제로
+겪은 지연이다. 0.1 s 의 비용은 한 코어의 약 0.15 %.
+
 ## 재현
 ```bash
 make bench SHIPS=1               # k6 REST + WS(선박 포함), api 층 직접
@@ -270,4 +281,5 @@ make measure-ais d=600 i=30      # AIS 수신 상태·처리량·자원(읽기 �
 (cd apps/web && npm run measure:first-js -- http://localhost:8700)          # 첫 화면 JS(배포 스택 — 페이지만 연다)
 bash tools/chaos.sh              # 장애 주입(개발 스택을 실제로 죽였다 살린다)
 (cd apps/collector && uv run --frozen python tests/perf/chain_disabled_reads.py)   # §11 공급자 체인의 운영자 끔 읽기(스택 없이)
+(cd apps/collector && uv run --frozen python tests/perf/loop_lag_sampling.py)      # §11 루프 지연 표본 간격의 비용 · 잡는 힘(약 13분)
 ```
