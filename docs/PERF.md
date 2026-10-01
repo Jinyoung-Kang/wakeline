@@ -284,6 +284,21 @@ synthetic_grid(1)), 운영 폭 1152. 세 번 돌린 값.
 바이트 · echo_cells · observed_cells 가 전과 같다(같은 시험의 고정값). 해석은 전용 스레드에서 돌므로(_DECODE_POOL) 이벤트 루프가 아니라 프레임당
 CPU 와 수집기 RSS 최고점(컨테이너 512 MiB)이 준다.
 
+**수요 추적의 루프 위 정규화(D2 — PLAN Phase 4, collector-review §4 P2)** — `tests/perf/demand_on_loop.py`: 응답 하나 → normalize.readsb_batch(정규화 +
+게이트) → hot_payload + envelope(orjson · gzip · base64). 항공기는 fixtures/adsb_lol_region.json(127대)의 hex 를 바꿔 늘렸고 응답 시각을 지금으로 옮겨
+모두 게이트를 지난다(그러지 않으면 낡은 위치로 모두 버려 일을 적게 잰다). 100번씩, 세 번 돌린 범위. 루프 지연 = 1 ms 표본기가 본 늦음.
+
+| 항공기 | 일 한 번 p50 · p99 | 루프 위(지금): 지연 p99 · 최대 | 전용 스레드 하나: 지연 p99 · 최대 |
+|---|---|---|---|
+| 127 | 2.0–2.1 · 3.9–7.7 ms | 1.8–3.6 · 2.2–6.7 ms | 2.2–6.7 · 3.9–8.0 ms |
+| 300 | 4.6–5.3 · 5.9–14.6 ms | 6.2–6.3 · 9.2–26.5 ms | 4.5–5.0 · 4.8–14.4 ms |
+| 600 | 9.5–9.8 · 23.4–27.5 ms | 10.6–10.9 · 12.3–17.0 ms | 8.5–8.9 · 19.8–21.7 ms |
+
+결정: **옮기지 않는다**(계획의 조건 — 루프 지연 20 ms 이상 — 에 닿지 않는다). 루프 지연 p99 는 600대에서도 약 11 ms 이고, 스레드로 옮겨도 p99 가 거의 같고
+최대는 오히려 같거나 컸다 — 일이 순수 파이썬(pydantic)이라 GIL 을 5 ms 마다 넘겨받아도 루프가 함께 기다린다(전세계 정규화의 15–19 ms 와 같은 까닭).
+focus 는 한 번에 50대 이하, hot 셀은 관심 지역 전체 고정본(127대)보다 작다. 덧붙여 hot 셀은 셀마다 태스크라 스레드로 옮기면 공유 게이트(hot_gate)를
+잠가야 한다. 운영에서 heartbeat loop_lag_max_s 가 20 ms 를 자주 넘으면 다시 본다(그때는 게이트 정규화를 덜 쓰는 쪽 — 리뷰 §4 P1 의 'dict 를 바로 만든다').
+
 ## 재현
 ```bash
 make bench SHIPS=1               # k6 REST + WS(선박 포함), api 층 직접
@@ -295,4 +310,5 @@ bash tools/chaos.sh              # 장애 주입(개발 스택을 실제로 죽�
 (cd apps/collector && uv run --frozen python tests/perf/chain_disabled_reads.py)   # §11 공급자 체인의 운영자 끔 읽기(스택 없이)
 (cd apps/collector && uv run --frozen python tests/perf/loop_lag_sampling.py)      # §11 루프 지연 표본 간격의 비용 · 잡는 힘(약 13분)
 (cd apps/collector && uv run --frozen python tests/perf/kma_render.py)             # §11 기상청 격자 해석 · PNG 시간 · 최고 메모리
+(cd apps/collector && uv run --frozen python tests/perf/demand_on_loop.py)         # §11 수요 추적의 루프 위 정규화(루프 위 · 스레드)
 ```

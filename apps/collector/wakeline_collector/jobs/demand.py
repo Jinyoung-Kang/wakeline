@@ -414,7 +414,8 @@ class DemandTracker:
         self, res: ProviderResult, gate: AircraftGate, keep: Callable[[str | None], bool]
     ) -> tuple[list[AircraftState], list[Quarantine], set[str]]:
         """(통과한 상태, 격리, 응답에 들어 있던 hex). keep(hex) 가 False 인 레코드는 보지 않는다(요청하지 않은 항공기). 관심 지역 작업과 같은
-        정규화 · 게이트(normalize.readsb_batch — 같은 관측은 어느 작업이 받아도 같은 seen_at). 이벤트 루프 위에서 돈다."""
+        정규화 · 게이트(normalize.readsb_batch — 같은 관측은 어느 작업이 받아도 같은 seen_at). 이벤트 루프 위에서 돈다 — 잰 루프 지연 p99 는 600대에서도
+        약 11 ms 이고 스레드로 옮겨도 GIL 때문에 줄지 않았다(docs/PERF.md §11 — D2, 운영은 heartbeat loop_lag_max_s 로 본다)."""
         _records, g, seen = readsb_batch(res.data, self.provider.name, res.fetched_at, gate, keep=keep)
         return g.kept, g.quarantined, seen
 
