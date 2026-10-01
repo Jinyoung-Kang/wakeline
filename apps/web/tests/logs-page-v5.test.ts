@@ -436,3 +436,61 @@ describe("/logs: '이전 항목 더 보기' while its page is on the way (web-re
     expect(calls.at(-1)).toContain(`cursor=${encodeURIComponent(T(10))}`);
   });
 });
+
+describe("/logs: the latest #id= link (or row) is the one left open (web-review B14)", () => {
+  const A = T(5);
+  const B = T(6);
+  const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+  /** 항목 A 의 답은 붙잡아 둔다(늦게 온다), B 는 바로 */
+  function stubItems(heldA: ((r: Response) => void)[]) {
+    calls.length = 0;
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      calls.push(`${init?.method ?? "GET"} ${url}`);
+      if (url === "/api/v1/ops/session") return json(200, { username: "op" });
+      if (url === `/api/v1/ops/logs/${A}`) return new Promise<Response>((r) => heldA.push(r));
+      if (url === `/api/v1/ops/logs/${B}`) return json(200, { item: entry(B) });
+      if (url.startsWith("/api/v1/ops/logs?")) return json(200, FIRST);
+      return json(404, { detail: "no such resource" });
+    });
+  }
+  /** 같은 화면에서 누른 #id= 링크(hashchange) — 최소 DOM 의 window 는 전역 객체라 듣는 함수를 잡아 둔다 */
+  function captureHashChange() {
+    const listeners = new Map<string, (e: unknown) => void>();
+    vi.stubGlobal("addEventListener", (t: string, l: (e: unknown) => void) => { listeners.set(t, l); });
+    vi.stubGlobal("removeEventListener", () => {});
+    return async (hash: string) => {
+      (globalThis.location as unknown as { hash: string }).hash = hash;
+      await React.act(async () => { listeners.get("hashchange")!({ type: "hashchange" }); });
+    };
+  }
+  /** 열린 상세의 항목 시각(KST) — 항목마다 다르다(같은 요청 id 목록의 다른 항목 글자와 섞이지 않게 이것으로 본다) */
+  const openTime = () => byTestId("log-detail-time")?.textContent ?? "";
+  const kstOf = (id: string) => new Date(Number(id.split("-")[0]) + 9 * 3600_000).toISOString().replace("Z", "+09:00");
+
+  it("two #id= links in a row: the first item's late answer does not replace the second", async () => {
+    const heldA: ((r: Response) => void)[] = [];
+    stubItems(heldA);
+    const go = captureHashChange();
+    await open();
+    await go(`#id=${A}`);
+    await go(`#id=${B}`);
+    await settle();
+    expect(openTime()).toBe(kstOf(B));
+    heldA[0](json(200, { item: entry(A) }));
+    await settle();
+    expect(openTime()).toBe(kstOf(B));
+  });
+
+  it("a row opened while a #id= item is still loading stays open", async () => {
+    const heldA: ((r: Response) => void)[] = [];
+    stubItems(heldA);
+    const go = captureHashChange();
+    await open();
+    await go(`#id=${A}`);
+    await click(allByTestId("log-row")[0]); // T(1)
+    expect(openTime()).toBe(kstOf(T(1)));
+    heldA[0](json(200, { item: entry(A) }));
+    await settle();
+    expect(openTime()).toBe(kstOf(T(1)));
+  });
+});

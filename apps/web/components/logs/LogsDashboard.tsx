@@ -173,15 +173,23 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
     return () => clearInterval(t);
   }, [tab, poll]);
 
+  /**
+   * 상세 열기 번호 — #id= 링크 · 줄 · 닫기마다 오른다. 먼저 누른 #id= 항목의 늦은 답이 나중에 연 상세를 덮지 않게(마지막 것만 — web-review B14,
+   * 해결 뒤 다시 읽기의 rereadSeq 와 같은 규칙)
+   */
+  const openSeq = useRef(0);
   const openById = useCallback(async (id: string, stream: LogStreamName | null = null) => {
+    const my = ++openSeq.current;
     setDetailMiss(null);
     try {
       const v = await apiGet<unknown>(logItemUrl(id, stream));
+      if (my !== openSeq.current) return;
       const raw = typeof v === "object" && v !== null && "item" in v ? (v as { item: unknown }).item : v;
       const e = parseLogEntry(raw);
       if (e) setDetail(e);
       else setDetailMiss({ id, error: new Error("항목 형식이 스키마와 맞지 않음") });
     } catch (e) {
+      if (my !== openSeq.current) return;
       setDetailMiss({ id, error: e });
       if (isAuthMiss(e)) authMiss(e);
     }
@@ -266,8 +274,7 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
       setSelId(entryKey(items[i]));
     } else if (e.key === "Enter" && selIdx >= 0) {
       e.preventDefault();
-      setDetail(items[selIdx]);
-      setDetailMiss(null);
+      openEntry(items[selIdx]);
     } else if (e.key === "c" || e.key === "C") {
       const it = selIdx >= 0 ? items[selIdx] : detail;
       if (it) { e.preventDefault(); void copy("항목 텍스트", logText(it)); }
@@ -292,8 +299,8 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
     setTab("logs"); setView("list"); setDraftRid(rid); setRidError(null);
     setFilter((f) => ({ ...f, rid, period: "7d" }));
   }, []);
-  const openEntry = useCallback((e: LogEntry) => { setDetail(e); setDetailMiss(null); }, []);
-  const closeDetail = useCallback(() => { setDetail(null); setDetailMiss(null); }, []);
+  const openEntry = useCallback((e: LogEntry) => { openSeq.current++; setDetail(e); setDetailMiss(null); }, []);
+  const closeDetail = useCallback(() => { openSeq.current++; setDetail(null); setDetailMiss(null); }, []);
   const logout = () => { void signOut(() => apiSend("DELETE", OPS_SESSION_PATH), onLeave); };
 
   /** 열린 상세 — 해결 쓰기 뒤 다시 읽을 항목(콜백이 상세가 바뀔 때마다 새로 만들어지지 않게 ref) */
