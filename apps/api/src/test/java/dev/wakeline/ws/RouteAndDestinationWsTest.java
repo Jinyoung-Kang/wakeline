@@ -4,7 +4,7 @@ import dev.wakeline.domain.AircraftState;
 import dev.wakeline.domain.ShipState;
 import dev.wakeline.domain.ShipStatic;
 import dev.wakeline.ingest.IngestEvents;
-import dev.wakeline.ingest.Receipt;
+import dev.wakeline.platform.support.Receipt;
 import dev.wakeline.route.RouteInfoTest;
 import dev.wakeline.route.RouteReader;
 import org.junit.jupiter.api.Test;

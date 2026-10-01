@@ -1,7 +1,7 @@
 package dev.wakeline.rest;
 
-import dev.wakeline.config.AppProperties;
-import dev.wakeline.config.ProblemAdvice;
+import dev.wakeline.platform.config.AppProperties;
+import dev.wakeline.platform.web.ProblemAdvice;
 import dev.wakeline.domain.AircraftState;
 import dev.wakeline.engine.EngineService;
 import dev.wakeline.ingest.SigmetStore;
@@ -46,7 +46,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @ExtendWith(OutputCaptureExtension.class)
 class AircraftControllerTest {
     static final AppProperties PROPS = new AppProperties("", "36.5,127.8", 250, 120, 200, 5, 10, 30, 2500, 0, "classpath:schemas", 72, 30,
-            120, List.of("http://localhost:8700"));
+            120, List.of("http://localhost:8700"), List.of());
 
     /** DB 가 내려간 저장소 — 조회마다 던질 예외를 고른다(기본: 연결을 얻지 못함). */
     static class DbDown extends AircraftRepository {

@@ -1,12 +1,15 @@
 package dev.wakeline.rest;
 
-import dev.wakeline.config.AppProperties;
-import dev.wakeline.config.Problem;
-import dev.wakeline.domain.Bbox;
+import dev.wakeline.platform.config.AppProperties;
+import dev.wakeline.platform.web.BboxParam;
+import dev.wakeline.platform.web.Meta;
+import dev.wakeline.platform.web.Problem;
+import dev.wakeline.geo.Bbox;
 import dev.wakeline.persist.MaintenanceJobs;
 import dev.wakeline.persist.SigmetRepository;
 import dev.wakeline.persist.StatsRepository;
 import dev.wakeline.persist.TrackRepository;
+import dev.wakeline.status.StatusService;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.CacheControl;
 import org.springframework.http.ResponseEntity;
@@ -35,15 +38,15 @@ public class HistoryController {
     private final TrackRepository tracks;
     private final SigmetRepository sigmetRepo;
     private final StatsRepository stats;
-    /** 공개 상태 — WS 와 같은 3 s 캐시(R-53: 요청마다 Redis 해시를 여러 번 읽지 않는다). */
+    /** 공개 상태 — WS 와 같은 3 s 캐시(StatusService, R-53: 요청마다 Redis 해시를 여러 번 읽지 않는다). */
     private final java.util.function.Supplier<Map<String, Object>> status;
     private final AppProperties props;
 
-    public HistoryController(TrackRepository tracks, SigmetRepository sigmetRepo, StatsRepository stats, dev.wakeline.ws.WsHub hub, AppProperties props) {
+    public HistoryController(TrackRepository tracks, SigmetRepository sigmetRepo, StatsRepository stats, StatusService status, AppProperties props) {
         this.tracks = tracks;
         this.sigmetRepo = sigmetRepo;
         this.stats = stats;
-        this.status = hub::status;
+        this.status = status::cachedPublicStatus;
         this.props = props;
     }
 
@@ -54,7 +57,7 @@ public class HistoryController {
      */
     @GetMapping("/replay")
     public ResponseEntity<Map<String, Object>> replay(@RequestParam Instant at, @RequestParam String bbox, HttpServletRequest req) {
-        Bbox b = Bbox.parse(bbox, props.maxBboxAreaSqdeg());
+        Bbox b = BboxParam.parse(bbox, props.maxBboxAreaSqdeg());
         Instant now = Instant.now();
         // 정확히 비교한다(R-71 — toDays() 절삭은 31일 23시간을 통과시켰다)
         if (at.isAfter(now.plusSeconds(60)) || Duration.between(at, now).compareTo(REPLAY_MAX_AGE) > 0) throw Problem.badRequest("BAD_AT", "at must be within the last 31 days");

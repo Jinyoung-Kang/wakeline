@@ -1,6 +1,6 @@
 package dev.wakeline;
 
-import dev.wakeline.config.AppProperties;
+import dev.wakeline.platform.config.AppProperties;
 import dev.wakeline.ops.OpsUserService;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.output.MigrateResult;

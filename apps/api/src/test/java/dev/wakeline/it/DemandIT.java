@@ -2,7 +2,7 @@ package dev.wakeline.it;
 
 import dev.wakeline.demand.DemandLeases;
 import dev.wakeline.domain.AircraftState;
-import dev.wakeline.domain.Bbox;
+import dev.wakeline.geo.Bbox;
 import dev.wakeline.domain.HotCell;
 import dev.wakeline.ingest.SnapshotStore;
 import io.micrometer.core.instrument.Gauge;

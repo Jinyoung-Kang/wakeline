@@ -1,9 +1,12 @@
 package dev.wakeline.persist;
 
-import dev.wakeline.domain.Bbox;
-import dev.wakeline.domain.GeoJson;
+import dev.wakeline.geo.Bbox;
+import dev.wakeline.geo.GeoJson;
 import dev.wakeline.domain.SigmetRecord;
 import dev.wakeline.ingest.IngestEvents;
+import dev.wakeline.platform.data.DbErrors;
+import dev.wakeline.platform.data.OrderedWriter;
+import dev.wakeline.platform.data.Sql;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.event.EventListener;
@@ -77,7 +80,7 @@ public class SigmetRepository {
             try {
                 if (upsertIfChanged(s, fetchedAt)) written++;
             } catch (RuntimeException e) {
-                if (OrderedWriter.isTransient(e)) throw e; // DB 장애: 세트 전체를 순서 큐가 다시 시도한다
+                if (DbErrors.isTransient(e)) throw e; // DB 장애: 세트 전체를 순서 큐가 다시 시도한다
                 // 한 건의 잘못된 자료(제약 위반 등)가 세트의 나머지·철회 판단을 막지 않게 — 그 경보만 건너뛴다
                 log.warn("sigmet {} not persisted: {}", s.id(), e.toString());
             }
@@ -216,7 +219,7 @@ public class SigmetRepository {
                     m.put("geometry", g == null ? null : json.readTree(g.toString()));
                     if (!Objects.equals(m.get("base_source"), SigmetRecord.BASE_JSON) && !Objects.equals(m.get("base_source"), SigmetRecord.BASE_ASSUMED_SURFACE))
                         m.put("base_source", null);
-                    for (String k : List.of("valid_from", "valid_to", "withdrawn_at")) m.put(k, TrackRepository.toInstant(m.get(k)));
+                    for (String k : List.of("valid_from", "valid_to", "withdrawn_at")) m.put(k, Sql.toInstant(m.get(k)));
                     return (Map<String, Object>) m;
                 }).toList();
     }

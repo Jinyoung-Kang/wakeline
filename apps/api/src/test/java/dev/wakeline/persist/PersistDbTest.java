@@ -1,18 +1,20 @@
 package dev.wakeline.persist;
 
 import dev.wakeline.DbTestSupport;
-import dev.wakeline.config.AppProperties;
+import dev.wakeline.platform.config.AppProperties;
 import dev.wakeline.domain.AircraftState;
 import dev.wakeline.domain.Alert;
-import dev.wakeline.domain.Bbox;
-import dev.wakeline.domain.GeoJson;
+import dev.wakeline.geo.Bbox;
+import dev.wakeline.geo.GeoJson;
 import dev.wakeline.domain.SigmetRecord;
 import dev.wakeline.engine.AlertStateMachine.Event;
 import dev.wakeline.engine.AlertStateMachine.EventType;
 import dev.wakeline.engine.EngineEvents;
 import dev.wakeline.ingest.IngestEvents;
 import dev.wakeline.ingest.SigmetStore;
-import dev.wakeline.ops.RegionSettings;
+import dev.wakeline.settings.RegionSettings;
+import dev.wakeline.platform.data.OrderedWriter;
+import dev.wakeline.platform.data.Sql;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -43,7 +45,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class PersistDbTest {
     static final Instant T0 = Instant.now().truncatedTo(ChronoUnit.SECONDS);
     static final AppProperties PROPS = new AppProperties("", "36.5,127.8", 250, 120, 200, 5, 10, 30, 2500, 0, "classpath:schemas", 72, 30,
-            120, List.of("http://localhost:8700"));
+            120, List.of("http://localhost:8700"), List.of());
 
     JdbcClient api;
     JdbcClient admin;
@@ -84,10 +86,10 @@ class PersistDbTest {
 
     /** 스트림 순서의 SIGMET 세트 한 벌(이력 저장 이벤트). */
     static IngestEvents.SigmetSetReceived set(Instant fetched, SigmetRecord... recs) {
-        return set(fetched, dev.wakeline.ingest.Receipt.NONE, recs);
+        return set(fetched, dev.wakeline.platform.support.Receipt.NONE, recs);
     }
 
-    static IngestEvents.SigmetSetReceived set(Instant fetched, dev.wakeline.ingest.Receipt receipt, SigmetRecord... recs) {
+    static IngestEvents.SigmetSetReceived set(Instant fetched, dev.wakeline.platform.support.Receipt receipt, SigmetRecord... recs) {
         Map<String, SigmetRecord> m = new LinkedHashMap<>();
         for (SigmetRecord r : recs) m.put(r.id(), fetchedAt(r, fetched));
         return new IngestEvents.SigmetSetReceived(fetched, "awc", m, receipt);
@@ -191,7 +193,7 @@ class PersistDbTest {
         assertThat(writer.drainNow()).isEqualTo(8);
         Map<String, Object> r = alertRow(id);
         assertThat(r).containsEntry("close_reason", "signal_lost");
-        assertThat(TrackRepository.toInstant(r.get("left_at"))).isEqualTo(T0);
+        assertThat(Sql.toInstant(r.get("left_at"))).isEqualTo(T0);
         assertThat(String.valueOf(r.get("evidence"))).contains("absent_snapshots");
         Map<String, Object> pr = alertRow(id + 1);
         assertThat(pr).containsEntry("close_reason", "prediction_cleared").containsEntry("eta_s", 240);
@@ -245,7 +247,7 @@ class PersistDbTest {
         // f3: B 가 사라짐. 미국(airsigmet) 항목은 세트에 하나도 없음 → 그 공급자는 판단하지 않는다(U 는 철회로 표시하지 않음)
         sigmets.onSigmetSet(set(f3, a));
         writer.drainNow();
-        assertThat(TrackRepository.toInstant(sigmetRow("B").get("withdrawn_at"))).isEqualTo(f3);
+        assertThat(Sql.toInstant(sigmetRow("B").get("withdrawn_at"))).isEqualTo(f3);
         assertThat(sigmetRow("U").get("withdrawn_at")).isNull();
         assertThat(sigmetRow("A").get("withdrawn_at")).isNull();
         assertThat(sigmets.validAt(T0).stream().map(m -> m.get("id")).toList()).containsExactlyInAnyOrder("A", "U");
@@ -357,7 +359,7 @@ class PersistDbTest {
         TrackWriter tw = new TrackWriter(DbTestSupport.apiJdbc(), new AircraftRepository(api, DbTestSupport.JSON), meters, 5, 10);
         tw.start();
         java.util.concurrent.atomic.AtomicInteger acked = new java.util.concurrent.atomic.AtomicInteger();
-        dev.wakeline.ingest.Receipt r = new dev.wakeline.ingest.Receipt(acked::incrementAndGet);
+        dev.wakeline.platform.support.Receipt r = new dev.wakeline.platform.support.Receipt(acked::incrementAndGet);
         tw.enqueue(List.of(ac("f10001", 36, 127, Instant.parse("2001-01-01T00:00:00Z"), null)), r); // 파티션 없음(23514)
         r.release();
         long deadline = System.currentTimeMillis() + 10_000;
@@ -469,7 +471,7 @@ class PersistDbTest {
         events(repo, new Event(EventType.PREDICTED, p), new Event(EventType.PREDICTION_UPDATED, pu));
         writer.drainNow();
         assertThat(alertRow(id)).containsEntry("close_reason", "sigmet_ended");
-        assertThat(TrackRepository.toInstant(alertRow(id).get("left_at"))).isEqualTo(T0.minusSeconds(5));
+        assertThat(Sql.toInstant(alertRow(id).get("left_at"))).isEqualTo(T0.minusSeconds(5));
         Map<String, Object> pr = admin.sql("SELECT eta_s, alt_ft_at_entry, (evidence->>'alt_ft_at_entry')::int ev_alt FROM alert_event WHERE id = :id")
                 .param("id", id + 1).query().singleRow();
         assertThat(pr).containsEntry("eta_s", 200).containsEntry("alt_ft_at_entry", 37000).containsEntry("ev_alt", 37000);
@@ -498,12 +500,12 @@ class PersistDbTest {
         sigmets.onSigmetSet(set(f4, keep));              // X 철회
         sigmets.onSigmetSet(set(f5, keep, y));
         writer.drainNow();
-        assertThat(TrackRepository.toInstant(sigmetRow("A").get("withdrawn_at"))).isEqualTo(f3);
-        assertThat(TrackRepository.toInstant(sigmetRow("X").get("withdrawn_at"))).isEqualTo(f4);
+        assertThat(Sql.toInstant(sigmetRow("A").get("withdrawn_at"))).isEqualTo(f3);
+        assertThat(Sql.toInstant(sigmetRow("X").get("withdrawn_at"))).isEqualTo(f4);
         assertThat(sigmetRow("Y").get("withdrawn_at")).as("Y had not appeared yet in f2..f4").isNull();
         assertThat(sigmetRow("K").get("withdrawn_at")).isNull();
         Map<String, Object> firstSeen = new LinkedHashMap<>();
-        for (var r : admin.sql("SELECT id, first_seen FROM sigmet").query().listOfRows()) firstSeen.put((String) r.get("id"), TrackRepository.toInstant(r.get("first_seen")));
+        for (var r : admin.sql("SELECT id, first_seen FROM sigmet").query().listOfRows()) firstSeen.put((String) r.get("id"), Sql.toInstant(r.get("first_seen")));
         assertThat(firstSeen).containsEntry("A", f1).containsEntry("X", f2).containsEntry("Y", f5);
         // 재생: 그 시각에 유효했던 경보
         assertThat(sigmets.validAt(f2.plusSeconds(1)).stream().map(m -> m.get("id")).toList()).contains("A", "X");
@@ -512,7 +514,7 @@ class PersistDbTest {
         // 이미 저장한 세트보다 오래된 세트는 건너뛴다(이력을 과거로 되돌리지 않는다)
         sigmets.onSigmetSet(set(f2, a, x, keep));
         assertThat(writer.drainNow()).isZero();
-        assertThat(TrackRepository.toInstant(sigmetRow("A").get("withdrawn_at"))).isEqualTo(f3);
+        assertThat(Sql.toInstant(sigmetRow("A").get("withdrawn_at"))).isEqualTo(f3);
     }
 
     /** API-CONC-8: SIGMET 세트 메시지의 영수증은 저장이 커밋된 뒤에 풀린다. 건너뛴 재전달은 영수증을 잡지 않는다. */
@@ -520,13 +522,13 @@ class PersistDbTest {
     void sigmetSetReceiptIsReleasedOnlyAfterTheSetIsPersisted() {
         var a = sig("RA", "awc_isigmet", "RAW", T0.minusSeconds(3600), T0.plusSeconds(3600));
         java.util.concurrent.atomic.AtomicInteger acked = new java.util.concurrent.atomic.AtomicInteger();
-        dev.wakeline.ingest.Receipt r = new dev.wakeline.ingest.Receipt(acked::incrementAndGet);
+        dev.wakeline.platform.support.Receipt r = new dev.wakeline.platform.support.Receipt(acked::incrementAndGet);
         sigmets.onSigmetSet(set(T0, r, a));
         r.release();                            // 소비자 자신의 보유
         assertThat(acked.get()).as("not acked before the DB write").isZero();
         writer.drainNow();
         assertThat(acked.get()).isEqualTo(1);
-        dev.wakeline.ingest.Receipt dup = new dev.wakeline.ingest.Receipt(acked::incrementAndGet);
+        dev.wakeline.platform.support.Receipt dup = new dev.wakeline.platform.support.Receipt(acked::incrementAndGet);
         sigmets.onSigmetSet(set(T0, dup, a));   // 재전달 — 잡지 않으므로 소비자 보유만 풀면 바로 ACK
         dup.release();
         assertThat(acked.get()).isEqualTo(2);
@@ -546,9 +548,9 @@ class PersistDbTest {
         tw.start();
         Instant seen = Instant.now().minusSeconds(20);
         java.util.concurrent.atomic.AtomicInteger acked = new java.util.concurrent.atomic.AtomicInteger();
-        dev.wakeline.ingest.Receipt m1 = new dev.wakeline.ingest.Receipt(acked::incrementAndGet);
-        dev.wakeline.ingest.Receipt m2 = new dev.wakeline.ingest.Receipt(acked::incrementAndGet);
-        dev.wakeline.ingest.Receipt empty = new dev.wakeline.ingest.Receipt(acked::incrementAndGet);
+        dev.wakeline.platform.support.Receipt m1 = new dev.wakeline.platform.support.Receipt(acked::incrementAndGet);
+        dev.wakeline.platform.support.Receipt m2 = new dev.wakeline.platform.support.Receipt(acked::incrementAndGet);
+        dev.wakeline.platform.support.Receipt empty = new dev.wakeline.platform.support.Receipt(acked::incrementAndGet);
         tw.enqueue(List.of(ac("f20001", 36, 127, seen, null), ac("f20002", 36, 127, seen, null)), m1);
         tw.enqueue(List.of(ac("f20003", 36, 127, seen, null)), m2);
         tw.enqueue(List.of(), empty);
@@ -565,7 +567,7 @@ class PersistDbTest {
 
         // 종료 때 DB 가 다시 죽어 있으면: 못 쓴 행의 메시지는 ACK 하지 않는다(다음 기동에서 PEL 로 다시 온다)
         down.set(true);
-        dev.wakeline.ingest.Receipt m3 = new dev.wakeline.ingest.Receipt(acked::incrementAndGet);
+        dev.wakeline.platform.support.Receipt m3 = new dev.wakeline.platform.support.Receipt(acked::incrementAndGet);
         tw.enqueue(List.of(ac("f20004", 36, 127, seen, null)), m3);
         m3.release();
         tw.stop();
@@ -589,14 +591,14 @@ class PersistDbTest {
         java.util.concurrent.atomic.AtomicInteger acked = new java.util.concurrent.atomic.AtomicInteger();
         List<AircraftState> first = new ArrayList<>();
         for (int i = 0; i < TrackWriter.BATCH; i++) first.add(ac(String.format("e3%04x", i), 36, 127, seen, null));
-        dev.wakeline.ingest.Receipt m1 = new dev.wakeline.ingest.Receipt(acked::incrementAndGet);
+        dev.wakeline.platform.support.Receipt m1 = new dev.wakeline.platform.support.Receipt(acked::incrementAndGet);
         tw.enqueue(first, m1);
         m1.release();
         long deadline = System.currentTimeMillis() + 5_000;
         while (System.currentTimeMillis() < deadline && tw.queued() > 0) Thread.sleep(10); // 첫 배치가 워커 손에(재시도 중)
         List<AircraftState> flood = new ArrayList<>();
         for (int i = 0; i < TrackWriter.QUEUE_MAX + 10; i++) flood.add(ac(String.format("%06x", 0x900000 + i), 36, 127, seen, null));
-        dev.wakeline.ingest.Receipt m2 = new dev.wakeline.ingest.Receipt(acked::incrementAndGet);
+        dev.wakeline.platform.support.Receipt m2 = new dev.wakeline.platform.support.Receipt(acked::incrementAndGet);
         tw.enqueue(flood, m2); // 자기 행 10개가 넘쳐 버려진다
         m2.release();
         assertThat(meters.counter("wakeline_track_rows_total", "result", "dropped").count()).isEqualTo(10.0);
@@ -609,8 +611,8 @@ class PersistDbTest {
     @Test
     void orderedWriterReleasesReceiptsOnSuccessAndPermanentFailureButNotAfterShutdown() throws Exception {
         java.util.concurrent.atomic.AtomicInteger acked = new java.util.concurrent.atomic.AtomicInteger();
-        dev.wakeline.ingest.Receipt ok = new dev.wakeline.ingest.Receipt(acked::incrementAndGet).hold();
-        dev.wakeline.ingest.Receipt bad = new dev.wakeline.ingest.Receipt(acked::incrementAndGet).hold();
+        dev.wakeline.platform.support.Receipt ok = new dev.wakeline.platform.support.Receipt(acked::incrementAndGet).hold();
+        dev.wakeline.platform.support.Receipt bad = new dev.wakeline.platform.support.Receipt(acked::incrementAndGet).hold();
         writer.start();
         writer.submit(OrderedWriter.task("probe_ok", () -> { }, ok));
         writer.submit(OrderedWriter.task("probe_bad", () -> api.sql("SELECT 1/0").query(Integer.class).single(), bad)); // 22012 — 영구 오류
@@ -620,7 +622,7 @@ class PersistDbTest {
         assertThat(acked.get()).isEqualTo(2);
         assertThat(meters.counter("wakeline_persist_tasks_total", "kind", "probe_bad", "result", "failed").count()).isEqualTo(1.0);
         writer.stop();
-        dev.wakeline.ingest.Receipt late = new dev.wakeline.ingest.Receipt(acked::incrementAndGet).hold();
+        dev.wakeline.platform.support.Receipt late = new dev.wakeline.platform.support.Receipt(acked::incrementAndGet).hold();
         assertThat(writer.submit(OrderedWriter.task("probe_late", () -> { }, late))).isFalse();
         late.release();
         assertThat(acked.get()).isEqualTo(2);

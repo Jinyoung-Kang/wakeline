@@ -3,6 +3,8 @@ package dev.wakeline.persist;
 import dev.wakeline.DbTestSupport;
 import dev.wakeline.PlanCapture;
 import dev.wakeline.ingest.SigmetStore;
+import dev.wakeline.platform.data.OrderedWriter;
+import dev.wakeline.platform.data.Sql;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -228,7 +230,7 @@ class QueryPlanDbTest {
             javax.sql.DataSource ds = plans.dataSource();
             JdbcClient db = JdbcClient.create(ds);
             var props = PersistDbTest.PROPS;
-            var region = new dev.wakeline.ops.RegionSettings(new org.springframework.data.redis.core.StringRedisTemplate(), db, DbTestSupport.JSON, props);
+            var region = new dev.wakeline.settings.RegionSettings(new org.springframework.data.redis.core.StringRedisTemplate(), db, DbTestSupport.JSON, props);
             var tx = new org.springframework.transaction.support.TransactionTemplate(new org.springframework.jdbc.datasource.DataSourceTransactionManager(ds));
             new MaintenanceJobs(db, props, region, tx).aggregateDay(day);
 

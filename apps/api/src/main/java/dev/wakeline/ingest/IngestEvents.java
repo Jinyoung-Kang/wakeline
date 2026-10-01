@@ -5,6 +5,8 @@ import dev.wakeline.domain.AisGap;
 import dev.wakeline.domain.ShipState;
 import dev.wakeline.domain.ShipStatic;
 import dev.wakeline.domain.SigmetRecord;
+import dev.wakeline.platform.support.PipelineEvent;
+import dev.wakeline.platform.support.Receipt;
 
 import java.time.Instant;
 import java.util.Collection;
@@ -19,26 +21,26 @@ import java.util.Set;
 public final class IngestEvents {
     private IngestEvents() {}
 
-    public record SnapshotUpdated(Snapshot previous, Snapshot current, Receipt receipt) {
+    public record SnapshotUpdated(Snapshot previous, Snapshot current, Receipt receipt) implements PipelineEvent {
         public SnapshotUpdated(Snapshot previous, Snapshot current) { this(previous, current, Receipt.NONE); }
     }
 
-    public record SigmetsUpdated(SigmetStore.State state) {}
+    public record SigmetsUpdated(SigmetStore.State state) implements PipelineEvent {}
 
     /**
      * 새 수신 없이 유효시간 만료로 활성 SIGMET 집합이 줄었다(엔진의 주기 점검이 발행).
      * state 는 내용이 같고 version 만 오른 상태 — WS 는 SigmetsUpdated 와 똑같이 모든 구독 세션에 다시 보낸다.
      * DB 저장 대상은 아니다(내용 변화 없음).
      */
-    public record SigmetsExpired(SigmetStore.State state, Set<String> expiredIds) {}
+    public record SigmetsExpired(SigmetStore.State state, Set<String> expiredIds) implements PipelineEvent {}
 
-    public record RadarUpdated(RadarStore.Frames frames) {}
+    public record RadarUpdated(RadarStore.Frames frames) implements PipelineEvent {}
 
     /**
      * 현재 스냅샷보다 오래된(fetched_at 이 같거나 이전) 항공기 엔트리 — 재시작·재시도 후 밀린 백로그.
      * 실시간 상태·엔진·WS 는 되돌리지 않는다(스냅샷은 '최신만 의미'). 항적 기록(TrackWriter)만 이 이벤트로 이어서 저장한다.
      */
-    public record AircraftBacklog(String scope, Instant fetchedAt, Collection<AircraftState> states, Receipt receipt) {
+    public record AircraftBacklog(String scope, Instant fetchedAt, Collection<AircraftState> states, Receipt receipt) implements PipelineEvent {
         public AircraftBacklog(String scope, Instant fetchedAt, Collection<AircraftState> states) { this(scope, fetchedAt, states, Receipt.NONE); }
     }
 
@@ -47,7 +49,7 @@ public final class IngestEvents {
      * 무관하다 — 재시작 뒤 밀린 세트(백로그)도 이것으로 저장된다. 이전에는 백로그 세트를 저장하지 않아 api 가 멈춘 동안 발표·만료·철회된
      * 경보가 재생·통계에서 사라졌다. 같은 세트가 다시 오면(재전달·부트스트랩) 저장기가 수신 시각 기준으로 건너뛴다.
      */
-    public record SigmetSetReceived(Instant fetchedAt, String provider, Map<String, SigmetRecord> byId, Receipt receipt) {
+    public record SigmetSetReceived(Instant fetchedAt, String provider, Map<String, SigmetRecord> byId, Receipt receipt) implements PipelineEvent {
         public SigmetSetReceived(Instant fetchedAt, String provider, Map<String, SigmetRecord> byId) { this(fetchedAt, provider, byId, Receipt.NONE); }
     }
 
@@ -58,7 +60,7 @@ public final class IngestEvents {
      * 저장기(ShipWriter)는 receipt 를 hold 하고 커밋 뒤 release 한다 → 그때 XACK.
      */
     public record ShipsUpdated(Instant fetchedAt, String provider, List<ShipState> states, List<ShipStatic> statics,
-                               Set<String> changed, Set<String> removed, Receipt receipt) {
+                               Set<String> changed, Set<String> removed, Receipt receipt) implements PipelineEvent {
         /** 저장할 보고 없이 실시간 목록만 바뀐 경우(만료·부트스트랩). */
         public static ShipsUpdated liveOnly(Set<String> changed, Set<String> removed) {
             return new ShipsUpdated(null, null, List.of(), List.of(), changed, removed, Receipt.NONE);
@@ -70,11 +72,11 @@ public final class IngestEvents {
      * 저장 성공과는 무관하다(받은 것의 표본). 관측 수신 격자(ADR-027 · coverage.ShipCoverage)가 센다 — 부트스트랩이 읽는 ship_position 과 실시간 셈이 같은 뜻.
      * 스트림 소비 스레드에서 ShipsUpdated 처리 중에 발행되는 파이프라인 이벤트라 리스너 예외는 그 리스너에 가둔다(API-CONC-2 — 저장기로 새지 않는다).
      */
-    public record ShipsSampled(List<ShipState> positions) {}
+    public record ShipsSampled(List<ShipState> positions) implements PipelineEvent {}
 
     /**
      * AIS 수신 공백 하나가 끝났다(kind ais_gap) — 저장기가 ingest_gap 에 남긴다(영구, 중복은 (source, 구역(scope), started_at) 으로 무시 — V8).
      * 같은 시각에 시작해도 구역이 다르면 다른 공백이다.
      */
-    public record AisGapReceived(AisGap gap, Receipt receipt) {}
+    public record AisGapReceived(AisGap gap, Receipt receipt) implements PipelineEvent {}
 }

@@ -1,15 +1,23 @@
 package dev.wakeline.rest;
 
-import dev.wakeline.config.AppProperties;
-import dev.wakeline.config.Problem;
+import dev.wakeline.platform.config.AppProperties;
+import dev.wakeline.platform.support.Times;
+import dev.wakeline.platform.web.BboxParam;
+import dev.wakeline.platform.web.Etags;
+import dev.wakeline.platform.web.Meta;
+import dev.wakeline.platform.web.Params;
+import dev.wakeline.platform.web.Problem;
 import dev.wakeline.domain.Alert;
-import dev.wakeline.domain.Bbox;
+import dev.wakeline.geo.Bbox;
 import dev.wakeline.domain.SigmetRecord;
 import dev.wakeline.engine.EngineService;
 import dev.wakeline.ingest.RadarStore;
 import dev.wakeline.ingest.SigmetStore;
 import dev.wakeline.persist.AirportRepository;
 import dev.wakeline.persist.AlertRepository;
+import dev.wakeline.weather.data.KrRadarFrames;
+import dev.wakeline.weather.data.KrRadarMissing;
+import dev.wakeline.weather.web.SigmetGeoJson;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.CacheControl;
 import org.springframework.http.ResponseEntity;
@@ -63,7 +71,7 @@ public class WeatherController {
         String etag = "\"s" + st.version() + "-" + (active ? 1 : 0) + "\"";
         if (bbox == null && hazard == null && Etags.notModified(etag, req.getHeader("If-None-Match")))
             return ResponseEntity.status(304).eTag(etag).cacheControl(CacheControl.maxAge(60, TimeUnit.SECONDS).cachePublic()).build();
-        Bbox b = bbox == null ? null : Bbox.parse(bbox, 0);
+        Bbox b = bbox == null ? null : BboxParam.parse(bbox, 0);
         List<SigmetRecord> list = new ArrayList<>();
         for (SigmetRecord s : st.byId().values()) {
             if (hazard != null && !hazard.equalsIgnoreCase(s.hazard())) continue;
@@ -102,7 +110,7 @@ public class WeatherController {
         Instant start = from == null ? end.minusSeconds(86400) : from;
         if (!start.isBefore(end) || end.toEpochMilli() - start.toEpochMilli() > 30L * 86400_000) throw Problem.badRequest("BAD_RANGE", "range must be within 30 d");
         int lim = Math.max(1, Math.min(limit, 200));
-        var page = alertRepo.history(start, end, hex == null ? null : AircraftController.normalizeHex(hex), cursor, lim);
+        var page = alertRepo.history(start, end, hex == null ? null : Params.hex(hex), cursor, lim);
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("items", page.items());
         m.put("next_cursor", page.nextCursor());
@@ -184,7 +192,7 @@ public class WeatherController {
         if (missing != null) m.put("missing", missing);
         m.put("time_zone", "KST(UTC+9) for tm; fetched_at is UTC");
         m.put("attribution", "기상청 API허브 레이더 합성자료(HSR) · 투영·격자 정의: 기상기후데이터위키");
-        Instant fetched = h.get("fetched_at") == null ? null : StatusService.isoInstant(h.get("fetched_at"));
+        Instant fetched = h.get("fetched_at") == null ? null : Times.isoInstant(h.get("fetched_at"));
         if (h.get("fetched_at") != null && fetched == null) radarParseError("fetched_at");
         m.put("meta", Meta.of(req, "kma_apihub", fetched, 900));
         return ResponseEntity.ok().eTag(etag).cacheControl(cc).body(m);
@@ -255,7 +263,7 @@ public class WeatherController {
 
     @GetMapping(value = "/airports", produces = "application/geo+json")
     public ResponseEntity<Map<String, Object>> airports(@RequestParam(required = false) String bbox, @RequestParam(defaultValue = "true") boolean watched, HttpServletRequest req) {
-        Bbox b = bbox == null ? Bbox.world() : Bbox.parse(bbox, 0);
+        Bbox b = bbox == null ? Bbox.world() : BboxParam.parse(bbox, 0);
         List<Map<String, Object>> rows = airports.withLatestMetar(b, watched);
         List<Map<String, Object>> features = new ArrayList<>();
         Instant latest = null;

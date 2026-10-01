@@ -3,13 +3,14 @@ package dev.wakeline.ws;
 import dev.wakeline.domain.ShipState;
 import dev.wakeline.domain.ShipStatic;
 import dev.wakeline.ingest.IngestEvents;
-import dev.wakeline.ingest.Receipt;
+import dev.wakeline.platform.support.Receipt;
 import dev.wakeline.ingest.ShipStore;
 import dev.wakeline.persist.StoredStaticReader;
 import dev.wakeline.portcalls.PortCallFixtures;
 import dev.wakeline.portcalls.PortCallIndex;
 import dev.wakeline.portcalls.PortCallReader;
 import dev.wakeline.route.RouteInfoTest;
+import dev.wakeline.ships.web.ShipJson;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.JsonNode;
 
@@ -269,8 +270,8 @@ class ShipFanoutTest {
     }
 
     @Test void pointsLimit_byZoomAndHysteresis() {
-        assertThat(ShipFanout.pointsLimit(7, false)).isEqualTo(ShipFanout.MAX_SHIPS_PER_MESSAGE);
-        assertThat(ShipFanout.pointsLimit(12, true)).as("no hysteresis at zoom ≥ 7").isEqualTo(ShipFanout.MAX_SHIPS_PER_MESSAGE);
+        assertThat(ShipFanout.pointsLimit(7, false)).isEqualTo(ShipJson.MAX_SHIPS_PER_MESSAGE);
+        assertThat(ShipFanout.pointsLimit(12, true)).as("no hysteresis at zoom ≥ 7").isEqualTo(ShipJson.MAX_SHIPS_PER_MESSAGE);
         assertThat(ShipFanout.pointsLimit(4, false)).isEqualTo(1_500);
         assertThat(ShipFanout.pointsLimit(6, false)).isEqualTo(1_500);
         assertThat(ShipFanout.pointsLimit(6, true)).isEqualTo(1_200);
@@ -281,7 +282,7 @@ class ShipFanoutTest {
     @Test void cappedAtZoom7_thenZoomOutIntoTheBand_usesTheResumeThreshold() throws Exception {
         try (WsTestKit k = new WsTestKit()) {
             List<ShipState> many = new ArrayList<>();
-            for (int i = 0; i <= ShipFanout.MAX_SHIPS_PER_MESSAGE; i++)
+            for (int i = 0; i <= ShipJson.MAX_SHIPS_PER_MESSAGE; i++)
                 many.add(pos(String.format("%09d", 300_000_000 + i), 34.001 + (i % 100) * 0.019, 128.001 + (i / 100) * 0.03, T));
             publish(k, many, List.of());
             FakeWsSession f = session(k, "dense", BUSAN, true);
@@ -303,7 +304,7 @@ class ShipFanoutTest {
     @Test void moreThan5000ShipsInTheViewport_sendsACappedGridInstead() throws Exception {
         try (WsTestKit k = new WsTestKit()) {
             List<ShipState> many = new ArrayList<>();
-            for (int i = 0; i <= ShipFanout.MAX_SHIPS_PER_MESSAGE; i++)
+            for (int i = 0; i <= ShipJson.MAX_SHIPS_PER_MESSAGE; i++)
                 many.add(pos(String.format("%09d", 300_000_000 + i), 34.001 + (i % 100) * 0.019, 128.001 + (i / 100) * 0.03, T));
             publish(k, many, List.of());
             FakeWsSession f = session(k, "dense", BUSAN, true);

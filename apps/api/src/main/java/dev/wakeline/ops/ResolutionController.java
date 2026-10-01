@@ -1,6 +1,6 @@
 package dev.wakeline.ops;
 
-import dev.wakeline.config.Problem;
+import dev.wakeline.platform.web.Problem;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;

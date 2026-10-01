@@ -1,6 +1,6 @@
 package dev.wakeline.rest;
 
-import dev.wakeline.config.ProblemAdvice;
+import dev.wakeline.platform.web.ProblemAdvice;
 import dev.wakeline.domain.AisGap;
 import dev.wakeline.domain.ShipState;
 import dev.wakeline.domain.ShipStatic;

@@ -129,7 +129,7 @@ describe("'조회 중' also covers the api's own read of the collector's result 
     expect(ROUTE_API_READ_BOUND_S).toBe(Number(m![1]));
     // 설정 식은 한 곳(RedisConfig.COMMAND_TIMEOUT — 없으면 3s)이고, api 가 그 값을 selected.route 답의 마감(WsHub → RouteLookups.deadlineMs)과 REST 노선
     // 기다림(RouteReader)에 쓴다 — api 쪽 JVM 시험(RouteSelectionLookupTest · WsIntegrationTest · RedisConfigTest)이 배선을 확인한다
-    const redisConfig = src("apps/api/src/main/java/dev/wakeline/config/RedisConfig.java");
+    const redisConfig = src("apps/api/src/main/java/dev/wakeline/platform/config/RedisConfig.java");
     expect(redisConfig).toContain('COMMAND_TIMEOUT = "${spring.data.redis.timeout:" + DEFAULT_COMMAND_TIMEOUT_TEXT + "}"');
     expect(redisConfig).toContain(`DEFAULT_COMMAND_TIMEOUT_TEXT = "${ROUTE_API_READ_BOUND_S}s"`);
     expect(src("apps/api/src/main/java/dev/wakeline/ws/WsHub.java")).toContain("@Value(RedisConfig.COMMAND_TIMEOUT) String redisCommandTimeout");

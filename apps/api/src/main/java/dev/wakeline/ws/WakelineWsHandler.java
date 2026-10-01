@@ -1,7 +1,7 @@
 package dev.wakeline.ws;
 
-import dev.wakeline.config.AppProperties;
-import dev.wakeline.domain.Bbox;
+import dev.wakeline.platform.config.AppProperties;
+import dev.wakeline.geo.Bbox;
 import dev.wakeline.ingest.SnapshotStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

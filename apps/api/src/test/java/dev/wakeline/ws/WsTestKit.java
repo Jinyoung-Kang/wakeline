@@ -1,7 +1,7 @@
 package dev.wakeline.ws;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
-import dev.wakeline.config.AppProperties;
+import dev.wakeline.platform.config.AppProperties;
 import dev.wakeline.domain.AircraftState;
 import dev.wakeline.domain.Alert;
 import dev.wakeline.engine.PredictionAvailability;
@@ -70,7 +70,7 @@ final class WsTestKit implements AutoCloseable {
 
     static AppProperties props(int maxConn, int maxPerIp) {
         return new AppProperties("", "36.5,127.8", 250, 120, maxConn, maxPerIp, 10, 30, 2500, 0, "classpath:schemas", 72, 30,
-                120, List.of("http://localhost:8700", "http://127.0.0.1:8700"));
+                120, List.of("http://localhost:8700", "http://127.0.0.1:8700"), List.of());
     }
 
     @Override public void close() { timer.shutdownNow(); }

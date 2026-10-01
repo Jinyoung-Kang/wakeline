@@ -1,6 +1,7 @@
 package dev.wakeline.persist;
 
 import dev.wakeline.domain.AircraftState;
+import dev.wakeline.platform.data.Sql;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 import tools.jackson.databind.ObjectMapper;
@@ -103,8 +104,8 @@ public class AircraftRepository {
                 .param("hex", hex).query().listOfRows().stream().findFirst().map(m -> {
                     var out = new LinkedHashMap<String, Object>();
                     m.forEach((k, v) -> out.put(k, v));
-                    out.put("first_seen", TrackRepository.toInstant(m.get("first_seen")));
-                    out.put("last_seen", TrackRepository.toInstant(m.get("last_seen")));
+                    out.put("first_seen", Sql.toInstant(m.get("first_seen")));
+                    out.put("last_seen", Sql.toInstant(m.get("last_seen")));
                     return (Map<String, Object>) out;
                 }).orElse(null);
     }
@@ -123,7 +124,7 @@ public class AircraftRepository {
                 ORDER BY last_seen DESC LIMIT :n""")
                 .param("lo", prefix).param("hi", hi).param("n", limit).query().listOfRows().stream().map(m -> {
                     var out = new LinkedHashMap<String, Object>(m);
-                    out.put("last_seen", TrackRepository.toInstant(m.get("last_seen")));
+                    out.put("last_seen", Sql.toInstant(m.get("last_seen")));
                     return (Map<String, Object>) out;
                 }).toList();
     }

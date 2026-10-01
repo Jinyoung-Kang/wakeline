@@ -108,6 +108,7 @@ make ops-user u=admin     # 운영자 계정 생성·비밀번호 변경(프롬�
 ```
 외부 키는 **없어도 동작**합니다(adsb.lol · adsb.fi · AWC · RainViewer 는 무인증). 있으면 켜지는 것: OpenSky(전세계 항공기), 기상청 API허브(한국 고해상도 레이더, 활용신청 필요), aisstream.io(선박), 공공데이터포털 `DATA_GO_KR_SERVICE_KEY` 하나(선박 카드의 한국 항만 입출항 — 해양수산부_선박운항정보 · 연안 교통량 — 한국해양교통안전공단 실시간 교통정보 조회 · 해양수산부 해양격자 WFS 활용신청, collector 에만 주입).
 외부 호출 없이 보려면 `make demo` — 분리된 스택(http://localhost:8701)에서 실응답 스냅샷(fixtures/)을 재생합니다.
+화면만 고치며 `next dev`(apps/web, http://localhost:3000 — /api 는 떠 있는 스택으로 넘긴다)로 띄울 때 운영 변경(쓰기)까지 하려면 `.env` 에 `EXTRA_ALLOWED_ORIGINS=http://localhost:3000` 을 넣고 `make up` 합니다(개발 전용, 기본은 비어 있어 스택 주소만 허용 — 읽기는 그대로 됩니다).
 
 | 명령 | 내용 |
 |---|---|

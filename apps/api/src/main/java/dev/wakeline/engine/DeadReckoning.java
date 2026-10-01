@@ -24,6 +24,6 @@ public final class DeadReckoning {
     }
 
     public static double haversineNm(double lat1, double lon1, double lat2, double lon2) {
-        return dev.wakeline.domain.Geo.haversineNm(lat1, lon1, lat2, lon2);
+        return dev.wakeline.geo.Geo.haversineNm(lat1, lon1, lat2, lon2);
     }
 }

@@ -5,6 +5,7 @@ import dev.wakeline.domain.AisScope;
 import dev.wakeline.domain.ShipQuery;
 import dev.wakeline.domain.ShipState;
 import dev.wakeline.domain.ShipStatic;
+import dev.wakeline.platform.data.Sql;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
@@ -229,7 +230,7 @@ public class ShipRepository {
 
     public StoredShip find(String mmsi) { return find(db, mmsi); }
 
-    /** MMSI 하나의 저장 행(공개 조회 상한) — 주어진 연결 출처로(REST 는 공유 풀, 선택 조회는 {@link ReadPool}). */
+    /** MMSI 하나의 저장 행(공개 조회 상한) — 주어진 연결 출처로(REST 는 공유 풀, 선택 조회는 {@link dev.wakeline.platform.data.ReadPool}). */
     public static StoredShip find(JdbcClient db, String mmsi) {
         return Sql.publicRead(db, "ship.find", "SELECT " + STATIC_COLUMNS + ", s.first_seen, s.last_seen FROM ship s WHERE s.mmsi = :m").param("m", mmsi)
                 .query((rs, i) -> new StoredShip(staticRow(rs), rs.getObject("first_seen", java.time.OffsetDateTime.class).toInstant(),

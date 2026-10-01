@@ -1,6 +1,7 @@
 package dev.wakeline.persist;
 
-import dev.wakeline.domain.Bbox;
+import dev.wakeline.geo.Bbox;
+import dev.wakeline.platform.data.Sql;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
@@ -29,7 +30,7 @@ public class TrackRepository {
         return q.query().listOfRows().stream().map(r -> {
             var m = new java.util.LinkedHashMap<>(r);
             m.remove("bucket");
-            m.put("ts", toInstant(m.get("ts")));
+            m.put("ts", Sql.toInstant(m.get("ts")));
             return (Map<String, Object>) m;
         }).toList();
     }
@@ -66,7 +67,7 @@ public class TrackRepository {
                     .query().listOfRows();
             source = rows.isEmpty() ? "none" : "track_point_1m";
         }
-        return new Replay(rows.stream().map(r -> { var m = new java.util.LinkedHashMap<>(r); m.put("ts", toInstant(m.get("ts"))); return (Map<String, Object>) m; }).toList(), source);
+        return new Replay(rows.stream().map(r -> { var m = new java.util.LinkedHashMap<>(r); m.put("ts", Sql.toInstant(m.get("ts"))); return (Map<String, Object>) m; }).toList(), source);
     }
 
     /** RainViewer 는 과거 프레임을 2시간만 제공한다 — 그보다 오래된 시각에는 레이더를 붙이지 않는다. */
@@ -89,16 +90,9 @@ public class TrackRepository {
                     Map<String, Object> m = new java.util.LinkedHashMap<>();
                     m.put("host", r.get("host"));
                     m.put("path", r.get("path"));
-                    Instant t = toInstant(r.get("frame_time"));
+                    Instant t = Sql.toInstant(r.get("frame_time"));
                     m.put("time", t == null ? null : t.getEpochSecond());
                     return m;
                 }).orElse(null);
-    }
-
-    public static Instant toInstant(Object v) {
-        if (v instanceof java.sql.Timestamp t) return t.toInstant();
-        if (v instanceof java.time.OffsetDateTime o) return o.toInstant();
-        if (v instanceof Instant i) return i;
-        return null;
     }
 }

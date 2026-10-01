@@ -1,7 +1,8 @@
 package dev.wakeline.persist;
 
 import dev.wakeline.DbTestSupport;
-import dev.wakeline.ops.RegionSettings;
+import dev.wakeline.settings.RegionSettings;
+import dev.wakeline.platform.data.Sql;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIf;

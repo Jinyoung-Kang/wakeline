@@ -1,18 +1,21 @@
 package dev.wakeline.rest;
 
-import dev.wakeline.config.AppProperties;
-import dev.wakeline.config.Problem;
-import dev.wakeline.config.ProblemAdvice;
+import dev.wakeline.aircraft.web.AircraftJson;
+import dev.wakeline.platform.config.AppProperties;
+import dev.wakeline.platform.web.BboxParam;
+import dev.wakeline.platform.web.Etags;
+import dev.wakeline.platform.web.Meta;
+import dev.wakeline.platform.web.Params;
+import dev.wakeline.platform.web.Problem;
+import dev.wakeline.platform.web.ProblemAdvice;
 import dev.wakeline.domain.AircraftState;
 import dev.wakeline.domain.Alert;
-import dev.wakeline.domain.Bbox;
+import dev.wakeline.geo.Bbox;
 import dev.wakeline.engine.EngineService;
 import dev.wakeline.ingest.SnapshotStore;
 import dev.wakeline.persist.AircraftRepository;
 import dev.wakeline.persist.TrackRepository;
 import dev.wakeline.route.RouteReader;
-import dev.wakeline.ws.WsHub;
-import dev.wakeline.ws.WsMessages;
 import org.springframework.dao.DataAccessException;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.CacheControl;
@@ -61,7 +64,7 @@ public class AircraftController {
      */
     @GetMapping(produces = "application/geo+json")
     public ResponseEntity<Map<String, Object>> snapshot(@RequestParam String bbox, @RequestParam(defaultValue = "lite") String detail, HttpServletRequest req) {
-        Bbox b = Bbox.parse(bbox, props.maxBboxAreaSqdeg());
+        Bbox b = BboxParam.parse(bbox, props.maxBboxAreaSqdeg());
         Instant now = Instant.now();
         SnapshotStore.View view = snapshots.view(now);
         String etag = "\"v" + view.version() + "-" + Long.toString(view.recheckAtMs(), 36) + "\"";
@@ -76,7 +79,7 @@ public class AircraftController {
         fc.put("type", "FeatureCollection");
         fc.put("features", features);
         Map<String, Object> meta = Meta.of(req, view.region().provider(), view.region().fetchedAt(), 60);
-        meta.put("sources", WsHub.sources(view, now));
+        meta.put("sources", AircraftJson.sources(view, now));
         fc.put("meta", meta);
         return ResponseEntity.ok().eTag(etag).cacheControl(cc).body(fc);
     }
@@ -100,7 +103,7 @@ public class AircraftController {
                     || (a.callsign() != null && a.callsign().trim().toUpperCase(java.util.Locale.ROOT).startsWith(needle))
                     || (a.registration() != null && a.registration().toUpperCase(java.util.Locale.ROOT).startsWith(needle));
             if (m) {
-                Map<String, Object> item = new LinkedHashMap<>(WsMessages.encode(a, "lite", false));
+                Map<String, Object> item = new LinkedHashMap<>(AircraftJson.encode(a, "lite", false));
                 item.put("live", true);
                 out.add(item);
                 seen.add(a.hex());
@@ -135,7 +138,7 @@ public class AircraftController {
      */
     @GetMapping("/{hex}")
     public ResponseEntity<Map<String, Object>> detail(@PathVariable String hex, HttpServletRequest req) {
-        String h = normalizeHex(hex);
+        String h = Params.hex(hex);
         AircraftState a = snapshots.find(h);
         Map<String, Object> stat = null;
         boolean dbUnavailable = false;
@@ -150,7 +153,7 @@ public class AircraftController {
         if (a == null && stat == null) throw Problem.notFound("aircraft " + h + " not seen");
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("hex", h);
-        m.put("state", a == null ? null : WsMessages.encode(a, "full", false));
+        m.put("state", a == null ? null : AircraftJson.encode(a, "full", false));
         m.put("static", stat);
         m.put("route", routes.forAircraft(a));
         List<Alert> alerts = engine.activeAlerts(null).stream().filter(x -> x.hex().equals(h)).toList();
@@ -172,7 +175,7 @@ public class AircraftController {
     public ResponseEntity<Map<String, Object>> track(@PathVariable String hex, @RequestParam(required = false) Instant from,
                                                      @RequestParam(required = false) Instant to, @RequestParam(defaultValue = "0") int stepS,
                                                      HttpServletRequest req) {
-        String h = normalizeHex(hex);
+        String h = Params.hex(hex);
         Instant end = to == null ? Instant.now() : to;
         Instant start = from == null ? end.minus(Duration.ofHours(2)) : from;
         // 정확히 비교한다(R-71 — toHours() 절삭은 24 h 59 m 을 통과시켰다)
@@ -196,13 +199,7 @@ public class AircraftController {
         f.put("type", "Feature");
         f.put("id", a.hex());
         f.put("geometry", Map.of("type", "Point", "coordinates", new double[]{a.lon(), a.lat()}));
-        f.put("properties", WsMessages.encode(a, detail, false));
+        f.put("properties", AircraftJson.encode(a, detail, false));
         return f;
-    }
-
-    static String normalizeHex(String hex) {
-        String h = hex == null ? "" : hex.trim().toLowerCase();
-        if (!h.matches("^[0-9a-f]{6}$")) throw Problem.badRequest("BAD_HEX", "hex must be 6 hex chars");
-        return h;
     }
 }

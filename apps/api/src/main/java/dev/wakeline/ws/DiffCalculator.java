@@ -1,7 +1,7 @@
 package dev.wakeline.ws;
 
 import dev.wakeline.domain.AircraftState;
-import dev.wakeline.domain.Bbox;
+import dev.wakeline.geo.Bbox;
 
 import java.util.ArrayList;
 import java.util.HashSet;

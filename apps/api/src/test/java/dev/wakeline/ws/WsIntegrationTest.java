@@ -1,12 +1,11 @@
 package dev.wakeline.ws;
 
-import dev.wakeline.config.AppProperties;
-import dev.wakeline.config.WebSocketConfig;
+import dev.wakeline.platform.config.AppProperties;
 import dev.wakeline.engine.EngineService;
 import dev.wakeline.ingest.RadarStore;
 import dev.wakeline.ingest.SigmetStore;
 import dev.wakeline.ingest.SnapshotStore;
-import dev.wakeline.rest.StatusService;
+import dev.wakeline.status.StatusService;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.apache.catalina.Context;
@@ -81,8 +80,8 @@ class WsIntegrationTest {
             return new dev.wakeline.portcalls.PortCallReader(none, new StringRedisTemplate(), m);
         }
         /** 선택 조회 전용 읽기 풀(계약 v5 §G18)도 DB 가 없는 구성 — 연결은 첫 사용 때 맺는다(이 시험의 읽는 쪽은 풀을 쓰지 않는다 — 크기 · 마감만). */
-        @Bean dev.wakeline.persist.ReadPool readPool(MeterRegistry m) {
-            return new dev.wakeline.persist.ReadPool("jdbc:postgresql://127.0.0.1:1/none", "none", "", 1, 250, m);
+        @Bean dev.wakeline.platform.data.ReadPool readPool(MeterRegistry m) {
+            return new dev.wakeline.platform.data.ReadPool("jdbc:postgresql://127.0.0.1:1/none", "none", "", 1, 250, m);
         }
         /** 저장 정적 보고(계약 v5 §G17)도 DB 가 없는 구성 — 메모리에 정적 정보가 없는 선박은 static_source stored_unavailable. */
         @Bean dev.wakeline.persist.StoredStaticReader storedStaticReader(MeterRegistry m) {

@@ -1,5 +1,6 @@
 package dev.wakeline.persist;
 
+import dev.wakeline.platform.data.Sql;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
@@ -44,7 +45,7 @@ public class StatsRepository {
         Map<String, Object> region = null;
         if (reg.containsKey("center_lat") && reg.containsKey("center_lon") && reg.containsKey("radius_nm")) {
             region = new LinkedHashMap<>();
-            var r = new dev.wakeline.ops.RegionSettings.Region(reg.get("center_lat").doubleValue(), reg.get("center_lon").doubleValue(),
+            var r = new dev.wakeline.settings.RegionSettings.Region(reg.get("center_lat").doubleValue(), reg.get("center_lon").doubleValue(),
                     reg.get("radius_nm").intValue());
             var b = r.bbox();
             region.put("center", r.center());

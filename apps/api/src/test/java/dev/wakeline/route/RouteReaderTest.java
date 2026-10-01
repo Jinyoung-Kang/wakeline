@@ -213,7 +213,7 @@ class RouteReaderTest {
 
     /** 명령 상한의 기본값은 RedisConfig 의 기본값(spring.data.redis.timeout 이 없을 때 3 s)이고, 0 이하(상한 없음)는 받지 않는다. */
     @Test void theWaitBoundDefaultsToTheRedisConfigDefault_andMustBePositive() {
-        assertThat(reader.commandTimeout()).isEqualTo(dev.wakeline.config.RedisConfig.DEFAULT_COMMAND_TIMEOUT).isEqualTo(java.time.Duration.ofSeconds(3));
+        assertThat(reader.commandTimeout()).isEqualTo(dev.wakeline.platform.config.RedisConfig.DEFAULT_COMMAND_TIMEOUT).isEqualTo(java.time.Duration.ofSeconds(3));
         for (java.time.Duration bad : new java.time.Duration[] {null, java.time.Duration.ZERO, java.time.Duration.ofMillis(-1)})
             org.assertj.core.api.Assertions.assertThatThrownBy(() -> new RouteReader(k -> null, RouteInfoTest.JSON, clock::get, new SimpleMeterRegistry(), bad))
                     .as(String.valueOf(bad)).isInstanceOf(IllegalArgumentException.class);

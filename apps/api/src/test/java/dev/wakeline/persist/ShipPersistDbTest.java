@@ -5,8 +5,11 @@ import dev.wakeline.domain.AisGap;
 import dev.wakeline.domain.ShipState;
 import dev.wakeline.domain.ShipStatic;
 import dev.wakeline.ingest.IngestEvents;
-import dev.wakeline.ingest.Receipt;
-import dev.wakeline.ops.RegionSettings;
+import dev.wakeline.platform.data.DbErrors;
+import dev.wakeline.platform.data.OrderedWriter;
+import dev.wakeline.platform.data.Sql;
+import dev.wakeline.platform.support.Receipt;
+import dev.wakeline.settings.RegionSettings;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -123,7 +126,7 @@ class ShipPersistDbTest {
                 "INSERT INTO ship AS s (mmsi, first_seen, last_seen, provider) VALUES (?, ?, ?, ?) ON CONFLICT (mmsi) DO UPDATE SET last_seen = EXCLUDED.last_seen",
                 List.of(new Object[]{"440000009", ts, ts, "x"}, new Object[]{"440000009", ts, ts, "x"})));
         assertThat(raw).hasStackTraceContaining("cannot affect row a second time");
-        assertThat(TrackWriter.isPermanent(raw)).isTrue();
+        assertThat(DbErrors.isPermanent(raw)).isTrue();
     }
 
     /** Class B 정적 정보(24A · 24B 만 채운 칸) — received 는 수집기가 받은 필드(null = 모름 · 이전 수집기). */

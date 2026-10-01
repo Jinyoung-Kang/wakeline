@@ -4,6 +4,8 @@ import dev.wakeline.domain.Alert;
 import dev.wakeline.engine.AlertStateMachine;
 import dev.wakeline.engine.EngineEvents;
 import dev.wakeline.ingest.SigmetStore;
+import dev.wakeline.platform.data.OrderedWriter;
+import dev.wakeline.platform.data.Sql;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -135,7 +137,7 @@ public class AlertRepository {
             var m = new java.util.LinkedHashMap<>(r);
             Object ev = m.get("evidence");
             m.put("evidence", ev == null ? null : json.readTree(ev.toString()));
-            for (String k : List.of("entered_at", "left_at", "eta_at")) m.put(k, TrackRepository.toInstant(m.get(k)));
+            for (String k : List.of("entered_at", "left_at", "eta_at")) m.put(k, Sql.toInstant(m.get(k)));
             m.put("estimated", "PREDICTED".equals(m.get("kind")));
             return (Map<String, Object>) m;
         }).toList();
