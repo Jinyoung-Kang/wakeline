@@ -73,6 +73,7 @@
 |---|---|---|---|
 | S13 | `/api/v1/status` 와 WS `status` 의 `active_providers` 는 정해 둔 필드만 싣는다: `{job}` · `{job}_since` · `{job}_reason` · `{job}_none_since` · `{job}_none_reason` · `{job}_none_next` · `{job}_none_retry`(job ∈ region · global) | 수집기 해시 `wakeline:active` 를 통째로 내보내서, 수집기가 나중에 쓰는 필드가 저절로 공개될 수 있었다 | 지금 쓰는 필드는 같다. WS 계약 샘플에서 시험용 `hot` 항목만 빠졌다 |
 | A3 | `GET /api/v1/radar/kr/{tm}.png`: Redis 장애는 **503 + `Retry-After`**, 값이 없으면 404, base64 가 아닌 값은 404 와 함께 `wakeline_radar_kr_parse_errors_total{field="frame_png"}` 를 센다(사용자 결정 6) | 장애가 '그림 없음'(404)으로 보였고, 깨진 값은 500 이 되었다(R-72 위반) | 프레임 목록(`/radar/kr`)은 Redis 오류를 '프레임 없음'으로 보는 동작 그대로 |
+| QA-207 | (QA 2026-10) 공개 · 운영의 시각 · 날짜 쿼리 파라미터는 1970-01-01T00:00:00Z ~ 9999-12-31T23:59:59.999999999Z(날짜 1970-01-01 ~ 9999-12-31)만 받는다 — 밖이면 400 `BAD_REQUEST`, 저장소에 닿지 않는다(api 요청 바인더 한 곳, 계약 v5 §G32) | 기원전 4713 년 앞의 날짜가 PostgreSQL 에 `-infinity` 로 가서 익명 `/stats/*` 하나가 3 s 동안 DB CPU 를 다 쓰고 임시 파일 0.5–0.8 GB 를 썼다(6개면 공개 조회 격벽이 찬다). PostgreSQL · Instant 범위 밖 값은 500 + ERROR 스택, 재집계는 `day = -infinity` 행을 썼다 | 범위 안 값의 결과는 같다. 1970 앞의 행은 있을 수 없어 잃는 답이 없다. 웹은 범위 밖 값을 보내지 않는다 |
 | S4 | WS `subscribe` 의 `zoom` 을 실수로 읽고 0–24 로 자른다 | int 범위 밖 숫자(`1e10` 등) 하나로 익명 클라이언트가 ERROR 스택 로그와 1011 종료를 반복해서 만들 수 있었다 | 범위 안 값의 결과는 같다. **한계**(최종 리뷰): double 범위를 넘는 정수(309자리 이상)는 Jackson 이 실수로도 읽지 못해 그 연결만 1002 로 닫힌다(WARN 분당 1줄) — 자르지 않는다 |
 
 ### 6.3 인프라(§4 에 더함)

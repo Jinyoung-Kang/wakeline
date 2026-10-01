@@ -158,6 +158,9 @@ describe("contract v5 amendment numbers are unique", () => {
     expect(heading(31)).toMatch(/^## G\. 21차 개정\(2026-10-01 · CTO 리뷰 cto-2026-10 최종 검토 · 레인 web /);
     expect(amendment(31)).toContain("`GET /api/v1/ops/dlq` 의 `error` — DLQ 를 읽지 못함");
     expect(amendment(31)).toContain("스키마 검증 실패 메시지(DLQ)를 읽지 못함");
-    expect(amendment(32)).toBe("");
+    // QA 2026-10 고치기(2026-10-02 · 레인 api): 시각 · 날짜 파라미터의 범위 — 22차 · §G32
+    expect(heading(32)).toMatch(/^## G\. 22차 개정\(2026-10-02 · QA 2026-10 고치기 · 레인 api /);
+    expect(amendment(32)).toContain("시각 · 날짜 파라미터의 범위 — 밖이면 400");
+    expect(amendment(33)).toBe("");
   });
 });

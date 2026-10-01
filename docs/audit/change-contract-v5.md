@@ -1097,3 +1097,20 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
     까닭이 글자가 아니면 `이유 모름`(지어내지 않는다), `error` 가 없거나 null · 빈 글자면 줄이 없다. 줄이 있는 동안 빈 목록을 '스키마 검증에 실패한 메시지가 없습니다.'
     로 적지 않는다(전에는 그렇게 적어 읽지 못함이 없음과 같아 보였다 — 리뷰 cto-2026-10 최종 검토). 항목이 있으면 표는 그대로.
   - 회귀 막기: 웹 `tests/ops-page.test.ts` · `tests/guide-page.test.ts`. api 는 `OpsDbTest.dlqSaysWhenItCouldNotBeRead`(Redis 가 죽으면 빈 목록 + `error`, 살아 있으면 `error` 키 없음).
+
+## G. 22차 개정(2026-10-02 · QA 2026-10 고치기 · 레인 api — 재현 시험으로 찾은 입력 · 응답 결함을 고치며 바뀐 계약)
+- G32(QA-207 · QA-001 · QA-201 · QA-202 · QA-208 · 계약 §2 · ADR-017 §6.2 QA-207) **시각 · 날짜 파라미터의 범위 — 밖이면 400**
+  - 공개 · 운영의 모든 시각(ISO 순간 `Instant`) · 날짜(`YYYY-MM-DD`) 쿼리 파라미터는 **1970-01-01T00:00:00Z ~ 9999-12-31T23:59:59.999999999Z**
+    (날짜는 1970-01-01 ~ 9999-12-31) 안이어야 한다. 밖이면 **400 `BAD_REQUEST`** problem+json(detail `invalid parameter: <이름> — out of the supported
+    range …`) — 저장소에 닿지 않는다. 경로: `/aircraft/{hex}/track?from,to` · `/ships/{mmsi}/track?from,to` · `/ais/gaps?from,to` · `/alerts/history?from,to` ·
+    `/replay?at` · `/stats/sigmet?from,to` · `/stats/alerts?from,to` · `/stats/traffic?day` · `/ops/runs?since` · `/ops/logs?since,until` · `/ops/logs/groups?since` ·
+    `POST /ops/stats/aggregate?day` — 규칙은 api 의 요청 바인더 한 곳(`platform.web.TimeParams`)이라 앞으로 생기는 시각 · 날짜 파라미터도 같다.
+  - 예전: Java 가 받는 범위(연도 ±999,999,999)를 그대로 받아 기원전 4713 년 앞의 날짜는 PostgreSQL 에 `-infinity` 로 가서 `/stats/*` 가 3 s 동안 DB CPU 를
+    다 쓰고(임시 파일 0.5–0.8 GB) 503 '재시도' 로 답했고, 재집계는 `day = -infinity` 행을 썼다. PostgreSQL 범위 밖이나 Instant 끝값은 500 + ERROR 스택이었다.
+  - 범위의 근거: 하한 — 저장하는 시각은 모두 수집 시스템이 받은 관측 · 실행의 유닉스 시각이라 1970 앞의 행은 있을 수 없다. 상한 — ISO 8601 네 자리 연도의 끝
+    (브라우저 `toISOString()` 의 형식). 미래를 묻는 정상 요청(창의 끝 · 오늘까지의 통계)은 그대로 받는다. 경로마다의 창 규칙(항적 24 h · AIS 공백 31일 · 알림
+    이력 30일 · 통계 92일 · 재생 31일과 미래 60 s · 재집계는 오늘 KST 이전 — `BAD_RANGE` · `BAD_AT` · `BAD_DAY`)은 그대로 뒤에서 본다. 해석(받는 글자 형식)과
+    같은 이름이 여럿일 때 첫 값을 쓰는 동작은 바꾸지 않았다.
+  - 웹은 이 범위 밖의 값을 보내지 않는다(서버 시계 · 달력 입력) — 화면 변화 없음.
+  - 회귀 막기: api `TimeParamsTest` · `Qa207StatsBcDateRunsAwayTest` · `Qa201TimeParamOutOfRangeTest` · `Qa201OpsTimeParamOutOfRangeTest` · `Qa202StatsDateOutOfRangeTest` ·
+    `Qa208AggregateBcDayWritesInfinityTest`, 격리 스택 점검 `tools/qa/qa_001_outofrange_time.py`.
