@@ -1,0 +1,20 @@
+/healthz
+      0.2s ..    16.2s  n=  5  max_ms=    25  status=200 health=ok
+     20.2s ..    32.2s  n=  4  max_ms=  5008  status=504
+     36.2s ..    40.2s  n=  2  max_ms=  2091  status=502
+     44.2s ..    80.2s  n= 10  max_ms=    22  status=200 health=ok
+/api/v1/aircraft?bbox=124,33,132,39
+      0.2s ..    16.2s  n=  5  max_ms=    35  status=200
+     20.2s ..    32.2s  n=  4  max_ms=  5007  status=504
+     36.2s ..    40.2s  n=  2  max_ms=  2091  status=502
+     44.2s ..    80.2s  n= 10  max_ms=    37  status=200
+/api/v1/ships?bbox=120,30,135,40
+      0.2s ..    16.2s  n=  5  max_ms=    36  status=200
+     20.2s ..    32.2s  n=  4  max_ms=  5007  status=504
+     36.2s ..    40.2s  n=  2  max_ms=  2090  status=502
+     44.2s ..    80.2s  n= 10  max_ms=    35  status=200
+/api/v1/alerts/history
+      0.2s ..    16.2s  n=  5  max_ms=    43  status=200
+     20.2s ..    32.2s  n=  4  max_ms=  5008  status=504
+     36.2s ..    40.2s  n=  2  max_ms=  2091  status=502
+     44.2s ..    80.2s  n= 10  max_ms=    46  status=200

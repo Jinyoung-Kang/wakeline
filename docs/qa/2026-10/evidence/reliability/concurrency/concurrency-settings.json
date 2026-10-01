@@ -1,0 +1,22 @@
+{
+ "ok": true,
+ "n": 8,
+ "statuses": {
+  "409": 7,
+  "200": 1
+ },
+ "error_codes": [
+  "VERSION_MISMATCH",
+  "VERSION_MISMATCH",
+  "VERSION_MISMATCH",
+  "VERSION_MISMATCH",
+  "VERSION_MISMATCH",
+  "VERSION_MISMATCH",
+  "VERSION_MISMATCH"
+ ],
+ "version": [
+  1,
+  2
+ ],
+ "audit_rows": 1
+}

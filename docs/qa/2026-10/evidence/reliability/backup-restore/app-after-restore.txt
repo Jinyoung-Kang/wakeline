@@ -1,0 +1,6 @@
+/api/v1/ops/session 200 {'role': 'OPS', 'username': 'qa-a'}
+/api/v1/ops/settings 200 items: 10
+/api/v1/ops/audit?limit=3 200 items: 3
+/api/v1/ops/resolutions 200 items: 0
+/api/v1/ops/providers 200 opensky switch: [{'provider': 'opensky', 'disabled': True, 'version': 11, 'updated_at': '2026-10-01T18:14:25.697664Z', 'updated_by': 'qa-a', 'redis_disabled': '1', 'mirror_differs': False}]
+re-enable opensky 200 b'{"provider":"opensky","disabled":false,"version":12,"updated_at":"2026-10-01T18:16:08.526801Z","mirrored":true}'

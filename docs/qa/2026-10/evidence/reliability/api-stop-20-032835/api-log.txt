@@ -1,0 +1,5 @@
+2026-10-01T18:29:18.661Z  INFO 7 --- [wakeline-api] [           main] dev.wakeline.WakelineApplication         : Started WakelineApplication in 4.55 seconds (process running for 5.012)
+2026-10-01T18:29:19.180Z  INFO 7 --- [wakeline-api] [stream-consumer] dev.wakeline.ingest.StreamConsumer       : bootstrap done: region=127 global=0 sigmets=132 radar=13
+2026-10-01T18:29:19.641Z  INFO 7 --- [wakeline-api] [ships-bootstrap] dev.wakeline.ingest.StreamConsumer       : ships bootstrap: 196 entries applied (0 invalid skipped), 375 live ships, 1 gaps
+2026-10-01T18:29:46.925Z  INFO 7 --- [wakeline-api] [erage-bootstrap] dev.wakeline.coverage.ShipCoverage       : ship coverage bootstrap: reading 25 hours of ship_position before 2026-10-01T18:29:00Z (live counting since then)
+2026-10-01T18:29:46.983Z  INFO 7 --- [wakeline-api] [erage-bootstrap] dev.wakeline.coverage.ShipCoverage       : ship coverage bootstrap: 25 hours, 376 rows in 59 ms

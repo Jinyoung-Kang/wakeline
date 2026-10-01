@@ -1,0 +1,156 @@
+{
+ "aircraft": {
+  "rows": 127,
+  "md5": "5d3b079ebe02372b48ccdee96b7706db"
+ },
+ "airport": {
+  "rows": 13,
+  "md5": "d58528f8d48c3245a6213b413f1316c5"
+ },
+ "alert_event": {
+  "rows": 1505,
+  "md5": "10b7f03aea317493a976460617bdc869"
+ },
+ "app_setting": {
+  "rows": 10,
+  "md5": "77d2128b49a88deea65f24aec04d5f52"
+ },
+ "audit_log": {
+  "rows": 67,
+  "md5": "77338394b138eb45d68015266a53d545"
+ },
+ "flyway_schema_history": {
+  "rows": 17,
+  "md5": "2200f2e1f6f53036534025e3c4015a72"
+ },
+ "ingest_gap": {
+  "rows": 0,
+  "md5": "-"
+ },
+ "ingest_run": {
+  "rows": 446,
+  "md5": "d86a6c1377093b7ccf721914e94fe934"
+ },
+ "kst_day_cutover": {
+  "rows": 1,
+  "md5": "7a036564364dc3a0008c006ce761a3a2"
+ },
+ "marine_grid4": {
+  "rows": 0,
+  "md5": "-"
+ },
+ "metar_obs": {
+  "rows": 26,
+  "md5": "c5bef0f7d9f52266f37d727cc89733fd"
+ },
+ "ops_resolution": {
+  "rows": 6,
+  "md5": "a1a0c786c13d08d52f0b4e27fce85807"
+ },
+ "ops_user": {
+  "rows": 2,
+  "md5": "91fe921acf9a2aa3011a3cf0bff760db"
+ },
+ "port_call": {
+  "rows": 0,
+  "md5": "-"
+ },
+ "port_call_coverage": {
+  "rows": 0,
+  "md5": "-"
+ },
+ "provider_budget_day": {
+  "rows": 11,
+  "md5": "aea6dec71d4d8bd0e57e0e1c6cc40ab9"
+ },
+ "provider_switch": {
+  "rows": 11,
+  "md5": "f85e8bcca4ee54d83cc88b117b560fa7"
+ },
+ "quality_event": {
+  "rows": 52,
+  "md5": "5f77c3d9b0a6b9faab21a900124110b6"
+ },
+ "quality_rule_count": {
+  "rows": 1,
+  "md5": "ca1d0e21d8bb9920f34b376eaf6450fb"
+ },
+ "quality_rule_count_utc_legacy": {
+  "rows": 0,
+  "md5": "-"
+ },
+ "radar_frame": {
+  "rows": 19,
+  "md5": "78fb9284ae6fbb8ad0e86b2e78ae1071"
+ },
+ "ship": {
+  "rows": 404,
+  "md5": "083ebc1000122870c5fd9f9e11d7fb19"
+ },
+ "ship_position_20260930": {
+  "rows": 0,
+  "md5": "-"
+ },
+ "ship_position_20261001": {
+  "rows": 15028,
+  "md5": "5c71bc5a8b271294363ce726c74a4a76"
+ },
+ "ship_position_20261002": {
+  "rows": 0,
+  "md5": "-"
+ },
+ "ship_position_20261003": {
+  "rows": 0,
+  "md5": "-"
+ },
+ "ship_position_20261004": {
+  "rows": 0,
+  "md5": "-"
+ },
+ "sigmet": {
+  "rows": 1716,
+  "md5": "75e64f78f6e57d617fe81a27d42eb138"
+ },
+ "stats_daily": {
+  "rows": 17,
+  "md5": "01d6bef56ce363faf5bb463be04b2503"
+ },
+ "stats_daily_utc_legacy": {
+  "rows": 0,
+  "md5": "-"
+ },
+ "track_point_1m": {
+  "rows": 5394,
+  "md5": "87c9f43caea56b2f8f0c24228f413cf2"
+ },
+ "track_point_20260930": {
+  "rows": 0,
+  "md5": "-"
+ },
+ "track_point_20261001": {
+  "rows": 42493,
+  "md5": "331056f26df86121d941df1307cd62e2"
+ },
+ "track_point_20261002": {
+  "rows": 0,
+  "md5": "-"
+ },
+ "track_point_20261003": {
+  "rows": 0,
+  "md5": "-"
+ },
+ "track_point_20261004": {
+  "rows": 0,
+  "md5": "-"
+ },
+ "_sequences": {
+  "alert_event_id_seq": 0,
+  "audit_log_id_seq": 67,
+  "ingest_gap_id_seq": 0,
+  "ingest_run_id_seq": 446,
+  "ops_resolution_id_seq": 6,
+  "ops_user_id_seq": 2,
+  "quality_event_id_seq": 52
+ },
+ "_flyway": "17"
+}

@@ -1,0 +1,28 @@
+{
+ "ok": true,
+ "day": "2026-10-01",
+ "waiting_on_lock_before_kill": 2,
+ "responses": {
+  "aggregate": 502,
+  "put": 502
+ },
+ "before": {
+  "version": 2,
+  "value": "600",
+  "mirror": "600",
+  "stats_md5": "5207796e325d265594f170390731efb0",
+  "stats_rows": 3,
+  "audit_setting": 1,
+  "audit_aggregate": 5
+ },
+ "after": {
+  "version": 2,
+  "value": "600",
+  "mirror": "600",
+  "stats_md5": "5207796e325d265594f170390731efb0",
+  "stats_rows": 3,
+  "audit_setting": 1,
+  "audit_aggregate": 5
+ },
+ "recovered_s": 14.1
+}

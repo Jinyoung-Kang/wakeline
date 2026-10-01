@@ -1,0 +1,36 @@
+ok   aircraft: rows 127 -> 127  md5 same
+ok   airport: rows 13 -> 13  md5 same
+ok   alert_event: rows 1505 -> 1505  md5 same
+ok   app_setting: rows 10 -> 10  md5 same
+ok   audit_log: rows 67 -> 67  md5 same
+ok   flyway_schema_history: rows 17 -> 17  md5 same
+ok   ingest_gap: rows 0 -> 0  md5 same
+ok   ingest_run: rows 446 -> 446  md5 same
+ok   kst_day_cutover: rows 1 -> 1  md5 same
+ok   marine_grid4: rows 0 -> 0  md5 same
+ok   metar_obs: rows 26 -> 26  md5 same
+ok   ops_resolution: rows 6 -> 6  md5 same
+ok   ops_user: rows 2 -> 2  md5 same
+ok   port_call: rows 0 -> 0  md5 same
+ok   port_call_coverage: rows 0 -> 0  md5 same
+ok   provider_budget_day: rows 11 -> 11  md5 same
+ok   provider_switch: rows 11 -> 11  md5 same
+ok   quality_event: rows 52 -> 52  md5 same
+ok   quality_rule_count: rows 1 -> 1  md5 same
+ok   quality_rule_count_utc_legacy: rows 0 -> 0  md5 same
+ok   radar_frame: rows 19 -> 19  md5 same
+ok   ship: rows 404 -> 404  md5 same
+ok   ship_position_20260930: 0 -> 0 (원해상도 — 기본 백업은 행을 담지 않는다)
+ok   ship_position_20261001: 15028 -> 0 (원해상도 — 기본 백업은 행을 담지 않는다)
+ok   ship_position_20261002: 0 -> 0 (원해상도 — 기본 백업은 행을 담지 않는다)
+ok   ship_position_20261003: 0 -> 0 (원해상도 — 기본 백업은 행을 담지 않는다)
+ok   ship_position_20261004: 0 -> 0 (원해상도 — 기본 백업은 행을 담지 않는다)
+ok   sigmet: rows 1716 -> 1716  md5 same
+ok   stats_daily: rows 17 -> 17  md5 same
+ok   stats_daily_utc_legacy: rows 0 -> 0  md5 same
+ok   track_point_1m: rows 5394 -> 5394  md5 same
+ok   track_point_20260930: 0 -> 0 (원해상도 — 기본 백업은 행을 담지 않는다)
+ok   track_point_20261001: 42493 -> 0 (원해상도 — 기본 백업은 행을 담지 않는다)
+ok   track_point_20261002: 0 -> 0 (원해상도 — 기본 백업은 행을 담지 않는다)
+ok   track_point_20261003: 0 -> 0 (원해상도 — 기본 백업은 행을 담지 않는다)
+ok   track_point_20261004: 0 -> 0 (원해상도 — 기본 백업은 행을 담지 않는다)

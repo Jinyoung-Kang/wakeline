@@ -1,0 +1,25 @@
+{
+ "ok": true,
+ "n": 4,
+ "day": "2026-10-01",
+ "statuses": {
+  "200": 4
+ },
+ "error_codes": [],
+ "audit_rows": 4,
+ "markers": [
+  [
+   "alerts",
+   "1"
+  ],
+  [
+   "sigmet",
+   "1"
+  ],
+  [
+   "traffic",
+   "1"
+  ]
+ ],
+ "took_s": 0.21
+}

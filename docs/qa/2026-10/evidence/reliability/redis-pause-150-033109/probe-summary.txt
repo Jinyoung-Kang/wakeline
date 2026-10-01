@@ -1,0 +1,12 @@
+/healthz
+      0.3s ..    44.3s  n= 12  max_ms=    41  status=200 health=ok
+     48.3s ..   128.4s  n= 21  max_ms=    39  status=200 health=degraded reasons=['consumer_stalled']
+    132.4s ..   164.4s  n=  9  max_ms=   118  status=200 health=degraded reasons=['region_feed_lag', 'consumer_stalled']
+    168.4s ..   168.4s  n=  1  max_ms=    21  status=200 health=degraded reasons=['region_feed_lag']
+    172.4s ..   208.4s  n= 10  max_ms=    49  status=200 health=ok
+/api/v1/ships?bbox=120,30,135,40
+      0.3s ..   208.4s  n= 53  max_ms=  3158  status=200
+/api/v1/aircraft?bbox=124,33,132,39
+      0.3s ..   208.4s  n= 53  max_ms=  3217  status=200
+/api/v1/alerts/history
+      0.3s ..   208.4s  n= 53  max_ms=  3238  status=200

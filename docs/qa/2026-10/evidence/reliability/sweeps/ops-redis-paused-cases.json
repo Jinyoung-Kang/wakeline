@@ -1,0 +1,18 @@
+[
+ {
+  "case": "redis paused + session cookie",
+  "path": "/api/v1/status",
+  "status": 500,
+  "retry_after": null,
+  "code": "INTERNAL_SERVER_ERROR",
+  "ms": 15060
+ },
+ {
+  "case": "redis paused + session cookie",
+  "path": "/api/v1/ops/settings",
+  "status": 500,
+  "retry_after": null,
+  "code": "INTERNAL_SERVER_ERROR",
+  "ms": 9053
+ }
+]

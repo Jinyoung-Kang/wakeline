@@ -1,0 +1,152 @@
+{
+ "window": [
+  1790875527230,
+  1790875636428
+ ],
+ "dlq_in_window": 0,
+ "aircraft": {
+  "entries": 11,
+  "expected_rows": 1270,
+  "missing_rows": 0,
+  "missing_sample": [],
+  "missing_by_second": {}
+ },
+ "ships": {
+  "entries": 11,
+  "expected_windows": 454,
+  "missing_windows": 32,
+  "missing_sample": [
+   [
+    "431007539",
+    "2026-10-01T17:26:00+00:00",
+    "1790875607810-0"
+   ],
+   [
+    "431029858",
+    "2026-10-01T17:26:00+00:00",
+    "1790875607810-0"
+   ],
+   [
+    "412479520",
+    "2026-10-01T17:26:00+00:00",
+    "1790875607810-0"
+   ],
+   [
+    "431000925",
+    "2026-10-01T17:26:00+00:00",
+    "1790875607810-0"
+   ],
+   [
+    "416001541",
+    "2026-10-01T17:26:00+00:00",
+    "1790875607810-0"
+   ],
+   [
+    "477680400",
+    "2026-10-01T17:26:00+00:00",
+    "1790875607810-0"
+   ],
+   [
+    "431005519",
+    "2026-10-01T17:26:00+00:00",
+    "1790875607810-0"
+   ],
+   [
+    "477996957",
+    "2026-10-01T17:26:00+00:00",
+    "1790875607810-0"
+   ],
+   [
+    "477997212",
+    "2026-10-01T17:26:00+00:00",
+    "1790875607810-0"
+   ],
+   [
+    "477056200",
+    "2026-10-01T17:26:00+00:00",
+    "1790875607810-0"
+   ]
+  ],
+  "late_windows": 4,
+  "late_windows_without_row": 0,
+  "duplicate_windows": 0,
+  "duplicate_sample": []
+ },
+ "sigmet": {
+  "entries": 1,
+  "expected_ids": 132,
+  "missing_ids": 0,
+  "missing_sample": []
+ },
+ "ais_gap": {
+  "expected": 0,
+  "missing": 0,
+  "missing_sample": []
+ },
+ "groups": {
+  "wakeline:aircraft": {
+   "pending": 1,
+   "lag": 0,
+   "last_delivered": "1790875650220-0",
+   "old_pending": 0,
+   "old_pending_sample": [],
+   "delivered_past_until": true
+  },
+  "wakeline:sigmet": {
+   "pending": 0,
+   "lag": 0,
+   "last_delivered": "1790875562724-0",
+   "old_pending": 0,
+   "old_pending_sample": [],
+   "delivered_past_until": false
+  },
+  "wakeline:radar": {
+   "pending": 0,
+   "lag": 0,
+   "last_delivered": "1790875627894-0",
+   "old_pending": 0,
+   "old_pending_sample": [],
+   "delivered_past_until": false
+  },
+  "wakeline:ships": {
+   "pending": 0,
+   "lag": 0,
+   "last_delivered": "1790875647815-0",
+   "old_pending": 0,
+   "old_pending_sample": [],
+   "delivered_past_until": true
+  }
+ },
+ "metrics": {
+  "wakeline_persist_queue": 0.0,
+  "wakeline_persist_tasks_total{kind=\"alert\",result=\"ok\"}": 83.0,
+  "wakeline_persist_tasks_total{kind=\"alert_reconcile\",result=\"ok\"}": 1.0,
+  "wakeline_persist_tasks_total{kind=\"sigmet_set\",result=\"ok\"}": 1.0,
+  "wakeline_ship_queue": 0.0,
+  "wakeline_ship_receipts_forced_total": 0.0,
+  "wakeline_ship_rows_total{result=\"downsampled\"}": 1.0,
+  "wakeline_ship_rows_total{result=\"dropped\"}": 51.0,
+  "wakeline_ship_rows_total{result=\"failed\"}": 0.0,
+  "wakeline_ship_rows_total{result=\"out_of_range\"}": 0.0,
+  "wakeline_ship_rows_total{result=\"written\"}": 174.0,
+  "wakeline_stream_messages_total{result=\"apply_error\"}": 0.0,
+  "wakeline_stream_messages_total{result=\"ok\"}": 11.0,
+  "wakeline_stream_messages_total{result=\"rejected\"}": 0.0,
+  "wakeline_stream_messages_total{result=\"stale_skipped\"}": 1.0,
+  "wakeline_stream_messages_total{result=\"trimmed\"}": 0.0,
+  "wakeline_stream_unacked": 0.0,
+  "wakeline_track_queue": 0.0,
+  "wakeline_track_receipts_forced_total": 0.0,
+  "wakeline_track_rows_total{result=\"dropped\"}": 0.0,
+  "wakeline_track_rows_total{result=\"failed\"}": 0.0,
+  "wakeline_track_rows_total{result=\"written\"}": 762.0
+ },
+ "defects": {
+  "aircraft_rows_lost": 0,
+  "ship_windows_lost": 32,
+  "ship_windows_duplicated": 0,
+  "sigmet_ids_lost": 0,
+  "ais_gaps_lost": 0,
+  "groups_not_drained": {}
+ }
+}
