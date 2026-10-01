@@ -80,7 +80,8 @@ infra-docker-test: init ## 버리는 컨테이너로 edge(Host 허용 목록·�
 	bash infra/tests/db_image_swap_test.sh
 
 # 원격 CI 가 없어도 ci.yml 의 security·third-party-images 와 같은 기준으로 막는다(R-07). 스캐너는 다이제스트 고정·네트워크 없음·docker.sock 없음(tools/scan_lib.sh).
-security: ## 보안 게이트: gitleaks(git 이력) + trivy(자체 이미지 차단 · 제3자는 ci.yml 행렬대로) — 이미지는 먼저 make build · SCAN_OFFLINE=1 이면 DB 캐시만
+# 의존성 감사는 ci.yml 의 web·collector job 과 같은 명령(tools/dependency_audit.sh, S2) — 레지스트리·취약점 DB 에 닿아야 하고, 돌리지 못하면 실패다.
+security: ## 보안 게이트: gitleaks(git 이력) + trivy(자체 이미지 차단 · 제3자는 ci.yml 행렬대로) + npm audit · pip-audit(CI 와 같은 명령) — 이미지는 먼저 make build · SCAN_OFFLINE=1 이면 trivy DB 캐시만 쓰고 의존성 감사는 건너뜀(SKIP 표시)
 	bash tools/security_gate.sh
 
 contract: ## Python↔Java 스키마 계약 검사 (+ api 테스트가 남긴 REST 응답 기록이 있으면 REST 계약도)
