@@ -9,13 +9,17 @@ import { useUi } from "@/lib/ui-store";
 import { validateStyleMin } from "@maplibre/maplibre-gl-style-spec";
 import { fmtKstMinute } from "@/lib/time";
 
-const rec = vi.hoisted(() => ({ calls: [] as string[], api: [] as string[] }));
+const rec = vi.hoisted(() => ({ calls: [] as string[], api: [] as string[], replies: {} as Record<string, () => Promise<unknown>>, reports: [] as string[] }));
 
 vi.mock("@/lib/maplibre", async (orig) => {
   const fake = (await import("./helpers/fake-maplibre")).fakeMaplibreModule;
   return { ...(await orig<typeof import("@/lib/maplibre")>()), maplibre: () => fake, loadMaplibre: async () => fake };
 });
-vi.mock("@/lib/api", () => ({ apiGet: (p: string) => { rec.api.push(p); return new Promise(() => {}); } }));
+vi.mock("@/lib/api", () => ({ apiGet: (p: string) => { rec.api.push(p); return rec.replies[p]?.() ?? new Promise(() => {}); } }));
+vi.mock("@/lib/errorReport", async (orig) => ({
+  ...(await orig<typeof import("@/lib/errorReport")>()),
+  reportClientError: (e: { message: string }) => { rec.reports.push(e.message); return "sent"; },
+}));
 vi.mock("@/lib/ws", () => ({
   WakelineWsClient: class {
     constructor() { rec.calls.push("client:new"); }
@@ -64,7 +68,7 @@ async function mount() {
 }
 async function act(fn: () => void) { await React.act(async () => { fn(); }); }
 
-beforeEach(() => { rec.calls.length = 0; rec.api.length = 0; FakeMap.instances.length = 0; resetData(); useUi.setState(initialUi, true); });
+beforeEach(() => { rec.calls.length = 0; rec.api.length = 0; rec.replies = {}; rec.reports.length = 0; FakeMap.instances.length = 0; resetData(); useUi.setState(initialUi, true); });
 afterEach(async () => { if (root) { const r = root; root = null; await React.act(async () => { r.unmount(); }); } });
 
 describe("MapView lifecycle (R-01: live data does not wait for the external basemap style)", () => {
@@ -254,6 +258,32 @@ describe("MapView under StrictMode: what is drawn belongs to the map that drew i
     setData({ ais: { connected: true, lag_s: 1, msgs_per_s: 10, gap_open_since: null, last_gap: null, state: "ok", coverage: [{ s: 33, w: 124, n: 39, e: 132 }], received_at: 1 } as never });
     const map = await mountStrict();
     expect((map.getSource("ship-coverage")!.data as { features: unknown[] }).features.length).toBeGreaterThan(0);
+  });
+});
+
+/** /api/v1/radar/kr 본문은 parseKrRadar 를 거친다(web-review B10) — 틀린 본문은 store 에 넣지 않고 마지막 값을 둔다. WS 처럼 보고한다(lib/errorReport) */
+describe("MapView KR radar poll validates the body (web-review B10)", () => {
+  const FRAME = { tm: "202609300810", obs_tm: "202609300810", fetched_at: "2026-09-29T23:13:40Z", echo_cells: 12, url: "/api/v1/radar/kr/202609300810.png?v=1" };
+  const GOOD = { available: true, latest_tm: "202609300810", georeferenced: true, coordinates: null, legend: null, frames: [FRAME], attribution: "기상청", meta: { fetched_at: "2026-09-29T23:13:40Z", stale: false } };
+  const settle = () => React.act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+
+  it("a readable body goes to the store", async () => {
+    rec.replies["/api/v1/radar/kr"] = async () => GOOD;
+    await mount();
+    await settle();
+    expect(getData().radarKr?.frames).toEqual([FRAME]);
+    expect(rec.reports).toEqual([]);
+  });
+
+  it("a body without frames keeps the last value (the dashboard does not fall over) and is reported", async () => {
+    const last = { ...GOOD, latest_tm: "202609300800" };
+    setData({ radarKr: last as never });
+    rec.replies["/api/v1/radar/kr"] = async () => ({ available: true, latest_tm: "202609281200" });
+    await mount();
+    await settle();
+    expect(getData().radarKr).toBe(last);
+    expect(rec.reports).toHaveLength(1);
+    expect(rec.reports[0]).toContain("/api/v1/radar/kr");
   });
 });
 

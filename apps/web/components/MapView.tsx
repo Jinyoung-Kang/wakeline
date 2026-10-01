@@ -22,13 +22,14 @@ import { activeSigmetFeatures } from "@/lib/sigmet";
 import { mapAttributionHtml, styleHasBasemapCredit } from "@/lib/attribution";
 import { mapAttributionControl } from "@/lib/map-attribution";
 import { isMetarStale } from "@/lib/format";
-import { krLayerId } from "@/lib/kr-radar";
+import { krLayerId, parseKrRadar } from "@/lib/kr-radar";
+import { reportClientError } from "@/lib/errorReport";
 import { layerTip, onReady, setDashboardMap } from "@/lib/map-ready";
 import { RECEPTION_FILL_LAYER } from "@/lib/reception-meta";
 import { addTrafficGridLayers, TRAFFIC_LAYERS, trafficDrawable, TrafficGridPoller, trafficGridFeatures, trafficGridTip, trafficStaleAt } from "@/lib/traffic-grid";
 import { aircraftTip, airportTip, renderTip, shipGridTip, shipTip, shipTrackPointTip, sigmetTip, type AirportProps, type Tip } from "@/lib/tooltip";
 import { appendTrackPoint, mergeTrack, pointFromState, trackError, trackFeatureCollection, trackFromRest, type TrackPt } from "@/lib/track";
-import type { KrRadar, RenderState, SigmetCollection } from "@/lib/types";
+import type { RenderState, SigmetCollection } from "@/lib/types";
 
 const REGION_CENTER: [number, number] = [127.8, 36.5];
 const EMPTY_FC: GeoJSON.FeatureCollection = { type: "FeatureCollection", features: [] };
@@ -350,7 +351,12 @@ export function MapView({ onFirstLoad }: { onFirstLoad?: () => void }) {
     worker.postMessage({ type: "start" });
     client.connect();
     subscribeViewport();
-    const pollKr = () => apiGet<KrRadar>("/api/v1/radar/kr").then((d) => setData({ radarKr: d })).catch(() => {});
+    // 본문은 parseKrRadar 로 검사한다(web-review B10) — 읽을 수 없으면 마지막 값을 두고 WS 처럼 보고한다(시스템 로그 web-client)
+    const pollKr = () => apiGet<unknown>("/api/v1/radar/kr").then((body) => {
+      const d = parseKrRadar(body);
+      if (d) setData({ radarKr: d });
+      else reportClientError({ message: "rest: malformed /api/v1/radar/kr body ignored — the last value is kept", component: "components/MapView.tsx" });
+    }).catch(() => {});
     pollKr();
     const krTimer = setInterval(() => { if (!document.hidden) pollKr(); }, 60_000); // 숨긴 탭에서는 받지 않는다
     pollAirports();
