@@ -1022,19 +1022,37 @@
 - portcalls_index: 격자가 시간 몫 290 을 먼저 쓰면 되찾기 · 채우기는 340 − 290 − (그 띠에서 이미 보낸 꼬리) = 11 까지(문서의 ~40/h 가 틀렸다). 재시작 · 꼬리 밀림 때 한 시간에 'low'
   budget_exhausted 하나가 날 수 있다(09-30 17:51 의 1건과 같은 모양) — 동작은 바꾸지 않고 docstring · ADR-022 · 산수 시험을 고쳤다.
 
-## 자동 검사 현황(2026-10-01 06:00 KST, 네 레인(kma · grid · writer · opsui) 통합 뒤 · 통합에서 고친 것(KMA 칩 · 상태 목록 시험 · 재생 알림) 뒤 — #88–#93)
+## #94 연안 교통량 격자 위치를 bbox 타일로 — 한 번에 32 km 상자 안의 칸을 모두(ADR-023 개정 · 계약 v5 §G28)
+- **본 것**(#90) 처음 보는 칸이 시간에 약 5,000개 나타나는데 한 칸 조회(maxFeatures=1)는 시간 290 · 하루 6,000 — 스냅샷 칸의 약 1/3 이 늘 '위치 확인 중'이었다.
+- **확인한 것**(수집기 컨테이너에서 실제 호출 두 번, 증거 `public-data-apis-2026-09-29.txt` 끝) `getOpnG4sWFS` 에 `bbox`(EPSG:5179) · `srs` · `maxFeatures` 를 주면 10 km 상자에 28칸,
+  50 km 상자에 450칸을 같은 GML 로 모두 준다(지물 하나 약 640 B). maxFeatures 상한 · numberOfFeatures 의 뜻 · 가장자리 칸의 잘림 여부는 확인하지 않았다.
+- **수정**(레인 bbox — 고칠 때마다 먼저 실패하는 시험, 두 렌즈의 적대적 리뷰 뒤 12건 수정) 고정 32 km EPSG:5179 타일(16 · 8 · 4 km 로 나눔), 알려진 칸 · 한 칸 조회로 찾은 칸 ·
+  지금 스냅샷의 모르는 칸이 닿은 가장자리 칸으로만 타일을 고른다(grid_no 를 풀어 위치를 짐작하지 않는다). 타일 = 예산 1(mof_grid4 · MOF 시간 창 — 한 칸 조회와 같은 몫 규칙).
+  타일이 끝났다고 적기 전에 상자 안에 완전히 든 알려진 칸이 답에 있는지 본다(없으면 잘렸을 수 있다 — 나눔). 타일의 격자 밖 지물은 음성 캐시를 쓰지 않는다(한 칸 조회가 판정).
+  답이 대부분 격자 밖 · 상자 밖이면 오류. 타일과 한 칸 조회는 차단기를 따로 쓴다(리뷰 HIGH: bbox 가 고장 나면 잘 되는 한 칸 조회가 약 10일 굶었다). 타일 상태는 Redis 해시
+  `wakeline:traffic_grid:tiles`(수집기 ACL — 정확한 이름 · HSET · HGETALL 만, Redis 재시작 필요), 나눈 타일의 자식은 재시작 뒤 다시 줄에. 본문은 엄격한 UTF-8 · 전체에서 DOCTYPE ·
+  ENTITY 거절 · 타일 384 KiB 상한(641 B/지물 × 32 km 타일 예상 176–201칸의 약 3배). 알려진 칸 메모리 압축(DB 에서 읽은 모양으로 잰 값 100k 칸 203 B/칸 유지).
+- **시험** collector `test_traffic_grid_tile*.py` · `test_marine_grid*.py` · 변이 16/16 죽음 · infra `redis_acl_test.sh` 297 · `collector_redis_test.sh` 14 · web 채우기 줄.
+- **배포 뒤 잰 값**(2026-10-01 08:33 KST 배포 — Redis 재시작으로 ACL 적용, api · ais 는 재연결 WARN 각 1건) 기동: `bbox tiles — 316 tiles queued from 8364 known cells`(레인의
+  가상 해안 모형은 147 — 실제 분포가 더 넓다). 하루 예산이 다 쓰인 상태(6,000/6,000)라 09:00 KST(UTC 날 바뀜)에 시작:
+  첫 차례 00:00–00:12Z — 타일 253번 · 오류 0 · 나눔 0, 칸 45,634 나열 · 새 칸 31,898 저장, 알려진 칸 8,364 → 40,262, mof_grid4 오늘 253 / 6,000, 시간 창 몫에서 멈춤(남은 타일 69).
+  스냅샷의 기하 있는 칸: 23:55Z 2,829 / 4,208(67.2 %) → 00:05Z 3,629 / 4,208(86.2 %) → 00:10Z 3,899 / 4,224(92.3 %). 한 칸 조회는 시간에 약 190칸이었다. 수집기 메모리 121 MiB / 512 MiB.
+  설명서 '연안 교통량' 그림을 다시 찍었다(3,929 / 4,224칸 표시).
+- **남은 것** 남은 타일 69와 이웃 타일은 다음 UTC 시간 창부터. 서버가 조용히 잘라 답하면서 알려진 칸도 없는 상자는 여전히 알아챌 수 없다(ADR-023 확인하지 않은 것).
+
+## 자동 검사 현황(2026-10-01 08:30 KST, 네 레인 통합(#88–#93) · bbox 타일 채우기(#94) 뒤)
 | 층 | 도구 | 수 |
 |---|---|---|
-| collector · ais 단위·통합 | pytest | 1,641 통과(+40 — 기상청 목록 · 오래된 tm · 격자 채우기 · 관심 지역 WARN · 항만 산수. 20 건너뜀 = 실 Redis 13(아래 줄) · 실 PostgreSQL 7(손으로만 돌리는 선택 시험 — 격자 기하 저장 · 복원 1 포함, 돌리지 않았다)) · 커버리지(`--cov=wakeline_collector`) 97 %(9,517문 중 245 빠짐) |
-| collector 실 Redis | `infra/tests/collector_redis_test.sh`(버리는 Redis 컨테이너) | 13 통과 |
+| collector · ais 단위·통합 | pytest | 1,729 통과(+88 — 기상청 목록 · 오래된 tm · 격자 채우기 · bbox 타일 · 관심 지역 WARN · 항만 산수. 21 건너뜀 = 실 Redis 14(아래 줄) · 실 PostgreSQL 7(손으로만 돌리는 선택 시험, 돌리지 않았다)) · 커버리지(`--cov=wakeline_collector`) 98 %(10,151문 중 252 빠짐) |
+| collector 실 Redis | `infra/tests/collector_redis_test.sh`(버리는 Redis 컨테이너) | 14 통과(+1 — 타일 상태 해시를 수집기 ACL 로) |
 | api 단위·통합 | JUnit 5 + Testcontainers(PostGIS·Redis 실물 — db 는 `wakeline-db:local`) | 968 통과(+29 — 쓰기 종료 경합 · 503 까닭 · 문장 이름 · /ops/runs 오류 글자 · ETag 에 note) · JaCoCo LINE 97.1 %(9,493줄 중 277 빠짐) · BRANCH 86.3 %(6,804 중 929 빠짐 · 하한 95 / 80 — 검증 통과) |
-| web 단위 | Vitest | 1,365(95 파일 — +45: /ops RUNS 드릴 · 상태 뜻 · 격자 채우기 줄 · 재생 503 · KMA 칩) |
+| web 단위 | Vitest | 1,368(95 파일 — +48: /ops RUNS 드릴 · 상태 뜻 · 격자 채우기 줄(타일 진행) · 재생 503 · KMA 칩) |
 | 정적 검사 · 빌드 | ruff check · ruff format --check(collector 전체) · mypy(77 파일) · tsc --noEmit · eslint · next build | 모두 통과 |
 | 언어 간 계약 | tools/contract_check.py | PASSED — 새 §8 영수증 표시 상한(수집기 상수로 다시 셈) 포함 |
 | REST 계약 | tools/rest_contract_check.py | 36종 PASSED |
 | 인프라 정책 | infra/tests(unittest) | 129 |
-| 버리는 컨테이너 시험 | edge · Redis ACL · db 권한 · 백업·복원 · 비밀번호 교체 · 이전 → 새 db 이미지 교체 | 448 — 이번에도 다시 돌리지 않았다(인프라 변경 없음 — 2026-09-30 판의 값) |
+| 버리는 컨테이너 시험 | edge · Redis ACL · db 권한 · 백업·복원 · 비밀번호 교체 · 이전 → 새 db 이미지 교체 | 35 · 297 · 36 · 48 · 27 · 11 = 454 — Redis ACL 만 이번에 다시 돌림(297, 타일 해시 +6), 나머지는 2026-09-30 판의 값(그 인프라는 바뀌지 않았다) |
 | E2E | Playwright(격리된 fixture 스택 8701, 작업자 1명) | 43 통과(+2 — `ops-screens` 드릴 · `replay-503`. 처음 통합 판은 `replay-503` 1건 실패 → 재생 알림을 지도 위로(#92) 뒤 43 통과, `replay-503` · `replay-layout` 3번씩 되풀이 통과) |
 | 첫 화면 JS 예산 | `npm run check:first-js -- --in-image` | 543,507 B / 550,000 B(여유 6,493 B — 통합 빌드) |
-| 보안 게이트 | `SCAN_OFFLINE=1 bash tools/security_gate.sh` | PASS(2026-10-01 06:0x KST, 배포한 이미지) — gitleaks 890 커밋 누출 0 · 자체 api · collector · web · db 고칠 수 있는 HIGH · CRITICAL 0 · 제3자 edge · redis PASS · k6 보고만 |
-| 배포 뒤 확인 | 수집기 · api 로그(사용자가 `docker logs` 읽기를 허용 — 2026-10-01) | 06:02 KST 배포(api · collector · web — ais 는 코드 변경 없어 그대로) 뒤 10분 WARN · ERROR 0, 기상청 연속 이어받기 · 전날 목록 측정 줄, 격자 채우기 요약(#90) |
+| 보안 게이트 | `SCAN_OFFLINE=1 bash tools/security_gate.sh` | PASS(2026-10-01 08:32 KST, 배포한 이미지) — gitleaks 917 커밋 누출 0 · 자체 api · collector · web · db 고칠 수 있는 HIGH · CRITICAL 0 · 제3자 edge · redis PASS · k6 보고만 |
+| 배포 뒤 확인 | 수집기 · api 로그(사용자가 `docker logs` 읽기를 허용 — 2026-10-01) | 06:02 KST 배포(api · collector · web) 뒤 10분 WARN · ERROR 0, 08:33 KST 배포(Redis 재시작 · collector · web) 뒤 재연결 WARN 2건 밖에 없음, 타일 채우기 첫 차례(#94) |
