@@ -145,6 +145,7 @@ from datetime import UTC, datetime, timedelta
 
 import httpx
 import orjson
+from redis.exceptions import RedisError
 
 from wakeline_collector.budget import UNKNOWN, regular_headroom
 from wakeline_collector.config import settings
@@ -691,6 +692,26 @@ class KmaRadarJob:
             return
         log.warning("kma radar: %s", f.log_text())
 
+    def _redis_failed(
+        self, started: datetime, f: _StepFailed, *, called: bool, stored: int = 0, quality: list | None = None, note: str = ""
+    ) -> None:
+        """Redis(프레임 목록 · meta · 프레임 저장)를 읽거나 쓰지 못했다(D2 — 전에는 redis-py 예외가 스케줄러까지 올라가 그 주기의 실행 기록 · 품질
+        사례가 사라졌다): 실행 'error' 하나(단계 · 예외 — 가린 글자, 그 주기의 품질 사례 · 글)와 WARN 한 줄. 공급자 오류가 아니다 — 공급자 last_error ·
+        연속 실패 수에는 적지 않는다. called = 이 주기에 기상청을 불렀다(아니면 'no KMA call this cycle')."""
+        text = f.detail() + (f" · {note}" if note else "")
+        quality = quality or []
+        self.ctx.db.record_run(
+            self.job_name,
+            self.p.name,
+            started,
+            status="error",
+            records_in=stored,
+            records_quarantined=len(quality),
+            error_text=text,
+            quality=quality,
+        )
+        log.warning("kma radar: %s%s", text, "" if called else " — no KMA call this cycle")
+
     @staticmethod
     def _throttle_text(f: _StepFailed) -> tuple[str, int | None]:
         """429 · 속도 상한(모듈 설명 '속도 상한')의 로그 한 줄과 (실행 기록 오류 글자, http 상태). 공급자 last_error · consecutive_failures 에는 적지
@@ -905,7 +926,11 @@ class KmaRadarJob:
                 self._warned = True
             await self._drop_missing()  # 수집하지 않는 동안 앞서 남은 연속을 지금 것처럼 두지 않는다(리뷰 2026-09-30)
             return
-        stored = await self.prune()
+        try:
+            stored = await self.prune()
+        except (RedisError, OSError) as e:
+            self._redis_failed(datetime.now(UTC), _StepFailed("frame list (Redis)", e, None), called=False)
+            return
         if not self._loaded:
             await self._load_missing()
         if self.missing is None and any(self._published.values()):
@@ -917,13 +942,17 @@ class KmaRadarJob:
         if self.missing is not None and self._waiting(now):
             await self._wait(now)
             return
-        self._probe_at = now  # 이 주기는 기상청을 부른다(목록 예약부터 — 실패해도 확인 간격은 여기서 센다)
         started = datetime.now(UTC)
+        # meta latest_tm — 프레임이 모두 만료돼도 남는다: 전날 끝에 닿았는가(_behind_prev_day) · 옛 tm(select_candidates known) · 목록 멈춤(_ListIdle —
+        # fetched_at 은 그 tm 을 처음 저장한 시각, STALE 시계). 예약 앞에서 읽는다 — 못 읽으면 기상청을 부르지 않고 예산도 쓰지 않는다(D2)
+        try:
+            latest, fetched = await self._latest_stored()
+        except (RedisError, OSError) as e:
+            self._redis_failed(started, _StepFailed("meta (Redis)", e, None), called=False)
+            return
+        self._probe_at = now  # 이 주기는 기상청을 부른다(목록 예약부터 — 실패해도 확인 간격은 여기서 센다)
         if not await self._reserve(started):
             return
-        # meta latest_tm — 프레임이 모두 만료돼도 남는다: 전날 끝에 닿았는가(_behind_prev_day) · 옛 tm(select_candidates known) · 목록 멈춤(_ListIdle —
-        # fetched_at 은 그 tm 을 처음 저장한 시각, STALE 시계)
-        latest, fetched = await self._latest_stored()
         try:
             listing = await self._listing([f["tm"] for f in stored], latest)
         except _StepFailed as f:
@@ -958,6 +987,7 @@ class KmaRadarJob:
         note = ""
         quality: list[tuple[str, str | None, dict]] = []
         budget_stop: tuple[str, str] | None = None  # 바이너리 예약이 거절돼 멈췄다(상태 · 오류 글자)
+        store_failed: _StepFailed | None = None  # 프레임 저장(Redis)이 실패해 멈췄다 — 주기 끝에서 'error' 하나로(D2)
         # 429(기상청이 거절 — 호스트를 멈췄다) · 속도 상한(보내지 않았다)으로 이 주기의 KMA 호출을 멈췄다. 곧바로 끝내지 않고 주기 끝(품질 이벤트 ·
         # 공급자 성공 · 연속 발행 · heartbeat)을 그대로 지난다 — 리뷰 2026-09-30: 전에는 return 해서 이미 포기한 tm 의 품질 이벤트와 같은 주기에
         # 열고 닫은 연속의 발행을 잃었다(Retry-After 가 길면 다음 주기도 멈춰 10분까지)
@@ -1011,14 +1041,18 @@ class KmaRadarJob:
                 except _BadFrame as e:
                     self._skip_bad(tm, e, quality)
                     continue
-                except OSError as e:
-                    await self._fail(started, _StepFailed(f"store tm={tm}", e, None))
-                    return
+                except (RedisError, OSError) as e:  # Redis 장애 · OOM(noeviction) — 공급자 오류가 아니다
+                    store_failed = _StepFailed(f"store tm={tm}", e, None)
+                    break
                 self._not_ready.pop(tm, None)
                 stored_n += 1
         finally:
             settled = self._settle_exhausted(exhausted, newest, kinds)
         note = settled or note
+        # 프레임 저장(Redis)이 실패했다 — 이 주기에 모은 품질 사례 · 글(포기한 tm · 아직 없는 tm)도 함께 적는다. 다음 주기가 그 tm 을 다시 받는다
+        if store_failed is not None:
+            self._redis_failed(started, store_failed, called=True, stored=stored_n, quality=quality, note=note)
+            return
         # 연속의 확인(연속이 그대로 열려 있을 때): 목록이 답했는데 확인할 tm 이 없었으면(새 날 목록이 비었다 · 목록이 자라지 않고 확인할 tm 이 없다) 목록만 읽은
         # 확인이다 — 마지막 확인을 옮긴다(전에는 옮기지 않아 웹이 '확인 멈춤'을 잘못 붙였다, 운영 2026-10-01). '파일 없음' 답을 받은 확인과 함께 목록 필드를 싣는다.
         # 확인이 없던 주기(예산 · 429 로 한 tm 도 묻지 못함)는 둘 다 그대로다
@@ -1594,9 +1628,6 @@ class KmaRadarJob:
         annotate_partial(frames)
         if entry.get("partial") is True:
             self.partial_stored += 1
-        await self._save_frames(frames)
-        if dropped:
-            await r.delete(*[KEY_FRAME.format(tm=f["tm"]) for f in dropped])  # 목록에서 빠진 이미지는 바로 지운다
         mapping: dict[str, str] = {
             "available": "1",
             "status": "200",
@@ -1613,7 +1644,13 @@ class KmaRadarJob:
             # 아니다(영상이 사라져 다시 받은 최신 tm — 전에는 다시 받은 시각으로 옮겨 새 tm 이 오지 않는 동안 STALE 이 늦어졌다, 도전 2026-10-01)
             if not prev_fetched or _tm_dt(prev_latest) is None or tm > str(prev_latest):
                 mapping["fetched_at"] = _iso(res.fetched_at)
+        # 쓰는 순서: 이미지(위) → meta → 목록(D2). 어디서 실패해도 목록이 meta(latest_tm · fetched_at — STALE 시계)보다 앞서지 않는다 — 앞서면 그 tm 은
+        # 목록에 있어 다시 받지 않으므로 더 새 tm 이 올 때까지 meta 가 뒤처졌다. meta 가 앞선 채 멈추면(목록 쓰기 실패) 그 tm 은 목록에 없어 다음 주기가
+        # 다시 받는다(fetched_at 은 처음 저장한 그대로). 남는 것은 목록에 없는 이미지(TTL 3 h)뿐이다
         await r.hset(KEY_META, mapping=mapping)  # type: ignore[arg-type]
+        await self._save_frames(frames)
+        if dropped:
+            await r.delete(*[KEY_FRAME.format(tm=f["tm"]) for f in dropped])  # 목록에서 빠진 이미지는 바로 지운다
         log.info(
             "kma radar: tm=%s %s stations=%d%s echo cells=%d png=%d B (%d frames)",
             tm,
