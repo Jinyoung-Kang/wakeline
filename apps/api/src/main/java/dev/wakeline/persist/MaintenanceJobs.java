@@ -2,7 +2,7 @@ package dev.wakeline.persist;
 
 import dev.wakeline.platform.config.AppProperties;
 import dev.wakeline.geo.Bbox;
-import dev.wakeline.ops.RegionSettings;
+import dev.wakeline.settings.RegionSettings;
 import dev.wakeline.platform.data.Sql;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

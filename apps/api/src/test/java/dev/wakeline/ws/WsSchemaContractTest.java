@@ -16,7 +16,7 @@ import dev.wakeline.ingest.IngestEvents;
 import dev.wakeline.ingest.RadarStore;
 import dev.wakeline.platform.support.Receipt;
 import dev.wakeline.ingest.ShipStore;
-import dev.wakeline.ops.RegionSettings;
+import dev.wakeline.settings.RegionSettings;
 import dev.wakeline.persist.StoredStaticReader;
 import dev.wakeline.portcalls.PortCallFixtures;
 import dev.wakeline.portcalls.PortCallIndex;

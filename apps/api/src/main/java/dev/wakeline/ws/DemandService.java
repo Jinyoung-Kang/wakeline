@@ -8,7 +8,7 @@ import dev.wakeline.geo.Bbox;
 import dev.wakeline.geo.Geo;
 import dev.wakeline.domain.HotCell;
 import dev.wakeline.ingest.SnapshotStore;
-import dev.wakeline.ops.RegionSettings;
+import dev.wakeline.settings.RegionSettings;
 import dev.wakeline.route.RouteReader;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;

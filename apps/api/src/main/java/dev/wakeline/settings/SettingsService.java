@@ -1,4 +1,4 @@
-package dev.wakeline.ops;
+package dev.wakeline.settings;
 
 import dev.wakeline.platform.web.Problem;
 import dev.wakeline.domain.AisBboxes;
@@ -39,6 +39,13 @@ public class SettingsService {
     /** 변경 감사 기록 콜백(같은 트랜잭션 안에서 불린다). */
     @FunctionalInterface
     public interface AuditHook { void record(Object before, Object after); }
+
+    /**
+     * 시스템 감사 기록 콜백(같은 트랜잭션 안에서 불린다) — 기동 시 .env 맞추기({@link #seedFromEnv})가 쓴다. 운영 쪽 AuditService::recordSystem 이 이 모양이다
+     * (설정이 운영 패키지를 import 하지 않게 — api-review §2.5-4, 그러지 않으면 settings ↔ ops 순환).
+     */
+    @FunctionalInterface
+    public interface SystemAuditHook { void record(String action, String target, Object before, Object after); }
 
     private final JdbcClient db;
     private final StringRedisTemplate redis;
@@ -124,7 +131,7 @@ public class SettingsService {
      * 검증을 통과하지 못한 .env 값은 쓰지 않는다. 바꾼 경우 감사 기록(시스템)을 같은 트랜잭션에 남긴다.
      * @return 바꾼 키 목록
      */
-    public List<String> seedFromEnv(String regionCenter, int regionRadiusNm, AuditService audit) {
+    public List<String> seedFromEnv(String regionCenter, int regionRadiusNm, SystemAuditHook audit) {
         List<String> changed = new java.util.ArrayList<>();
         Map<String, JsonNode> wanted = new LinkedHashMap<>();
         wanted.put("region_center", JsonNodeFactory.instance.stringNode(regionCenter == null ? "" : regionCenter.trim()));
@@ -146,7 +153,7 @@ public class SettingsService {
                 if (before.equals(e.getValue())) return false;
                 db.sql("UPDATE app_setting SET value = :v::jsonb, version = version + 1, updated_by = :by, updated_at = now() WHERE key = :k")
                         .param("v", json.writeValueAsString(e.getValue())).param("by", ENV_SEEDER).param("k", e.getKey()).update();
-                audit.recordSystem("SETTING_SEED_ENV", e.getKey(), before, e.getValue());
+                audit.record("SETTING_SEED_ENV", e.getKey(), before, e.getValue());
                 return true;
             });
             if (Boolean.TRUE.equals(did)) changed.add(e.getKey());

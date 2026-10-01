@@ -1,4 +1,4 @@
-package dev.wakeline.ops;
+package dev.wakeline.settings;
 
 import dev.wakeline.platform.config.AppProperties;
 import dev.wakeline.platform.web.Problem;

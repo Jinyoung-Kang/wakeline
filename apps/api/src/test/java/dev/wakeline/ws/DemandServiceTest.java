@@ -6,7 +6,7 @@ import dev.wakeline.domain.AircraftState;
 import dev.wakeline.domain.HotCell;
 import dev.wakeline.domain.ShipStatic;
 import dev.wakeline.ingest.Snapshot;
-import dev.wakeline.ops.RegionSettings;
+import dev.wakeline.settings.RegionSettings;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.JsonNode;
 

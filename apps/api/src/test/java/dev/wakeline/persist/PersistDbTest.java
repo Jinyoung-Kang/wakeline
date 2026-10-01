@@ -12,7 +12,7 @@ import dev.wakeline.engine.AlertStateMachine.EventType;
 import dev.wakeline.engine.EngineEvents;
 import dev.wakeline.ingest.IngestEvents;
 import dev.wakeline.ingest.SigmetStore;
-import dev.wakeline.ops.RegionSettings;
+import dev.wakeline.settings.RegionSettings;
 import dev.wakeline.platform.data.OrderedWriter;
 import dev.wakeline.platform.data.Sql;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;

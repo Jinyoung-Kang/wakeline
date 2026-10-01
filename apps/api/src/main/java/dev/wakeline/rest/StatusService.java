@@ -2,7 +2,7 @@ package dev.wakeline.rest;
 
 import dev.wakeline.platform.config.AppProperties;
 import dev.wakeline.demand.DemandStats;
-import dev.wakeline.ops.RegionSettings;
+import dev.wakeline.settings.RegionSettings;
 import dev.wakeline.platform.support.Times;
 import org.springframework.beans.factory.annotation.Autowired;
 import dev.wakeline.engine.EngineService;

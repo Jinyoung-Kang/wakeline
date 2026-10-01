@@ -4,6 +4,8 @@ import dev.wakeline.DbTestSupport;
 import dev.wakeline.platform.config.AppProperties;
 import dev.wakeline.platform.web.Problem;
 import dev.wakeline.persist.MaintenanceJobs;
+import dev.wakeline.settings.RegionSettings;
+import dev.wakeline.settings.SettingsService;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -221,16 +223,16 @@ class OpsDbTest {
     @Test
     void envRegionSeedsOnlyValuesNoOperatorChanged() {
         SettingsService s = settings(redis);
-        assertThat(s.seedFromEnv("35.1,129.0", 200, audit)).containsExactly("region_center", "region_radius_nm");
+        assertThat(s.seedFromEnv("35.1,129.0", 200, audit::recordSystem)).containsExactly("region_center", "region_radius_nm");
         assertThat(s.get("region_center")).containsEntry("updated_by", "env");
         assertThat(auditCount("SETTING_SEED_ENV")).isEqualTo(2);
-        assertThat(s.seedFromEnv("35.1,129.0", 200, audit)).isEmpty(); // 같은 값 — 다시 쓰지 않는다
+        assertThat(s.seedFromEnv("35.1,129.0", 200, audit::recordSystem)).isEmpty(); // 같은 값 — 다시 쓰지 않는다
         // 운영자가 바꾼 뒤에는 .env 가 덮어쓰지 않는다
         s.update("region_radius_nm", JsonNodeFactory.instance.numberNode(300), 2, "alice", (b, a) -> { });
-        assertThat(s.seedFromEnv("35.1,129.0", 150, audit)).isEmpty();
+        assertThat(s.seedFromEnv("35.1,129.0", 150, audit::recordSystem)).isEmpty();
         assertThat(s.get("region_radius_nm").get("value").toString()).isEqualTo("300");
         // 검증을 통과하지 못한 .env 값은 쓰지 않는다
-        assertThat(s.seedFromEnv("123,456", 200, audit)).isEmpty();
+        assertThat(s.seedFromEnv("123,456", 200, audit::recordSystem)).isEmpty();
     }
 
     // ---------- 공급자 스위치(R-94, 계약 v5 §D1): 원본은 DB provider_switch, Redis 는 미러 ----------
