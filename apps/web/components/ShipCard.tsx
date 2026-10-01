@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { shipDetail } from "@/lib/endpoints/ship-detail";
 import { useServerNow } from "@/lib/clock";
 import { fmtKstTitle, fmtRangeTitle } from "@/lib/time";
@@ -254,7 +254,13 @@ function ShipList({ shipCats }: { shipCats: readonly ShipCategory[] }) {
   const [q, setQ] = useState("");
   const [sort, setSort] = useState<ShipSort>(SHIP_SORT_DEFAULT);
   const now = useServerNow(1000);
-  if (view.mode !== "points") {
+  // 화면 안 선박 전부를 거르고 정렬하는 일은 선박 메시지(view — 지도 목록 사본 shipStates 는 view 와 함께 바뀐다) · 거르기 글자 · 선종 필터 · 정렬이 바뀔 때만 —
+  // 1 s 시계는 경과 칸만 다시 그린다. 시계를 따라가는 것은 경과 정렬뿐(web-review §4 P2 — 50줄을 보이려고 매초 전체를 정렬했다, docs/PERF.md §11)
+  const filtered = shipCats.length < SHIP_CATEGORIES.length;
+  const list = useMemo(() => (view.mode === "points" ? shipList(shipStates.values(), q, Infinity, filtered ? new Set(shipCats) : null) : null), [view, q, shipCats, filtered]);
+  const sortNow = sort.key === "age" ? now : 0;
+  const rows = useMemo(() => (list ? sortShipRows(list.items.map(shipRowFromLite), sort, sortNow).slice(0, SHIP_LIST_MAX) : []), [list, sort, sortNow]);
+  if (view.mode !== "points" || !list) {
     return (
       <div className="p-3 text-[11px] text-fg-3" data-testid="ship-list-empty">
         {view.mode === "grid" ? <>
@@ -266,10 +272,7 @@ function ShipList({ shipCats }: { shipCats: readonly ShipCategory[] }) {
   }
   // 화면 안 0척이면 칩과 같은 이유 문구(수신국 없는 해역 · 수신 범위 밖 · AIS 꺼짐 · 연결 안 됨 · 상태 모름)
   const zero = shipsChip(view, { zoom: viewport?.zoom ?? null, bbox: viewport?.bbox ?? null, ais, observed });
-  // 목록 계산은 렌더 중 — 화면 안 선박(서버 상한 5 000)만이라 가볍다
-  const filtered = shipCats.length < SHIP_CATEGORIES.length;
-  const { items, total, hidden } = shipList(shipStates.values(), q, Infinity, filtered ? new Set(shipCats) : null);
-  const rows = sortShipRows(items.map(shipRowFromLite), sort, now).slice(0, SHIP_LIST_MAX);
+  const { total, hidden } = list;
   const onSort = (k: ShipSortKey) => setSort((cur) => (cur.key === k ? { key: k, dir: cur.dir === "asc" ? "desc" : "asc" } : { key: k, dir: k === "age" || k === "sog" ? "desc" : "asc" }));
   return (
     <div className="flex h-full flex-col" data-testid="ship-list">
