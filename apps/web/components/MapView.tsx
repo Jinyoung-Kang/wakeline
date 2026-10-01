@@ -1,30 +1,27 @@
 "use client";
 import type * as maplibregl from "maplibre-gl";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import {
   addBaseLayers, aircraftFeatureCollection, FALLBACK_STYLE, predictionFeature, predictionKey, predictionTargets, RADAR_SLOT, STYLE_LOAD_TIMEOUT_MS, STYLE_URL,
 } from "@/lib/maplayers";
 import { subscriptionBbox } from "@/lib/viewport";
 import { maplibre } from "@/lib/maplibre";
 import { applyBasemap } from "@/lib/basemap";
-import { aircraftStates, getData, serverNowMs, setData, shipStates, useServerData } from "@/lib/store";
-import { addShipLayers, SHIP_LAYERS, shipCategoryFilter } from "@/lib/ship-layers";
-import { aisCoverageFeatures, filterGridCells, gridFeatures, selectedShipFeatures, shipCategory, shipFeatures } from "@/lib/ships";
+import { aircraftStates, getData, serverNowMs, setData, useServerData } from "@/lib/store";
+import { addShipLayers, SHIP_LAYERS } from "@/lib/ship-layers";
 import { useUi } from "@/lib/ui-store";
 import { WakelineWsClient } from "@/lib/ws";
 import { mapAttributionHtml, styleHasBasemapCredit } from "@/lib/attribution";
 import { mapAttributionControl } from "@/lib/map-attribution";
 import { onReady, setDashboardMap, useDashboardMap } from "@/lib/map-ready";
-import { addTrafficGridLayers, TRAFFIC_LAYERS, trafficDrawable, TrafficGridPoller, trafficGridFeatures, trafficStaleAt } from "@/lib/traffic-grid";
+import { addTrafficGridLayers, TRAFFIC_LAYERS } from "@/lib/traffic-grid";
 import { useMapPointer } from "./map/useMapPointer";
 import { useSelectionTracks, type LiveFeed } from "./map/useSelectionTracks";
+import { useShipLayers } from "./map/useShipLayers";
 import { useWeatherLayers } from "./map/useWeatherLayers";
 import type { RenderState } from "@/lib/types";
 
 const REGION_CENTER: [number, number] = [127.8, 36.5];
-const EMPTY_FC: GeoJSON.FeatureCollection = { type: "FeatureCollection", features: [] };
-/** 선박 STALE(> 15분) 재계산 주기 — 새 메시지가 없어도 오래된 선박을 반투명으로 */
-const SHIP_STALE_CHECK_MS = 30_000;
 
 function geo(map: maplibregl.Map, id: string) {
   return map.getSource(id) as maplibregl.GeoJSONSource | undefined;
@@ -43,21 +40,13 @@ export function MapView({ onFirstLoad }: { onFirstLoad?: () => void }) {
   /** 이 지도의 실시간 피드(WS 클라이언트 · 워커 · 예측선 갱신) — 지도 생성 effect 가 채우고 정리할 때 비운다 */
   const feed = useRef<LiveFeed | null>(null);
   const alerts = useServerData((d) => d.alerts);
-  const ships = useServerData((d) => d.ships);
-  const shipSelected = useServerData((d) => d.shipSelected);
-  const ais = useServerData((d) => d.ais);
   const layers = useUi((s) => s.layers);
   const selectedHex = useUi((s) => s.selectedHex);
-  const selectedShip = useUi((s) => s.selectedShip);
-  const shipCats = useUi((s) => s.shipCats);
   const flyTo = useUi((s) => s.flyTo);
   /** 마운트 전에 처리된 이동 요청은 다시 하지 않는다(다른 화면에서 돌아올 때) */
   const flyHandled = useRef(useUi.getState().flyTo?.id ?? 0);
   const selectedRef = useRef<string | null>(null);
   useEffect(() => { selectedRef.current = selectedHex; }, [selectedHex]);
-  /** 그린 AIS 수신 범위 키 — '이 지도에 그린 것'의 기록 */
-  const coverageKey = useRef("");
-  const [shipClock, setShipClock] = useState(0);
 
   // ---- 지도·WS·워커 생명주기 ----
   useEffect(() => {
@@ -179,9 +168,6 @@ export function MapView({ onFirstLoad }: { onFirstLoad?: () => void }) {
       setDashboardMap(null); // 지우기 전에 — 조각이 지운 지도에 그리지 않게
       map.remove();
       mapRef.current = null;
-      // '이 지도에 그린 것'의 기록은 지도와 함께 버린다 — 다음 지도(StrictMode 의 두 번째 마운트 · 다시 마운트)에는 아무것도 그려져 있지 않다.
-      // 남기면 같은 SIGMET · AIS 범위를 '이미 그림'으로 건너뛰어 새 지도에 그리지 않았다(web-review B8)
-      coverageKey.current = "";
       feed.current = null;
       setData({ conn: "closed" });
     };
@@ -223,77 +209,8 @@ export function MapView({ onFirstLoad }: { onFirstLoad?: () => void }) {
     });
   }, [layers]);
 
-  // ---- 연안 교통량(ADR-023): 켜져 있을 때만 조회(90 s · ETag · 숨긴 탭 제외 · 다시 보이면 곧바로). 지도는 내용이 바뀔 때(version)만 다시 그리고,
-  // 끄면 칸을 비운다. 받아 둔 값이 이 시계로 오래되면(regDt + stale_after_s) 그리지 않고, 그리는 중이면 그 순간 비운다 — 조회가 실패해 api 가 '멈춤'을
-  // 말할 수 없을 때도 지난 칸을 지금처럼 두지 않는다 ----
-  const trafficVersion = useServerData((d) => d.trafficGrid.version);
-  useEffect(() => {
-    if (!layers.traffic) return;
-    const poller = new TrafficGridPoller((s) => setData({ trafficGrid: s }), getData().trafficGrid);
-    poller.start();
-    return () => poller.stop();
-  }, [layers.traffic]);
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map) return;
-    const g = getData().trafficGrid.data;
-    const now = serverNowMs(Date.now());
-    const draw = layers.traffic === true && trafficDrawable(g, now);
-    onReady(map, "traffic-grid", () => geo(map, "traffic-grid")?.setData(draw ? trafficGridFeatures(g.cells) : EMPTY_FC));
-    const at = draw ? trafficStaleAt(g) : null;
-    if (at == null) return;
-    const t = setTimeout(() => onReady(map, "traffic-grid", () => geo(map, "traffic-grid")?.setData(EMPTY_FC)), Math.max(0, at - now) + 50);
-    return () => clearTimeout(t);
-  }, [trafficVersion, layers.traffic]);
-
-  // ---- 선박·격자 그리기: 서버 메시지(ships.version)·선택·STALE 재계산(30 s) ----
-  useEffect(() => {
-    const t = setInterval(() => setShipClock(Date.now()), SHIP_STALE_CHECK_MS);
-    return () => clearInterval(t);
-  }, []);
-  // 격자는 선종 필터(계약 v5 §B3)로 칸 수를 다시 센다 — 선종별 수가 없는 칸(구 서버)은 그대로(칸 툴팁·칩이 밝힌다)
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map) return;
-    const now = serverNowMs(Date.now());
-    const enabled = new Set(shipCats);
-    onReady(map, "ships", () => {
-      geo(map, "ships")?.setData(ships.mode === "points" ? shipFeatures(shipStates.values(), selectedShip, now) : EMPTY_FC);
-      geo(map, "ship-grid")?.setData(ships.mode === "grid" ? gridFeatures(filterGridCells(ships.grid, enabled).cells) : EMPTY_FC);
-    });
-  }, [ships, selectedShip, shipClock, shipCats]);
-
-  // ---- 선택 선박(계약 v5 §B3): 격자 모드·선종 필터와 상관없이 고리 + 라벨(선박 기호가 그리지 않으면 아이콘도). 위치를 모르면 그리지 않는다 ----
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map) return;
-    const listed = selectedShip ? shipStates.get(selectedShip) ?? null : null;
-    const live = shipSelected && shipSelected.mmsi === selectedShip ? shipSelected.state : null;
-    const symbolDraws = ships.mode === "points" && listed != null && shipCats.includes(shipCategory(listed.ship_type));
-    const staticName = shipSelected && shipSelected.mmsi === selectedShip ? shipSelected.static?.name ?? null : null;
-    const fc = selectedShipFeatures(selectedShip, live, listed, symbolDraws, serverNowMs(Date.now()), staticName);
-    onReady(map, "ship-selected", () => geo(map, "ship-selected")?.setData(fc));
-  }, [ships, selectedShip, shipSelected, shipClock, shipCats]);
-
-  // ---- 선종 필터(계약 v5 §B3): 점 모드는 MapLibre filter(모두 켜져 있으면 없음) ----
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map) return;
-    const filter = shipCategoryFilter(new Set(shipCats));
-    onReady(map, "ship-filter", () => { if (map.getLayer("ship-symbol")) map.setFilter("ship-symbol", filter); });
-  }, [shipCats]);
-
-  // ---- 선박 수신 범위(계약 v3 §A): 선박 레이어가 켜져 있고 status 가 범위를 줄 때만 경계 점선. 모르면 그리지 않는다 ----
-  const coverage = ais?.coverage ?? null;
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map) return;
-    const fc = layers.ships ? aisCoverageFeatures(coverage) : EMPTY_FC;
-    const key = JSON.stringify(fc.features.map((f) => f.geometry));
-    if (key === coverageKey.current) return;
-    coverageKey.current = key;
-    onReady(map, "ship-coverage", () => geo(map, "ship-coverage")?.setData(fc));
-  }, [coverage, layers.ships]);
+  // ---- 선박 레이어(선박 · 격자 · 선택 선박 · 선종 필터 · AIS 수신 범위 · 연안 교통량 — components/map/useShipLayers) ----
+  useShipLayers(dashMap);
 
   // ---- 선택 항적: WS 선택 · 켜진 레이어 알림, 항공기 · 선박 항적(components/map/useSelectionTracks) ----
   useSelectionTracks(dashMap, feed);
