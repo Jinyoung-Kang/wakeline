@@ -14,7 +14,7 @@ import dev.wakeline.engine.EngineService;
 import dev.wakeline.ingest.AisStatus;
 import dev.wakeline.ingest.IngestEvents;
 import dev.wakeline.ingest.RadarStore;
-import dev.wakeline.ingest.Receipt;
+import dev.wakeline.platform.support.Receipt;
 import dev.wakeline.ingest.ShipStore;
 import dev.wakeline.ops.RegionSettings;
 import dev.wakeline.persist.StoredStaticReader;

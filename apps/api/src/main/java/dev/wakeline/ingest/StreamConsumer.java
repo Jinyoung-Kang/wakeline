@@ -6,6 +6,7 @@ import dev.wakeline.domain.HotCell;
 import dev.wakeline.domain.ShipState;
 import dev.wakeline.domain.ShipStatic;
 import dev.wakeline.domain.SigmetRecord;
+import dev.wakeline.platform.support.Receipt;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;

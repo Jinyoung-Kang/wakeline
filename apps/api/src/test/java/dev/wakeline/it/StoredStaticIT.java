@@ -2,8 +2,8 @@ package dev.wakeline.it;
 
 import dev.wakeline.DbTestSupport;
 import dev.wakeline.ingest.ShipStore;
-import dev.wakeline.persist.ReadPool;
-import dev.wakeline.persist.Sql;
+import dev.wakeline.platform.data.ReadPool;
+import dev.wakeline.platform.data.Sql;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIf;

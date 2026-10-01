@@ -1,7 +1,7 @@
 package dev.wakeline.portcalls;
 
-import dev.wakeline.persist.ReadPool;
-import dev.wakeline.persist.Sql;
+import dev.wakeline.platform.data.ReadPool;
+import dev.wakeline.platform.data.Sql;
 import dev.wakeline.persist.TrackRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.simple.JdbcClient;

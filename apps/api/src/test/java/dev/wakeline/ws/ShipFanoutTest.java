@@ -3,7 +3,7 @@ package dev.wakeline.ws;
 import dev.wakeline.domain.ShipState;
 import dev.wakeline.domain.ShipStatic;
 import dev.wakeline.ingest.IngestEvents;
-import dev.wakeline.ingest.Receipt;
+import dev.wakeline.platform.support.Receipt;
 import dev.wakeline.ingest.ShipStore;
 import dev.wakeline.persist.StoredStaticReader;
 import dev.wakeline.portcalls.PortCallFixtures;

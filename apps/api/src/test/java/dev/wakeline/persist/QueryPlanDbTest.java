@@ -3,6 +3,8 @@ package dev.wakeline.persist;
 import dev.wakeline.DbTestSupport;
 import dev.wakeline.PlanCapture;
 import dev.wakeline.ingest.SigmetStore;
+import dev.wakeline.platform.data.OrderedWriter;
+import dev.wakeline.platform.data.Sql;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;

@@ -1,4 +1,4 @@
-package dev.wakeline.persist;
+package dev.wakeline.platform.data;
 
 import org.springframework.jdbc.core.simple.JdbcClient;
 

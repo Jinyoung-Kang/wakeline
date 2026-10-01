@@ -1,6 +1,7 @@
 package dev.wakeline.ingest;
 
 import dev.wakeline.domain.AisGap;
+import dev.wakeline.platform.support.Receipt;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.core.StringRedisTemplate;

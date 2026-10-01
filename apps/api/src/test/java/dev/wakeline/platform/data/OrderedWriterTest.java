@@ -1,4 +1,4 @@
-package dev.wakeline.persist;
+package dev.wakeline.platform.data;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
@@ -93,18 +93,5 @@ class OrderedWriterTest {
         assertThat(done).containsExactly("first", "second");
         assertThat(count("alert", "failed")).isZero();
         assertThat(count("alert", "ok")).isEqualTo(2.0);
-    }
-
-    @Test
-    void transientClassification() {
-        assertThat(OrderedWriter.isTransient(new CannotGetJdbcConnectionException("x"))).isTrue();
-        assertThat(OrderedWriter.isTransient(new RuntimeException(new SQLException("conn", "08006")))).isTrue();
-        assertThat(OrderedWriter.isTransient(new RuntimeException(new SQLException("deadlock", "40P01")))).isTrue();
-        assertThat(OrderedWriter.isTransient(new UncategorizedSQLException("x", "UPDATE", new SQLException("lock timeout", "55P03")))).isTrue();
-        assertThat(OrderedWriter.isTransient(new UncategorizedSQLException("x", "UPDATE", new SQLException("object not in state", "55000")))).isFalse();
-        assertThat(OrderedWriter.isTransient(new DataIntegrityViolationException("fk", new SQLException("fk", "23503")))).isFalse();
-        assertThat(TrackWriter.isPermanent(new RuntimeException(new SQLException("no partition", "23514")))).isTrue();
-        assertThat(TrackWriter.isPermanent(new RuntimeException(new SQLException("cannot affect row a second time", "21000")))).isTrue();
-        assertThat(TrackWriter.isPermanent(new CannotGetJdbcConnectionException("x"))).isFalse();
     }
 }

@@ -6,6 +6,7 @@ import dev.wakeline.domain.ShipState;
 import dev.wakeline.domain.ShipStatic;
 import dev.wakeline.domain.SigmetRecord;
 import dev.wakeline.platform.support.PipelineEvent;
+import dev.wakeline.platform.support.Receipt;
 
 import java.time.Instant;
 import java.util.Collection;

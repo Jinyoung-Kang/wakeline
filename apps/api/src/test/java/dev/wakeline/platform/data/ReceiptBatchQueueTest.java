@@ -1,6 +1,6 @@
-package dev.wakeline.persist;
+package dev.wakeline.platform.data;
 
-import dev.wakeline.ingest.Receipt;
+import dev.wakeline.platform.support.Receipt;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;

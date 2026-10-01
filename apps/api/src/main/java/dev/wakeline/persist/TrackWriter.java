@@ -2,7 +2,9 @@ package dev.wakeline.persist;
 
 import dev.wakeline.domain.AircraftState;
 import dev.wakeline.ingest.IngestEvents;
-import dev.wakeline.ingest.Receipt;
+import dev.wakeline.platform.data.DbErrors;
+import dev.wakeline.platform.data.OrderedWriter;
+import dev.wakeline.platform.support.Receipt;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
@@ -12,7 +14,6 @@ import org.springframework.context.event.EventListener;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
-import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -325,8 +326,8 @@ public class TrackWriter implements SmartLifecycle {
                             pending == null ? 0 : pending.rows().size(), queued(), e.toString());
                     continue;
                 }
-                boolean unclassified = isUnclassified(e);
-                if (!unclassified && !isPermanent(e)) {
+                boolean unclassified = DbErrors.isUnclassified(e);
+                if (!unclassified && !DbErrors.isPermanent(e)) {
                     log.warn("track batch ({} rows) failed, retry in {} ms (queue {}): {}", pending == null ? 0 : pending.rows().size(), backoff, queued(), e.toString());
                 } else if (++permanentFailures >= PERMANENT_ATTEMPTS) {
                     int n = pending == null ? 0 : pending.rows().size();
@@ -451,34 +452,6 @@ public class TrackWriter implements SmartLifecycle {
             ps.setInt(13, s.quality());
         });
         writtenRows.increment(batch.size());
-    }
-
-    /**
-     * 재시도해도 같은 결과인 오류: SQLState 21(카디널리티 — 한 문장이 같은 행을 두 번 upsert)·22(데이터)·23(제약 — 파티션 없음 포함)·
-     * 42(문법·권한). 파티션 없음은 3회 재시도 사이에 ensurePartitions 가 만들 수 있어 바로 버리지 않는다. 연결·자원 오류는 일시 장애로 본다.
-     */
-    static boolean isPermanent(Throwable e) {
-        if (OrderedWriter.isTransient(e)) return false;
-        for (Throwable c = e; c != null; c = c.getCause() == c ? null : c.getCause()) {
-            if (c instanceof SQLException s && s.getSQLState() != null) {
-                String st = s.getSQLState();
-                return st.startsWith("21") || st.startsWith("22") || st.startsWith("23") || st.startsWith("42");
-            }
-        }
-        return false;
-    }
-
-    /**
-     * 분류할 수 없는 오류(리뷰 cto-2026-10 D3): 일시 장애로 아는 종류({@link OrderedWriter#isTransient})도 아니고 원인 사슬에 SQLState 도 없다 — 쓰기 코드의
-     * 결함(예: 문장 값을 채우는 람다의 예외)이나 상태 없는 드라이버 · 번역 예외다. 예전에는 일시 장애처럼 같은 배치를 끝없이 다시 시도해 큐 머리를 막았다
-     * (새 행이 넘쳐 버려지고 영수증이 묶였다). 영구 오류처럼 {@value #PERMANENT_ATTEMPTS}번 뒤 버리고 ERROR 로 남긴다(OrderedWriter 와 같은 결과).
-     * SQLState 가 있는데 영구 · 일시 어느 쪽도 아닌 것은 전처럼 다시 시도한다.
-     */
-    static boolean isUnclassified(Throwable e) {
-        if (OrderedWriter.isTransient(e)) return false;
-        for (Throwable c = e; c != null; c = c.getCause() == c ? null : c.getCause())
-            if (c instanceof SQLException s && s.getSQLState() != null) return false;
-        return true;
     }
 
     int queued() {

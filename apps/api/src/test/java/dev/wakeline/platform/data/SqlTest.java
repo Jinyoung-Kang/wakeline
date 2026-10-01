@@ -1,4 +1,4 @@
-package dev.wakeline.persist;
+package dev.wakeline.platform.data;
 
 import dev.wakeline.platform.web.ProblemAdvice;
 import org.junit.jupiter.api.Test;

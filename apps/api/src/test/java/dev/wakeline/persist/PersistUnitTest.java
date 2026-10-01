@@ -94,7 +94,7 @@ class PersistUnitTest {
         TrackWriter tw = new TrackWriter(jdbc, aircraft, meters, 5, 10);
         tw.start();
         java.util.concurrent.atomic.AtomicInteger ackA = new java.util.concurrent.atomic.AtomicInteger(), ackB = new java.util.concurrent.atomic.AtomicInteger();
-        dev.wakeline.ingest.Receipt ra = new dev.wakeline.ingest.Receipt(ackA::incrementAndGet), rb = new dev.wakeline.ingest.Receipt(ackB::incrementAndGet);
+        dev.wakeline.platform.support.Receipt ra = new dev.wakeline.platform.support.Receipt(ackA::incrementAndGet), rb = new dev.wakeline.platform.support.Receipt(ackB::incrementAndGet);
         tw.enqueue(java.util.List.of(ac("a00001")), ra);
         ra.release();
         assertThat(entered.await(5, java.util.concurrent.TimeUnit.SECONDS)).as("the worker is writing batch A").isTrue();
@@ -158,7 +158,7 @@ class PersistUnitTest {
         tw.stopWaitMs = 1_200;
         tw.start();
         java.util.concurrent.atomic.AtomicInteger ackA = new java.util.concurrent.atomic.AtomicInteger(), ackB = new java.util.concurrent.atomic.AtomicInteger();
-        dev.wakeline.ingest.Receipt ra = new dev.wakeline.ingest.Receipt(ackA::incrementAndGet), rb = new dev.wakeline.ingest.Receipt(ackB::incrementAndGet);
+        dev.wakeline.platform.support.Receipt ra = new dev.wakeline.platform.support.Receipt(ackA::incrementAndGet), rb = new dev.wakeline.platform.support.Receipt(ackB::incrementAndGet);
         tw.enqueue(java.util.List.of(ac("a00001")), ra);
         ra.release();
         assertThat(jdbc.entered.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
@@ -187,7 +187,7 @@ class PersistUnitTest {
         TrackWriter tw = trackWriter(jdbc, new io.micrometer.core.instrument.simple.SimpleMeterRegistry(), 2_000, 30_000);
         tw.start();
         java.util.concurrent.atomic.AtomicInteger ackA = new java.util.concurrent.atomic.AtomicInteger();
-        dev.wakeline.ingest.Receipt ra = new dev.wakeline.ingest.Receipt(ackA::incrementAndGet);
+        dev.wakeline.platform.support.Receipt ra = new dev.wakeline.platform.support.Receipt(ackA::incrementAndGet);
         tw.enqueue(java.util.List.of(ac("a00001")), ra);
         ra.release();
         assertThat(jdbc.entered.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
@@ -211,7 +211,7 @@ class PersistUnitTest {
         TrackWriter tw = trackWriter(jdbc, new io.micrometer.core.instrument.simple.SimpleMeterRegistry(), 5, 10);
         tw.start();
         java.util.concurrent.atomic.AtomicInteger ackA = new java.util.concurrent.atomic.AtomicInteger(), ackB = new java.util.concurrent.atomic.AtomicInteger();
-        dev.wakeline.ingest.Receipt ra = new dev.wakeline.ingest.Receipt(ackA::incrementAndGet), rb = new dev.wakeline.ingest.Receipt(ackB::incrementAndGet);
+        dev.wakeline.platform.support.Receipt ra = new dev.wakeline.platform.support.Receipt(ackA::incrementAndGet), rb = new dev.wakeline.platform.support.Receipt(ackB::incrementAndGet);
         tw.enqueue(java.util.List.of(ac("a00001")), ra);
         ra.release();
         long end = System.currentTimeMillis() + 5_000;
@@ -243,9 +243,9 @@ class PersistUnitTest {
                 org.springframework.jdbc.core.simple.JdbcClient.create(down), null), meters, 50, 100);
         tw.start();
         java.util.concurrent.atomic.AtomicInteger acked = new java.util.concurrent.atomic.AtomicInteger();
-        java.util.List<dev.wakeline.ingest.Receipt> rs = new java.util.ArrayList<>();
+        java.util.List<dev.wakeline.platform.support.Receipt> rs = new java.util.ArrayList<>();
         for (int i = 0; i <= TrackWriter.MAX_MARKS; i++) {
-            dev.wakeline.ingest.Receipt r = new dev.wakeline.ingest.Receipt(acked::incrementAndGet);
+            dev.wakeline.platform.support.Receipt r = new dev.wakeline.platform.support.Receipt(acked::incrementAndGet);
             rs.add(r);
             tw.enqueue(java.util.List.of(new dev.wakeline.domain.AircraftState(String.format("%06x", i), null, null, null, null, 36, 127, 30000,
                     null, null, null, false, null, NOW, "adsb_lol", NOW, 0, false)), r);
@@ -282,7 +282,7 @@ class PersistUnitTest {
         tw.start();
         try {
             java.util.concurrent.atomic.AtomicInteger acked = new java.util.concurrent.atomic.AtomicInteger();
-            dev.wakeline.ingest.Receipt r = new dev.wakeline.ingest.Receipt(acked::incrementAndGet);
+            dev.wakeline.platform.support.Receipt r = new dev.wakeline.platform.support.Receipt(acked::incrementAndGet);
             tw.enqueue(java.util.List.of(ac("a00001")), r);
             r.release();
             long end = System.currentTimeMillis() + 5_000;

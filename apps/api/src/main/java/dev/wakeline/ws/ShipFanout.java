@@ -8,7 +8,7 @@ import dev.wakeline.domain.ShipState;
 import dev.wakeline.domain.ShipStatic;
 import dev.wakeline.ingest.IngestEvents;
 import dev.wakeline.ingest.ShipStore;
-import dev.wakeline.persist.ReadPool;
+import dev.wakeline.platform.data.ReadPool;
 import dev.wakeline.persist.StoredStaticReader;
 import dev.wakeline.portcalls.PortCallReader;
 import dev.wakeline.portcalls.PortCallsInfo;

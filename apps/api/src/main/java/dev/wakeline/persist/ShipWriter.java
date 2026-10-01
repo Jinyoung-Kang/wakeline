@@ -3,7 +3,10 @@ package dev.wakeline.persist;
 import dev.wakeline.domain.ShipState;
 import dev.wakeline.domain.ShipStatic;
 import dev.wakeline.ingest.IngestEvents;
-import dev.wakeline.ingest.Receipt;
+import dev.wakeline.platform.data.DbErrors;
+import dev.wakeline.platform.data.OrderedWriter;
+import dev.wakeline.platform.data.ReceiptBatchQueue;
+import dev.wakeline.platform.support.Receipt;
 import dev.wakeline.ingest.ShipStore;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -319,8 +322,8 @@ public class ShipWriter implements SmartLifecycle {
                             n, queue.size(), e.toString());
                     continue;
                 }
-                boolean unclassified = TrackWriter.isUnclassified(e); // SQLState 없는 결함 — 영구 오류처럼 3번 뒤 버린다(리뷰 cto-2026-10 D3)
-                if (!unclassified && !TrackWriter.isPermanent(e)) {
+                boolean unclassified = DbErrors.isUnclassified(e); // SQLState 없는 결함 — 영구 오류처럼 3번 뒤 버린다(리뷰 cto-2026-10 D3)
+                if (!unclassified && !DbErrors.isPermanent(e)) {
                     log.warn("ship batch ({} rows) failed, retry in {} ms (queue {}): {}", n, backoff, queue.size(), e.toString());
                 } else if (++permanentFailures >= PERMANENT_ATTEMPTS) {
                     if (pending != null && pending.items().stream().anyMatch(it -> it instanceof Stat)) forgetStatics = true;

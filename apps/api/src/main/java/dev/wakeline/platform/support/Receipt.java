@@ -1,4 +1,4 @@
-package dev.wakeline.ingest;
+package dev.wakeline.platform.support;
 
 import java.util.concurrent.atomic.AtomicInteger;
 

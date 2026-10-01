@@ -1,6 +1,6 @@
-package dev.wakeline.persist;
+package dev.wakeline.platform.data;
 
-import dev.wakeline.ingest.Receipt;
+import dev.wakeline.platform.support.Receipt;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -21,11 +21,11 @@ import java.util.concurrent.locks.ReentrantLock;
  * </ul>
  * 소비자(쓰기 스레드)는 한 번에 한 배치만 진행한다: {@link #next} → 쓰기 → {@link #resolved}(커밋 또는 영구 실패).
  */
-final class ReceiptBatchQueue<T> {
-    record Batch<T>(long firstSeq, long lastSeq, List<T> items) {}
+public final class ReceiptBatchQueue<T> {
+    public record Batch<T>(long firstSeq, long lastSeq, List<T> items) {}
 
     /** add 한 번의 결과: 넘쳐 버린 행 수 · 상한으로 먼저 놓은 영수증 수. */
-    record Added(int dropped, int forced) {}
+    public record Added(int dropped, int forced) {}
 
     private record Row<T>(long seq, T item) {}
 
@@ -44,14 +44,14 @@ final class ReceiptBatchQueue<T> {
     /** 진행 중 배치의 첫 번호(없으면 0). */
     private long outstandingFrom;
 
-    ReceiptBatchQueue(int max, int maxMarks, int batch) {
+    public ReceiptBatchQueue(int max, int maxMarks, int batch) {
         this.max = max;
         this.maxMarks = maxMarks;
         this.batch = batch;
     }
 
     /** 행을 넣고 영수증이 있으면 이 메시지의 마지막 행에 표식을 단다(빈 목록은 아무것도 하지 않는다 — 영수증을 잡지 않는다). */
-    Added add(Collection<T> items, Receipt receipt) {
+    public Added add(Collection<T> items, Receipt receipt) {
         if (items.isEmpty()) return new Added(0, 0);
         List<Receipt> done = null;
         int dropped = 0, forced = 0;
@@ -83,7 +83,7 @@ final class ReceiptBatchQueue<T> {
     }
 
     /** 넣은 마지막 행 번호(없으면 0). */
-    long lastAddedSeq() {
+    public long lastAddedSeq() {
         lock.lock();
         try {
             return nextSeq - 1;
@@ -93,7 +93,7 @@ final class ReceiptBatchQueue<T> {
     }
 
     /** 이 번호까지의 행은 모두 끝났다(진행 중 배치의 첫 번호 − 1, 없으면 떠난 마지막 번호 — 영수증을 놓는 기준과 같다). */
-    long settledUpTo() {
+    public long settledUpTo() {
         lock.lock();
         try {
             return outstandingFrom > 0 ? outstandingFrom - 1 : left;
@@ -111,7 +111,7 @@ final class ReceiptBatchQueue<T> {
     }
 
     /** 쓰기 스레드: 최대 waitMs 기다려 한 배치를 꺼내 진행 중으로 표시한다. 없으면 null. */
-    Batch<T> next(long waitMs) throws InterruptedException {
+    public Batch<T> next(long waitMs) throws InterruptedException {
         lock.lock();
         try {
             if (queue.isEmpty() && waitMs > 0) notEmpty.await(waitMs, TimeUnit.MILLISECONDS);
@@ -128,7 +128,7 @@ final class ReceiptBatchQueue<T> {
      * '큐를 떠난 마지막 번호'를 옮기지 않는다 — 옮기면 그 뒤의 {@link #resolved}(진행 중이던 배치의 늦은 커밋)가 쓰지 않은 이 배치의 영수증까지
      * 놓았다(조사 2026-10-01 종료 F3 — XACK 되고 행은 없다). TrackWriter.drainForFlush 와 같은 규칙.
      */
-    Batch<T> poll() {
+    public Batch<T> poll() {
         lock.lock();
         try {
             return take(false);
@@ -152,7 +152,7 @@ final class ReceiptBatchQueue<T> {
     }
 
     /** 쓰기 스레드: 진행 중 배치가 끝났다(커밋 또는 영구 실패) — 끝난 표식의 영수증을 놓는다. */
-    void resolved() {
+    public void resolved() {
         List<Receipt> done;
         lock.lock();
         try {
@@ -168,7 +168,7 @@ final class ReceiptBatchQueue<T> {
      * 종료 flush: seq 까지의 행을 썼다 — 그 메시지 영수증만 놓는다(그 뒤는 ACK 하지 않아 다음 기동에서 다시 처리된다). flush 는 진행 중이던 배치부터
      * 번호 순서로 쓰므로 seq 까지가 '끝난' 행이 된다(진행 중 배치가 그 안에 들면 진행 중 표시도 지운다).
      */
-    void releaseUpTo(long seq) {
+    public void releaseUpTo(long seq) {
         List<Receipt> done = new ArrayList<>();
         lock.lock();
         try {
@@ -181,12 +181,12 @@ final class ReceiptBatchQueue<T> {
         done.forEach(Receipt::release);
     }
 
-    int size() {
+    public int size() {
         lock.lock();
         try { return queue.size(); } finally { lock.unlock(); }
     }
 
-    int pendingMarks() {
+    public int pendingMarks() {
         lock.lock();
         try { return marks.size(); } finally { lock.unlock(); }
     }

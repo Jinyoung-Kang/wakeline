@@ -1,4 +1,4 @@
-package dev.wakeline.persist;
+package dev.wakeline.platform.support;
 
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;

@@ -1,18 +1,12 @@
-package dev.wakeline.persist;
+package dev.wakeline.platform.data;
 
 import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import dev.wakeline.ingest.Receipt;
+import dev.wakeline.platform.support.Receipt;
 import org.springframework.context.SmartLifecycle;
-import org.springframework.dao.DataAccessResourceFailureException;
-import org.springframework.dao.NonTransientDataAccessResourceException;
-import org.springframework.dao.RecoverableDataAccessException;
-import org.springframework.dao.TransientDataAccessException;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.CannotCreateTransactionException;
 
-import java.sql.SQLException;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
@@ -36,7 +30,7 @@ public class OrderedWriter implements SmartLifecycle {
     /** 종료 순서: 스트림 소비(MAX-10) → WS going_away(MAX-100) → 이 큐·항적 flush(MAX-200) → Tomcat(MAX-1024). */
     public static final int PHASE = Integer.MAX_VALUE - 200;
     static final int QUEUE_MAX = 50_000;
-    static final int PERMANENT_ATTEMPTS = 3;
+    public static final int PERMANENT_ATTEMPTS = 3;
     static final long BACKOFF_START_MS = 1_000;
     static final long BACKOFF_MAX_MS = 30_000;
     /** 종료 시 비우기 마감. 소비 중지(≤5 s) + going_away + 이것(≤8 s, 항적 flush 와 동시) + Tomcat(≤10 s) 이 compose 유예 30 s 안에 든다. */
@@ -77,7 +71,7 @@ public class OrderedWriter implements SmartLifecycle {
     }
 
     /** 테스트용: 재시도 간격을 줄여 쓴다. */
-    OrderedWriter(MeterRegistry meters, long backoffStartMs, long backoffMaxMs) {
+    public OrderedWriter(MeterRegistry meters, long backoffStartMs, long backoffMaxMs) {
         this.meters = meters;
         this.backoffStartMs = backoffStartMs;
         this.backoffMaxMs = backoffMaxMs;
@@ -100,7 +94,7 @@ public class OrderedWriter implements SmartLifecycle {
     public int pending() { return queue.size(); }
 
     /** 테스트용: 워커 없이 호출 스레드에서 큐를 순서대로 비운다(시작 전 상태에서 — 일시 장애는 재시도하지 않고 버린다). */
-    int drainNow() {
+    public int drainNow() {
         int n = 0;
         Task t;
         while ((t = queue.poll()) != null) if (runWithRetry(t)) n++;
@@ -160,7 +154,7 @@ public class OrderedWriter implements SmartLifecycle {
                 t.receipt().release();
                 return true;
             } catch (RuntimeException e) {
-                boolean transientError = isTransient(e);
+                boolean transientError = DbErrors.isTransient(e);
                 if (!transientError && ++permanentFailures >= PERMANENT_ATTEMPTS) {
                     count(t.kind(), "failed");
                     log.warn("{} persist failed permanently after {} attempts, dropped: {}", t.kind(), permanentFailures, e.toString());
@@ -215,23 +209,5 @@ public class OrderedWriter implements SmartLifecycle {
 
     private void count(String kind, String result) {
         meters.counter("wakeline_persist_tasks_total", "kind", kind, "result", result).increment();
-    }
-
-    /**
-     * 기다리면 나을 오류인가: 연결 실패·풀 대기 초과·타임아웃·교착/직렬화 실패, 또는 SQLState 08(연결)·53(자원 부족)·57P(관리자 종료)·40(롤백)·
-     * 55P03(lock_not_available — lock_timeout 5 s. Spring 의 기본 번역이 부류 55 를 몰라 UncategorizedSQLException 으로 온다 — 조사 2026-10-01).
-     * 제약 위반·권한·문법 오류는 기다려도 같다.
-     */
-    static boolean isTransient(Throwable e) {
-        if (e instanceof DataAccessResourceFailureException || e instanceof NonTransientDataAccessResourceException
-                || e instanceof TransientDataAccessException || e instanceof RecoverableDataAccessException
-                || e instanceof CannotCreateTransactionException) return true;
-        for (Throwable c = e; c != null; c = c.getCause() == c ? null : c.getCause()) {
-            if (c instanceof SQLException s && s.getSQLState() != null) {
-                String st = s.getSQLState();
-                if (st.startsWith("08") || st.startsWith("53") || st.startsWith("57P") || st.startsWith("40") || st.equals("55P03")) return true;
-            }
-        }
-        return false;
     }
 }
