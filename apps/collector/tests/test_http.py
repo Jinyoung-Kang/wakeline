@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import gzip
+import tracemalloc
+import zlib
+
 import httpx
 import pytest
 import respx
@@ -191,4 +195,81 @@ async def test_before_send_runs_after_the_rate_limit_grant_and_can_stop_the_call
         assert route.call_count == 1
     assert httpmod.SendCancelled in httpmod.NOT_SENT_ERRORS and httpmod.HostNotAllowed in httpmod.NOT_SENT_ERRORS
     assert httpx.ReadTimeout not in httpmod.NOT_SENT_ERRORS  # 보낸 뒤의 실패는 보낸 것으로 센다
+    await c.aclose()
+
+
+GZ_URL = "https://api.rainviewer.com/public/weather-maps.json"
+
+
+async def _serving(body: bytes, encoding: str) -> HttpClient:
+    """Content-Encoding 이 붙은 본문을 받은 그대로(stream) 주는 클라이언트. respx 는 가짜 응답을 미리 읽어(풀어) 두므로 여기에 맞지 않는다 —
+    httpx.MockTransport 로 전송 계층에서 준다."""
+    c = _client()
+    old = c._client
+    c._client = httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda _req: httpx.Response(200, stream=httpx.ByteStream(body), headers={"content-encoding": encoding})
+        ),
+        headers=old.headers,
+        follow_redirects=False,
+    )
+    await old.aclose()
+    return c
+
+
+def _raw_deflate(data: bytes) -> bytes:
+    z = zlib.compressobj(wbits=-zlib.MAX_WBITS)
+    return z.compress(data) + z.flush()
+
+
+@pytest.mark.parametrize(
+    ("encoding", "pack"),
+    [
+        ("gzip", gzip.compress),
+        ("deflate", zlib.compress),
+        ("deflate", _raw_deflate),
+        ("GZIP", gzip.compress),
+        ("identity", bytes),
+    ],
+)
+async def test_compressed_bodies_are_decoded_as_before(encoding, pack):
+    body = b'{"host":"https://tilecache.rainviewer.com","radar":{}}' * 500
+    c = await _serving(pack(body), encoding)
+    assert (await c.get(GZ_URL)).body == body
+    await c.aclose()
+
+
+async def test_a_small_compressed_body_that_expands_past_the_cap_is_refused_while_inflating(monkeypatch):
+    """보안 검토 L-7(2026-10-01): 크기 상한을 압축을 푼 청크마다 쟀다 — httpx 는 받은 청크(최대 64 KiB)를 한 번에 풀어, 작은 압축 본문 하나가
+    수십 MiB 로 다 펼쳐진 뒤에야 ResponseTooLarge 였다(공급자 8 연결이면 수집기 512 MiB 한도까지). 이제 푸는 동안 상한 + 1 바이트에서 멈춘다."""
+    cap = 1 << 20
+    monkeypatch.setattr(httpmod.settings, "http_max_bytes", cap)
+    bomb = gzip.compress(b"\0" * (32 << 20))  # 32 MiB → 약 32 KiB(한 청크)
+    assert len(bomb) < 64 << 10
+    c = await _serving(bomb, "gzip")
+    tracemalloc.start()
+    try:
+        with pytest.raises(ResponseTooLarge, match="gzip"):
+            await c.get(GZ_URL)
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert peak < 4 * cap, f"peak {peak} B while refusing a body capped at {cap} B"
+    await c.aclose()
+
+
+@pytest.mark.parametrize(
+    ("encoding", "body"),
+    [("gzip", b"not gzip at all"), ("deflate", b"not deflate"), ("gzip, gzip", gzip.compress(gzip.compress(b"{}")))],
+)
+async def test_a_corrupt_or_stacked_compressed_body_is_a_decoding_error(encoding, body):
+    c = await _serving(body, encoding)
+    with pytest.raises(httpx.DecodingError):
+        await c.get(GZ_URL)
+    await c.aclose()
+
+
+async def test_the_client_asks_only_for_the_encodings_it_inflates_within_the_cap():
+    c = HttpClient()
+    assert c._client.headers["accept-encoding"] == "gzip, deflate"
     await c.aclose()

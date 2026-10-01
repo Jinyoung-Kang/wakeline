@@ -7,12 +7,14 @@ ProviderHttpError.pause_s 로 호출자에게 알린다(로그 · 실행 기록�
 시간 상한: httpx Timeout(읽기 8 s · 연결 4 s — 호출자가 read_s 로 읽기 제한만 바꿀 수 있다)은 단계마다라서, 조금씩 계속 보내는 응답은 끝나지 않을 수 있다. 그래서 보내기부터
 본문을 다 읽을 때까지 전체에 호출자별 상한(total_s, 기본 DEFAULT_TOTAL_S)을 건다. 넘으면 RequestTimedOut — 보낸 호출로 센다(R-67).
 속도 상한 대기(wait_s)는 이 상한에 들어가지 않는다(그 자체로 상한이 있다).
+크기 상한(http_max_bytes)은 푼 바이트로 잰다 — gzip · deflate 본문은 httpx 에 맡기지 않고 직접 풀며, 푸는 동안 상한 + 1 바이트에서 멈춘다(_Inflate).
 """
 
 from __future__ import annotations
 
 import asyncio
 import time
+import zlib
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
@@ -40,6 +42,11 @@ ALLOWED_HOSTS = frozenset(
         "apis.data.go.kr",  # 공공데이터포털 — 한국 항만 입출항 색인(ADR-022 PORT-MIS) · 연안 교통량(ADR-023). 호스트 버킷 하나를 나눠 쓴다
     }
 )
+
+
+# 받는 Content-Encoding — 상한 안에서 직접 푸는 것만 부른다(_Inflate). httpx 기본값과 같다(brotli · zstandard 가 없을 때) — 그것들이 깔려도
+# 부르는 인코딩이 늘지 않게 적어 둔다
+ACCEPT_ENCODING = "gzip, deflate"
 
 
 class HostNotAllowed(RuntimeError):
@@ -90,6 +97,42 @@ NOT_SENT_ERRORS: tuple[type[Exception], ...] = (
 BeforeSend = Callable[[], Awaitable[bool]]
 
 
+class _Inflate:
+    """gzip · deflate 본문을 한 번에 max_out 바이트까지만 푼다(보안 검토 L-7: httpx 는 받은 청크(최대 64 KiB)를 한 번에 풀어, 작은 압축 본문이
+    수십 MiB 로 다 펼쳐진 뒤에야 크기 상한을 쟀다). deflate 는 httpx 와 같게 zlib 머리가 있는 것을 먼저, 첫 청크에서 틀리면 머리 없는 것으로."""
+
+    def __init__(self, coding: str) -> None:
+        self.coding = coding
+        self._z = zlib.decompressobj(zlib.MAX_WBITS | 16 if coding == "gzip" else zlib.MAX_WBITS)
+        self._first = True
+
+    def decode(self, data: bytes, max_out: int) -> bytes:
+        first, self._first = self._first, False
+        try:
+            return self._z.decompress(data, max_out)
+        except zlib.error as e:
+            if first and self.coding == "deflate":
+                self._z = zlib.decompressobj(-zlib.MAX_WBITS)
+                return self.decode(data, max_out)
+            raise httpx.DecodingError(str(e)) from e
+
+    def flush(self) -> bytes:
+        try:
+            return self._z.flush()
+        except zlib.error as e:
+            raise httpx.DecodingError(str(e)) from e
+
+
+def _inflater(headers: httpx.Headers) -> _Inflate | None:
+    """응답의 Content-Encoding → 푸는 것(gzip · deflate 하나), 아니면 None(identity · 모르는 인코딩 — httpx 처럼 받은 그대로 둔다). 둘 이상 겹친
+    인코딩은 부르지 않았다(ACCEPT_ENCODING) — 풀지 않고 DecodingError."""
+    codings = [v.strip().lower() for v in headers.get_list("content-encoding", split_commas=True)]
+    known = [c for c in codings if c in ("gzip", "deflate")]
+    if len(known) > 1:
+        raise httpx.DecodingError(f"stacked Content-Encoding {', '.join(codings)[:60]!r} — not decoded")
+    return _Inflate(known[0]) if known else None
+
+
 class FetchResponse:
     __slots__ = ("body", "status", "headers", "fetched_at", "latency_ms")
 
@@ -126,7 +169,7 @@ class HttpClient:
         self._client = httpx.AsyncClient(
             timeout=httpx.Timeout(settings.http_timeout_s, connect=CONNECT_TIMEOUT_S),
             follow_redirects=False,
-            headers={"User-Agent": settings.http_user_agent, "Accept": "application/json"},
+            headers={"User-Agent": settings.http_user_agent, "Accept": "application/json", "Accept-Encoding": ACCEPT_ENCODING},
             http2=False,
             limits=httpx.Limits(max_connections=8, max_keepalive_connections=4),
         )
@@ -189,12 +232,29 @@ class HttpClient:
         return FetchResponse(body, status, headers, datetime.now(UTC), latency)
 
     async def _send(self, method: str, url: str, **kw) -> tuple[bytes, int, dict[str, str]]:
+        """본문을 받는다 — 크기 상한은 푼 바이트로 잰다. 압축 본문은 받은 청크(aiter_raw)를 직접 풀되 한 번에 '남은 상한 + 1' 바이트까지만 —
+        넘는 순간 ResponseTooLarge(펼친 것 전체를 메모리에 만들지 않는다)."""
+        limit = settings.http_max_bytes
         async with self._client.stream(method, url, **kw) as resp:
+            inflate = _inflater(resp.headers)
             chunks: list[bytes] = []
             size = 0
-            async for chunk in resp.aiter_bytes():
+            async for raw in resp.aiter_raw():
+                chunk = raw if inflate is None else inflate.decode(raw, limit - size + 1)
                 size += len(chunk)
-                if size > settings.http_max_bytes:
-                    raise ResponseTooLarge(f"{size} bytes > {settings.http_max_bytes}")
+                if size > limit:
+                    raise ResponseTooLarge(_too_large(size, limit, inflate))
                 chunks.append(chunk)
+            if inflate is not None:
+                tail = inflate.flush()
+                size += len(tail)
+                if size > limit:
+                    raise ResponseTooLarge(_too_large(size, limit, inflate))
+                chunks.append(tail)
             return b"".join(chunks), resp.status_code, {k.lower(): v for k, v in resp.headers.items()}
+
+
+def _too_large(size: int, limit: int, inflate: _Inflate | None) -> str:
+    if inflate is None:
+        return f"{size} bytes > {limit}"
+    return f"more than {limit} bytes once {inflate.coding}-decoded — stopped inflating"
