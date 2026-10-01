@@ -1,0 +1,11 @@
+FAIL ais/gaps to            +300000-01-01T00:00:00Z      -> 500 INTERNAL
+FAIL alerts/history to      +300000-01-01T00:00:00Z      -> 500 INTERNAL
+ok   replay at              +300000-01-01T00:00:00Z      -> 400 BAD_AT
+ok   stats/alerts from      +6000000-01-01               -> 400 BAD_RANGE
+FAIL stats/alerts to        +6000000-01-01               -> 500 INTERNAL
+FAIL stats/traffic day      +6000000-01-01               -> 500 INTERNAL
+ok   stats/sigmet from      +6000000-01-01               -> 400 BAD_RANGE
+FAIL stats/sigmet to        +6000000-01-01               -> 500 INTERNAL
+FAIL ops/runs since         +300000-01-01T00:00:00Z      -> 500 INTERNAL
+
+6 endpoint(s) return non-400 on out-of-range time/date (expected 400)

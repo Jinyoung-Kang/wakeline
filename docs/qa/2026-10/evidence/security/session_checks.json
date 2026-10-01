@@ -1,0 +1,181 @@
+[
+ {
+  "check": "qa-a creates resolution",
+  "ok": true,
+  "status": 201,
+  "id": 1,
+  "fp": "094c4a0ecb467057"
+ },
+ {
+  "check": "qa-b revokes qa-a's resolution (shared operator role)",
+  "ok": true,
+  "status": 204,
+  "observed": "204=revoked by another operator"
+ },
+ {
+  "check": "audit shows RESOLVE by qa-a and UNRESOLVE by qa-b",
+  "ok": true,
+  "audit": [
+   {
+    "id": 23,
+    "action": "UNRESOLVE",
+    "username": "qa-b",
+    "target": "log_group:094c4a0ecb467057"
+   },
+   {
+    "id": 22,
+    "action": "RESOLVE",
+    "username": "qa-a",
+    "target": "log_group:094c4a0ecb467057"
+   }
+  ]
+ },
+ {
+  "check": "login 200 for qa-b",
+  "ok": true,
+  "status": 200
+ },
+ {
+  "check": "session cookie Path=/api",
+  "ok": true,
+  "path": "/api"
+ },
+ {
+  "check": "session cookie HttpOnly",
+  "ok": true
+ },
+ {
+  "check": "session cookie SameSite=Strict",
+  "ok": true
+ },
+ {
+  "check": "csrf cookie SameSite=Strict, Path=/",
+  "ok": true
+ },
+ {
+  "check": "victim login with planted attacker session cookie",
+  "ok": true,
+  "status": 200
+ },
+ {
+  "check": "session id changed at login (fixation)",
+  "ok": true
+ },
+ {
+  "check": "victim session is qa-sec",
+  "ok": true,
+  "status": 200
+ },
+ {
+  "check": "attacker's planted session no longer valid",
+  "ok": true,
+  "status": 404
+ },
+ {
+  "check": "CSRF token rotated at login",
+  "ok": true
+ },
+ {
+  "check": "pre-login CSRF token rejected after login",
+  "ok": true
+ },
+ {
+  "check": "login with planted nonexistent session id gets a fresh id",
+  "ok": true,
+  "status": 200
+ },
+ {
+  "check": "logout v2",
+  "ok": true,
+  "status": 204
+ },
+ {
+  "check": "other session of the same user survives logout",
+  "ok": true,
+  "status": 200
+ },
+ {
+  "check": "session hash has ops_auth_at",
+  "ok": true,
+  "fields": [
+   "sessionAttr:SPRING_SECURITY_CONTEXT",
+   "lastAccessedTime",
+   "sessionAttr:ops_user_id",
+   "maxInactiveInterval",
+   "sessionAttr:ops_credential",
+   "sessionAttr:ops_auth_at",
+   "creationTime"
+  ]
+ },
+ {
+  "check": "serialized Long header matches the stored ops_auth_at",
+  "ok": true,
+  "stored_len": 83
+ },
+ {
+  "check": "session older than 8 h (absolute) ends: 404",
+  "ok": true,
+  "status": 404
+ },
+ {
+  "check": "expired session key removed from redis",
+  "ok": true
+ },
+ {
+  "check": "two qa-sec sessions",
+  "ok": true,
+  "s1": 200,
+  "s2": 200
+ },
+ {
+  "check": "session 1 ends after password change",
+  "ok": true,
+  "status": 404
+ },
+ {
+  "check": "session 2 ends after password change",
+  "ok": true,
+  "status": 404
+ },
+ {
+  "check": "old password rejected (401)",
+  "ok": true,
+  "status": 401
+ },
+ {
+  "check": "new password works",
+  "ok": true,
+  "status": 200
+ },
+ {
+  "check": "5 failures then correct password is refused (locked)",
+  "ok": true,
+  "failures": [
+   401,
+   401,
+   401,
+   401,
+   401
+  ],
+  "after": 401
+ },
+ {
+  "check": "audit has ACCOUNT_LOCKED for qa-sec",
+  "ok": true,
+  "recent": [
+   "LOGIN_FAILED",
+   "ACCOUNT_LOCKED",
+   "LOGIN_FAILED",
+   "LOGIN_FAILED",
+   "LOGIN_FAILED",
+   "LOGIN_FAILED",
+   "LOGIN_FAILED",
+   "LOGIN"
+  ]
+ },
+ {
+  "check": "unlock via CLI reset",
+  "ok": true,
+  "status": 200
+ }
+]
