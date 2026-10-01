@@ -14,6 +14,7 @@ import pytest
 from fakes import FakeRedis, RecordingDb, make_ctx
 
 from wakeline_collector import masking
+from wakeline_collector import traffic_grid_plan as plan
 from wakeline_collector.budget import DEFAULT_STRICT, day_key
 from wakeline_collector.http import FetchResponse, ProviderHttpError, SendCancelled
 from wakeline_collector.jobs import traffic_grid as tg
@@ -210,7 +211,7 @@ async def test_waits_for_the_next_reg_dt_before_calling_again():
     job, komsa, _w, _r, clock, _db = setup(komsa_body(), later)
     await job.run_once()
     reg = datetime(2026, 9, 29, 9, 5, 5, tzinfo=UTC)
-    assert job.schedule.next_due == reg + timedelta(seconds=tg.PERIOD_S + tg.PUBLISH_DELAY_S)
+    assert job.schedule.next_due == reg + timedelta(seconds=plan.PERIOD_S + plan.PUBLISH_DELAY_S)
     for _ in range(9):  # 다음 regDt 가 나올 때까지(4분 50초) 틱마다 부르지 않는다
         clock.advance(30)
         await job.run_once()
@@ -238,7 +239,7 @@ async def test_unchanged_reg_dt_backs_off_and_republishes_the_identical_value():
 
 async def test_an_older_reg_dt_never_replaces_the_newer_snapshot():
     job, _k, _w, r, clock, db = setup(komsa_body("2026-09-29 18:10:05"), komsa_body("2026-09-29 18:05:05"))
-    clock.advance(tg.PERIOD_S)  # 18:10:05 KST 자료가 나온 뒤
+    clock.advance(plan.PERIOD_S)  # 18:10:05 KST 자료가 나온 뒤
     await job.run_once()
     first = r.kv[SNAPSHOT_KEY]
     clock.t = job.schedule.next_due
@@ -263,8 +264,8 @@ def simulate_provider(
     rnd = random.Random(seed)
     t0 = datetime(2026, 9, 29, tzinfo=UTC)
     regs: list[tuple[float, float]] = []
-    for k in range(-2, int(hours * 3600 / tg.PERIOD_S) + 4):
-        r = k * tg.PERIOD_S + 5 + rnd.uniform(0, 2)
+    for k in range(-2, int(hours * 3600 / plan.PERIOD_S) + 4):
+        r = k * plan.PERIOD_S + 5 + rnd.uniform(0, 2)
         lag = lag_s if lag_after is None or r < lag_after[0] else lag_after[1]
         regs.append((r, r + max(0.0, lag + rnd.uniform(-jitter_s, jitter_s))))
     s = schedule or tg.KomsaSchedule()
@@ -309,20 +310,20 @@ def test_schedule_learns_how_late_the_provider_publishes_and_stays_fresh_within_
     assert max_in_any_hour(stamps) <= tg.HOURLY_CAP
     worst = max(a for t, a in ages if t >= 3600)
     assert worst < 900, f"regDt age reached {worst:.0f} s"
-    assert tg.DELAY_MIN_S <= s.delay_s <= tg.DELAY_MAX_S
+    assert plan.DELAY_MIN_S <= s.delay_s <= plan.DELAY_MAX_S
 
 
 def test_the_learned_delay_comes_back_down_when_the_provider_speeds_up():
     """느린 발행(300 s)을 배운 뒤 공급자가 빨라지면(30 s) 추정이 주기마다 조금씩 내려와 자료가 다시 빨리 보인다."""
     stamps, ages, s = simulate_provider(300, tick_s=30, lag_after=(3 * 3600, 30))
-    assert s.delay_s <= tg.DELAY_MIN_S + tg.DELAY_DECAY_S
+    assert s.delay_s <= plan.DELAY_MIN_S + plan.DELAY_DECAY_S
     assert max(a for t, a in ages if t >= 20 * 3600) < 400
     assert len(stamps) <= 13 * 24
 
 
 def test_zero_lag_keeps_one_call_per_period():
     stamps, _ages, s = simulate_provider(0, tick_s=30)
-    assert len(stamps) <= 12 * 24 + 1 and s.delay_s == tg.DELAY_MIN_S
+    assert len(stamps) <= 12 * 24 + 1 and s.delay_s == plan.DELAY_MIN_S
 
 
 def test_a_slow_first_answer_is_not_learned_as_the_delay():
@@ -330,10 +331,10 @@ def test_a_slow_first_answer_is_not_learned_as_the_delay():
     s = tg.KomsaSchedule()
     reg = datetime(2026, 9, 29, 9, 5, 5, tzinfo=UTC)
     s.on_new(reg, reg + timedelta(seconds=280))
-    assert s.delay_s == tg.PUBLISH_DELAY_S
+    assert s.delay_s == plan.PUBLISH_DELAY_S
     s.on_failure(reg + timedelta(seconds=400))
     s.on_new(reg + timedelta(seconds=300), reg + timedelta(seconds=700))
-    assert s.delay_s == tg.PUBLISH_DELAY_S - tg.DELAY_DECAY_S  # 한 번에 받은 주기와 같게(줄여 볼 뿐 늘리지 않는다)
+    assert s.delay_s == plan.PUBLISH_DELAY_S - plan.DELAY_DECAY_S  # 한 번에 받은 주기와 같게(줄여 볼 뿐 늘리지 않는다)
 
 
 def test_early_call_bounds_the_delay_tightly():
@@ -342,18 +343,18 @@ def test_early_call_bounds_the_delay_tightly():
     s = tg.KomsaSchedule()
     reg = datetime(2026, 9, 29, 9, 5, 5, tzinfo=UTC)
     s.on_new(reg, reg + timedelta(seconds=70))
-    nxt = reg + timedelta(seconds=tg.PERIOD_S)
+    nxt = reg + timedelta(seconds=plan.PERIOD_S)
     s.on_unchanged(nxt + timedelta(seconds=60))
     s.on_new(nxt, nxt + timedelta(seconds=125))
     assert s.delay_s == 125
-    assert s.next_due == nxt + timedelta(seconds=tg.PERIOD_S + 125)
+    assert s.next_due == nxt + timedelta(seconds=plan.PERIOD_S + 125)
     s.on_unchanged(s.next_due)  # 이번에는 더 늦다: 이른 호출 뒤 한참(실패 · 긴 물러나기) 뒤에야 받았다
-    third = nxt + timedelta(seconds=tg.PERIOD_S)
+    third = nxt + timedelta(seconds=plan.PERIOD_S)
     s.on_new(third, third + timedelta(seconds=500))
-    assert s.delay_s == 125 + tg.LEARN_SLACK_S
-    s.on_unchanged(third + timedelta(seconds=tg.PERIOD_S + 900))
-    s.on_new(third + timedelta(seconds=tg.PERIOD_S), third + timedelta(seconds=tg.PERIOD_S + 2000))
-    assert s.delay_s == tg.DELAY_MAX_S  # 위 끝: regDt + 5분 + 이 값 + 틱이 오래됨(900 s) 안에
+    assert s.delay_s == 125 + plan.LEARN_SLACK_S
+    s.on_unchanged(third + timedelta(seconds=plan.PERIOD_S + 900))
+    s.on_new(third + timedelta(seconds=plan.PERIOD_S), third + timedelta(seconds=plan.PERIOD_S + 2000))
+    assert s.delay_s == plan.DELAY_MAX_S  # 위 끝: regDt + 5분 + 이 값 + 틱이 오래됨(900 s) 안에
 
 
 async def test_the_learned_delay_survives_a_restart_via_the_heartbeat():
@@ -362,8 +363,8 @@ async def test_the_learned_delay_survives_a_restart_via_the_heartbeat():
     # 아직 배우지 않았다 — 처음 추정(선택값)을 싣지 않는다
     assert r.kv["wakeline:collector"]["traffic_grid_publish_delay_s"] == ""
     reg = datetime(2026, 9, 29, 9, 5, 5, tzinfo=UTC)
-    job.schedule.on_unchanged(reg + timedelta(seconds=tg.PERIOD_S + 120))  # 이른 호출 → 새 regDt 를 185 s 에 받음
-    job.schedule.on_new(reg + timedelta(seconds=tg.PERIOD_S), reg + timedelta(seconds=tg.PERIOD_S + 185))
+    job.schedule.on_unchanged(reg + timedelta(seconds=plan.PERIOD_S + 120))  # 이른 호출 → 새 regDt 를 185 s 에 받음
+    job.schedule.on_new(reg + timedelta(seconds=plan.PERIOD_S), reg + timedelta(seconds=plan.PERIOD_S + 185))
     clock.advance(30)
     await job.run_once()
     assert r.kv["wakeline:collector"]["traffic_grid_publish_delay_s"] == "185"
@@ -373,7 +374,7 @@ async def test_the_learned_delay_survives_a_restart_via_the_heartbeat():
     r.kv["wakeline:collector"]["traffic_grid_publish_delay_s"] = "99999"  # 범위 밖(손댄 값) — 쓰지 않는다
     third = TrafficGridJob(FakeKomsa(clock, komsa_body()), FakeWfs(), job.ctx, now=clock)
     await third.run_once()
-    assert third.schedule.delay_s == tg.PUBLISH_DELAY_S
+    assert third.schedule.delay_s == plan.PUBLISH_DELAY_S
 
 
 async def test_restarts_cannot_exceed_the_hourly_cap_because_it_is_counted_in_redis():
@@ -426,7 +427,7 @@ async def test_a_future_reg_dt_is_rejected_so_it_cannot_freeze_the_layer():
     assert "ahead of the collector clock" in run["error_text"] and run["raw_ref"]
     assert run["quality"][0][0] == "traffic_grid_reg_dt_future" and run["quality"][0][2]["reg_dt"] == "2026-09-30T09:05:05Z"
     assert "ahead of the collector clock" in r.kv["wakeline:provider:komsa_traffic"]["last_error"]
-    assert job.schedule.next_due == clock.t + timedelta(seconds=tg.FAIL_BACKOFF_S[0])
+    assert job.schedule.next_due == clock.t + timedelta(seconds=plan.FAIL_BACKOFF_S[0])
     clock.t = job.schedule.next_due
     await job.run_once()
     assert snapshot(r)["reg_dt_kst"] == "2026-09-29T18:10:05+09:00"  # 옳은 다음 자료는 그대로 받는다
@@ -491,7 +492,7 @@ async def test_daily_budget_exhausted_is_recorded_and_not_called():
     clock.t = job.schedule.next_due
     await job.run_once()
     assert komsa.calls == 1 and statuses(db) == ["ok", "budget_exhausted"]
-    assert job.schedule.next_due == clock.t + timedelta(seconds=tg.SKIP_RETRY_S)
+    assert job.schedule.next_due == clock.t + timedelta(seconds=plan.SKIP_RETRY_S)
 
 
 async def test_budget_store_down_fails_closed():
@@ -549,7 +550,7 @@ async def test_not_found_and_off_grid_are_negative_cached_and_quarantined():
     clock.t = job.schedule.next_due
     await job.run_once()
     assert wfs.asked == ["GR4_F2K41_D3", "GR4_F2K41_C3", "GR4_F2K41_C4"]  # 다음 스냅샷에서 다시 묻지 않는다
-    clock.advance(tg.NEGATIVE_TTL_S)
+    clock.advance(plan.NEGATIVE_TTL_S)
     job.schedule.next_due = None
     await job.run_once()
     assert sorted(wfs.asked[3:]) == ["GR4_F2K41_C4", "GR4_F2K41_D3"]  # 7일 뒤 다시 묻는다
@@ -577,7 +578,7 @@ async def test_wfs_errors_back_off_per_id_and_trip_the_breaker():
     clock.advance(60)
     await job.run_once()
     assert len(wfs.asked) == 3  # 차단기(5분) · 칸별 물러나기(5분)
-    clock.advance(tg.FILL_PAUSE_S[0])
+    clock.advance(plan.FILL_PAUSE_S[0])
     wfs.answers = {g: WfsResult("found", cell=c) for g, c in CELLS.items()}
     await job.run_once()
     assert snapshot(r)["resolved"] == 3
@@ -597,7 +598,7 @@ async def test_wfs_error_bodies_are_retried_later_not_negative_cached():
     clock.advance(60)
     await job.run_once()
     assert wfs.asked.count("GR4_F2K41_D3") == 1  # 5분 전에는 다시 묻지 않는다
-    clock.advance(tg.ID_RETRY_S[0])
+    clock.advance(plan.ID_RETRY_S[0])
     await job.run_once()
     assert wfs.asked.count("GR4_F2K41_D3") == 2
 
@@ -614,7 +615,7 @@ async def test_a_lookup_that_keeps_failing_is_set_aside_for_a_day_and_counted_as
     )
     job, _k, _w, r, clock, db = setup(wfs=wfs)
     await job.run_once()
-    for step in tg.ID_RETRY_S[: tg.ID_MAX_FAILURES - 1]:
+    for step in plan.ID_RETRY_S[: tg.ID_MAX_FAILURES - 1]:
         clock.advance(step)
         await job.run_once()
     assert tg.ID_MAX_FAILURES == 5 and wfs.asked.count("GR4_F2K41_D3") == tg.ID_MAX_FAILURES
@@ -625,7 +626,7 @@ async def test_a_lookup_that_keeps_failing_is_set_aside_for_a_day_and_counted_as
     geom = [kw for j, _p, kw in db.runs if j == "traffic_grid_geom"][-1]
     assert geom["quality"][0][0] == "traffic_grid_lookup_failed" and geom["quality"][0][2]["grid_no"] == "GR4_F2K41_D3"
     assert r.kv["wakeline:collector"]["traffic_grid_failed"] == "1" and r.kv["wakeline:collector"]["traffic_grid_pending"] == "0"
-    clock.advance(tg.ID_RETRY_S[-1] * 3)
+    clock.advance(plan.ID_RETRY_S[-1] * 3)
     await job.run_once()
     assert wfs.asked.count("GR4_F2K41_D3") == tg.ID_MAX_FAILURES  # 하루 동안은 묻지 않는다
     clock.advance(tg.FAILED_TTL_S)
@@ -639,7 +640,7 @@ def test_retries_wait_behind_first_time_lookups():
     g.observe([("A", 5), ("B", 4)], T0)
     g.failed("A", T0)
     g.observe([("C", 1)], T0)
-    later = T0 + timedelta(seconds=tg.ID_RETRY_S[0])
+    later = T0 + timedelta(seconds=plan.ID_RETRY_S[0])
     assert g.due(later, 10) == ["B", "C", "A"]
 
 

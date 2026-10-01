@@ -15,6 +15,7 @@ import pytest
 from fakes import FakeRedis, make_ctx
 from test_traffic_grid_job import CELLS, T0, Clock, FakeKomsa, FakeWfs, TGDb, cell, komsa_body, setup, snapshot
 
+from wakeline_collector import traffic_grid_plan as plan
 from wakeline_collector.http import ProviderHttpError
 from wakeline_collector.jobs import traffic_grid as tg
 from wakeline_collector.jobs.traffic_grid import NEGATIVE_KEY, TrafficGridJob
@@ -332,7 +333,7 @@ async def test_a_pass_line_counts_an_id_set_aside_after_repeated_failures(caplog
     )
     job, _k, _w, r, clock, _db = setup(wfs=wfs)
     await job.run_once()
-    for step in tg.ID_RETRY_S[: tg.ID_MAX_FAILURES - 1]:
+    for step in plan.ID_RETRY_S[: tg.ID_MAX_FAILURES - 1]:
         clock.advance(step)
         await job.run_once()
     assert wfs.asked.count("GR4_F2K41_D3") == tg.ID_MAX_FAILURES
@@ -376,9 +377,9 @@ def test_a_full_negative_cache_forgets_only_expired_entries(monkeypatch):
     g.mark_negative("GR4_C", "not_found", T0)
     assert set(g.negative) == {"GR4_A", "GR4_B", "GR4_C"}  # 유효한 결과는 하나도 잊지 않는다
     assert g.observe([("GR4_A", 1), ("GR4_B", 1), ("GR4_C", 1)], T0 + timedelta(hours=1)) == 0  # 다시 묻지 않는다
-    old = T0 - timedelta(seconds=tg.NEGATIVE_TTL_S + 1)
-    g.negative["GR4_A"] = tg.Negative("not_found", old)  # 기한이 지났다
-    g.negative["GR4_C"] = tg.Negative("off_grid", old)  # 기한이 지났다
+    old = T0 - timedelta(seconds=plan.NEGATIVE_TTL_S + 1)
+    g.negative["GR4_A"] = plan.Negative("not_found", old)  # 기한이 지났다
+    g.negative["GR4_C"] = plan.Negative("off_grid", old)  # 기한이 지났다
     g.observe([("GR4_D", 1)], T0)
     g.mark_negative("GR4_D", "off_grid", T0)
     assert set(g.negative) == {"GR4_B", "GR4_D"}  # 기한이 지난 항목은 한 번에 모두 비운다

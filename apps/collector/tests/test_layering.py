@@ -55,6 +55,7 @@ RULE_FEATURES: dict[str, str] = {
     "marine_grid": "marine",
     "grid_tiles": "marine",
     "traffic_grid": "marine",
+    "traffic_grid_plan": "marine",
     "portcalls": "portcalls",
     "route": "route",
     "ais": "ais",
