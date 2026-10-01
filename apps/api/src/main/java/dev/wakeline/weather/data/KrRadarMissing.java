@@ -1,4 +1,4 @@
-package dev.wakeline.rest;
+package dev.wakeline.weather.data;
 
 import dev.wakeline.platform.support.Times;
 
@@ -27,7 +27,7 @@ import java.util.regex.Pattern;
  * 하나라도 틀리면 연속 전체를 모름(null)으로 두고 "missing" 으로 센다 — 일부만 보여 까닭을 틀리게 말하지 않는다. file · listed · probe_every_s · list_tm · list_newer 가 틀리면 그 키만 뺀다
  * (비었으면 — 옛 수집기 — 키가 없고 세지 않는다).
  */
-final class KrRadarMissing {
+public final class KrRadarMissing {
     private static final Pattern TM = Pattern.compile("^\\d{12}$");
     private static final Pattern FILE = Pattern.compile("^RDR_CMP_[A-Z]+_[A-Z]+_\\d{12}\\.bin\\.gz$");
     private static final Pattern KIND = Pattern.compile("^[A-Z]{1,8}$");
@@ -39,7 +39,7 @@ final class KrRadarMissing {
     private KrRadarMissing() { }
 
     /** 수집기 해시 → 공개 missing. 연속이 없거나 핵심 값이 틀리면 null. */
-    static Map<String, Object> from(Map<?, ?> h, Consumer<String> parseError) {
+    public static Map<String, Object> from(Map<?, ?> h, Consumer<String> parseError) {
         String since = text(h.get("missing_since_tm"));
         if (since.isEmpty()) return null;
         String last = text(h.get("missing_last_tm"));

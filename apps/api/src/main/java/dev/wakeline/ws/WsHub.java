@@ -16,7 +16,7 @@ import dev.wakeline.ingest.SigmetStore;
 import dev.wakeline.ingest.Snapshot;
 import dev.wakeline.ingest.SnapshotStore;
 import dev.wakeline.rest.SigmetGeoJson;
-import dev.wakeline.rest.StatusService;
+import dev.wakeline.status.StatusService;
 import dev.wakeline.route.RouteInfo;
 import dev.wakeline.route.RouteReader;
 import io.micrometer.core.instrument.Counter;

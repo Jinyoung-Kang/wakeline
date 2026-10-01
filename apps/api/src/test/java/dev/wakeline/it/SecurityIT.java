@@ -408,7 +408,7 @@ class SecurityIT extends IntegrationTest {
      */
     @Test
     void everyProviderHasADatabaseSwitchAfterStartup() {
-        for (String p : dev.wakeline.rest.StatusService.PROVIDERS) {
+        for (String p : dev.wakeline.status.StatusService.PROVIDERS) {
             assertThat(db.sql("SELECT count(*) FROM provider_switch WHERE provider = :p").param("p", p).query(Long.class).single()).as(p).isEqualTo(1);
             assertThat(count("SELECT count(*) FROM audit_log WHERE action = 'PROVIDER_SWITCH_IMPORT' AND target = ? AND user_id IS NULL", p)).as(p).isLessThanOrEqualTo(1);
         }

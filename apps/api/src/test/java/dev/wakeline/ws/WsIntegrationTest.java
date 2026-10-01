@@ -5,7 +5,7 @@ import dev.wakeline.engine.EngineService;
 import dev.wakeline.ingest.RadarStore;
 import dev.wakeline.ingest.SigmetStore;
 import dev.wakeline.ingest.SnapshotStore;
-import dev.wakeline.rest.StatusService;
+import dev.wakeline.status.StatusService;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.apache.catalina.Context;

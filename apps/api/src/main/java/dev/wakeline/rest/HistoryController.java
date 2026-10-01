@@ -9,6 +9,7 @@ import dev.wakeline.persist.MaintenanceJobs;
 import dev.wakeline.persist.SigmetRepository;
 import dev.wakeline.persist.StatsRepository;
 import dev.wakeline.persist.TrackRepository;
+import dev.wakeline.status.StatusService;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.CacheControl;
 import org.springframework.http.ResponseEntity;

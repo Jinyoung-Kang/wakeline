@@ -21,7 +21,7 @@ import dev.wakeline.persist.StoredStaticReader;
 import dev.wakeline.portcalls.PortCallFixtures;
 import dev.wakeline.portcalls.PortCallIndex;
 import dev.wakeline.portcalls.PortCallReader;
-import dev.wakeline.rest.StatusService;
+import dev.wakeline.status.StatusService;
 import dev.wakeline.route.RouteInfoTest;
 import dev.wakeline.route.RouteReader;
 import org.junit.jupiter.api.BeforeAll;

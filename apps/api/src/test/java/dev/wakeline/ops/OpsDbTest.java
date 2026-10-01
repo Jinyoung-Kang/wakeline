@@ -84,7 +84,7 @@ class OpsDbTest {
         redis = new StringRedisTemplate(redisFactory);
         deadRedis = new StringRedisTemplate(deadFactory);
         List<String> keys = new ArrayList<>(List.of(SettingsService.REDIS_KEY));
-        for (String p : dev.wakeline.rest.StatusService.PROVIDERS) keys.add(ProviderSwitchService.key(p));
+        for (String p : dev.wakeline.status.StatusService.PROVIDERS) keys.add(ProviderSwitchService.key(p));
         redis.delete(keys);
         audit = new AuditService(api, DbTestSupport.JSON, PROPS);
     }
@@ -240,7 +240,7 @@ class OpsDbTest {
     ProviderSwitchService switches(StringRedisTemplate r) { return new ProviderSwitchService(api, r, DbTestSupport.apiTx(), audit); }
 
     OpsController ops(StringRedisTemplate r, AuditService a) {
-        var status = new dev.wakeline.rest.StatusService(null, null, null, null, r, PROPS);
+        var status = new dev.wakeline.status.StatusService(null, null, null, null, r, PROPS);
         var jobs = new MaintenanceJobs(api, PROPS, region(r), DbTestSupport.apiTx());
         return new OpsController(status, api, r, settings(r), a, jobs, DbTestSupport.apiTx(), switches(r),
                 new ResolutionService(new ResolutionRepository(api), DbTestSupport.apiTx()));
@@ -250,7 +250,7 @@ class OpsDbTest {
     OpsController opsWithStatus(StringRedisTemplate r, AuditService a) {
         var snapshots = new dev.wakeline.ingest.SnapshotStore();
         var sigmets = new dev.wakeline.ingest.SigmetStore();
-        var status = new dev.wakeline.rest.StatusService(snapshots, sigmets, new dev.wakeline.ingest.RadarStore(),
+        var status = new dev.wakeline.status.StatusService(snapshots, sigmets, new dev.wakeline.ingest.RadarStore(),
                 new dev.wakeline.engine.EngineService(snapshots, sigmets, e -> { }, new io.micrometer.core.instrument.simple.SimpleMeterRegistry()), r, PROPS);
         return new OpsController(status, api, r, settings(r), a, new MaintenanceJobs(api, PROPS, region(r), DbTestSupport.apiTx()), DbTestSupport.apiTx(),
                 switches(r), new ResolutionService(new ResolutionRepository(api), DbTestSupport.apiTx()));
@@ -301,7 +301,7 @@ class OpsDbTest {
                 .isEqualTo("{\"version\": 1, \"disabled\": true} -> {\"version\": 2, \"disabled\": false}"); // jsonb 는 짧은 키부터
 
         redis.opsForHash().putAll("wakeline:provider:adsbdb", Map.of("last_error", "HTTP 503", "consecutive_failures", "2"));
-        var status = new dev.wakeline.rest.StatusService(null, null, null, null, redis, PROPS);
+        var status = new dev.wakeline.status.StatusService(null, null, null, null, redis, PROPS);
         assertThat(status.providerStatuses()).filteredOn(p -> "adsbdb".equals(p.get("name"))).singleElement()
                 .satisfies(p -> assertThat(p).containsEntry("disabled", "0").containsEntry("last_error", "HTTP 503"));
         assertThatThrownBy(() -> ops.toggleProvider("nope", "disable", request(), ALICE)).isInstanceOf(Problem.class);
@@ -377,7 +377,7 @@ class OpsDbTest {
         assertThat(s.sync().corrected()).containsExactly("adsbdb");
         assertThat(redisFlag("adsbdb")).isEqualTo("1");
         assertThat(redis.hasKey(ProviderSwitchService.key("opensky"))).as("enabled + no hash: nothing to write").isFalse();
-        assertThat(switchRows()).isEqualTo(dev.wakeline.rest.StatusService.PROVIDERS.size());
+        assertThat(switchRows()).isEqualTo(dev.wakeline.status.StatusService.PROVIDERS.size());
     }
 
     /**
@@ -394,12 +394,12 @@ class OpsDbTest {
         assertThat(switchRows()).as("redis down: nothing imported").isZero();
 
         var r = switches(redis).sync();
-        assertThat(r.imported()).containsExactlyInAnyOrderElementsOf(dev.wakeline.rest.StatusService.PROVIDERS);
+        assertThat(r.imported()).containsExactlyInAnyOrderElementsOf(dev.wakeline.status.StatusService.PROVIDERS);
         assertThat(r.corrected()).isEmpty();
         assertThat(switchRow("adsbdb")).containsEntry("disabled", true).containsEntry("version", 1).containsEntry("updated_by", null);
         assertThat(switchRow("opensky")).containsEntry("disabled", false);
         assertThat(switchRow("awc")).containsEntry("disabled", false);
-        assertThat(auditCount("PROVIDER_SWITCH_IMPORT")).isEqualTo(dev.wakeline.rest.StatusService.PROVIDERS.size());
+        assertThat(auditCount("PROVIDER_SWITCH_IMPORT")).isEqualTo(dev.wakeline.status.StatusService.PROVIDERS.size());
         assertThat(admin.sql("SELECT coalesce(user_id::text, '-') || ' ' || before::text || ' -> ' || after::text FROM audit_log WHERE action = 'PROVIDER_SWITCH_IMPORT' AND target = 'adsbdb'")
                 .query(String.class).single()).isEqualTo("- {\"redis_disabled\": \"1\"} -> {\"version\": 1, \"disabled\": true}");
         assertThat(admin.sql("SELECT before::text FROM audit_log WHERE action = 'PROVIDER_SWITCH_IMPORT' AND target = 'awc'").query(String.class).single())
@@ -412,7 +412,7 @@ class OpsDbTest {
         assertThat(again.corrected()).containsExactly("kma_radar");
         assertThat(switchRow("kma_radar")).containsEntry("disabled", false);
         assertThat(redisFlag("kma_radar")).isEqualTo("0");
-        assertThat(auditCount("PROVIDER_SWITCH_IMPORT")).isEqualTo(dev.wakeline.rest.StatusService.PROVIDERS.size());
+        assertThat(auditCount("PROVIDER_SWITCH_IMPORT")).isEqualTo(dev.wakeline.status.StatusService.PROVIDERS.size());
     }
 
     /**
@@ -424,7 +424,7 @@ class OpsDbTest {
     void theProviderListShowsTheDatabaseSwitchNextToTheRedisMirror() {
         alice();
         var s = switches(redis);
-        assertThat(s.states()).extracting(m -> m.get("provider")).containsExactlyElementsOf(dev.wakeline.rest.StatusService.PROVIDERS);
+        assertThat(s.states()).extracting(m -> m.get("provider")).containsExactlyElementsOf(dev.wakeline.status.StatusService.PROVIDERS);
         assertThat(s.states()).allSatisfy(m -> assertThat(m).containsEntry("disabled", null).containsEntry("version", null)
                 .containsEntry("mirror_differs", null).containsEntry("redis_error", null));
 
@@ -529,7 +529,7 @@ class OpsDbTest {
         assertThat(admin.sql("SELECT before::text FROM audit_log WHERE action = 'PROVIDER_ENABLE'").query(String.class).single())
                 .as("no row yet: the database value is unknown").isEqualTo("{\"version\": null, \"disabled\": null}");
         var r = switches(redis).sync();
-        assertThat(r.imported()).doesNotContain("adsbdb").hasSize(dev.wakeline.rest.StatusService.PROVIDERS.size() - 1);
+        assertThat(r.imported()).doesNotContain("adsbdb").hasSize(dev.wakeline.status.StatusService.PROVIDERS.size() - 1);
         assertThat(switchRow("adsbdb")).containsEntry("disabled", false).containsEntry("updated_by", 1);
         assertThat(redisFlag("adsbdb")).isEqualTo("0");
     }

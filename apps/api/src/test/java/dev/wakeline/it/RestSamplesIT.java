@@ -40,7 +40,7 @@ class RestSamplesIT extends IntegrationTest {
     @Autowired RadarStore radar;
     @Autowired EngineService engine;
     /** REST /status 가 보는 값(WS 와 같은 3 s 캐시, R-53) — 기다릴 때도 같은 값을 본다. */
-    @Autowired dev.wakeline.rest.StatusService status;
+    @Autowired dev.wakeline.status.StatusService status;
     @Autowired dev.wakeline.route.RouteReader routes;
     /** 연안 교통량 읽기(ADR-023) — 5 s 메모. 기다림은 이것으로(REST 요청 제한을 쓰지 않게). */
     @Autowired dev.wakeline.rest.TrafficGridReader trafficGrid;

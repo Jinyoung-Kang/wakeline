@@ -1,4 +1,4 @@
-package dev.wakeline.rest;
+package dev.wakeline.status;
 
 import dev.wakeline.ingest.IngestHealthIndicator;
 import dev.wakeline.ingest.SnapshotStore;

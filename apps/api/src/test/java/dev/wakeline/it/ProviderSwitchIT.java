@@ -72,7 +72,7 @@ class ProviderSwitchIT extends IntegrationTest {
             JsonNode all = b.get("/api/v1/ops/providers").json().path("provider_switch");
             List<String> names = new ArrayList<>();
             for (JsonNode s : all) names.add(s.path("provider").asString());
-            assertThat(names).containsExactlyElementsOf(dev.wakeline.rest.StatusService.PROVIDERS);
+            assertThat(names).containsExactlyElementsOf(dev.wakeline.status.StatusService.PROVIDERS);
             // null 인 필드는 응답에서 빠진다(앱 JSON 규칙 NON_NULL) — 기동 때 이관된 행은 운영자가 없다(updated_by 없음)
             for (JsonNode s : all) assertThat(s.path("updated_by").isMissingNode() || s.path("updated_by").isString()).isTrue();
 

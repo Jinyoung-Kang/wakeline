@@ -1,6 +1,6 @@
 package dev.wakeline.it;
 
-import dev.wakeline.rest.StatusService;
+import dev.wakeline.status.StatusService;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIf;

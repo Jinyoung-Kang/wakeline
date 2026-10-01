@@ -1,4 +1,4 @@
-package dev.wakeline.rest;
+package dev.wakeline.weather.data;
 
 import dev.wakeline.platform.support.Times;
 import tools.jackson.databind.JsonNode;
@@ -22,9 +22,9 @@ import java.util.regex.Pattern;
  *   <li>url: 받은 시각(fetched_at)을 아는 프레임은 {@code ?v=<epoch ms>} — 다시 받아 바뀐 영상이 브라우저 캐시(1 h)의 옛 영상으로 보이지 않게</li>
  * </ul>
  */
-final class KrRadarFrames {
+public final class KrRadarFrames {
     /** 헤더 STN_LIST 는 20 B × 48 자리(기상청 포맷 문서). */
-    static final int MAX_STATIONS = 48;
+    public static final int MAX_STATIONS = 48;
     private static final Pattern TM = Pattern.compile("^\\d{12}$");
     private static final Pattern STATION_ID = Pattern.compile("^[A-Za-z0-9]{1,6}$");
     /** 응답 최상위(최신 프레임의 합성 요약)에 옮기는 키. */
@@ -33,7 +33,7 @@ final class KrRadarFrames {
     private KrRadarFrames() { }
 
     /** 항목 하나. 객체가 아니거나 tm 이 틀리면 null(목록에서 뺀다). echo_cells 가 틀려도 null(센다). */
-    static Map<String, Object> frame(JsonNode f, Consumer<String> parseError) {
+    public static Map<String, Object> frame(JsonNode f, Consumer<String> parseError) {
         if (f == null || !f.isObject()) return null;
         String tm = f.path("tm").asString("");
         if (!TM.matcher(tm).matches()) return null;
@@ -83,7 +83,7 @@ final class KrRadarFrames {
     }
 
     /** 응답 최상위: 목록의 마지막(최신) 프레임의 합성 지점 수 · 코드 · 기준 · partial. 모르면 키 없음(이전 프레임 값으로 채우지 않는다). */
-    static Map<String, Object> latest(List<Map<String, Object>> frames) {
+    public static Map<String, Object> latest(List<Map<String, Object>> frames) {
         Map<String, Object> m = new LinkedHashMap<>();
         if (frames.isEmpty()) return m;
         Map<String, Object> last = frames.getLast();
