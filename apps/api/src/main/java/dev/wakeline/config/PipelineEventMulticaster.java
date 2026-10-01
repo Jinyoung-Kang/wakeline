@@ -1,7 +1,6 @@
 package dev.wakeline.config;
 
-import dev.wakeline.engine.EngineEvents;
-import dev.wakeline.ingest.IngestEvents;
+import dev.wakeline.platform.support.PipelineEvent;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
@@ -17,7 +16,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
 
 /**
- * 수집 파이프라인 이벤트(IngestEvents·EngineEvents)의 리스너를 서로 격리하는 멀티캐스터(API-CONC-2).
+ * 수집 파이프라인 이벤트(페이로드가 {@link PipelineEvent} — IngestEvents·EngineEvents 의 record)의 리스너를 서로 격리하는 멀티캐스터(API-CONC-2).
  * <p>
  * Spring 기본 멀티캐스터는 리스너 하나가 예외를 던지면 그 이벤트의 나머지 리스너를 부르지 않고 예외를 발행자에게 돌려준다. 발행자는
  * 스트림 소비 스레드라서, 예를 들어 엔진이 던지면 ① 뒤의 항적 저장·WS 팬아웃이 건너뛰어지고 ② 멀쩡한 메시지가 DLQ 로 갔다.
@@ -35,11 +34,9 @@ public class PipelineEventMulticaster extends SimpleApplicationEventMulticaster 
         this.meters = meters;
     }
 
-    /** 이 이벤트가 수집 파이프라인 이벤트(스트림 소비·엔진이 발행)인가. */
+    /** 이 이벤트가 수집 파이프라인 이벤트(스트림 소비·엔진이 발행 — 페이로드에 {@link PipelineEvent} 표시)인가. */
     static boolean isPipelineEvent(ApplicationEvent event) {
-        if (!(event instanceof PayloadApplicationEvent<?> p)) return false;
-        Class<?> owner = p.getPayload().getClass().getEnclosingClass();
-        return owner == IngestEvents.class || owner == EngineEvents.class;
+        return event instanceof PayloadApplicationEvent<?> p && p.getPayload() instanceof PipelineEvent;
     }
 
     @Override

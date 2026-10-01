@@ -2,6 +2,7 @@ package dev.wakeline.config;
 
 import dev.wakeline.ingest.IngestEvents;
 import dev.wakeline.ingest.RadarStore;
+import dev.wakeline.platform.support.PipelineEvent;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.support.DefaultListableBeanFactory;
@@ -59,6 +60,24 @@ class PipelineEventMulticasterTest {
         m.multicastEvent(new PayloadApplicationEvent<>(this, sampled));
         assertThat(calls).containsExactly("coverage", "other");
         assertThat(meters.find("wakeline_event_listener_errors_total").tag("event", "ShipsSampled").counter().count()).isEqualTo(1.0);
+    }
+
+    record Marked(String v) implements PipelineEvent {}
+    record Unmarked(String v) {}
+
+    /**
+     * 격리 기준은 표시(PipelineEvent)다 — 페이로드를 감싼 클래스가 아니다(리뷰 cto-2026-10 api §2.5-1: 이벤트 묶음을 기능별로 나눠도 격리가 따라간다).
+     * 표시가 있으면 어디에 있든 격리되고, 표시가 없으면 기본 동작(첫 예외가 발행자로)이다.
+     */
+    @Test
+    void theMarkerDecides_notTheEnclosingClass() {
+        assertThat(PipelineEventMulticaster.isPipelineEvent(new PayloadApplicationEvent<>(this, new Marked("x")))).isTrue();
+        assertThat(PipelineEventMulticaster.isPipelineEvent(new PayloadApplicationEvent<>(this, new Unmarked("x")))).isFalse();
+        m.addApplicationListener((ApplicationListener<PayloadApplicationEvent<?>>) e -> { calls.add("first"); throw new IllegalStateException("boom"); });
+        m.addApplicationListener((ApplicationListener<PayloadApplicationEvent<?>>) e -> calls.add("second"));
+        m.multicastEvent(new PayloadApplicationEvent<>(this, new Marked("x")));
+        assertThat(calls).containsExactly("first", "second");
+        assertThatThrownBy(() -> m.multicastEvent(new PayloadApplicationEvent<>(this, new Unmarked("x")))).hasMessage("boom");
     }
 
     static class Target {

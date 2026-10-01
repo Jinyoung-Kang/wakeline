@@ -39,7 +39,7 @@ class ArchitectureTest {
     /** Flip to true in the commit that empties ingest of state stores (end of the feature moves). */
     static final boolean INGEST_IS_ADAPTER_ONLY = false;
     /** Number of class-level imports inside package cycles today. May only go down; 0 at the end of phase 1. */
-    static final int MAX_CYCLE_EDGES = 141;
+    static final int MAX_CYCLE_EDGES = 139;
     static final Set<String> KNOWN = Set.of(
             "controller-data-access|ops.OpsController|org.springframework.data.redis.connection",
             "controller-data-access|ops.OpsController|org.springframework.data.redis.connection.stream",
