@@ -7,7 +7,7 @@ import { fmtBudgetLimit, fmtLatencyMs } from "@/lib/format";
 import { liveNote, mirrorDiffers, switchCell, toggleNote, type SwitchNote } from "@/lib/provider-switch";
 import {
   classifyOpsError, editSetting, isAuthMiss, parseSetting, pipelineLossCount, providerLastError, providerMissing, providersNowMs, rebaseSetting,
-  RUN_STATUS_TITLE, runStatusClass, runStatusTone, SESSION_EXPIRED_NOTE, settingConflict, qualityPartialDay, settingIfMatch, settingSpec, signOut, switchHistoryError, withProviderResolutions,
+  RUN_STATUS_TITLE, runStatusClass, runStatusTone, SESSION_EXPIRED_NOTE, settingConflict, qualityPartialDay, settingIfMatch, settingSpec, signOut, switchHistoryError, dlqReadError, withProviderResolutions,
   type SettingEdit,
 } from "@/lib/ops";
 import { hiddenCount, hiddenText, parseResolutionState, RESOLUTION_STATE_TEXT, RESOLVE_EFFECT, type ResolvedMode } from "@/lib/resolutions";
@@ -326,8 +326,16 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
         {tab === "settings" && settings ? <SettingsForm items={settings.items} msg={settingsMsg} setMsg={setSettingsMsg} onSaved={refresh} onAuthMiss={fail} /> : null}
         {tab === "audit" && audit ? <table><thead><tr><th>at (KST)</th><th>user</th><th>action</th><th>target</th><th>before</th><th>after</th><th>ip</th><th>request</th></tr></thead>
           <tbody>{audit.items.map((a) => <tr key={String(a.id)}><TimeCell v={a.at} /><td>{String(a.username ?? "")}</td><td>{String(a.action)}</td><td className="mono">{String(a.target ?? "")}</td><td className="mono text-fg-3">{String(a.before ?? "")}</td><td className="mono">{String(a.after ?? "")}</td><td className="mono">{String(a.ip ?? "")}</td><td className="mono text-fg-3">{String(a.request_id ?? "")}</td></tr>)}</tbody></table> : null}
-        {tab === "dlq" && dlq ? (dlq.items.length ? <table><thead><tr><th>at (KST)</th><th>stream</th><th>kind</th><th>reason</th><th title={`스트림 메시지 앞 200자 — ${RAW_RECORD_TITLE}`}>payload head (raw)</th></tr></thead>
-          <tbody>{dlq.items.map((d) => <tr key={String(d.stream_id)}><TimeCell v={d.at} /><td className="mono">{String(d.source_stream)}</td><td>{String(d.kind)}</td><td className="text-bad">{String(d.reason)}</td><td className="mono text-fg-3" data-raw="record">{String(d.payload_head)}</td></tr>)}</tbody></table> : <div className="text-fg-3">스키마 검증에 실패한 메시지가 없습니다.</div>) : null}
+        {tab === "dlq" && dlq ? (() => {
+          // 읽지 못한 목록을 '없음' 과 가른다 — api 가 빈 items 와 함께 error 를 싣는다(providers 탭의 자동 전환 기록과 같은 줄)
+          const w = dlqReadError(dlq);
+          return <>
+            {w ? <div className="mb-1 text-[11px] text-warn" role="alert" data-testid="dlq-error">{w}</div> : null}
+            {dlq.items.length ? <table><thead><tr><th>at (KST)</th><th>stream</th><th>kind</th><th>reason</th><th title={`스트림 메시지 앞 200자 — ${RAW_RECORD_TITLE}`}>payload head (raw)</th></tr></thead>
+              <tbody>{dlq.items.map((d) => <tr key={String(d.stream_id)}><TimeCell v={d.at} /><td className="mono">{String(d.source_stream)}</td><td>{String(d.kind)}</td><td className="text-bad">{String(d.reason)}</td><td className="mono text-fg-3" data-raw="record">{String(d.payload_head)}</td></tr>)}</tbody></table>
+              : w ? null : <div className="text-fg-3">스키마 검증에 실패한 메시지가 없습니다.</div>}
+          </>;
+        })() : null}
       </div>
     </div>
   );

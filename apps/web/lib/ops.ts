@@ -494,6 +494,18 @@ export function switchHistoryError(resp: unknown): string | null {
 }
 
 /**
+ * /ops/dlq 를 api 가 읽지 못했다는 표시: 응답 맨 위 error(api OpsController.dlq — Redis 오류면 빈 items 와 "redis unavailable").
+ * 그대로 두면 빈 목록이 '스키마 검증에 실패한 메시지가 없습니다' 로 보인다 — 경고 줄 글자를 돌려준다. 규칙은 switchHistoryError 와 같다:
+ * error 가 없거나 null · 빈 글자면 null, 까닭은 api 가 준 글자 그대로, 글자가 아니면 '이유 모름'.
+ */
+export function dlqReadError(resp: unknown): string | null {
+  const e = obj(resp).error;
+  if (e == null || e === "") return null;
+  const why = typeof e === "string" ? e : "이유 모름";
+  return `스키마 검증 실패 메시지(DLQ)를 읽지 못함(api: ${why}) — 목록이 비어 있어도 ‘없음’이 아니다. 15 s 마다 다시 읽는다`;
+}
+
+/**
  * /ops/providers 응답을 만든 서버 시각(generated_at — 시간대가 있는 ISO 만) → ms. 없거나 틀리면 0(모름 — providerMissing 이 '확인 멈춤'을 판정하지 않는다).
  * 공급자 해시의 시각(수집기 missing_checked_at)의 나이를 브라우저 시계가 아니라 서버 기준 지금으로 잰다(계약 v5 §G22 — 브라우저 시계가 15분 넘게
  * 틀려도 상황판 칩과 같은 판정, 통합 리뷰 2026-09-30). 응답은 15 s 마다 새로 받는다 — 그 사이 지난 시간은 더하지 않는다(다음 응답이 다시 잰다).

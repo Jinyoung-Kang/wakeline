@@ -343,6 +343,11 @@ describe("time examples", () => {
     const ops = text(section(render(EMPTY), "ops-dashboard"));
     expect(ops).toContain("수집기 자동 전환 기록(api 가 읽지 못하면 ‘읽지 못함’ 경고 — 빈 표가 ‘전환 없음’은 아님)");
   });
+  // 리뷰 cto-2026-10 최종: DLQ 도 api 가 읽지 못하면 '없음' 이 아니라 경고 — 설명서도 그렇게 말한다
+  it("6.2 says an unreadable DLQ is a warning, not 'no messages'", () => {
+    const ops = text(section(render(EMPTY), "ops-dashboard"));
+    expect(ops).toContain("처리하지 못한 메시지(DLQ — api 가 읽지 못하면 ‘읽지 못함’ 경고, 빈 목록이 ‘없음’은 아님)");
+  });
   // CTO 리뷰 2026-10(collector D0 · F6): PIPELINE 의 collector 묶음에 이벤트 루프 지연 · 멈춤과 원천 보관 실패 · 정리 실패 행이 생겼다
   it("6.2 names the pipeline tab's collector event-loop lag and raw-archive rows, and which of them is a loss", () => {
     const ops = text(section(render(EMPTY), "ops-dashboard"));
