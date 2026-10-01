@@ -17,6 +17,7 @@ import { LEGEND_OPEN_MIN_WIDTH } from "@/lib/prefs";
 import { REPLAY_FULL_RES_MS, REPLAY_MAX_AREA_SQDEG, REPLAY_STEPS, REPLAY_SUMMARY_MS } from "@/lib/replay";
 import { ROUTE_CAVEAT, ROUTE_SLOW_AFTER_S, ROUTE_STATUS_TEXT, ROUTE_TITLE } from "@/lib/route";
 import { BUSY_APPEAR_DELAY_MS } from "@/lib/busy";
+import { hotChip, type HotState } from "@/lib/demand";
 import { HEALTH_MARK, RADAR_STALE_S, SIGMET_STALE_S } from "@/lib/statusbar";
 import {
   AIS_GAP_SHOW_MS, AIS_LAG_WARN_S, SHIP_STALE_S, SHIP_TRACK_HOURS, SHIPS_OUT_OF_COVERAGE_TEXT, SHIPS_RULE_TEXT, SHIPS_ZERO_AIS_DOWN_TEXT, SHIPS_ZERO_TEXT, STORED_STATIC_LABEL, STORED_STATIC_TIME_LABEL,
@@ -27,6 +28,7 @@ import { fmtKstRange, fmtTimeTitle, fmtZuluToken, kstDayStartMs, kstWallMs, RAW_
 import { TRAFFIC_BINS, TRAFFIC_LAYER_LABEL, TRAFFIC_LEGEND_NOTE, TRAFFIC_POLL_MS } from "@/lib/traffic-grid";
 import { RECEPTION_BINS, RECEPTION_LAYER_LABEL } from "@/lib/reception-meta";
 import { GLOBAL_STALE_S, REGION_STALE_S, RX_DEAD_MS, RX_FRESH_MS } from "@/lib/ws-protocol";
+import { HOT_MIN_ZOOM } from "@/lib/viewport";
 import { GuideFigure } from "./GuideFigure";
 import { GuideToc } from "./GuideToc";
 
@@ -50,6 +52,11 @@ const STATS_DAY_START = kstDayStartMs(STATS_DAY)!;
 /** 공급자 예산 날 예(수집기 예산 키의 날 — 매일 09:00 KST 에 새로 시작) */
 const BUDGET_DAY = "2026-09-28";
 const n0 = (n: number) => n.toLocaleString("en-US");
+/**
+ * 핫 리전 칩 글자의 예 — 화면과 같은 함수(lib/demand hotChip)로 만든다. 주기 30 s 는 수집기의 첫 주기(collector jobs/demand.py HOT_LEVELS_S),
+ * 반경 100 NM 은 예(실제 반경은 화면 크기로 정해진다 — 2.5).
+ */
+const hotExample = (state: HotState) => hotChip({ hot: { cell: null, radius_nm: 100, state, interval_s: state === "active" ? 30 : null }, focus: null, received_at: 0 })?.text ?? "";
 /** 구간 글자 "a – b" — 쪽마다 줄바꿈 없이(좁은 칸에서는 " – " 에서만 바뀐다 — components/KstTime KstRange 와 같은 모양) */
 function RangeText({ text }: { text: string }) {
   const [a, b] = text.split(" – ");
@@ -202,6 +209,13 @@ export function GuideView({ manifest, dropped }: { manifest: GuideManifest; drop
                 <li><B>위치 공유</B> — 주소 끝 <span className="mono">#줌/위도/경도</span>(예: <span className="mono">/#6.3/36.1/127.9</span>)가 지금 지도 위치입니다. 그 주소를 열면 같은 자리로 열립니다.</li>
                 <li><B>키보드</B> — 지도에 초점(Tab)을 두면 <Kbd>←</Kbd><Kbd>→</Kbd><Kbd>↑</Kbd><Kbd>↓</Kbd> 이동, <Kbd>=</Kbd>/<Kbd>-</Kbd> 확대 · 축소(Shift 와 함께 2단계 — 9장).</li>
               </UL>
+              {fig("world")}
+              <UL>
+                <li><B>전세계 보기</B> — 줌 {HOT_MIN_ZOOM} 미만으로 축소하면 핫 리전 조회를 하지 않고(2.5), 서버가 이미 받아 둔 관심 지역 · 핫 리전 · 집중 추적 · 전세계 피드를 합친 목록을 그립니다(같은 항공기는 가장 최근 관측 하나 — 전세계 피드의 항공기는 관측 뒤 600 s 가 지나면 뺍니다).
+                  화면이 날짜 변경선(±180°)을 넘으면 그 위도 띠 전체(경도 −180 – 180)를 구독하므로 상태 바 aircraft{ref("world", 1)}는 화면 밖 항공기까지 셀 수 있습니다.</li>
+                <li><B>world 칩</B>{ref("world", 2)} — 전세계 피드의 지연. {GLOBAL_STALE_S} s 를 넘거나 서버가 오래됐다고 판정하면 STALE, 전세계 피드가 없으면(공급자 설정 없음) ‘—’ 이고 지도에는 다른 피드로 받은 항공기만 보입니다.
+                  region 칩{ref("world", 3)}은 관심 지역 피드이고 따로 갱신됩니다(2.10).</li>
+              </UL>
             </Sec>
             <Sec id="dashboard-layers" sub>
               <UL>
@@ -243,6 +257,15 @@ export function GuideView({ manifest, dropped }: { manifest: GuideManifest; drop
                   {ROUTE_SLOW_AFTER_S} s 를 넘으면 ‘보통 경로 계산값보다 오래 걸림’을 덧붙입니다. 움직임 줄이기 설정이면 막대가 움직이지 않습니다.</li>
                 <li><B>집중 추적</B> — 항공기를 고르면 서버 수집기가 그 항공기만 따로 조회합니다{ref("aircraft", 2)}. 고르지 않고 확대하면 화면 중심 주변을 따로 조회합니다(핫 리전). 칩에는 서버가 보고한 상태 · 주기만 쓰고, 호출 상한 때문에 늦어지면 그렇다고 적습니다. 창을 닫으면 최대 60초 안에 멈추고, 한 세션의 연속 집중 추적은 30분까지입니다.</li>
                 <li><B>항적 · 예측</B> — 항적은 DB 기록(최근 2 h)에 실시간 관측을 이은 선, 점선 궤적은 서버가 예측할 수 있다고 판단할 때만 그리는 10분 추정입니다. 예측하지 않으면 카드에 이유(선회 중 · 저속 · 지상 · 속도/방위 없음 · 수신 지연)를 적습니다.</li>
+              </UL>
+              {fig("hot")}
+              <UL>
+                <li><B>핫 리전</B>{ref("hot", 1)} — 항공기를 고르지 않고 줌 {HOT_MIN_ZOOM} 이상으로 고정 관심 지역(한반도) 밖을 보면, 서버가 화면 중심을 0.5° 격자에 맞춘 칸을 수집기에 맡겨 따로 조회합니다.
+                  반경은 화면 대각선의 절반을 50 NM 단위로 올린 값(50–250 NM)이고, 주기는 30 s(호출 여유가 모자라면 60 · 120 s)입니다. 같은 칸을 여러 사람이 보면 한 번만 조회하고, 축소 · 이동하거나 창을 닫으면 60 s 안에 멈춥니다.</li>
+                <li><B>칩 읽기</B> — 서버가 보고한 상태를 그대로 적습니다(예): ‘{hotExample("active")}’ = 수집기가 그 칸을 조회해 발행했고 마지막 성공이 주기 × 3(적어도 15 s) 안 ·
+                  ‘{hotExample("pending")}’ = 아직 조회 전 · ‘호출 상한으로 지연’ = 공급자 호출 상한 때문에 주기를 늘렸거나 이 칸을 건너뜀 · ‘{hotExample("covered_by_region")}’ = 화면 중심이 관심 지역 안이라 따로 조회하지 않음.
+                  관심 지역 피드는 region 칩{ref("hot", 3)}입니다.</li>
+                <li><B>항공기 수</B>{ref("hot", 2)} — 지도 영역 안 항공기 수. 여러 피드를 합친 목록이라(같은 항공기는 가장 최근 관측 하나) 카드의 출처는 공급자 이름이고, 어느 수집(관심 지역 · 핫 리전 · 전세계)으로 받았는지는 따로 적지 않습니다.</li>
               </UL>
             </Sec>
             <Sec id="dashboard-ship" sub>

@@ -12,14 +12,15 @@
 // - 가림(계획의 masks): 설명서는 로그인 없이 누구나 본다. 운영 · 로그 화면은 운영자 이름과 운영 정보 · 브라우저가 보낸 글자가 든 열(마지막 오류 · 전환 사유 ·
 //   로거 · 메시지 · 요청 id)을 회색 상자로 가려 찍고, 무엇을 가렸는지 캡처 조건에 적는다. 가릴 자리를 하나라도 찾지 못하면 그 스크린샷을 싣지 않는다.
 // - 못 찍은 스크린샷은 이전 결과를 그대로 두고(있으면) 이유를 보고한다. 이번에 바뀐 결과가 더 가리키지 않는 옛 파일은 지운다.
+// - 화면에서 읽은 값을 캡처 조건에 적는 그림(world · hot — 칩 글자 · 항공기 수)은 찍기 직전과 직후에 두 번 읽어 같을 때만 싣는다(READ_TRIES 번까지 다시).
 // - 끝에 크기 보고. 종료 코드: 0 = 모두 찍음, 3 = 일부 건너뜀, 2 = 인자 오류, 1 = 그 밖의 실패.
 import { chromium } from "@playwright/test";
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  anchorPoint, checkLocalBase, credentialFileWarning, ERROR_MARKS, findColumn, hashedName, maskedVariant, mergeManifest, parseArgs, parseCredentials, realDataVerdict, sizeReport, stackNote,
-  staleFiles, statsPanelsVerdict, withStackNote,
+  anchorPoint, checkLocalBase, chipCount, credentialFileWarning, ERROR_MARKS, findColumn, hashedName, hotVariant, isHotActive, maskedVariant, mergeManifest, parseArgs, parseCredentials,
+  realDataVerdict, sizeReport, stackNote, staleFiles, statsPanelsVerdict, withStackNote, worldVariant,
 } from "./guide-capture-lib.mjs";
 
 const WEB = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -121,6 +122,24 @@ async function setLegend(open) {
   const b = page.getByTestId("legend-toggle");
   if ((await b.getAttribute("aria-expanded")) !== String(open)) await b.click();
 }
+/** 상태 바 칩의 값 글자(data-testid — lib/statusbar 의 칩). 칩이 없으면 null */
+const chipValue = (testId) => page.evaluate((id) => document.querySelector(`[data-testid="${id}"] .chip-v`)?.textContent ?? null, testId);
+/** fn 이 Skip 없이 돌아올 때까지 1 s 마다 다시(상한 ms) — 끝까지 Skip 이면 마지막 이유로 건너뛴다 */
+async function until(fn, ms) {
+  const end = Date.now() + ms;
+  for (;;) {
+    try { return await fn(); } catch (e) { if (!(e instanceof Skip) || Date.now() >= end) throw e; }
+    await wait(1_000);
+  }
+}
+/**
+ * 핫 리전 칩이 '갱신'이 되기를 기다리는 상한 — 새 칸의 첫 조회는 수집기 전체에서 30 s 에 2칸까지만 곧바로이고 나머지는 한 주기(30 s) 뒤,
+ * 호출 여유가 모자라면 주기가 60 · 120 s 로 는다(collector jobs/demand.py HOT_NEW_BURST · HOT_LEVELS_S). api 는 수집기 상태를 10 s 마다 읽는다.
+ */
+const HOT_WAIT_MS = 120_000;
+/** 화면 값을 캡처 조건에 적는 그림: 찍기 전후 두 번 읽은 값이 다르면 다시 찍는 횟수 */
+const READ_TRIES = 3;
+
 /** 한반도 지도 영역의 실시간 항공기(서버가 준 값 그대로) */
 async function koreaAircraft() {
   const r = await page.request.get(`${BASE}/api/v1/aircraft?bbox=${KOREA_BBOX}`);
@@ -155,6 +174,24 @@ const RECIPES = {
     await setLegend(true);
     await wait(10_000); // 스냅샷 · 레이더 타일 · 선박 격자
     return `한반도 ${shot.path.slice(1)}`;
+  },
+  async world(shot) {
+    // 전세계 보기(줌 1.6 — 서버가 넓은 구독을 받는 줌 5 이하, 핫 리전 줌 미만): 서버는 구독 영역의 병합 목록(전세계 · 관심 지역 피드 등)을 보낸다.
+    // 상태 바 world 칩이 정상(data-health ok — 전세계 피드가 있고 서버 · 브라우저 판정 모두 오래되지 않음)이고 aircraft 칩이 1 이상일 때까지 기다린다(상한 30 s).
+    // 피드가 없거나(공급자 설정 없음) 오래됐으면 건너뛴다 — 관심 지역만 찍힌 '전세계' 그림을 싣지 않는다. 캡처 조건 = 찍기 전후에 읽은 항공기 수(같을 때만)
+    await openMap(shot.path);
+    await setPressed("layer-ships", false);
+    await setLegend(false);
+    const read = async () => {
+      const health = await page.evaluate(() => document.querySelector('[data-testid="global-lag-badge"]')?.getAttribute("data-health") ?? null);
+      if (health !== "ok") throw new Skip(`상태 바 world 칩이 정상이 아님(${health ?? "칩 없음"}) — 전세계 피드가 없거나 오래됨`);
+      const n = chipCount(await chipValue("aircraft-count"));
+      if (!(n > 0)) throw new Skip(`상태 바 aircraft 수가 1 이상이 아님(${n ?? "—"})`);
+      return worldVariant(shot.path, n);
+    };
+    await until(read, 30_000);
+    await wait(6_000); // 기호 · 레이더 타일 그리기
+    return read;
   },
   async traffic(shot) {
     // 연안 교통량(ADR-023): 레이어를 켜면 곧바로 조회한다 — 상태 줄이 '불러오는 중'을 벗어날 때까지 기다리고, 칸을 그리는 상태(기준 …)일 때만 찍는다
@@ -219,6 +256,28 @@ const RECIPES = {
     await page.getByTestId("aircraft-card").waitFor();
     await wait(9_000); // 지도 이동 · 상세 · 노선 · 집중 추적 첫 보고
     return `${String(t.callsign).trim()} (${t.hex}) — 한반도 영역에서 가장 높이 나는 항공기`;
+  },
+  async hot(shot) {
+    // 핫 리전(ADR-013): 관심 지역 밖(도쿄)을 줌 ≥ 7 로 열고 아무것도 고르지 않으면 서버가 화면 중심 칸을 수집기에 맡긴다. 지도 칩이 '핫 리전 … 갱신'(isHotActive —
+    // 수집기가 그 칸을 조회해 발행한 뒤에만 active, api 는 마지막 성공이 max(15 s, 주기 × 3) 안일 때만 active 로 보낸다)이 될 때까지 기다리고(상한 HOT_WAIT_MS),
+    // WS 차분 한 주기(api ws-diff-interval-s 10 s)를 넘게 더 기다려 핫 리전 자료가 지도에 그려진 뒤 찍는다. 대기 · 지연 · 오류 · 꺼짐 · 제한 · 관심 지역 안이면
+    // 마지막 칩 글자와 함께 건너뛴다. 캡처 조건 = 찍기 전후에 읽은 칩 글자 · 항공기 수(같을 때만 — 찍을 때도 '갱신'인지 다시 본다)
+    await openMap(shot.path);
+    await setPressed("layer-ships", false);
+    await setLegend(false);
+    const read = async () => {
+      const c = await page.evaluate(() => {
+        const el = document.querySelector('[data-testid="demand-map-chip"]');
+        return el ? { kind: el.getAttribute("data-kind"), text: (el.textContent ?? "").trim() } : null;
+      });
+      if (!isHotActive(c?.kind, c?.text)) throw new Skip(`지도 칩이 핫 리전 ‘갱신’이 아님 — ${c ? `${c.kind} ‘${c.text}’` : "칩 없음"}`);
+      const n = chipCount(await chipValue("aircraft-count"));
+      if (!(n > 0)) throw new Skip(`상태 바 aircraft 수가 1 이상이 아님(${n ?? "—"})`);
+      return hotVariant(shot.path, c.text, n);
+    };
+    await until(read, HOT_WAIT_MS);
+    await wait(12_000);
+    return read;
   },
   async ship(shot) {
     // 계획의 위치(부산항 부근)에 선박이 없으면 수신국이 많은 도쿄만으로 — 어디서 찍었는지 조건에 적는다
@@ -474,13 +533,23 @@ for (const shot of fatal ? [] : shots) {
   try {
     if (!recipe) throw new Skip("이 스크립트에 캡처 방법이 없음(RECIPES)");
     console.log(`… ${shot.id}`);
-    const condition = await recipe(shot);
+    const got = await recipe(shot);
+    // 레시피가 읽기 함수를 돌려주면 캡처 조건은 화면 값이다(칩 글자 · 항공기 수) — 찍기 직전과 직후에 읽어 같을 때만 싣는다(WS 차분이 10 s 마다 와 값이 바뀔 수 있다)
+    const read = typeof got === "function" ? got : null;
     await assertNoErrors();
     const mask = await maskLocators(shot);
-    const variant = maskedVariant(withStackNote(stack, condition), (shot.masks ?? []).map((m) => m.label));
     await page.evaluate(() => document.fonts?.ready);
-    const positions = await measure(shot.callouts);
-    const png = await page.screenshot({ type: "png", mask, maskColor: MASK_COLOR });
+    let condition = read ? null : got, positions, png;
+    for (let attempt = 1; ; attempt++) {
+      const before = read ? await read() : null;
+      positions = await measure(shot.callouts);
+      png = await page.screenshot({ type: "png", mask, maskColor: MASK_COLOR });
+      if (!read) break;
+      const after = await read();
+      if (after === before) { condition = after; break; }
+      if (attempt >= READ_TRIES) throw new Skip(`찍는 동안 화면 값이 바뀜(${READ_TRIES}번 — 마지막 ${before} → ${after})`);
+    }
+    const variant = maskedVariant(withStackNote(stack, condition), (shot.masks ?? []).map((m) => m.label));
     const enc = await encode(png);
     const file = hashedName(shot.id, enc.bytes, enc.format);
     writeFileSync(join(OUT, file), enc.bytes);

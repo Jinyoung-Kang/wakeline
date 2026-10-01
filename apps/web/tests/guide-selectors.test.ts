@@ -16,10 +16,13 @@ const walk = (d: string): string[] => readdirSync(join(WEB, d)).flatMap((n) => {
   return statSync(join(WEB, rel)).isDirectory() ? (n === "guide" ? [] : walk(rel)) : /\.tsx?$/.test(n) ? [rel] : [];
 });
 const SRC = ["app", "components"].flatMap(walk).map((f) => readFileSync(join(WEB, f), "utf8")).join("\n");
+/** 상태 바 칩의 testid 는 lib/statusbar 가 정하고(testId: "…") StatusBar 의 ChipView 가 data-testid={chip.testId} 로 그린다 */
+const STATUS_CHIPS = readFileSync(join(WEB, "lib", "statusbar.ts"), "utf8");
 
-/** 소스에 그 data-testid 가 있는가 — 글자 그대로, 컴포넌트 prop(testId="…"), 조건부 값, 또는 `${앞}-${…}` 로 만들고 뒷부분이 소스의 글자로 있을 때 */
+/** 소스에 그 data-testid 가 있는가 — 글자 그대로, 컴포넌트 prop(testId="…"), 조건부 값, 상태 바 칩(lib/statusbar testId: "…"), 또는 `${앞}-${…}` 로 만들고 뒷부분이 소스의 글자로 있을 때 */
 function hasTestId(id: string): boolean {
   if (SRC.includes(`data-testid="${id}"`) || SRC.includes(`testId="${id}"`)) return true;
+  if (SRC.includes("data-testid={chip.testId}") && STATUS_CHIPS.includes(`testId: "${id}"`)) return true;
   if (new RegExp(`data-testid=\\{[^}\\n]*\\? "${id}"`).test(SRC)) return true; // 조건부: data-testid={조건 ? "id" : undefined}
   const cut = id.lastIndexOf("-");
   if (cut > 0) {

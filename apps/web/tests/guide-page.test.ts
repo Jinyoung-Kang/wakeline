@@ -23,6 +23,9 @@ import { htmlUtcLeaks, utcLeaks } from "./helpers/kst-only";
 import { parseHtml } from "./helpers/html-tree";
 import { TRAFFIC_LAYER_LABEL, TRAFFIC_LEGEND_NOTE } from "@/lib/traffic-grid";
 import { RECEPTION_LAYER_LABEL } from "@/lib/reception-meta";
+import { HOT_STATES, hotChip } from "@/lib/demand";
+import { HOT_MIN_ZOOM } from "@/lib/viewport";
+import { GLOBAL_STALE_S } from "@/lib/ws-protocol";
 
 const links: { href: string; prefetch?: boolean | null }[] = [];
 vi.mock("next/link", () => ({
@@ -354,5 +357,36 @@ describe("time examples", () => {
   it("unknown values are shown as — without a unit", () => {
     const t = text(render(EMPTY));
     expect(t).not.toMatch(/— (ft|kt|ms|m|km|s)\b/);
+  });
+});
+
+/**
+ * 2026-10-01 두 그림: 전세계 보기(2.2 — world)와 관심 지역 밖 핫 리전(2.5 — hot). 설명은 코드의 값(HOT_MIN_ZOOM · GLOBAL_STALE_S)과 화면이 실제로 그리는 칩 글자(lib/demand hotChip)로.
+ */
+describe("world (2.2) and hot (2.5) figures", () => {
+  const raw = (html: string, from: string, to: string) => html.slice(html.indexOf(`<section id="${from}"`), html.indexOf(`<section id="${to}"`));
+  it("2.2 places the world figure and says what the zoomed-out map counts: no hot region below the hot zoom, the merged list, the antimeridian band, the world chip", () => {
+    const html = render(EMPTY);
+    expect(raw(html, "dashboard-map", "dashboard-layers")).toContain('data-guide-shot="world"');
+    const t = section(html, "dashboard-map");
+    expect(t).toContain(`줌 ${HOT_MIN_ZOOM} 미만으로 축소하면 핫 리전 조회를 하지 않고`);
+    expect(t).toMatch(/관심 지역 · 핫 리전 · 집중 추적 · 전세계 피드를 합친 목록[^.]*같은 항공기는 가장 최근 관측 하나/);
+    expect(t).toMatch(/날짜 변경선\(±180°\)을 넘으면 그 위도 띠 전체/);
+    expect(t).toContain(`${GLOBAL_STALE_S} s 를 넘거나 서버가 오래됐다고 판정하면 STALE`);
+    expect(t).toMatch(/전세계 피드가 없으면[^.]*‘—’/);
+  });
+  it("2.5 places the hot figure after the aircraft figure and quotes the chip as lib/demand draws it", () => {
+    const html = render(EMPTY);
+    const sec = raw(html, "dashboard-aircraft", "dashboard-ship");
+    expect(sec.indexOf('data-guide-shot="aircraft"')).toBeGreaterThan(0);
+    expect(sec.indexOf('data-guide-shot="hot"')).toBeGreaterThan(sec.indexOf('data-guide-shot="aircraft"'));
+    const t = section(html, "dashboard-aircraft");
+    const chip = (state: (typeof HOT_STATES)[number]) => hotChip({ hot: { cell: null, radius_nm: 100, state, interval_s: state === "active" ? 30 : null }, focus: null, received_at: 0 })!.text;
+    for (const s of ["active", "pending", "covered_by_region"] as const) expect(t).toContain(`‘${chip(s)}’`);
+    expect(t).toContain(`줌 ${HOT_MIN_ZOOM} 이상으로 고정 관심 지역(한반도) 밖을 보면`);
+    expect(t).toMatch(/0\.5° 격자/);
+    expect(t).toMatch(/화면 대각선의 절반을 50 NM 단위로 올린 값\(50–250 NM\)/);
+    expect(t).toMatch(/마지막 성공이 주기 × 3\(적어도 15 s\) 안/);
+    expect(t).toMatch(/어느 수집\(관심 지역 · 핫 리전 · 전세계\)으로 받았는지는 따로 적지 않습니다/);
   });
 });

@@ -96,6 +96,36 @@ export function fixtureVariant(variant) {
   return typeof variant === "string" && /fixture/i.test(variant);
 }
 
+/**
+ * 지도 칩(data-testid demand-map-chip)이 '핫 리전이 지금 조회되고 있다'고 말하는가 — lib/demand hotChip 의 active 글자("핫 리전 30초 갱신(반경 100 NM)" ·
+ * 주기 · 반경을 서버가 보고하지 않으면 그 부분 없이)만. active 는 수집기가 그 칸을 조회해 발행한 뒤에만 쓰고(collector jobs/demand.py), api 는 마지막 성공이
+ * max(15 s, 주기 × 3) 안일 때만 active 로 보낸다(CollectorDemandStatus.activeAt). 대기 · 지연 · 오류 · 꺼짐 · 제한 · 관심 지역 안 · 집중 추적 칩은 아니다.
+ * 글자 모양은 시험(tests/guide-capture.test.ts)이 hotChip 의 모든 상태와 견준다.
+ */
+const HOT_ACTIVE_RE = /^핫 리전(?: \d+(?:\.\d)?초)? 갱신(?:\(반경 \d+ NM\))?$/;
+export function isHotActive(kind, text) {
+  return kind === "hot" && typeof text === "string" && HOT_ACTIVE_RE.test(text.trim());
+}
+
+/** 상태 바 aircraft 칩의 값(lib/statusbar — String(수) 또는 모르면 "—") → 수. 수가 아니면 null(읽지 못한 값을 지어내지 않는다) */
+export function chipCount(text) {
+  const t = typeof text === "string" ? text.trim() : "";
+  return /^\d+$/.test(t) ? Number(t) : null;
+}
+
+/** 지도 경로("/#줌/위도/경도")의 위치 글자 */
+const where = (path) => path.replace(/^\//, "");
+
+/** 전세계 그림의 캡처 조건 — 지도 위치와 찍을 때 상태 바가 보인 항공기 수(구독 영역 안 — 화면이 날짜 변경선을 넘으면 그 위도 띠 전체) */
+export function worldVariant(path, aircraft) {
+  return `전세계 ${where(path)} · 상태 바 aircraft ${aircraft}(구독 영역 안)`;
+}
+
+/** 핫 리전 그림의 캡처 조건 — 지도 위치(도쿄 — 계획의 경로) · 찍을 때 지도 칩 글자 그대로 · 상태 바 항공기 수 */
+export function hotVariant(path, chipText, aircraft) {
+  return `도쿄 ${where(path)} · 지도 칩 ‘${chipText}’ · 상태 바 aircraft ${aircraft}`;
+}
+
 /** 통계 화면의 패널 수(app/stats/page.tsx — FIR · 위험 유형 · 시간대별 항공기 · 알림) */
 export const STATS_PANELS = 4;
 const STATS_STATES = new Set(["loading", "ready", "empty", "error"]);

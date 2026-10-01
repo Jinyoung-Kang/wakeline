@@ -8,11 +8,14 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
-  anchorPoint, checkLocalBase, credentialFileWarning, findColumn, fixtureVariant, hashedName, maskedVariant, mergeManifest, parseArgs, parseCredentials, realDataVerdict, sizeReport,
-  stackNote, staleFiles, statsPanelsVerdict, withStackNote,
+  anchorPoint, checkLocalBase, chipCount, credentialFileWarning, findColumn, fixtureVariant, hashedName, hotVariant, isHotActive, maskedVariant, mergeManifest, parseArgs, parseCredentials,
+  realDataVerdict, sizeReport, stackNote, staleFiles, statsPanelsVerdict, withStackNote, worldVariant,
 } from "../scripts/guide-capture-lib.mjs";
 import manifestJson from "@/lib/guide-manifest.json";
+import { FOCUS_STATES, focusChip, HOT_STATES, hotChip } from "@/lib/demand";
 import { GUIDE_FILE_RE, parseManifest, PLAN } from "@/lib/guide";
+import { statusChips } from "@/lib/statusbar";
+import { HOT_MIN_ZOOM } from "@/lib/viewport";
 
 const SECRET = "correct-horse-battery";
 
@@ -275,7 +278,7 @@ describe("capture recipes: stats waits for every panel; reception turns the coas
     const list = /const OVERLAY_LAYERS = \[([^\]]*)\]/.exec(src);
     const overlays = [...(list?.[1] ?? "").matchAll(/"([^"]+)"/g)].map((m) => m[1]);
     const ids = [...src.matchAll(/^ {2}async (?:"([\w-]+)"|(\w+))\(shot\) \{/gm)].map((m) => m[1] ?? m[2]);
-    expect(ids).toEqual(expect.arrayContaining(["traffic", "reception", "search", "aircraft", "ship", "port-calls", "alerts", "radar"]));
+    expect(ids).toEqual(expect.arrayContaining(["world", "traffic", "reception", "search", "aircraft", "hot", "ship", "port-calls", "alerts", "radar"]));
     for (const id of ids) {
       const r = recipe(id);
       const on = [...r.matchAll(/setPressed\("([\w-]+)", true\)/g)].map((m) => m[1]);
@@ -291,3 +294,106 @@ describe("capture recipes: stats waits for every panel; reception turns the coas
   });
 });
 
+
+/**
+ * README · 설명서의 두 그림(2026-10-01): 전세계 보기(world)와 관심 지역 밖 핫 리전(hot).
+ * - world: 줌 5 이하(서버가 넓은 구독을 받는 줌) · 핫 리전 줌 미만. 상태 바 world 칩이 정상(전세계 피드가 있고 오래되지 않음 — data-health "ok")이고
+ *   aircraft 칩이 1 이상일 때만 찍는다(관심 지역만 찍힌 '전세계' 그림을 싣지 않는다).
+ * - hot: 줌 ≥ HOT_MIN_ZOOM 으로 관심 지역 밖(도쿄)을 열고 아무것도 고르지 않는다. 지도 칩이 핫 리전 '갱신'(서버 상태 active — 수집기가 그 칸을 조회해 발행한 뒤에만
+ *   쓰고, api 는 마지막 성공이 max(15 s, 주기 × 3) 안일 때만 active 로 보낸다)일 때만 찍는다. 그 판정(isHotActive)은 lib/demand 가 그리는 칩 글자와 시험으로 묶는다.
+ * - 두 그림의 캡처 조건은 화면에서 읽은 값(칩 글자 · 항공기 수)이다 — 찍기 전후 두 번 읽어 같을 때만 싣는다(차분이 10 s 마다 와 수가 바뀔 수 있다).
+ */
+describe("world and hot figures: what proves real data is on screen", () => {
+  const src = readFileSync(new URL("../scripts/guide-screenshots.mjs", import.meta.url), "utf8");
+  const recipe = (id: string) => {
+    const i = src.search(new RegExp(`^ {2}async (?:"${id}"|${id})\\(shot\\) \\{`, "m"));
+    expect(i, id).toBeGreaterThan(0);
+    return src.slice(i, src.indexOf("\n  },\n", i));
+  };
+  const zoomOf = (path: string) => Number(/^\/#([\d.]+)\//.exec(path)?.[1]);
+  const shot = (id: string) => PLAN.shots.find((s) => s.id === id)!;
+
+  it("plan: world is a zoomed-out map (≤ 5, below the hot-region zoom) in 2.2; hot is outside the interest region at ≥ HOT_MIN_ZOOM in 2.5, after the aircraft card", () => {
+    expect(shot("world").section).toBe("dashboard-map");
+    expect(zoomOf(shot("world").path)).toBeLessThanOrEqual(5);
+    expect(zoomOf(shot("world").path)).toBeLessThan(HOT_MIN_ZOOM);
+    expect(shot("hot").section).toBe("dashboard-aircraft");
+    expect(zoomOf(shot("hot").path)).toBeGreaterThanOrEqual(HOT_MIN_ZOOM);
+    const ids = PLAN.shots.map((s) => s.id);
+    expect(ids.indexOf("hot")).toBe(ids.indexOf("aircraft") + 1);
+    expect(shot("world").callouts.map((c) => c.target)).toEqual(['[data-testid="aircraft-count"]', '[data-testid="global-lag-badge"]', '[data-testid="lag-badge"]']);
+    expect(shot("hot").callouts.map((c) => c.target)).toEqual(['[data-testid="demand-map-chip"]', '[data-testid="aircraft-count"]', '[data-testid="lag-badge"]']);
+  });
+
+  it("isHotActive: true only for the chip lib/demand draws when the server reports the hot region active (any interval, any radius)", () => {
+    for (const state of HOT_STATES) for (const interval_s of [null, 30, 60, 120, 7.5]) for (const radius_nm of [null, 50, 250, 120.4]) {
+      const chip = hotChip({ hot: { cell: "35.5:140.0:250", radius_nm, state, interval_s }, focus: null, received_at: 0 });
+      expect(chip, state).not.toBeNull();
+      expect(isHotActive(chip!.kind, chip!.text), `${state} ${interval_s} ${radius_nm}`).toBe(state === "active");
+    }
+    // 선택 항공기의 집중 추적 칩은 핫 리전이 아니다(같은 자리 · 같은 testid)
+    for (const state of FOCUS_STATES) {
+      const c = focusChip({ hot: null, focus: { hex: "abc123", state, interval_s: 5, since: null }, received_at: 0 }, "abc123", 0)!;
+      expect(isHotActive(c.kind, c.text), state).toBe(false);
+    }
+    expect(isHotActive(null, "핫 리전 30초 갱신(반경 250 NM)")).toBe(false);
+    expect(isHotActive("hot", null)).toBe(false);
+  });
+
+  it("chipCount reads the status bar's aircraft chip value (String(n), or — when unknown) and nothing else", () => {
+    const at = Date.parse("2026-10-01T03:00:00Z");
+    const value = (n: number | null) => statusChips({
+      conn: "open", reconnectAttempt: 0, lastRxAt: at, nowMs: at, srvNowMs: at, feeds: { region: null, global: null }, aircraftCount: n, status: null,
+      sigmetsProvider: "", sigmetsFetchedAt: null, radar: null, radarKr: null, ais: null, snapshotVersion: 1,
+    }).find((c) => c.testId === "aircraft-count")!.value;
+    for (const n of [0, 7, 12_345]) expect(chipCount(value(n))).toBe(n);
+    expect(chipCount(value(null))).toBeNull();
+    for (const bad of ["", "1,234", "12a", "-3", null]) expect(chipCount(bad), String(bad)).toBeNull();
+    expect(chipCount(" 42 ")).toBe(42);
+  });
+
+  it("the capture conditions say where the map was and what the page showed — within the 120 characters the page accepts", () => {
+    expect(worldVariant("/#1.6/30/60", 9876)).toBe("전세계 #1.6/30/60 · 상태 바 aircraft 9876(구독 영역 안)");
+    expect(hotVariant("/#8.2/35.55/139.9", "핫 리전 30초 갱신(반경 100 NM)", 87)).toBe("도쿄 #8.2/35.55/139.9 · 지도 칩 ‘핫 리전 30초 갱신(반경 100 NM)’ · 상태 바 aircraft 87");
+    const longest = maskedVariant(withStackNote("수집 모드 모름(fixture 허용으로 찍음)", hotVariant("/#8.2/35.55/139.9", "핫 리전 120초 갱신(반경 250 NM)", 99_999)), []);
+    expect(longest?.length).toBeLessThanOrEqual(120);
+  });
+
+  it("world: waits for a healthy world chip and a counted aircraft list, skips otherwise, and returns a reader (no ships, no overlays, no selection)", () => {
+    const r = recipe("world");
+    expect(r).toMatch(/await openMap\(shot\.path\)/);
+    expect(r).toMatch(/setPressed\("layer-ships", false\)/);
+    expect(r).toContain('"global-lag-badge"');
+    expect(r).toContain('"data-health"');
+    expect(r).toMatch(/[!=]== "ok"/);
+    expect(r).toContain('"aircraft-count"');
+    expect(r).toMatch(/chipCount\(/);
+    expect(r).toMatch(/throw new Skip\(/);
+    expect(r).not.toMatch(/press\("\/"\)|keyboard\.press\("Enter"\)/);
+    expect(r).toMatch(/return read;/);
+  });
+
+  it("hot: waits (bounded) for the hot-region chip to say active, then one WS diff period, re-checks at the shot, never selects an aircraft", () => {
+    const r = recipe("hot");
+    expect(r).toMatch(/await openMap\(shot\.path\)/);
+    expect(r).toMatch(/setPressed\("layer-ships", false\)/);
+    expect(r).toContain('"demand-map-chip"');
+    expect(r).toMatch(/isHotActive\(c\?\.kind, c\?\.text\)/); // 칩의 종류(data-kind)와 글자 — 집중 추적 칩을 핫 리전으로 읽지 않는다
+    expect(r).toMatch(/HOT_WAIT_MS/);
+    expect(r).toMatch(/throw new Skip\(/);
+    expect(r).not.toMatch(/press\("\/"\)|keyboard\.press\("Enter"\)|aircraft-search/);
+    expect(r).toMatch(/return read;/);
+    // 칩이 active 가 된 뒤 WS 차분 한 주기(api ws-diff-interval-s 10 s)를 넘게 기다린다 — 핫 리전 자료가 지도에 그려진 뒤
+    expect(r).toMatch(/await wait\(12_000\)/);
+  });
+
+  it("a recipe that returns a reader is read just before and just after the screenshot; a change means another try, then a skip", () => {
+    const loop = src.slice(src.indexOf("for (const shot of fatal ? [] : shots)"), src.indexOf("// 찍는 사이에 스택이 FIXTURE 로"));
+    const shotAt = loop.indexOf("page.screenshot(");
+    expect(shotAt).toBeGreaterThan(0);
+    expect(loop.lastIndexOf("await read()", shotAt)).toBeGreaterThan(0); // 찍기 전
+    expect(loop.indexOf("await read()", shotAt)).toBeGreaterThan(shotAt); // 찍은 뒤
+    expect(loop).toMatch(/READ_TRIES/);
+    expect(loop).toMatch(/throw new Skip\(`찍는 동안 화면 값이 바뀜/);
+  });
+});
