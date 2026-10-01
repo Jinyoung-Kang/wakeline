@@ -37,15 +37,15 @@ public class HistoryController {
     private final TrackRepository tracks;
     private final SigmetRepository sigmetRepo;
     private final StatsRepository stats;
-    /** 공개 상태 — WS 와 같은 3 s 캐시(R-53: 요청마다 Redis 해시를 여러 번 읽지 않는다). */
+    /** 공개 상태 — WS 와 같은 3 s 캐시(StatusService, R-53: 요청마다 Redis 해시를 여러 번 읽지 않는다). */
     private final java.util.function.Supplier<Map<String, Object>> status;
     private final AppProperties props;
 
-    public HistoryController(TrackRepository tracks, SigmetRepository sigmetRepo, StatsRepository stats, dev.wakeline.ws.WsHub hub, AppProperties props) {
+    public HistoryController(TrackRepository tracks, SigmetRepository sigmetRepo, StatsRepository stats, StatusService status, AppProperties props) {
         this.tracks = tracks;
         this.sigmetRepo = sigmetRepo;
         this.stats = stats;
-        this.status = hub::status;
+        this.status = status::cachedPublicStatus;
         this.props = props;
     }
 

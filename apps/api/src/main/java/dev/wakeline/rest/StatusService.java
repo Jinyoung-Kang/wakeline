@@ -11,6 +11,11 @@ import dev.wakeline.ingest.RadarStore;
 import dev.wakeline.ingest.SigmetStore;
 import dev.wakeline.ingest.Snapshot;
 import dev.wakeline.ingest.SnapshotStore;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
@@ -20,9 +25,16 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.Supplier;
 
-/** 공개 상태(비밀값·수치 예산 없음)와 운영 상태(공급자 해시 전체). collector 가 Redis 에 쓴 값을 읽는다. */
+/**
+ * 공개 상태(비밀값·수치 예산 없음)와 운영 상태(공급자 해시 전체). collector 가 Redis 에 쓴 값을 읽는다.
+ * 공개 상태는 {@link #STATUS_TTL_MS} 동안 한 벌을 나눠 쓴다(R-53) — WS status 메시지와 REST /api/v1/status 가 같은 캐시에서 읽는다
+ * (예전에는 이 캐시가 WS 허브 안에 있어 REST 컨트롤러가 WS 허브를 읽었다 — api-review E6 · §2.5-5).
+ */
 @Service
 public class StatusService {
+    private static final Logger log = LoggerFactory.getLogger(StatusService.class);
+    /** 공개 상태(Redis 조회 3회) 공유 캐시 수명 */
+    static final long STATUS_TTL_MS = 3_000;
     /**
      * 운영 화면 공급자(상태 해시 wakeline:provider:{name} · 켜고 끄기는 감사 기록과 함께 — OpsController). adsbdb = 선택 항공기 노선 조회
      * (계약 v4 §G A-2 — 끄면 수집기가 묻지 않고 노선 상태는 disabled). 해시에는 호출 시각·지연·건수·오류·예산만 있고 노선 내용은 없다(ADR-016).
@@ -45,8 +57,18 @@ public class StatusService {
     private final AisStatus ais;
     /** collector heartbeat 가 이보다 오래되면 그 안의 adsb_fi_rps_1m 은 '현재' 값이 아니다(null). */
     static final long HEARTBEAT_MAX_AGE_S = 120;
+    private record Cached(long atMs, Map<String, Object> status) {}
+    private final Object statusLock = new Object();
+    private volatile Cached statusCache;
+    private final Counter statusHit;
+    private final Counter statusMiss;
 
     @Autowired
+    public StatusService(SnapshotStore snapshots, SigmetStore sigmets, RadarStore radar, EngineService engine, StringRedisTemplate redis, RegionSettings region,
+                         DemandStats demand, AisStatus ais, MeterRegistry meters) {
+        this(snapshots, sigmets, radar, engine, redis, (Supplier<RegionSettings.Region>) region::current, demand, ais, meters);
+    }
+
     public StatusService(SnapshotStore snapshots, SigmetStore sigmets, RadarStore radar, EngineService engine, StringRedisTemplate redis, RegionSettings region,
                          DemandStats demand, AisStatus ais) {
         this(snapshots, sigmets, radar, engine, redis, (Supplier<RegionSettings.Region>) region::current, demand, ais);
@@ -68,6 +90,14 @@ public class StatusService {
 
     StatusService(SnapshotStore snapshots, SigmetStore sigmets, RadarStore radar, EngineService engine, StringRedisTemplate redis, Supplier<RegionSettings.Region> region,
                   DemandStats demand, AisStatus ais) {
+        this(snapshots, sigmets, radar, engine, redis, region, demand, ais, new SimpleMeterRegistry());
+    }
+
+    StatusService(SnapshotStore snapshots, SigmetStore sigmets, RadarStore radar, EngineService engine, StringRedisTemplate redis, Supplier<RegionSettings.Region> region,
+                  DemandStats demand, AisStatus ais, MeterRegistry meters) {
+        // 캐시 적중률(R-53): 공유 status 페이로드(WS · REST /status)
+        this.statusHit = Counter.builder("wakeline_cache_requests_total").tag("cache", "status").tag("result", "hit").register(meters);
+        this.statusMiss = Counter.builder("wakeline_cache_requests_total").tag("cache", "status").tag("result", "miss").register(meters);
         this.ais = ais;
         this.snapshots = snapshots;
         this.sigmets = sigmets;
@@ -79,6 +109,44 @@ public class StatusService {
     }
 
     private static Supplier<RegionSettings.Region> fixed(RegionSettings.Region r) { return () -> r; }
+
+    /**
+     * 공개 상태(REST /api/v1/status 가 쓴다, R-53) — WS 와 같은 STATUS_TTL_MS 캐시. 요청마다 Redis 를 읽지 않는다. 조회 실패 시 이전 값,
+     * 이전 값도 없으면 예외를 그대로 올린다(REST 가 503 으로).
+     */
+    public Map<String, Object> cachedPublicStatus() {
+        Map<String, Object> c = cachedPublicStatusOrNull();
+        return c != null ? c : publicStatus();
+    }
+
+    /**
+     * 공개 상태(WS status 메시지가 쓴다) — STATUS_TTL_MS 동안 모든 세션 · REST 가 같은 맵을 쓴다(같은 인스턴스 — WS 는 그 동안 직렬화도 한 번만).
+     * 조회 실패 시 이전 값(없으면 null).
+     */
+    public Map<String, Object> cachedPublicStatusOrNull() {
+        long now = System.currentTimeMillis();
+        Cached c = statusCache;
+        if (c != null && now - c.atMs() < STATUS_TTL_MS) {
+            statusHit.increment();
+            return c.status();
+        }
+        synchronized (statusLock) {
+            c = statusCache;
+            if (c != null && now - c.atMs() < STATUS_TTL_MS) {
+                statusHit.increment();
+                return c.status();
+            }
+            statusMiss.increment();
+            try {
+                Map<String, Object> st = publicStatus();
+                statusCache = new Cached(System.currentTimeMillis(), st);
+                return st;
+            } catch (RuntimeException e) {
+                log.debug("ws status unavailable: {}", e.toString());
+                return c == null ? null : c.status();
+            }
+        }
+    }
 
     public Map<String, Object> publicStatus() {
         Instant now = Instant.now();
