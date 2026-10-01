@@ -111,6 +111,7 @@
       | `dev.wakeline.persist.SigmetRepository` | `dev.wakeline.weather.data.SigmetRepository` |
       | `dev.wakeline.persist.ShipWriter` | `dev.wakeline.ships.data.ShipWriter` |
       | `dev.wakeline.persist.MaintenanceJobs` | `dev.wakeline.history.MaintenanceJobs` |
+      | `dev.wakeline.ws.OriginAllowList`(허용 Origin 정리의 WARN 두 줄 — '비었다 · 기본 목록' · "'*' ignored") | `dev.wakeline.platform.config.AppProperties`(3e1a3c92 가 정리를 옮겼다 — 최종 리뷰가 찾은 빠진 줄) |
 
       DEBUG · INFO 만 남겨 지문과 무관한 옮긴 클래스: `AlertRepository` · `StatusService` · `SecurityConfig` · `WebSocketConfig` · `StoredStaticReader` ·
       `UnlocodePorts`, 그리고 AIS 상태 해시 읽기 실패의 DEBUG 한 줄(`AisStatus` → `AisStatusReader`). `SinkAppender.OWN_PACKAGE`(`dev.wakeline.logs.`)는
@@ -154,7 +155,7 @@
   `IngestEvents` 는 없어졌다.
 - 동작 · 계약 변화 없음: 옮긴 커밋은 패키지 줄 · import · 한정자만 바꿨고(시험도 같다 — 나눈 시험은 메서드를 그대로 옮겼다), OpenAPI 스냅샷 · WS 표본은 바이트
   그대로, REST 표본은 같다. api 시험 수는 이동 내내 1,047 이었고 `KrRadarReaderTest` 3개를 더해 1,050 이다.
-- 알려진 비용: 위 표의 로거 열두 개의 WARN · ERROR 묶음이 새 fp 로 보인다 — 운영자가 다시 해결한다(VERIFICATION · 최종 보고에 적는다).
+- 알려진 비용: 위 표의 로거 열세 개의 WARN · ERROR 묶음이 새 fp 로 보인다 — 운영자가 다시 해결한다(VERIFICATION · 최종 보고에 적는다).
 - 새 코드의 규칙: 결정 1 의 '둘 곳'과 결정 2 의 규칙을 따르고, 어기면 `ArchitectureTest` 가 규칙 이름과 클래스로 알린다. `KNOWN` 에 더하는 것은 이유를 적은
   일시적 예외일 때만이고, 고치면 지운다(남아 있으면 시험이 실패한다).
 - 되돌리기: 패키지 이동과 읽기 분리뿐이라 데이터 · 계약 · URL 과 무관하다(세션 직렬화 클래스는 옮기지 않았다).

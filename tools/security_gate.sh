@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 로컬 보안 게이트(make security, R-07) — 원격 CI 가 없어도 ci.yml 의 security · third-party-images job 과 같은 기준으로 막는다.
-#   1) gitleaks: git 이력 전체(새 clone · --network none). 허용은 .gitleaksignore 의 지문(시험용 가짜 값 6건)뿐 — 하나라도 더 나오면 실패
+#   1) gitleaks: git 이력 전체(새 clone · --network none). 허용은 .gitleaksignore 의 정확한 지문(시험용 가짜 값만 — 목록은 그 파일)뿐 — 하나라도 더 나오면 실패
 #   2) trivy: 자체 이미지 wakeline-api·collector·web:local — 고칠 수 있는(ignore-unfixed) HIGH/CRITICAL 이 있으면 실패
 #   3) trivy: compose 에 고정된 제3자 이미지 + make bench 의 k6 — 차단 여부는 ci.yml third-party-images 행렬(blocking)을 그대로 읽는다
 #   4) 의존성 감사: ci.yml 의 npm audit(web) · pip-audit(collector)와 같은 명령(tools/dependency_audit.sh, S2) — 취약점이 있거나 돌리지 못하면 실패
