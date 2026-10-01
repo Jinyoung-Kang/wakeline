@@ -288,6 +288,69 @@ describe("/logs: the auto-check is not sent while the previous check is still ou
   });
 });
 
+/**
+ * 필터를 바꾼 불러오기가 실패하면 앞 필터의 줄 · 묶음이 화면에 남는다. 다음 자동 확인(새 필터)이 그것과 견주어 새 필터의 줄을 '새 항목 N건'으로 내놓았고,
+ * 반영하면 두 필터의 줄이 섞였다 — 묶음 보기는 '묶음에 새 항목'(리뷰 cto-2026-10 최종의 후속). 다른 조건으로 받은 것은 견줄 기준이 아니다:
+ * '보이는 줄이 없으면 바로 보인다' 와 같이 확인의 답을 바로 보인다(그 조건의 목록이 처음 보이는 것이다 — 실패한 불러오기를 확인이 대신한다).
+ */
+describe("/logs: after a failed load for a new filter, the auto-check does not compare with the previous filter's list", () => {
+  const failOnce = (match: string) => {
+    let failed = false;
+    return (u: string) => { if (!u.includes(match) || failed) return false; failed = true; return true; };
+  };
+  it("list: the check shows the new filter's rows at once instead of offering them as '새 항목'", async () => {
+    const first = failOnce("level=ERROR");
+    stub((u) => (!isList(u) ? json(404, {}) : first(u) ? json(503, { detail: "log store unavailable" }) : u.includes("level=ERROR") ? json(200, page([T(1), T(2)])) : json(200, page([T(5)]))));
+    await open();
+    await m.click(m.button("ERROR")); // 실패 — 앞 필터의 [T(5)] 가 남는다
+    expect(rows()).toEqual([T(5)]);
+    await tick();
+    expect(m.byTestId("logs-new")?.textContent ?? null).toBeNull();
+    expect(rows()).toEqual([T(1), T(2)]);
+  });
+
+  it("groups: the check shows the new filter's groups at once instead of offering them as changed", async () => {
+    const first = failOnce("level=ERROR");
+    stub((u) => (!isGroups(u) ? (isList(u) ? json(200, page([T(1)])) : json(404, {}))
+      : first(u) ? json(503, { detail: "log store unavailable" })
+      : json(200, { groups: [group(u.includes("level=ERROR") ? 42 : 17)], scanned: 10, scan_truncated: false })));
+    await open();
+    await m.click(m.button("묶음(fp)"));
+    await m.click(m.button("ERROR")); // 실패 — 앞 필터의 묶음(17)이 남는다
+    expect(m.allByTestId("log-group")[0].textContent).toContain("17");
+    await tick();
+    expect(m.byTestId("logs-new")?.textContent ?? null).toBeNull();
+    expect(m.allByTestId("log-group")[0].textContent).toContain("42");
+  });
+
+  // 같은 뿌리: '더 보기' 는 화면 목록의 커서에 지금 필터를 붙여 보냈다 — 앞 필터의 목록 아래 새 필터의 줄이 붙었다
+  it("'이전 항목 더 보기' continues the list on screen under the filter it was loaded with", async () => {
+    const first = failOnce("level=ERROR");
+    stub((u) => (!isList(u) ? json(404, {})
+      : u.includes("cursor=") ? json(200, page([u.includes("level=ERROR") ? T(9) : T(6)]))
+      : first(u) ? json(503, { detail: "log store unavailable" })
+      : json(200, page([T(5)], { next_cursor: T(5) }))));
+    await open();
+    await m.click(m.button("ERROR")); // 실패 — 앞 필터의 [T(5)] 와 그 커서가 남는다
+    await m.click(m.button("이전 항목 더 보기"));
+    expect(rows()).toEqual([T(5), T(6)]);
+  });
+
+  it("a failed reload of the same filter still compares with the rows on screen (they are that filter's)", async () => {
+    let body: unknown = page([T(1)]);
+    let fail = false;
+    stub((u) => (!isList(u) ? json(404, {}) : fail ? json(503, { detail: "log store unavailable" }) : json(200, body)));
+    await open();
+    fail = true;
+    await m.click(m.button("새로고침"));
+    fail = false;
+    body = page([T(0), T(1)]);
+    await tick();
+    expect(m.byTestId("logs-new")!.textContent).toBe("새 항목 1건");
+    expect(rows()).toEqual([T(1)]);
+  });
+});
+
 describe("/logs list: errors, the last-success time and the selection across reloads", () => {
   it("a failed load shows its error with the request id; the next successful check clears it and sets 갱신", async () => {
     let fail = true;
