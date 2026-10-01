@@ -79,8 +79,8 @@ const PIPELINE_SPEC: [PipelineGroup, string, string, Kind, string][] = [
   ["ais", "quarantined_total", "AIS 격리", "quarantine", "품질 규칙으로 걸러낸 메시지(지도에 표시 안 함) — 누적"],
   ["ais", "stream_budget_trims", "선박 스트림 예산 트림", "count", `바이트 예산 때문에 선박 스트림을 보존 목표(시간)보다 일찍 자른 발행 수 — 누적. ${TRIM_NOT_LOSS}`],
   ["ais", "stream_window_s.ships", "선박 스트림 보존 창", "window", ""],
-  // 수신 진단(ADR-014 부록 C — keepalive 1011 원인 가리기): 최근 창 최댓값은 aisDiagRow 가 창 · 상한 · 시간 초과(수집기 설정)와 함께 적는다.
-  // 설명의 {필드} 는 응답(수집기 상태 해시)의 고른 값으로 채운다(fillAisSettings — 웹은 숫자를 들고 있지 않다, 모르면 "—"). {필드/60} 은 분
+  // 수신 진단(ADR-014 부록 C — keepalive 1011 원인 가리기): 최근 창 최댓값은 diagRow 가 창 · 상한 · 시간 초과(수집기 설정)와 함께 적는다.
+  // 설명의 {필드} 는 응답(그 행 묶음의 수집기 상태 해시)의 고른 값으로 채운다(fillSettings — 웹은 숫자를 들고 있지 않다, 모르면 "—"). {필드/60} 은 분
   ["ais", "reconnects_quick_total", "짧은 재연결", "count", "받던 연결이 끊겨 열린 AIS 수신 공백(마지막 메시지 → 다시 받은 메시지)이 {reconnect_quick_window_s} s(수집기 고른 값) 안에 닫힌 끊김 수 — 누적(ais 시작 이후). 로그 수준과 상관없이 공백 길이로 센다. 공백은 그대로 기록된다(선박 패널 · 공백 목록). 회복 줄은 INFO 라 로그 화면에 오르지 않고 끊김 줄도 대개 INFO 다 — 같은 연결이 {reconnect_warn_window_s/60}분에 {reconnect_warn_count}번째부터 끊긴 것(되풀이, 수집기 고른 값)과 그 사이 데이터 없이 끝난 재연결 시도는 WARN 으로 오르지만, 공백이 창 안에 닫히면 여기에도 센다. 끊기기 전부터 조용해 공백이 이미 창을 넘음(idle 끊김 등) · 공백이 창을 넘도록 다시 받지 못함은 WARN 으로 오르고 여기에 세지 않는다. 손실 수가 아니다(공백이 손실 구간)"],
   ["ais", "ping_rtt_max_s", "keepalive 왕복", "diag", "keepalive ping 을 보내고 pong 을 받기까지(websockets latency) — 시간 초과를 넘으면 수집기가 1011 로 끊고 다시 붙는다. 이 값과 공급자 지연이 커지는데 루프 지연 · 수신 버퍼가 작으면 공급자 쪽(연결별 전달 적체)이 늦은 것이다. 시간 초과를 넘은 ping 은 왕복을 잴 수 없어 여기에 들지 않는다"],
   ["ais", "loop_lag_max_s", "이벤트 루프 지연", "diag", "수집기 이벤트 루프가 {loop_tick_s} s(수집기 고른 값) 잠든 뒤 늦게 깬 만큼 — 그동안 소켓을 읽지 못한다. ping 이 나가 있는 동안 keepalive 시간 초과보다 길게 멈추면 그 연결이 1011 로 끊길 수 있다(멈춤이 끝난 뒤 콜백 순서에 따라 끊기지 않기도 하고 구역마다 다를 수 있다)"],
@@ -121,9 +121,9 @@ const count = (v: unknown): number | null => (typeof v === "number" && Number.is
 export function pipelineRows(resp: unknown): PipelineRow[] {
   const r = obj(resp);
   return PIPELINE_SPEC.map(([group, key, label, kind, spec]) => {
-    const title = group === "ais" ? fillAisSettings(spec, obj(r.ais)) : spec;
+    const title = fillSettings(spec, obj(r[group]));
     if (kind === "window") return streamWindowRow(r, group, key, label);
-    if (kind === "diag") return aisDiagRow(r, group, key, label, title);
+    if (kind === "diag") return diagRow(r, group, key, label, title);
     const value = count(obj(r[group])[key]);
     const text = value == null ? "—" : kind === "age" ? fmtDuration(value) : value.toLocaleString("en-US");
     const tone = kind !== "loss" || value == null ? "muted" : value > 0 ? "bad" : "ok";
@@ -186,10 +186,10 @@ function streamWindowRow(r: Record<string, unknown>, group: PipelineGroup, key: 
 }
 
 /**
- * ais 설명의 {필드} 자리에 응답의 수집기 설정값(고른 값)을 넣는다 — 숫자를 웹에 적어 두면 수집기가 바꿀 때 조용히 어긋난다. {필드/60} 은 분 단위.
- * 모르는 값(없음 · 형식 오류)은 "—".
+ * 설명의 {필드} 자리에 그 행 묶음(collector · ais) 응답의 수집기 설정값(고른 값)을 넣는다 — 숫자를 웹에 적어 두면 수집기가 바꿀 때 조용히 어긋난다.
+ * {필드/60} 은 분 단위. 모르는 값(없음 · 형식 오류)은 "—". 자리는 소문자 · 밑줄 이름만이다(api 설명의 {result=sent} 같은 글자는 그대로 둔다).
  */
-function fillAisSettings(title: string, src: Record<string, unknown>): string {
+function fillSettings(title: string, src: Record<string, unknown>): string {
   return title.replace(/\{([a-z_]+)(\/60)?\}/g, (_m, k: string, perMin: string | undefined) => {
     const v = count(src[k]);
     return fmtSetting(v == null ? null : perMin ? v / 60 : v);
@@ -205,12 +205,12 @@ const fmtSecs = (v: number | null): string => (v == null ? "—" : `${v.toFixed(
 const fmtSetting = (v: number | null): string => (v == null ? "—" : String(Number.isInteger(v) ? v : Number(v.toFixed(2))));
 
 /**
- * ais 수신 진단 행(ADR-014 부록 C): 최근 diag_window_s 초의 최댓값. 창 · 상한(ws 수신 버퍼 · 원문 대기열) · keepalive 시간 초과는 수집기가 고른 값이라
+ * 진단 행 — ais 수신 진단(ADR-014 부록 C): 최근 diag_window_s 초의 최댓값(창은 그 행 묶음의 응답에서). 창 · 상한(ws 수신 버퍼 · 원문 대기열) · keepalive 시간 초과는 수집기가 고른 값이라
  * 응답에서 읽어 detail 에 "수집기 설정" 으로 적는다(웹이 숫자를 지어내지 않는다). 색으로 판정하지 않는다(muted — 운영자가 시간 초과 · 상한과 견준다).
  * 수신 버퍼가 상한 이상이면(꺼낸 뒤 남은 수 — websockets 는 '> 상한' 에서 멈추므로 상한과 같아도 그때 읽기가 멈춰 있었다) 그 사실만 state 에 적는다:
  * 한꺼번에 받은 묶음에서도 생기는 일이라 결함 표시(주황)가 아니다. 모르면 "—".
  */
-function aisDiagRow(r: Record<string, unknown>, group: PipelineGroup, key: string, label: string, title: string): PipelineRow {
+function diagRow(r: Record<string, unknown>, group: PipelineGroup, key: string, label: string, title: string): PipelineRow {
   const src = obj(r[group]);
   const value = count(src[key]);
   const win = `최근 ${fmtSetting(count(src.diag_window_s))} s 최대`;
@@ -229,7 +229,7 @@ function aisDiagRow(r: Record<string, unknown>, group: PipelineGroup, key: strin
     detail = `${win}(지금 기다리는 원문 포함)`;
   } else if (key === "ping_rtt_max_s") {
     detail = `${win} · 시간 초과 ${fmtSetting(count(src.ping_timeout_s))} s — 수집기 설정`;
-  } else if (key === "loop_lag_max_s") {
+  } else if (key === "loop_lag_max_s" && group === "ais") { // keepalive 는 ais 수신 연결의 것
     detail = `${win} · keepalive 시간 초과 ${fmtSetting(count(src.ping_timeout_s))} s — 수집기 설정`;
   }
   return { group, key, label, title, value, text, tone, kind: "diag", detail, state };
