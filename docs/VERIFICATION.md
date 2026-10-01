@@ -1051,19 +1051,31 @@
 - **bbox 뜻 확인**(실제 호출 네 번 — 증거 `docs/review/evidence/public-data-apis-2026-10-01-bbox.txt`) numberOfFeatures 는 돌려준 수 · 가장자리 칸은 잘리지 않고 전체(한 칸
   조회와 posList 같음) · 100 km 상자에 1,575칸(상한 없음) — ADR-023 '확인한 것'.
 
-## 자동 검사 현황(2026-10-01 08:30 KST, 네 레인 통합(#88–#93) · bbox 타일 채우기(#94) 뒤)
+## #96 README 그림이 2026-09-28 것이었다(UTC · 옛 상태 줄) — 설명서 그림을 안정된 이름으로 내보낸다 · 전세계 · 핫 리전 그림
+- **본 것** README 의 그림 10장(과 어디서도 쓰지 않는 8장, `docs/images` PNG 18개 · 약 25 MB)은 KST 만 보이기(계약 v5 §G20) · 한 줄 상태 바 · 수신 범위 · 연안 교통량 전이었고,
+  그것을 만든 `apps/web/scripts/screenshots.mjs` 는 운영 비밀번호를 환경 변수로 읽었다(규칙: 비밀번호는 명령행 · 환경 변수로 받지 않는다). README 7절은 '그림 11 + 자리표시 2'라고 적었다.
+- **수정**(레인 readme — 적대적 리뷰 뒤 변이 34개 중 33 죽음, 남은 1개는 같은 동작) `make readme-images`(`apps/web/lib/readme-images.json` → `docs/images/<이름>.webp`):
+  설명서 manifest 의 지금 파일만 복사하고, 없는 그림 · 크기 다름 · WebP 아님 · 이름 형식 밖 · fixture 그림인데 README 대체 글이 밝히지 않음 · README 와 설정 불일치면 아무것도
+  바꾸지 않고 멈춘다. `guide-screenshots.mjs --allow-fixture` 는 모든 조건 앞에 스택을 적는다. 새 그림 world(전역 피드가 건강하고 항공기 ≥ 1 일 때만) · hot(도쿄 — 지도 칩이
+  '핫 리전 … 갱신'(수집기가 그 칸을 받아 발행한 뒤에만 active)일 때만 — 그 칸에 항공기가 있다는 증명은 아니다, 설명서 2.5 가 그렇게 적는다). 옛 PNG 18개와 그 스크립트를 지웠다.
+- **찍은 것**(2026-10-01 12:4x KST, 운영 스택 — 기상청 회복 뒤) 14장 다시: 레이더는 다시 '기상청 HSR'(합성 12/16곳 · 일부 합성), world '상태 바 aircraft 6281', hot '핫 리전 30초
+  갱신(반경 100 NM) · aircraft 80'. ops · logs 는 06:13 격리 fixture 스택 그대로. 내보내기 16장 1.9 MB(전 PNG 약 25 MB). 배포한 /guide 에서 16장 모두 불러와짐(자리표시 0).
+- **시험** web `readme-images.test.ts`(README 의 docs/images 참조 ↔ 설정 ↔ 설명서 id · fixture 표시 · 남은 파일) · `guide-capture.test.ts`(world/hot 결정 · 대기 상한 · 앞뒤 읽기 ·
+  스택 확인을 동작으로) · infra Makefile 정책.
+
+## 자동 검사 현황(2026-10-01 12:50 KST, 네 레인 통합(#88–#93) · bbox 타일 채우기(#94) · README 그림(#96) 뒤)
 | 층 | 도구 | 수 |
 |---|---|---|
 | collector · ais 단위·통합 | pytest | 1,729 통과(+88 — 기상청 목록 · 오래된 tm · 격자 채우기 · bbox 타일 · 관심 지역 WARN · 항만 산수. 21 건너뜀 = 실 Redis 14(아래 줄) · 실 PostgreSQL 7(손으로만 돌리는 선택 시험, 돌리지 않았다)) · 커버리지(`--cov=wakeline_collector`) 98 %(10,151문 중 252 빠짐) |
 | collector 실 Redis | `infra/tests/collector_redis_test.sh`(버리는 Redis 컨테이너) | 14 통과(+1 — 타일 상태 해시를 수집기 ACL 로) |
 | api 단위·통합 | JUnit 5 + Testcontainers(PostGIS·Redis 실물 — db 는 `wakeline-db:local`) | 968 통과(+29 — 쓰기 종료 경합 · 503 까닭 · 문장 이름 · /ops/runs 오류 글자 · ETag 에 note) · JaCoCo LINE 97.1 %(9,493줄 중 277 빠짐) · BRANCH 86.3 %(6,804 중 929 빠짐 · 하한 95 / 80 — 검증 통과) |
-| web 단위 | Vitest | 1,368(95 파일 — +48: /ops RUNS 드릴 · 상태 뜻 · 격자 채우기 줄(타일 진행) · 재생 503 · KMA 칩) |
+| web 단위 | Vitest | 1,413(96 파일 — +93: /ops RUNS 드릴 · 상태 뜻 · 격자 채우기 줄(타일 진행) · 재생 503 · KMA 칩 · README 그림 · world/hot 캡처 결정) |
 | 정적 검사 · 빌드 | ruff check · ruff format --check(collector 전체) · mypy(77 파일) · tsc --noEmit · eslint · next build | 모두 통과 |
 | 언어 간 계약 | tools/contract_check.py | PASSED — 새 §8 영수증 표시 상한(수집기 상수로 다시 셈) 포함 |
 | REST 계약 | tools/rest_contract_check.py | 36종 PASSED |
 | 인프라 정책 | infra/tests(unittest) | 129 |
 | 버리는 컨테이너 시험 | edge · Redis ACL · db 권한 · 백업·복원 · 비밀번호 교체 · 이전 → 새 db 이미지 교체 | 35 · 297 · 36 · 48 · 27 · 11 = 454 — `make infra-docker-test` 모두 통과(2026-10-01 09:3x KST, Redis ACL 타일 해시 +6) |
-| E2E | Playwright(격리된 fixture 스택 8701, 작업자 1명) | 43 통과(+2 — `ops-screens` 드릴 · `replay-503`. 처음 통합 판은 `replay-503` 1건 실패 → 재생 알림을 지도 위로(#92) 뒤 43 통과, `replay-503` · `replay-layout` 3번씩 되풀이 통과) |
+| E2E | Playwright(격리된 fixture 스택 8701, 작업자 1명) | 43 통과(README 그림 통합 뒤에도 다시 — 1.9 분. +2 — `ops-screens` 드릴 · `replay-503`. 처음 통합 판은 `replay-503` 1건 실패 → 재생 알림을 지도 위로(#92) 뒤 43 통과, `replay-503` · `replay-layout` 3번씩 되풀이 통과) |
 | 첫 화면 JS 예산 | `npm run check:first-js -- --in-image` · 브라우저 `measure:first-js -- --serve 8790` | 543,507 B / 550,000 B(여유 6,493 B — 통합 빌드, 웹 이미지의 Node) · 브라우저(2026-10-01 09:3x): 빌드 결과 목록과 같은 18개 · 541,194 B(호스트 Node) · 실패 0, 첫 화면 뒤 미리 받은 조각 10개 57,636 B(예산 밖) |
-| 보안 게이트 | `SCAN_OFFLINE=1 bash tools/security_gate.sh` | PASS(2026-10-01 08:32 KST, 배포한 이미지) — gitleaks 917 커밋 누출 0 · 자체 api · collector · web · db 고칠 수 있는 HIGH · CRITICAL 0 · 제3자 edge · redis PASS · k6 보고만 |
+| 보안 게이트 | `SCAN_OFFLINE=1 bash tools/security_gate.sh` | PASS(2026-10-01 12:5x KST, 배포한 이미지) — gitleaks 930 커밋 누출 0 · 자체 api · collector · web · db 고칠 수 있는 HIGH · CRITICAL 0 · 제3자 edge · redis PASS · k6 보고만 |
 | 배포 뒤 확인 | 수집기 · api 로그(사용자가 `docker logs` 읽기를 허용 — 2026-10-01) | 06:02 KST 배포(api · collector · web) 뒤 10분 WARN · ERROR 0, 08:33 KST 배포(Redis 재시작 · collector · web) 뒤 재연결 WARN 2건 밖에 없음, 타일 채우기 첫 차례(#94) |
