@@ -1,9 +1,9 @@
 package dev.wakeline.ingest;
 
-import dev.wakeline.domain.AisGap;
-import dev.wakeline.domain.AisScope;
-import dev.wakeline.domain.ShipState;
-import dev.wakeline.domain.ShipStatic;
+import dev.wakeline.ships.core.AisGap;
+import dev.wakeline.ships.core.AisScope;
+import dev.wakeline.ships.core.ShipState;
+import dev.wakeline.ships.core.ShipStatic;
 import tools.jackson.databind.JsonNode;
 
 import java.time.Instant;

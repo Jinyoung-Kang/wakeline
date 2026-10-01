@@ -93,7 +93,7 @@ wakeline:
   track-retention-hours: 72
   alert-retention-days: ${WAKELINE_ALERT_RETENTION_DAYS:30}   # 끝난 알림 보존(일, R-06 · ADR-017 §2). 0 = 지우지 않음
   summary-retention-days: 30
-  # WS 선택 선박 조회(저장 정적 보고 · 입출항 색인) 전용 읽기 풀(계약 v5 §G18 · ADR-025 · persist.ReadPool). 공유 풀(12 · 연결 대기 5 s)과 나눈다.
+  # WS 선택 선박 조회(저장 정적 보고 · 입출항 색인) 전용 읽기 풀(계약 v5 §G18 · ADR-025 · platform.data.ReadPool). 공유 풀(12 · 연결 대기 5 s)과 나눈다.
   # 연결 대기는 공개 조회 문장 상한(3 s) 이하만 받는다 — 한 번의 읽기 상한 = 연결 대기 + 문장 = 2 s + 3 s(고른 값, 잰 값 아님). 크기 = 조회 실행기 스레드 수.
   read-pool:
     size: 4

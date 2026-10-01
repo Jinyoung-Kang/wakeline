@@ -10,7 +10,7 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Component;
 
 /**
- * WS 선택 선박 조회 전용 작은 읽기 풀(계약 v5 §G18 · ADR-025) — 저장 정적 보고({@link dev.wakeline.persist.StoredStaticReader})와 한국 항만 입출항 색인
+ * WS 선택 선박 조회 전용 작은 읽기 풀(계약 v5 §G18 · ADR-025) — 저장 정적 보고({@link dev.wakeline.ships.data.StoredStaticReader})와 한국 항만 입출항 색인
  * ({@code PortCallIndex})만 쓴다. 공유 풀(application.yml spring.datasource.hikari — 12 · 연결 대기 5 s)과 나눈 까닭:
  * <ul>
  *   <li>연결 대기 상한을 문장 상한 이하로: 공유 풀의 연결 대기 5 s 는 공개 조회 문장 상한({@value Sql#PUBLIC_READ_TIMEOUT_S} s)보다 길어, 풀이 바닥나면 한 번의

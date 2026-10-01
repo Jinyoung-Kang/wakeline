@@ -3,7 +3,7 @@ package dev.wakeline.ops;
 import dev.wakeline.DbTestSupport;
 import dev.wakeline.platform.config.AppProperties;
 import dev.wakeline.platform.web.Problem;
-import dev.wakeline.persist.MaintenanceJobs;
+import dev.wakeline.history.MaintenanceJobs;
 import dev.wakeline.settings.RegionSettings;
 import dev.wakeline.settings.SettingsService;
 import org.junit.jupiter.api.AfterAll;
@@ -242,18 +242,18 @@ class OpsDbTest {
     OpsController ops(StringRedisTemplate r, AuditService a) {
         var status = new dev.wakeline.status.StatusService(null, null, null, null, r, PROPS);
         var jobs = new MaintenanceJobs(api, PROPS, region(r), DbTestSupport.apiTx());
-        return new OpsController(status, api, r, settings(r), a, jobs, DbTestSupport.apiTx(), switches(r),
-                new ResolutionService(new ResolutionRepository(api), DbTestSupport.apiTx()));
+        return new OpsController(status, new OpsQueries(api, r), settings(r), a, jobs, DbTestSupport.apiTx(), switches(r),
+                new ResolutionService(new ResolutionRepository(api), DbTestSupport.apiTx()), new IngestRunRepository(api));
     }
 
     /** 실제 상태 서비스(빈 스토어)를 쓰는 운영 컨트롤러 — /ops/providers 처럼 공개 상태도 읽는 응답용. */
     OpsController opsWithStatus(StringRedisTemplate r, AuditService a) {
-        var snapshots = new dev.wakeline.ingest.SnapshotStore();
-        var sigmets = new dev.wakeline.ingest.SigmetStore();
-        var status = new dev.wakeline.status.StatusService(snapshots, sigmets, new dev.wakeline.ingest.RadarStore(),
-                new dev.wakeline.engine.EngineService(snapshots, sigmets, e -> { }, new io.micrometer.core.instrument.simple.SimpleMeterRegistry()), r, PROPS);
-        return new OpsController(status, api, r, settings(r), a, new MaintenanceJobs(api, PROPS, region(r), DbTestSupport.apiTx()), DbTestSupport.apiTx(),
-                switches(r), new ResolutionService(new ResolutionRepository(api), DbTestSupport.apiTx()));
+        var snapshots = new dev.wakeline.aircraft.core.SnapshotStore();
+        var sigmets = new dev.wakeline.weather.core.SigmetStore();
+        var status = new dev.wakeline.status.StatusService(snapshots, sigmets, new dev.wakeline.weather.core.RadarStore(),
+                new dev.wakeline.weather.core.EngineService(snapshots, sigmets, e -> { }, new io.micrometer.core.instrument.simple.SimpleMeterRegistry()), r, PROPS);
+        return new OpsController(status, new OpsQueries(api, r), settings(r), a, new MaintenanceJobs(api, PROPS, region(r), DbTestSupport.apiTx()), DbTestSupport.apiTx(),
+                switches(r), new ResolutionService(new ResolutionRepository(api), DbTestSupport.apiTx()), new IngestRunRepository(api));
     }
 
     /**

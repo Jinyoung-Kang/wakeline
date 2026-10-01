@@ -1,6 +1,6 @@
 package dev.wakeline.it;
 
-import dev.wakeline.ingest.SnapshotStore;
+import dev.wakeline.aircraft.core.SnapshotStore;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIf;
@@ -33,7 +33,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 @EnabledIf("dev.wakeline.DbTestSupport#dockerAvailable")
 class WsIT extends IntegrationTest {
     @Autowired SnapshotStore snapshots;
-    @Autowired dev.wakeline.ingest.SigmetStore sigmetStore;
+    @Autowired dev.wakeline.weather.core.SigmetStore sigmetStore;
 
     static final class Client implements WebSocket.Listener {
         final LinkedBlockingQueue<JsonNode> messages = new LinkedBlockingQueue<>();

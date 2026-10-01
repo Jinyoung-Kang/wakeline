@@ -22,6 +22,9 @@ apps/web/coverage/
 data/
 # 예외: api 에 싣는 참조 자료(UN/LOCODE 항구 표 — tools/gen_unlocode.py 가 만든다)
 !apps/api/src/main/resources/data/
+# 예외: 이름이 data 인 Java 패키지(platform.data · aircraft/ships/weather.data — ADR-028). 가리면 그 패키지의 새 클래스가 커밋에서 조용히 빠진다
+!apps/api/src/main/java/**/data/
+!apps/api/src/test/java/**/data/
 raw/
 # misc
 .DS_Store

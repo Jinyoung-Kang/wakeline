@@ -1,15 +1,15 @@
 package dev.wakeline.ws;
 
-import dev.wakeline.domain.ShipState;
-import dev.wakeline.domain.ShipStatic;
-import dev.wakeline.ingest.IngestEvents;
 import dev.wakeline.platform.support.Receipt;
-import dev.wakeline.ingest.ShipStore;
-import dev.wakeline.persist.StoredStaticReader;
 import dev.wakeline.portcalls.PortCallFixtures;
 import dev.wakeline.portcalls.PortCallIndex;
 import dev.wakeline.portcalls.PortCallReader;
 import dev.wakeline.route.RouteInfoTest;
+import dev.wakeline.ships.core.ShipEvents;
+import dev.wakeline.ships.core.ShipState;
+import dev.wakeline.ships.core.ShipStatic;
+import dev.wakeline.ships.core.ShipStore;
+import dev.wakeline.ships.data.StoredStaticReader;
 import dev.wakeline.ships.web.ShipJson;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.JsonNode;
@@ -50,7 +50,7 @@ class ShipFanoutTest {
     /** ShipStore 에 반영하고 이벤트를 팬아웃에 넘긴다(timer 없음 — 바로 팬아웃). */
     static ShipStore.Change publish(WsTestKit k, List<ShipState> st, List<ShipStatic> sc) {
         ShipStore.Change c = k.ships.apply(st, sc, T, "aisstream", System.currentTimeMillis());
-        k.shipFanout.onShips(new IngestEvents.ShipsUpdated(T, "aisstream", st, sc, c.changed(), Set.of(), Receipt.NONE));
+        k.shipFanout.onShips(new ShipEvents.ShipsUpdated(T, "aisstream", st, sc, c.changed(), Set.of(), Receipt.NONE));
         return c;
     }
 
@@ -142,7 +142,7 @@ class ShipFanoutTest {
             assertThat(diffs.get(3).path("upsert").get(0).path("name").asString()).isEqualTo("NAMED LATER");
             // 만료(실시간 목록에서 빠짐) → remove
             ShipStore.Change c = k.ships.expire(System.currentTimeMillis() + 3_600_000L, false);
-            k.shipFanout.onShips(IngestEvents.ShipsUpdated.liveOnly(Set.of(), c.removed()));
+            k.shipFanout.onShips(ShipEvents.ShipsUpdated.liveOnly(Set.of(), c.removed()));
             assertThat(sseqs(f)).containsExactly(1, 2, 3, 4, 5, 6);
             assertThat(ofType(f, "ships_diff").getLast().path("remove")).extracting(JsonNode::asString).containsExactly("440000001");
         }
@@ -245,7 +245,7 @@ class ShipFanoutTest {
             // 만료로 1,201 척 — 1,500 이하지만 격자 세션은 1,200 이하가 되어야 돌아온다
             ShipStore.Change c = k.ships.expire(System.currentTimeMillis(), false);
             assertThat(c.removed()).hasSize(300);
-            k.shipFanout.onShips(IngestEvents.ShipsUpdated.liveOnly(Set.of(), c.removed()));
+            k.shipFanout.onShips(ShipEvents.ShipsUpdated.liveOnly(Set.of(), c.removed()));
             int snaps = ofType(f, "ships_snapshot").size();
             JsonNode g2 = ofType(f, "ships_grid").getLast();
             assertThat(g2.path("capped").asBoolean()).isTrue();
@@ -351,7 +351,7 @@ class ShipFanoutTest {
 
             // 실시간 목록에서 빠짐 → state null(키는 남는다), static 은 알고 있는 동안
             ShipStore.Change c = k.ships.expire(System.currentTimeMillis() + 3_600_000L, false);
-            k.shipFanout.onShips(IngestEvents.ShipsUpdated.liveOnly(Set.of(), c.removed()));
+            k.shipFanout.onShips(ShipEvents.ShipsUpdated.liveOnly(Set.of(), c.removed()));
             JsonNode gone = ofType(f, "ship_selected").getLast();
             assertThat(gone.has("state")).isTrue();
             assertThat(gone.get("state").isNull()).isTrue();

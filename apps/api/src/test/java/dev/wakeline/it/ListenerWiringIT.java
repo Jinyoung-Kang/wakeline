@@ -1,7 +1,9 @@
 package dev.wakeline.it;
 
-import dev.wakeline.engine.EngineEvents;
-import dev.wakeline.ingest.IngestEvents;
+import dev.wakeline.aircraft.core.AircraftEvents;
+import dev.wakeline.ships.core.ShipEvents;
+import dev.wakeline.weather.core.EngineEvents;
+import dev.wakeline.weather.core.WeatherEvents;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIf;
 import org.springframework.aop.support.AopUtils;
@@ -39,15 +41,15 @@ class ListenerWiringIT extends IntegrationTest {
 
     /** 이벤트 → 그 이벤트를 받는 dev.wakeline 리스너(집합 — 순서는 아래 시험이 따로 본다). */
     static final Map<Class<?>, Set<String>> EXPECTED = Map.ofEntries(
-            entry(IngestEvents.SnapshotUpdated.class, Set.of("EngineService#onSnapshot", "TrackWriter#onSnapshot", "WsHub#onSnapshot")),
-            entry(IngestEvents.SigmetsUpdated.class, Set.of("EngineService#onSigmets", "WsHub#onSigmets")),
-            entry(IngestEvents.SigmetsExpired.class, Set.of("WsHub#onSigmetsExpired")),
-            entry(IngestEvents.RadarUpdated.class, Set.of("WsHub#onRadar")),
-            entry(IngestEvents.AircraftBacklog.class, Set.of("TrackWriter#onBacklog")),
-            entry(IngestEvents.SigmetSetReceived.class, Set.of("SigmetRepository#onSigmetSet")),
-            entry(IngestEvents.ShipsUpdated.class, Set.of("ShipWriter#onShips", "ShipFanout#onShips")),
-            entry(IngestEvents.ShipsSampled.class, Set.of("ShipCoverage#onSampled")),
-            entry(IngestEvents.AisGapReceived.class, Set.of("ShipWriter#onGap")),
+            entry(AircraftEvents.SnapshotUpdated.class, Set.of("EngineService#onSnapshot", "TrackWriter#onSnapshot", "WsHub#onSnapshot")),
+            entry(WeatherEvents.SigmetsUpdated.class, Set.of("EngineService#onSigmets", "WsHub#onSigmets")),
+            entry(WeatherEvents.SigmetsExpired.class, Set.of("WsHub#onSigmetsExpired")),
+            entry(WeatherEvents.RadarUpdated.class, Set.of("WsHub#onRadar")),
+            entry(AircraftEvents.AircraftBacklog.class, Set.of("TrackWriter#onBacklog")),
+            entry(WeatherEvents.SigmetSetReceived.class, Set.of("SigmetRepository#onSigmetSet")),
+            entry(ShipEvents.ShipsUpdated.class, Set.of("ShipWriter#onShips", "ShipFanout#onShips")),
+            entry(ShipEvents.ShipsSampled.class, Set.of("ShipCoverage#onSampled")),
+            entry(ShipEvents.AisGapReceived.class, Set.of("ShipWriter#onGap")),
             entry(EngineEvents.AlertsChanged.class, Set.of("AlertRepository#onAlerts", "WsHub#onAlerts")));
 
     /** 멀티캐스터가 이 페이로드 형의 이벤트에 부르는 리스너 — 부르는 순서 그대로, dev.wakeline 의 것만(프레임워크 리스너는 뺀다). */
@@ -62,7 +64,7 @@ class ListenerWiringIT extends IntegrationTest {
         List<String> out = new ArrayList<>();
         for (ApplicationListener<?> l : found) {
             if (l instanceof ApplicationListenerMethodAdapter a) {
-                String head = a.getListenerId().substring(0, a.getListenerId().indexOf('(')); // dev.wakeline.persist.TrackWriter.onSnapshot
+                String head = a.getListenerId().substring(0, a.getListenerId().indexOf('(')); // dev.wakeline.aircraft.data.TrackWriter.onSnapshot
                 if (!head.startsWith("dev.wakeline.")) continue;
                 String cls = head.substring(0, head.lastIndexOf('.'));
                 out.add(cls.substring(cls.lastIndexOf('.') + 1) + "#" + head.substring(head.lastIndexOf('.') + 1));
@@ -76,7 +78,7 @@ class ListenerWiringIT extends IntegrationTest {
     @Test
     void everyPipelineEventHasExactlyTheListenersItHasToday() throws Exception {
         Set<Class<?>> events = new TreeSet<>(java.util.Comparator.comparing(Class::getName));
-        Stream.of(IngestEvents.class, EngineEvents.class).flatMap(c -> Stream.of(c.getDeclaredClasses())).filter(Class::isRecord).forEach(events::add);
+        Stream.of(AircraftEvents.class, WeatherEvents.class, ShipEvents.class, EngineEvents.class).flatMap(c -> Stream.of(c.getDeclaredClasses())).filter(Class::isRecord).forEach(events::add);
         assertThat(events).as("every pipeline event record is listed here (a new event needs its listeners pinned)")
                 .containsExactlyInAnyOrderElementsOf(EXPECTED.keySet());
         for (Class<?> e : events)
@@ -85,7 +87,7 @@ class ListenerWiringIT extends IntegrationTest {
 
     @Test
     void theEngineSeesEachSnapshotBeforeTheWsHubFansItOut() throws Exception {
-        List<String> order = listeners(IngestEvents.SnapshotUpdated.class);
+        List<String> order = listeners(AircraftEvents.SnapshotUpdated.class);
         assertThat(order.indexOf("EngineService#onSnapshot")).as(order.toString()).isNotNegative()
                 .isLessThan(order.indexOf("WsHub#onSnapshot"));
     }

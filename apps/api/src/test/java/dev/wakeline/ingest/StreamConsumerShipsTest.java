@@ -1,6 +1,11 @@
 package dev.wakeline.ingest;
 
+import dev.wakeline.aircraft.core.SnapshotStore;
 import dev.wakeline.platform.support.Receipt;
+import dev.wakeline.ships.core.ShipEvents;
+import dev.wakeline.ships.core.ShipStore;
+import dev.wakeline.weather.core.RadarStore;
+import dev.wakeline.weather.core.SigmetStore;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.connection.stream.MapRecord;
@@ -71,7 +76,7 @@ class StreamConsumerShipsTest {
         assertThat(ships.view().get("440123456").stat().name()).isEqualTo("HANJIN BUSAN");
         assertThat(ships.view().get("440123456").state().rot()).isNull();
         assertThat(ships.staticOf("477000001").name()).isNull();
-        IngestEvents.ShipsUpdated e = (IngestEvents.ShipsUpdated) events.getFirst();
+        ShipEvents.ShipsUpdated e = (ShipEvents.ShipsUpdated) events.getFirst();
         assertThat(e.states()).hasSize(2);
         assertThat(e.statics()).hasSize(2);
         assertThat(e.changed()).containsExactlyInAnyOrder("440123456", "431011305");
@@ -82,7 +87,7 @@ class StreamConsumerShipsTest {
 
         // 같은 메시지를 다시(재전달): 실시간 상태는 그대로, 저장 대상 보고는 그대로 넘긴다(저장기가 멱등으로 거른다)
         consumer.handle(ships(T, p));
-        IngestEvents.ShipsUpdated again = (IngestEvents.ShipsUpdated) events.getLast();
+        ShipEvents.ShipsUpdated again = (ShipEvents.ShipsUpdated) events.getLast();
         assertThat(again.changed()).isEmpty();
         assertThat(again.states()).hasSize(2);
     }
@@ -95,12 +100,12 @@ class StreamConsumerShipsTest {
         String with = shipsPayload(List.of(), List.of(stat("416009981", "BLUE HOLE", null, T.minusSeconds(30)), stat("416009982", "OTHER", 37, T.minusSeconds(30))))
                 .replace(",\"stats\":", ",\"static_received\":{\"416009981\":[\"name\"]},\"stats\":");
         consumer.handle(ships(T, with));
-        IngestEvents.ShipsUpdated e = (IngestEvents.ShipsUpdated) events.getLast();
+        ShipEvents.ShipsUpdated e = (ShipEvents.ShipsUpdated) events.getLast();
         assertThat(e.statics().get(0).received()).containsExactly("name");
         assertThat(e.statics().get(1).received()).as("missing from the map — unknown").isNull();
         assertThat(ships.staticOf("416009981").received()).as("memory keeps what was received live").containsExactly("name");
         consumer.handle(ships(T.plusSeconds(10), shipsPayload(List.of(), List.of(stat("416009983", "LEGACY", 70, T.minusSeconds(20))))));
-        assertThat(((IngestEvents.ShipsUpdated) events.getLast()).statics().getFirst().received()).as("older collector").isNull();
+        assertThat(((ShipEvents.ShipsUpdated) events.getLast()).statics().getFirst().received()).as("older collector").isNull();
         for (String bad : List.of("{\"416009981\":[\"vendor\"]}", "{\"41600998\":[\"name\"]}", "{\"416009981\":[\"name\",\"name\"]}"))
             assertThatThrownBy(() -> consumer.parse(ships(T, with.replace("{\"416009981\":[\"name\"]}", bad)))).as(bad)
                     .hasMessageContaining("payload");
@@ -110,7 +115,7 @@ class StreamConsumerShipsTest {
     @Test void legacyGnssPositionSource_becomesUnknownAtIngest() throws Exception {
         consumer.handle(ships(T, shipsPayload(List.of(state("440123456", 35.1, 129.05, T.minusSeconds(3))), List.of())));
         assertThat(ships.view().get("440123456").state().positionSource()).isNull();
-        IngestEvents.ShipsUpdated e = (IngestEvents.ShipsUpdated) events.getFirst();
+        ShipEvents.ShipsUpdated e = (ShipEvents.ShipsUpdated) events.getFirst();
         assertThat(e.states().getFirst().positionSource()).as("what the writer stores (V7 rejects 'gnss')").isNull();
 
         JsonMapper m = JsonMapper.builder().build();
@@ -124,7 +129,7 @@ class StreamConsumerShipsTest {
     @Test void gapMessage_isRememberedAndPublished() throws Exception {
         consumer.handle(rec(StreamConsumer.S_SHIPS, "ais_gap", "ships", T, gap(T.minusSeconds(300), T.minusSeconds(60)), 0));
         assertThat(ships.gaps()).hasSize(1);
-        IngestEvents.AisGapReceived g = (IngestEvents.AisGapReceived) events.getFirst();
+        ShipEvents.AisGapReceived g = (ShipEvents.AisGapReceived) events.getFirst();
         assertThat(g.gap().startedAt()).isEqualTo(T.minusSeconds(300));
         assertThat(g.gap().provider()).isEqualTo("aisstream");
         assertThat(g.gap().reason()).isEqualTo("server closed (1006)");
@@ -140,7 +145,7 @@ class StreamConsumerShipsTest {
      */
     @Test void gapScope_parsedWhenValid_invalidBecomesNullAndIsCounted() throws Exception {
         consumer.handle(rec(StreamConsumer.S_SHIPS, "ais_gap", "ships", T, scopedGap(T.minusSeconds(300), T.minusSeconds(60), "\"-90,45,90,180\""), 0));
-        IngestEvents.AisGapReceived g = (IngestEvents.AisGapReceived) events.getLast();
+        ShipEvents.AisGapReceived g = (ShipEvents.AisGapReceived) events.getLast();
         assertThat(g.gap().scopeText()).isEqualTo("-90,45,90,180");
         assertThat(g.gap().appliesAt(35, 129)).isTrue();
         assertThat(g.gap().appliesAt(40, -70)).isFalse();
@@ -166,7 +171,7 @@ class StreamConsumerShipsTest {
             assertThat(meters.counter("wakeline_ais_gap_scope_invalid_total").count()).as("parsing alone does not count").isEqualTo(seq - 3);
             consumer.handle(r);
             seq++;
-            assertThat(((IngestEvents.AisGapReceived) events.getLast()).gap().scope()).as("received without a scope, not dead-lettered").isNull();
+            assertThat(((ShipEvents.AisGapReceived) events.getLast()).gap().scope()).as("received without a scope, not dead-lettered").isNull();
         }
         assertThat(meters.counter("wakeline_ais_gap_scope_invalid_total").count()).isEqualTo(4);
         // 스키마: scope 는 문자열·null 만(다른 형은 검증 실패 → DLQ)
@@ -246,7 +251,7 @@ class StreamConsumerShipsTest {
         assertThat(ships.view().get("440000014").state().lat()).as("the newest report of that MMSI").isEqualTo(35.044, org.assertj.core.data.Offset.offset(1e-9));
         assertThat(ships.gaps()).hasSize(1);
         assertThat(events).hasSize(1);
-        IngestEvents.ShipsUpdated e = (IngestEvents.ShipsUpdated) events.getFirst();
+        ShipEvents.ShipsUpdated e = (ShipEvents.ShipsUpdated) events.getFirst();
         assertThat(e.states()).as("bootstrap persists nothing").isEmpty();
         assertThat(e.changed()).hasSize(30);
         // 창 밖(35분 전보다 오래된) 엔트리만 있으면 아무것도 하지 않는다

@@ -1,7 +1,7 @@
 package dev.wakeline.status;
 
 import dev.wakeline.ingest.IngestHealthIndicator;
-import dev.wakeline.ingest.SnapshotStore;
+import dev.wakeline.aircraft.core.SnapshotStore;
 import org.springframework.boot.health.contributor.Status;
 import org.springframework.http.CacheControl;
 import org.springframework.http.ResponseEntity;

@@ -1,7 +1,7 @@
 package dev.wakeline.it;
 
 import dev.wakeline.DbTestSupport;
-import dev.wakeline.ingest.ShipStore;
+import dev.wakeline.ships.core.ShipStore;
 import dev.wakeline.platform.data.ReadPool;
 import dev.wakeline.platform.data.Sql;
 import org.junit.jupiter.api.AfterEach;

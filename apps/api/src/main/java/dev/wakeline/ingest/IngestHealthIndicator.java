@@ -1,5 +1,6 @@
 package dev.wakeline.ingest;
 
+import dev.wakeline.aircraft.core.SnapshotStore;
 import org.springframework.boot.health.contributor.Health;
 import org.springframework.boot.health.contributor.HealthIndicator;
 import org.springframework.boot.health.contributor.Status;

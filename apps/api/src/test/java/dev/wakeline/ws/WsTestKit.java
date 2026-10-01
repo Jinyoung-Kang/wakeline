@@ -1,16 +1,16 @@
 package dev.wakeline.ws;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
+import dev.wakeline.aircraft.core.AircraftEvents;
+import dev.wakeline.aircraft.core.AircraftState;
+import dev.wakeline.aircraft.core.Snapshot;
+import dev.wakeline.aircraft.core.SnapshotStore;
+import dev.wakeline.weather.core.Alert;
+import dev.wakeline.weather.core.PredictionAvailability;
+import dev.wakeline.weather.core.RadarStore;
+import dev.wakeline.ships.core.ShipStore;
+import dev.wakeline.weather.core.SigmetStore;
 import dev.wakeline.platform.config.AppProperties;
-import dev.wakeline.domain.AircraftState;
-import dev.wakeline.domain.Alert;
-import dev.wakeline.engine.PredictionAvailability;
-import dev.wakeline.ingest.IngestEvents;
-import dev.wakeline.ingest.RadarStore;
-import dev.wakeline.ingest.ShipStore;
-import dev.wakeline.ingest.SigmetStore;
-import dev.wakeline.ingest.Snapshot;
-import dev.wakeline.ingest.SnapshotStore;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.springframework.web.socket.TextMessage;
 import tools.jackson.databind.JsonNode;
@@ -87,7 +87,7 @@ final class WsTestKit implements AutoCloseable {
         for (AircraftState a : states) m.put(a.hex(), a);
         Snapshot s = new Snapshot(snapshots.nextVersion(), scope, "global".equals(scope) ? "opensky" : "adsb_lol", fetchedAt, fetchedAt, "-", Map.copyOf(m));
         Snapshot prev = snapshots.replace(s);
-        hub.onSnapshot(new IngestEvents.SnapshotUpdated(prev, s));
+        hub.onSnapshot(new AircraftEvents.SnapshotUpdated(prev, s));
         return s;
     }
 
@@ -97,7 +97,7 @@ final class WsTestKit implements AutoCloseable {
         for (AircraftState a : states) m.put(a.hex(), a);
         Snapshot s = new Snapshot(snapshots.nextVersion(), "hot", "adsb_fi", fetchedAt, fetchedAt, "-", Map.copyOf(m));
         Snapshot prev = snapshots.replaceHotIfNewer(cell, s);
-        if (prev != null) hub.onSnapshot(new IngestEvents.SnapshotUpdated(prev, s));
+        if (prev != null) hub.onSnapshot(new AircraftEvents.SnapshotUpdated(prev, s));
         return prev == null ? null : s;
     }
 
@@ -107,7 +107,7 @@ final class WsTestKit implements AutoCloseable {
         for (AircraftState a : states) m.put(a.hex(), a);
         Snapshot s = new Snapshot(snapshots.nextVersion(), "focus", "adsb_fi", fetchedAt, fetchedAt, "-", Map.copyOf(m));
         Snapshot prev = snapshots.applyFocus(s);
-        if (prev != null) hub.onSnapshot(new IngestEvents.SnapshotUpdated(prev, s));
+        if (prev != null) hub.onSnapshot(new AircraftEvents.SnapshotUpdated(prev, s));
         return prev == null ? null : s;
     }
 

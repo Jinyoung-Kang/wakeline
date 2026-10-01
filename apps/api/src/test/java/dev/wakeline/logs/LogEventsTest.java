@@ -71,7 +71,7 @@ class LogEventsTest {
         var ex = new LogEvents.Ex("java.lang.IllegalStateException", "boom", "java.lang.IllegalStateException: boom\n\tat x.Y.z(Y.java:1)");
         Map<String, Object> ctx = new LinkedHashMap<>();
         ctx.put("job", "retention");
-        var d = new LogEvents.Draft(T, "api", "api-host:1", "WARN", "dev.wakeline.persist.MaintenanceJobs", null, "failed 3 times", ex,
+        var d = new LogEvents.Draft(T, "api", "api-host:1", "WARN", "dev.wakeline.history.MaintenanceJobs", null, "failed 3 times", ex,
                 "0199a3b4c5d6e7f8a9b0c1d2", ctx, false);
         String s = LogEvents.serialize(d, "0123456789abcdef", 4);
         assertThat(SCHEMA.validate(s)).as(s).isNull();
@@ -156,7 +156,7 @@ class LogEventsTest {
     void logbackEventIsMaskedAndCarriesRequestIdAndMdcContext() {
         LogMasker.registerSecrets("db-password-value");
         var ctx = new LoggerContext();
-        var logger = ctx.getLogger("dev.wakeline.persist.TrackWriter");
+        var logger = ctx.getLogger("dev.wakeline.aircraft.data.TrackWriter");
         var cause = new java.sql.SQLException("auth failed for db-password-value");
         var top = new IllegalStateException("connect redis://u:pw123@redis:6379 failed", cause);
         var e = new LoggingEvent("fqcn", logger, Level.ERROR, "batch failed password={} after {} ms", top, new Object[]{"hunter2", 1500});

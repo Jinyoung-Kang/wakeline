@@ -1,6 +1,12 @@
 package dev.wakeline.ingest;
 
+import dev.wakeline.aircraft.core.AircraftEvents;
+import dev.wakeline.aircraft.core.Snapshot;
+import dev.wakeline.aircraft.core.SnapshotStore;
 import dev.wakeline.platform.support.Receipt;
+import dev.wakeline.weather.core.RadarStore;
+import dev.wakeline.weather.core.SigmetStore;
+import dev.wakeline.weather.core.WeatherEvents;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.connection.stream.MapRecord;
@@ -99,8 +105,8 @@ class StreamConsumerTest {
         consumer.process(envelope(StreamConsumer.S_AIRCRAFT, "aircraft", "region", T, aircraftPayload("a00001", T)), true); // 중복 재전달
         assertThat(snapshots.region()).isSameAs(live);
         assertThat(snapshots.version()).isEqualTo(v);
-        assertThat(events.stream().filter(e -> e instanceof IngestEvents.SnapshotUpdated)).hasSize(1);
-        var backlog = events.stream().filter(e -> e instanceof IngestEvents.AircraftBacklog).map(e -> (IngestEvents.AircraftBacklog) e).toList();
+        assertThat(events.stream().filter(e -> e instanceof AircraftEvents.SnapshotUpdated)).hasSize(1);
+        var backlog = events.stream().filter(e -> e instanceof AircraftEvents.AircraftBacklog).map(e -> (AircraftEvents.AircraftBacklog) e).toList();
         assertThat(backlog).hasSize(2);
         assertThat(backlog.getFirst().states()).extracting(a -> a.hex()).containsExactly("a00002");
         // global 은 자기 스코프 기준 — region 보다 오래된 fetched_at 이어도 적용
@@ -125,13 +131,13 @@ class StreamConsumerTest {
         consumer.process(envelope(StreamConsumer.S_SIGMET, "sigmet", "-", T, sigmetPayload("NEW:1:1", T)), true);
         assertThat(sigmets.state()).isSameAs(st);
         assertThat(sigmets.state().byId()).containsOnlyKeys("NEW:1:1");
-        assertThat(events.stream().filter(e -> e instanceof IngestEvents.SigmetsUpdated)).hasSize(1);
+        assertThat(events.stream().filter(e -> e instanceof WeatherEvents.SigmetsUpdated)).hasSize(1);
         // API-CONC-1: 이력 이벤트는 백로그·중복까지 스트림 순서대로 모두 나간다(중복 판단은 저장기가 수신 시각으로 한다)
-        var history = events.stream().filter(e -> e instanceof IngestEvents.SigmetSetReceived).map(e -> (IngestEvents.SigmetSetReceived) e).toList();
-        assertThat(history).extracting(IngestEvents.SigmetSetReceived::fetchedAt).containsExactly(T, T.minusSeconds(300), T);
+        var history = events.stream().filter(e -> e instanceof WeatherEvents.SigmetSetReceived).map(e -> (WeatherEvents.SigmetSetReceived) e).toList();
+        assertThat(history).extracting(WeatherEvents.SigmetSetReceived::fetchedAt).containsExactly(T, T.minusSeconds(300), T);
         assertThat(history.get(1).byId()).containsOnlyKeys("OLD:1:1");
         // 이력 이벤트가 실시간 갱신보다 먼저 — 세트의 SIGMET 행이 그 세트로 만든 알림보다 먼저 순서 큐에 들어간다
-        assertThat(events.indexOf(history.getFirst())).isLessThan(events.indexOf(events.stream().filter(e -> e instanceof IngestEvents.SigmetsUpdated).findFirst().orElseThrow()));
+        assertThat(events.indexOf(history.getFirst())).isLessThan(events.indexOf(events.stream().filter(e -> e instanceof WeatherEvents.SigmetsUpdated).findFirst().orElseThrow()));
     }
 
     @Test void olderRadarEntry_isIgnored() throws Exception {
@@ -140,7 +146,7 @@ class StreamConsumerTest {
         var fr = radar.frames();
         consumer.process(envelope(StreamConsumer.S_RADAR, "radar", "-", T.minusSeconds(600), p), true);
         assertThat(radar.frames()).isSameAs(fr);
-        assertThat(events.stream().filter(e -> e instanceof IngestEvents.RadarUpdated)).hasSize(1);
+        assertThat(events.stream().filter(e -> e instanceof WeatherEvents.RadarUpdated)).hasSize(1);
     }
 
     @Test void sigmetStore_republishBumpsVersionKeepsContent() {
@@ -196,7 +202,7 @@ class StreamConsumerTest {
     @Test void ackWaitsUntilTheAsyncWriterReleasesTheReceipt() throws Exception {
         List<Receipt> held = new ArrayList<>();
         RecordingConsumer c = new RecordingConsumer(new SnapshotStore(), e -> {
-            if (e instanceof IngestEvents.SnapshotUpdated u) held.add(u.receipt().hold());
+            if (e instanceof AircraftEvents.SnapshotUpdated u) held.add(u.receipt().hold());
         }, new SimpleMeterRegistry());
         var m = envelope(StreamConsumer.S_AIRCRAFT, "aircraft", "region", T, aircraftPayload("a00011", T));
         c.handle(m);
@@ -289,15 +295,15 @@ class StreamConsumerTest {
         assertThat(snapshots.region()).isSameAs(region); // 예전에는 region 이 아닌 스코프가 모두 region 을 덮어썼다
         assertThat(snapshots.hot()).containsOnlyKeys("35.5:139.5:150");
         assertThat(snapshots.merged(T.plusSeconds(2))).containsKeys("a00001", "b00001");
-        var upd = events.stream().filter(e -> e instanceof IngestEvents.SnapshotUpdated).map(e -> (IngestEvents.SnapshotUpdated) e).toList();
+        var upd = events.stream().filter(e -> e instanceof AircraftEvents.SnapshotUpdated).map(e -> (AircraftEvents.SnapshotUpdated) e).toList();
         assertThat(upd.getLast().current().scope()).isEqualTo("hot");
         assertThat(upd.getLast().previous().states()).isEmpty();
         // 같은 셀의 오래된 메시지 → 항적만
         consumer.process(envelope(StreamConsumer.S_AIRCRAFT, "aircraft", "hot", T, hotPayload("35.5:139.5:150", "b00002", T)), true);
-        var backlog = events.stream().filter(e -> e instanceof IngestEvents.AircraftBacklog).map(e -> (IngestEvents.AircraftBacklog) e).toList();
+        var backlog = events.stream().filter(e -> e instanceof AircraftEvents.AircraftBacklog).map(e -> (AircraftEvents.AircraftBacklog) e).toList();
         assertThat(backlog).singleElement().satisfies(b -> {
             assertThat(b.scope()).isEqualTo("hot");
-            assertThat(b.states()).extracting(dev.wakeline.domain.AircraftState::hex).containsExactly("b00002");
+            assertThat(b.states()).extracting(dev.wakeline.aircraft.core.AircraftState::hex).containsExactly("b00002");
         });
     }
 
@@ -323,7 +329,7 @@ class StreamConsumerTest {
                 focusPayload(List.of("c00001", "c00002"), List.of("c00002"), T, "c00001", "c00009")), true);
         assertThat(snapshots.focus()).containsOnlyKeys("c00001"); // c00009 는 요청하지 않은 hex
         assertThat(meters.counter("wakeline_focus_unrequested_total").count()).isEqualTo(1.0);
-        var upd = (IngestEvents.SnapshotUpdated) ev.getLast();
+        var upd = (AircraftEvents.SnapshotUpdated) ev.getLast();
         assertThat(upd.current().scope()).isEqualTo("focus");
         assertThat(upd.current().states()).containsOnlyKeys("c00001");
         // 모두 missing → 반영할 관측 없음(이벤트 없음)
@@ -334,7 +340,7 @@ class StreamConsumerTest {
         snapshots.setLeases(java.util.Set.of(), java.util.Set.of("c00002"));
         c.process(envelope(StreamConsumer.S_AIRCRAFT, "aircraft", "focus", T.plusSeconds(10), focusPayload(List.of("c00001"), null, T.plusSeconds(10), "c00001")), true);
         assertThat(snapshots.focus()).isEmpty();
-        assertThat(ev.getLast()).isInstanceOf(IngestEvents.AircraftBacklog.class);
-        assertThat(((IngestEvents.AircraftBacklog) ev.getLast()).scope()).isEqualTo("focus");
+        assertThat(ev.getLast()).isInstanceOf(AircraftEvents.AircraftBacklog.class);
+        assertThat(((AircraftEvents.AircraftBacklog) ev.getLast()).scope()).isEqualTo("focus");
     }
 }

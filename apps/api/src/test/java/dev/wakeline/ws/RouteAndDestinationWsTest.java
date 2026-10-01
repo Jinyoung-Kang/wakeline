@@ -1,12 +1,12 @@
 package dev.wakeline.ws;
 
-import dev.wakeline.domain.AircraftState;
-import dev.wakeline.domain.ShipState;
-import dev.wakeline.domain.ShipStatic;
-import dev.wakeline.ingest.IngestEvents;
+import dev.wakeline.aircraft.core.AircraftState;
 import dev.wakeline.platform.support.Receipt;
 import dev.wakeline.route.RouteInfoTest;
 import dev.wakeline.route.RouteReader;
+import dev.wakeline.ships.core.ShipEvents;
+import dev.wakeline.ships.core.ShipState;
+import dev.wakeline.ships.core.ShipStatic;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.JsonNode;
 
@@ -134,7 +134,7 @@ class RouteAndDestinationWsTest {
             ShipStatic noDest = new ShipStatic("440000002", "NODEST", null, null, 70, null, null, null, null, null, null, null, null, null, null,
                     t.minusSeconds(60), "aisstream");
             var c = k.ships.apply(List.of(pos), List.of(stat, noDest), t, "aisstream", System.currentTimeMillis());
-            k.shipFanout.onShips(new IngestEvents.ShipsUpdated(t, "aisstream", List.of(pos), List.of(stat, noDest), c.changed(), Set.of(), Receipt.NONE));
+            k.shipFanout.onShips(new ShipEvents.ShipsUpdated(t, "aisstream", List.of(pos), List.of(stat, noDest), c.changed(), Set.of(), Receipt.NONE));
             FakeWsSession f = k.subscribed("s", "1.1.1.1");
             k.msg(f, "{\"type\":\"select_ship\",\"mmsi\":\"440000001\"}");
             JsonNode d = ofType(f, "ship_selected").getLast().path("destination_info");

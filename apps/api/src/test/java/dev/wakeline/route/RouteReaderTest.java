@@ -1,6 +1,6 @@
 package dev.wakeline.route;
 
-import dev.wakeline.domain.AircraftState;
+import dev.wakeline.aircraft.core.AircraftState;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.RedisConnectionFailureException;

@@ -1,7 +1,7 @@
 package dev.wakeline.ws;
 
 import dev.wakeline.aircraft.web.AircraftJson;
-import dev.wakeline.domain.AircraftState;
+import dev.wakeline.aircraft.core.AircraftState;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;

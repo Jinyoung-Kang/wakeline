@@ -93,12 +93,12 @@ class ComposePolicyTest(unittest.TestCase):
         cls._tmp.cleanup()
 
     @classmethod
-    def _config(cls, extra: dict[str, str], project: str | None = None) -> dict:
+    def _config(cls, extra: dict[str, str], project: str | None = None, env_file: Path | None = None) -> dict:
         # 호스트 셸의 값이 해석 결과에 섞이지 않게(시험은 임시 .env + 명시한 값만 본다)
         drop = ("WAKELINE_", "REDIS_", "DB_", "COMPOSE_", "OPENSKY_", "KMA_", "AIS_", "aisstream", "EXTRA_ALLOWED_ORIGINS")
         env = {k: v for k, v in os.environ.items() if not k.startswith(drop)}
         env.update(extra)
-        cmd = ["docker", "compose"] + (["-p", project] if project else []) + ["-f", str(COMPOSE), "--env-file", str(cls.env_file), "config", "--format", "json"]
+        cmd = ["docker", "compose"] + (["-p", project] if project else []) + ["-f", str(COMPOSE), "--env-file", str(env_file or cls.env_file), "config", "--format", "json"]
         r = subprocess.run(cmd, capture_output=True, text=True, env=env)
         if r.returncode != 0:
             raise AssertionError(f"docker compose config failed: {r.stderr}")
@@ -352,6 +352,18 @@ class ComposePolicyTest(unittest.TestCase):
         for k in FAKE_EXTERNAL:
             with self.subTest(key=k):
                 self.assertEqual(self.iso_env.get(k), "", "Makefile ISO_ENV 가 빈 값으로 덮어써야 한다")
+
+    def test_iso_env_blanks_the_dev_only_extra_origins(self):
+        """격리 스택(make e2e · demo, 8701)은 개발자 .env 의 EXTRA_ALLOWED_ORIGINS(`next dev` 용 opt-in)를 물려받지 않는다 —
+        두 스택이 같은 .env 를 읽으므로 외부 키처럼 ISO_ENV 가 빈 값으로 덮어써야 허용 목록이 게시 포트(8701)뿐이다."""
+        self.assertEqual(self.iso_env.get("EXTRA_ALLOWED_ORIGINS"), "", "Makefile ISO_ENV 가 빈 값으로 덮어써야 한다")
+        dev_env = Path(self._tmp.name) / "extra-origins.env"
+        dev_env.write_text(re.sub(r"^EXTRA_ALLOWED_ORIGINS=.*$", "EXTRA_ALLOWED_ORIGINS=http://localhost:3000",
+                                  self.env_file.read_text(), flags=re.M))
+        self.assertIn("EXTRA_ALLOWED_ORIGINS=http://localhost:3000", dev_env.read_text())
+        api = self._config(self.iso_env, project="wakeline-e2e", env_file=dev_env)["services"]["api"]["environment"]
+        self.assertEqual(api["WAKELINE_EXTRA_ALLOWED_ORIGINS"], "")
+        self.assertEqual(api["WAKELINE_ALLOWED_ORIGINS"], "http://localhost:8701,http://127.0.0.1:8701")
 
     def test_api_has_shutdown_grace(self):
         self.assertIn("stop_grace_period", self.svc("api"))

@@ -1,6 +1,6 @@
 package dev.wakeline.ws;
 
-import dev.wakeline.domain.AircraftState;
+import dev.wakeline.aircraft.core.AircraftState;
 import dev.wakeline.route.RouteInfo;
 import dev.wakeline.route.RouteInfoTest;
 import dev.wakeline.route.RouteReader;

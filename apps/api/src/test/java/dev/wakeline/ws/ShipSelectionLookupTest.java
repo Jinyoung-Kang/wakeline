@@ -1,7 +1,7 @@
 package dev.wakeline.ws;
 
-import dev.wakeline.domain.ShipStatic;
-import dev.wakeline.persist.StoredStaticReader;
+import dev.wakeline.ships.core.ShipStatic;
+import dev.wakeline.ships.data.StoredStaticReader;
 import dev.wakeline.portcalls.PortCallFixtures;
 import dev.wakeline.portcalls.PortCallIndex;
 import dev.wakeline.portcalls.PortCallReader;

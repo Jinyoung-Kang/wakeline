@@ -110,7 +110,7 @@ class StreamTrimLossIT extends IntegrationTest {
      * 만들어 이미 있는 엔트리도 소비한다(자연키·fetched_at 단조 가드가 다시 읽기를 흡수한다). 새로 만든 그룹은 손실로 세지 않는다.
      */
     @Test
-    void aGroupCreatedAfterEntriesWerePublishedStillConsumesThem(@Autowired dev.wakeline.ingest.RadarStore radar) throws Exception {
+    void aGroupCreatedAfterEntriesWerePublishedStillConsumesThem(@Autowired dev.wakeline.weather.core.RadarStore radar) throws Exception {
         String stream = Streams.RADAR;
         double before = lossEvents(stream);
         Instant f = Streams.nextFetchedAt();

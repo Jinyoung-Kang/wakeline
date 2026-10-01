@@ -16,7 +16,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
 
 /**
- * 수집 파이프라인 이벤트(페이로드가 {@link PipelineEvent} — IngestEvents·EngineEvents 의 record)의 리스너를 서로 격리하는 멀티캐스터(API-CONC-2).
+ * 수집 파이프라인 이벤트(페이로드가 {@link PipelineEvent} — AircraftEvents·WeatherEvents·ShipEvents·EngineEvents 의 record)의 리스너를 서로 격리하는 멀티캐스터(API-CONC-2).
  * <p>
  * Spring 기본 멀티캐스터는 리스너 하나가 예외를 던지면 그 이벤트의 나머지 리스너를 부르지 않고 예외를 발행자에게 돌려준다. 발행자는
  * 스트림 소비 스레드라서, 예를 들어 엔진이 던지면 ① 뒤의 항적 저장·WS 팬아웃이 건너뛰어지고 ② 멀쩡한 메시지가 DLQ 로 갔다.
@@ -67,7 +67,7 @@ public class PipelineEventMulticaster extends SimpleApplicationEventMulticaster 
     /** @EventListener 메서드면 "클래스#메서드", 아니면 리스너 클래스 이름. 지표 태그라서 짧고 유한해야 한다. */
     static String listenerName(ApplicationListener<?> listener) {
         if (listener instanceof org.springframework.context.event.ApplicationListenerMethodAdapter a) {
-            String id = a.getListenerId(); // 예: dev.wakeline.persist.TrackWriter.onSnapshot(dev.wakeline.ingest.IngestEvents$SnapshotUpdated)
+            String id = a.getListenerId(); // 예: dev.wakeline.aircraft.data.TrackWriter.onSnapshot(dev.wakeline.aircraft.core.AircraftEvents$SnapshotUpdated)
             int paren = id.indexOf('(');
             String head = paren < 0 ? id : id.substring(0, paren);
             int dot = head.lastIndexOf('.');

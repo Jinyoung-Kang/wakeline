@@ -1,7 +1,7 @@
 package dev.wakeline.it;
 
 import dev.wakeline.DbTestSupport;
-import dev.wakeline.persist.MaintenanceJobs;
+import dev.wakeline.history.MaintenanceJobs;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIf;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -92,8 +92,8 @@ class JobsAndRadarIT extends IntegrationTest {
 
         // 일 통계(어제 — KST 날짜, 계약 v5 §G20): 관심 지역 안의 서로 다른 항공기 수 + 어느 지역을 셌는지. 시(dim)는 KST 시 —
         // 20:00 KST 는 그 KST 날짜의 11:00 UTC 라 운영 파티션(어제 · 오늘 UTC)에 든다
-        LocalDate y = dev.wakeline.persist.MaintenanceJobs.today().minusDays(1);
-        Instant eightPm = y.atStartOfDay(dev.wakeline.persist.MaintenanceJobs.DAY_ZONE).toInstant().plusSeconds(20 * 3600);
+        LocalDate y = dev.wakeline.history.MaintenanceJobs.today().minusDays(1);
+        Instant eightPm = y.atStartOfDay(dev.wakeline.history.MaintenanceJobs.DAY_ZONE).toInstant().plusSeconds(20 * 3600);
         track("a1e002", eightPm.plusSeconds(5), 36.0, 128.0);
         track("a1e003", eightPm.plusSeconds(65), 36.1, 128.1);
         jobs.aggregate(y);

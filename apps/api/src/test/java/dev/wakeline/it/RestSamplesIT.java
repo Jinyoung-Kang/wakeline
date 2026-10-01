@@ -1,9 +1,9 @@
 package dev.wakeline.it;
 
-import dev.wakeline.engine.EngineService;
-import dev.wakeline.ingest.RadarStore;
-import dev.wakeline.ingest.SigmetStore;
-import dev.wakeline.ingest.SnapshotStore;
+import dev.wakeline.weather.core.EngineService;
+import dev.wakeline.weather.core.RadarStore;
+import dev.wakeline.weather.core.SigmetStore;
+import dev.wakeline.aircraft.core.SnapshotStore;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIf;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -43,11 +43,11 @@ class RestSamplesIT extends IntegrationTest {
     @Autowired dev.wakeline.status.StatusService status;
     @Autowired dev.wakeline.route.RouteReader routes;
     /** 연안 교통량 읽기(ADR-023) — 5 s 메모. 기다림은 이것으로(REST 요청 제한을 쓰지 않게). */
-    @Autowired dev.wakeline.rest.TrafficGridReader trafficGrid;
+    @Autowired dev.wakeline.traffic.TrafficGridReader trafficGrid;
     /** 관측 수신 범위(계약 v5 §G27 · ADR-027) — 스냅숏(60 s 캐시)을 새로 만들어 기다린다(REST 요청 제한을 쓰지 않게) */
     @Autowired dev.wakeline.coverage.ShipCoverage coverage;
     /** 일 통계 집계(계약 v5 §G20) — 끝난 KST 날짜를 실제로 집계해 통계 응답에 행이 있게 한다 */
-    @Autowired dev.wakeline.persist.MaintenanceJobs jobs;
+    @Autowired dev.wakeline.history.MaintenanceJobs jobs;
 
     final Map<String, String> index = new LinkedHashMap<>();
     static final String ASIA_PACIFIC = "-90,45,90,180";
@@ -153,7 +153,7 @@ class RestSamplesIT extends IntegrationTest {
                 VALUES ('RKSI', date_trunc('hour', now()), 'RKSI 271200Z 27010KT 9999 BKN030 20/15 Q1013', 20, 15, 270, 10, 6.0, '6+', 3000, 'measured', 'VFR', 'awc', 'awc', now())
                 ON CONFLICT DO NOTHING""").update();
 
-        String day = dev.wakeline.persist.MaintenanceJobs.today().toString(); // 통계 날짜 = KST 날짜(계약 v5 §G20)
+        String day = dev.wakeline.history.MaintenanceJobs.today().toString(); // 통계 날짜 = KST 날짜(계약 v5 §G20)
         String bbox = "124,33,132,39";
         record("status", "/api/v1/status", 200);
         record("aircraft", "/api/v1/aircraft?bbox=" + bbox, 200);
@@ -207,8 +207,8 @@ class RestSamplesIT extends IntegrationTest {
         // 통계(계약 v5 §G20 — 리뷰 2026-09-30): 오늘(KST)은 집계 전이라 items 가 비어, 교통량 KST 시 · 한 날짜 · 시마다 한 행 규칙이 실제 응답을 보지 못했다.
         // 끝난 KST 날짜(어제)에 관심 지역 항적 — 00:30 KST(앞 UTC 날 파티션) · 23:30 KST(그 UTC 날 파티션) — · 그날 발표된 SIGMET · 그 안의 알림을 넣고
         // 실제 집계(MaintenanceJobs.aggregateDay)를 돌린 뒤 기록한다. 오늘(집계 전)의 응답은 stats_traffic_today 로 따로 남긴다.
-        java.time.LocalDate statsDay = dev.wakeline.persist.MaintenanceJobs.today().minusDays(1);
-        Instant k0 = statsDay.atStartOfDay(dev.wakeline.persist.MaintenanceJobs.DAY_ZONE).toInstant();
+        java.time.LocalDate statsDay = dev.wakeline.history.MaintenanceJobs.today().minusDays(1);
+        Instant k0 = statsDay.atStartOfDay(dev.wakeline.history.MaintenanceJobs.DAY_ZONE).toInstant();
         String statsSigmet = "RKRR:IT-REST-STATS:" + System.currentTimeMillis();
         var root = admin();
         dev.wakeline.DbTestSupport.ensureTrackPartitions(ItStack.DB, k0, k0.plusSeconds(24 * 3600 - 1));

@@ -51,7 +51,7 @@ class PipelineEventTest {
                 if (!PipelineEvent.class.isAssignableFrom(r)) unmarked.add(r.getName());
             }
         }
-        assertThat(holders).as("event holders found").contains("IngestEvents", "EngineEvents");
+        assertThat(holders).as("event holders found").contains("AircraftEvents", "WeatherEvents", "ShipEvents", "EngineEvents");
         assertThat(records).isGreaterThanOrEqualTo(10);
         assertThat(unmarked).as("records in *Events classes without the PipelineEvent marker (their listeners would not be isolated)").isEmpty();
     }

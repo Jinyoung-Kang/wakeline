@@ -1,11 +1,11 @@
 package dev.wakeline.ws;
 
 import dev.wakeline.aircraft.web.AircraftJson;
-import dev.wakeline.domain.AircraftState;
+import dev.wakeline.aircraft.core.AircraftState;
 import dev.wakeline.geo.Bbox;
-import dev.wakeline.domain.ShipStatic;
-import dev.wakeline.engine.PredictionAvailability;
-import dev.wakeline.ingest.ShipStore;
+import dev.wakeline.ships.core.ShipStatic;
+import dev.wakeline.weather.core.PredictionAvailability;
+import dev.wakeline.ships.core.ShipStore;
 import dev.wakeline.portcalls.PortCallsInfo;
 import dev.wakeline.route.RouteInfo;
 import org.springframework.web.socket.CloseStatus;
