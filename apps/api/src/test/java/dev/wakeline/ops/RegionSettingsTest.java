@@ -106,7 +106,7 @@ class RegionSettingsTest {
         StringRedisTemplate redis = new StringRedisTemplate() {
             @Override public <HK, HV> HashOperations<String, HK, HV> opsForHash() { return (HashOperations<String, HK, HV>) (HashOperations<?, ?, ?>) hash; }
         };
-        AppProperties props = new AppProperties("", "36.5,127.8", 250, 120, 200, 5, 10, 30, 2500, 0, "classpath:schemas", 72, 30, 120, List.of());
+        AppProperties props = new AppProperties("", "36.5,127.8", 250, 120, 200, 5, 10, 30, 2500, 0, "classpath:schemas", 72, 30, 120, List.of(), List.of());
         RegionSettings region = new RegionSettings(redis, null, null, props);
 
         Thread background = Thread.ofVirtual().start(region::refreshNow);

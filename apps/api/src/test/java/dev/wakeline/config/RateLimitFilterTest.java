@@ -15,7 +15,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 /** 공개 API 요청 제한(2차): 넘으면 429 + Retry-After + RFC 9457 본문. */
 class RateLimitFilterTest {
     static final AppProperties PROPS = new AppProperties("", "36.5,127.8", 250, 120, 200, 5, 10, 30, 2500, 0, "classpath:schemas", 72, 30, 120,
-            List.of("http://localhost:8700"));
+            List.of("http://localhost:8700"), List.of());
 
     /**
      * 리뷰 cto-2026-10 I-2: 429 본문을 손으로 이어 붙였다 — 요청 경로(instance)를 JSON 문자열로 이스케이프하지 않았다. Tomcat 이 원문 '"' · '\\' 를

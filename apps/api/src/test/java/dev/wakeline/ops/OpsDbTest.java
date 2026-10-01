@@ -40,7 +40,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 @EnabledIf("dev.wakeline.DbTestSupport#dockerAvailable")
 class OpsDbTest {
     static final AppProperties PROPS = new AppProperties("", "36.5,127.8", 250, 120, 200, 5, 10, 30, 2500, 0, "classpath:schemas", 72, 30,
-            120, List.of("http://localhost:8700"));
+            120, List.of("http://localhost:8700"), List.of());
     static GenericContainer<?> redisContainer;
     static LettuceConnectionFactory redisFactory;
     static LettuceConnectionFactory deadFactory;

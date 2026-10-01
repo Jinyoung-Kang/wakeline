@@ -35,7 +35,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class ClientErrorControllerTest {
     static final JsonMapper M = JsonMapper.builder().build();
     static final AppProperties PROPS = new AppProperties("", "36.5,127.8", 250, 120, 200, 5, 10, 30, 2500, 0, "classpath:schemas", 72, 30,
-            120, List.of("http://localhost:8700"));
+            120, List.of("http://localhost:8700"), List.of());
     static final Instant NOW = Instant.parse("2026-09-29T03:04:05.678Z");
 
     /** 메모리 요청 제한기(키 → 수). redisDown 이면 hitStrict 가 실패한다(Redis 장애). */

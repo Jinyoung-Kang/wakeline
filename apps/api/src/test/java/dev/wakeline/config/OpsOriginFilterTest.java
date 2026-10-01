@@ -15,6 +15,10 @@ class OpsOriginFilterTest {
 
     /** @return 다음 필터로 넘겼으면 0, 아니면 응답 상태 */
     int run(String method, String uri, String origin, String site) throws Exception {
+        return run(filter, method, uri, origin, site);
+    }
+
+    static int run(OpsOriginFilter filter, String method, String uri, String origin, String site) throws Exception {
         MockHttpServletRequest req = new MockHttpServletRequest(method, uri);
         req.setRequestURI(uri);
         if (origin != null) req.addHeader("Origin", origin);
@@ -41,6 +45,23 @@ class OpsOriginFilterTest {
         assertThat(run("PUT", ops, "http://localhost:8700", "cross-site")).isEqualTo(403);
         assertThat(run("POST", ops, null, "none")).isEqualTo(403);
         assertThat(run("POST", "/api/v1/%6Fps/providers/opensky/disable", "http://localhost:9999", null)).as("decoded path, like authorization").isEqualTo(403);
+    }
+
+    /**
+     * `next dev`(http://localhost:3000 — /api 를 스택으로 넘긴다)의 opt-in: 기본(추가 목록 비어 있음)이면 403 그대로, .env 의 EXTRA_ALLOWED_ORIGINS 에 넣으면
+     * 그 Origin 의 same-origin 요청이 통과한다(브라우저가 보기에 페이지와 /api 는 같은 출처). 다른 출처 · 다른 사이트는 여전히 403.
+     */
+    @Test
+    void anExtraAllowedOriginPassesOnlyOnceConfigured() throws Exception {
+        String ops = "/api/v1/ops/providers/opensky/disable";
+        OpsOriginFilter stackOnly = new OpsOriginFilter(AppPropertiesTest.props(List.of("http://localhost:8700", "http://127.0.0.1:8700")).originPatterns());
+        assertThat(run(stackOnly, "POST", ops, "http://localhost:3000", "same-origin")).as("default: empty extra list").isEqualTo(403);
+        OpsOriginFilter dev = new OpsOriginFilter(AppPropertiesTest.props(List.of("http://localhost:8700", "http://127.0.0.1:8700"),
+                List.of("http://localhost:3000")).originPatterns());
+        assertThat(run(dev, "POST", ops, "http://localhost:3000", "same-origin")).isZero();
+        assertThat(run(dev, "POST", ops, "http://localhost:8700", "same-origin")).isZero();
+        assertThat(run(dev, "POST", ops, "http://localhost:9999", null)).isEqualTo(403);
+        assertThat(run(dev, "POST", ops, "http://localhost:3000", "same-site")).isEqualTo(403);
     }
 
     @Test

@@ -95,7 +95,7 @@ class ComposePolicyTest(unittest.TestCase):
     @classmethod
     def _config(cls, extra: dict[str, str], project: str | None = None) -> dict:
         # 호스트 셸의 값이 해석 결과에 섞이지 않게(시험은 임시 .env + 명시한 값만 본다)
-        drop = ("WAKELINE_", "REDIS_", "DB_", "COMPOSE_", "OPENSKY_", "KMA_", "AIS_", "aisstream")
+        drop = ("WAKELINE_", "REDIS_", "DB_", "COMPOSE_", "OPENSKY_", "KMA_", "AIS_", "aisstream", "EXTRA_ALLOWED_ORIGINS")
         env = {k: v for k, v in os.environ.items() if not k.startswith(drop)}
         env.update(extra)
         cmd = ["docker", "compose"] + (["-p", project] if project else []) + ["-f", str(COMPOSE), "--env-file", str(cls.env_file), "config", "--format", "json"]
@@ -314,6 +314,20 @@ class ComposePolicyTest(unittest.TestCase):
         self.assertEqual(self.svc("api")["environment"]["WAKELINE_ALLOWED_ORIGINS"], "http://localhost:8700,http://127.0.0.1:8700")
         self.assertEqual(self.svc("api", self.iso)["environment"]["WAKELINE_ALLOWED_ORIGINS"], "http://localhost:8701,http://127.0.0.1:8701")
 
+    def test_extra_allowed_origins_are_an_empty_opt_in_that_reaches_only_the_api(self):
+        """`next dev`(http://localhost:3000)로 화면을 띄울 때의 개발 전용 opt-in(리뷰 cto-2026-10 S1 후속): 기본은 비어 있어 허용 목록은 게시 포트뿐이고,
+        .env 의 EXTRA_ALLOWED_ORIGINS 는 api 의 WAKELINE_EXTRA_ALLOWED_ORIGINS 로만 간다(AppProperties.originPatterns 가 목록 뒤에 붙인다)."""
+        for cfg in (self.dev, self.iso):
+            with self.subTest(project=cfg["name"]):
+                self.assertEqual(self.svc("api", cfg)["environment"]["WAKELINE_EXTRA_ALLOWED_ORIGINS"], "")
+        custom = self._config({"EXTRA_ALLOWED_ORIGINS": "http://localhost:3000"})
+        api = custom["services"]["api"]["environment"]
+        self.assertEqual(api["WAKELINE_EXTRA_ALLOWED_ORIGINS"], "http://localhost:3000")
+        self.assertEqual(api["WAKELINE_ALLOWED_ORIGINS"], "http://localhost:8700,http://127.0.0.1:8700", "the stack's own list is unchanged")
+        for name, svc in custom["services"].items():
+            if name != "api":
+                self.assertNotIn("WAKELINE_EXTRA_ALLOWED_ORIGINS", sorted(svc.get("environment") or {}), name)
+
     # --- REL-20 · 계약 §8: collector 헬스체크 ---
     def test_collector_healthcheck(self):
         hc = self.svc("collector")["healthcheck"]
@@ -446,7 +460,7 @@ class ComposePolicyTest(unittest.TestCase):
             with self.subTest(secret=key):
                 broken = Path(self._tmp.name) / f"missing-{key}.env"
                 broken.write_text(re.sub(rf"^{re.escape(key)}=.*\n", "", text, flags=re.M))
-                drop = ("WAKELINE_", "REDIS_", "DB_", "COMPOSE_", "OPENSKY_", "KMA_", "AIS_", "aisstream")
+                drop = ("WAKELINE_", "REDIS_", "DB_", "COMPOSE_", "OPENSKY_", "KMA_", "AIS_", "aisstream", "EXTRA_ALLOWED_ORIGINS")
                 env = {k: v for k, v in os.environ.items() if not k.startswith(drop)}
                 r = subprocess.run(["docker", "compose", "-f", str(COMPOSE), "--env-file", str(broken), "config", "--quiet"],
                                    capture_output=True, text=True, env=env)

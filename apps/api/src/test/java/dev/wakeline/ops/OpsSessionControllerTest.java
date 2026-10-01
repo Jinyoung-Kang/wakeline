@@ -31,7 +31,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 /** 로그인: 요청 제한은 실패 시 닫힘(Redis 장애 → 503, 비밀번호 검사도 하지 않음), 실패·잠금은 감사 기록(SEC-6). */
 class OpsSessionControllerTest {
     static final AppProperties PROPS = new AppProperties("", "36.5,127.8", 250, 120, 200, 5, 10, 30, 2500, 0, "classpath:schemas", 72, 30,
-            120, List.of("http://localhost:8700"));
+            120, List.of("http://localhost:8700"), List.of());
     static final String BODY = "{\"username\":\"admin\",\"password\":\"not-the-password\"}";
 
     final List<String> audited = new ArrayList<>();

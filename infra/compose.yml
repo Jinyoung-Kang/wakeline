@@ -121,6 +121,9 @@ services:
       WAKELINE_TRUSTED_PROXY: ${WAKELINE_NET_PREFIX:-10.77.0}.10   # edge 만 X-Forwarded-For 를 말할 수 있다
       # WebSocket Origin 허용 목록(계약 §1). Host 에서 유도하지 않는다 — DNS rebinding 방어(SEC-7). 격리 스택은 WAKELINE_PORT=8701 로 맞춰진다.
       WAKELINE_ALLOWED_ORIGINS: http://localhost:${WAKELINE_PORT:-8700},http://127.0.0.1:${WAKELINE_PORT:-8700}
+      # 개발 전용 opt-in(기본 비어 있음): 화면을 스택 밖 주소로 띄울 때(예: `next dev` 면 .env 에 EXTRA_ALLOWED_ORIGINS=http://localhost:3000) 위 목록 뒤에
+      # 붙는다 — WS 핸드셰이크 · 운영 변경 요청의 출처 검사가 같은 목록을 쓴다(AppProperties.originPatterns). 같은 .env 를 읽는 격리 스택에도 간다.
+      WAKELINE_EXTRA_ALLOWED_ORIGINS: ${EXTRA_ALLOWED_ORIGINS:-}
       WAKELINE_REGION_CENTER: ${REGION_CENTER:-36.5,127.8}
       WAKELINE_REGION_RADIUS_NM: ${REGION_RADIUS_NM:-250}
       WAKELINE_OPS_SESSION_TTL_H: ${OPS_SESSION_TTL_H:-8}

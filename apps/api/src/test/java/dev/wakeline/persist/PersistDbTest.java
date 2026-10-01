@@ -43,7 +43,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class PersistDbTest {
     static final Instant T0 = Instant.now().truncatedTo(ChronoUnit.SECONDS);
     static final AppProperties PROPS = new AppProperties("", "36.5,127.8", 250, 120, 200, 5, 10, 30, 2500, 0, "classpath:schemas", 72, 30,
-            120, List.of("http://localhost:8700"));
+            120, List.of("http://localhost:8700"), List.of());
 
     JdbcClient api;
     JdbcClient admin;

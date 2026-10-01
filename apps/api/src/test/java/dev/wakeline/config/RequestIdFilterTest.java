@@ -24,7 +24,7 @@ class RequestIdFilterTest {
         assertThat(RequestIdFilter.elapsedMs(req)).as("not filtered — unknown, not 0").isNull();
         long[] seen = {-1};
         RequestIdFilter f = new RequestIdFilter(new AppProperties(EDGE, "36.5,127.8", 250, 120, 200, 5, 10, 30, 2500, 0, "classpath:schemas", 72, 30,
-                120, java.util.List.of()));
+                120, java.util.List.of(), java.util.List.of()));
         f.doFilter(req, new org.springframework.mock.web.MockHttpServletResponse(), (rq, rs) -> {
             try { Thread.sleep(30); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
             seen[0] = RequestIdFilter.elapsedMs((jakarta.servlet.http.HttpServletRequest) rq);
