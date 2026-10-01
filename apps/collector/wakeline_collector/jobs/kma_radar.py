@@ -1242,7 +1242,20 @@ class KmaRadarJob:
         await self.store.write_meta(mapping)
         await self._save_frames(frames)
         if dropped:
-            await self.store.drop_images([f["tm"] for f in dropped])  # 목록에서 빠진 이미지는 바로 지운다
+            # 목록에서 빠진 이미지는 바로 지운다. 여기서 실패해도(목록 SET 과 DEL 사이에 연결이 끊김) 이 tm 은 이미 저장됐다 — 목록 · meta 에 있어 다음
+            # 주기가 다시 받지 않는다. 저장 실패로 올리면 실행이 'error'(저장 수 하나 적게) · 공급자 성공 없음 · 남은 후보를 건너뛰었다(CTO 리뷰 2026-10).
+            # 남는 것은 목록에 없는 옛 이미지뿐이고 자기 TTL(FRAME_TTL_S)로 만료된다 — WARN 한 줄(Redis 문제 — _redis_failed 와 같은 '<오류> · <단계>')
+            gone = [f["tm"] for f in dropped]
+            try:
+                await self.store.drop_images(gone)
+            except (RedisError, OSError) as e:
+                log.warning(
+                    "kma radar: %s · delete of images dropped from the list (Redis) — tm=%s is stored; tm=%s left until the %d h image TTL",
+                    describe_error(e),
+                    tm,
+                    ",".join(gone),
+                    FRAME_TTL_S // 3600,
+                )
         log.info(
             "kma radar: tm=%s %s stations=%d%s echo cells=%d png=%d B (%d frames)",
             tm,
