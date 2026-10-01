@@ -102,4 +102,29 @@ class KrRadarFramesTest {
         Map<String, Object> legacy = KrRadarFrames.frame(node("{\"tm\":\"202609291440\",\"fetched_at\":\"x\",\"echo_cells\":1}"), errors::add);
         assertThat(KrRadarFrames.latest(List.of(older, legacy))).isEmpty(); // 최신 프레임을 모르면 이전 프레임 값으로 채우지 않는다
     }
+
+    /**
+     * 리뷰 cto-2026-10 A2(B5-a): Jackson 3 의 asInt() 는 숫자가 아니거나 int 밖이면 던진다 — 수집기 항목의 echo_cells 가 틀리면 /radar/kr 가 500 이었다(R-72 의
+     * 빈틈 — 이 클래스는 수집기 값으로 500 이 나지 않는다고 약속한다). 계약은 0 이상 정수(tools/rest_contract_check.py)라 틀린 값이면 프레임을 빼고 센다
+     * (틀린 tm 처럼). 없거나 null 인 옛 항목은 예전처럼 0.
+     */
+    @Test
+    void echoCellsMustBeANonNegativeIntOrTheFrameIsDroppedAndCounted() {
+        record Row(String value, Integer kept) {}
+        for (Row r : List.of(new Row("8587", 8587), new Row("0", 0), new Row(null, 0), new Row("null", 0),
+                new Row("\"n/a\"", null), new Row("\"12\"", null), new Row("-1", null), new Row("1.5", null), new Row("1e10", null),
+                new Row("2147483648", null), new Row("123456789012345678901234567890", null), new Row("true", null), new Row("{}", null), new Row("[1]", null))) {
+            List<String> errors = new ArrayList<>();
+            String json = "{\"tm\":\"202609291440\",\"obs_tm\":\"202609291440\",\"fetched_at\":\"" + FETCHED + "\""
+                    + (r.value() == null ? "" : ",\"echo_cells\":" + r.value()) + "}";
+            Map<String, Object> f = KrRadarFrames.frame(node(json), errors::add);
+            if (r.kept() == null) {
+                assertThat(f).as(r.value()).isNull();
+                assertThat(errors).as(r.value()).containsExactly("echo_cells");
+            } else {
+                assertThat(f).as(String.valueOf(r.value())).containsEntry("echo_cells", r.kept());
+                assertThat(errors).as(String.valueOf(r.value())).isEmpty();
+            }
+        }
+    }
 }

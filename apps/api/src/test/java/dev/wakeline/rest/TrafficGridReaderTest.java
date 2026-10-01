@@ -213,4 +213,17 @@ class TrafficGridReaderTest {
         assertThat(TrafficGridReader.kstOf("2026-09-29T18:05:05", REG)).isFalse();
         assertThat(TrafficGridReader.kstOf("2026-09-29T09:05:05Z", REG)).isFalse();
     }
+
+    /**
+     * 리뷰 cto-2026-10 A2(B5-c): 판 번호 v 가 int 밖의 정수면 intValue() 가 던졌다(isIntegralNumber 는 범위를 보지 않는다) — 형식이 틀린 스냅샷처럼 센다.
+     */
+    @Test
+    void aVersionOutsideTheIntRangeIsAMalformedSnapshotNotAnException() {
+        for (String v : List.of("4294967297", "123456789012345678901234567890", "1.0", "\"1\"")) {
+            raw = snapshot(CELLS, "").replace("{\"v\":1,", "{\"v\":" + v + ",");
+            org.assertj.core.api.Assertions.assertThatCode(() -> reader.parse(raw)).as(v).doesNotThrowAnyException();
+            assertThat(reader.parse(raw)).as(v).isNull();
+        }
+        assertThat(errors("version")).isEqualTo(8.0);
+    }
 }
