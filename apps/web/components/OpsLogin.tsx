@@ -30,7 +30,7 @@ export function OpsLogin({ onLogin, notice }: { onLogin: (u: { username: string 
         <div className="label mb-3">Operator sign-in</div>
         {notice ? <div className="mb-2 text-[11px] text-warn" role="status" data-testid="ops-login-notice">{notice}</div> : null}
         <label className="label block" htmlFor="ops-user">username</label>
-        <input id="ops-user" ref={userRef} className="mb-2 w-full" value={u} onChange={(e) => setU(e.target.value)} autoComplete="username" required
+        <input id="ops-user" ref={userRef} data-session-focus className="mb-2 w-full" value={u} onChange={(e) => setU(e.target.value)} autoComplete="username" required
           aria-invalid={invalid("user")} aria-describedby={err ? "ops-login-err" : undefined} />
         <label className="label block" htmlFor="ops-pass">password <span className="normal-case text-fg-3">(8자 이상)</span></label>
         <input id="ops-pass" ref={passRef} className="mb-3 w-full" type="password" value={p} onChange={(e) => setP(e.target.value)} autoComplete="current-password" required minLength={8}

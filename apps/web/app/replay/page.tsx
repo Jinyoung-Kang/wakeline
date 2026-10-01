@@ -12,6 +12,7 @@ import { ReplayList } from "@/components/ReplayList";
 import { ReplayAircraftDetail, ReplaySigmetDetail } from "@/components/ReplayInspector";
 import { ReplayStatusRow } from "@/components/ReplayStatus";
 import { RequestIdCopy } from "@/components/logs/ErrorNote";
+import { useFocusRescue } from "@/lib/use-focus-rescue";
 
 const ReplayMap = dynamic(() => import("@/components/ReplayMap").then((m) => m.ReplayMap), { ssr: false });
 const SPEEDS = [1, 5, 10, 30, 60];
@@ -61,6 +62,15 @@ export default function ReplayPage() {
   }, [playing, speed, max]);
 
   const onBbox = useCallback((b: string, c: boolean) => { setBbox(b); setClamped(c); }, []);
+  /**
+   * 상세를 연 자리(목록의 항목 단추 · 지도) — '닫기'로 상세가 사라지면 초점이 body 로 떨어졌다(QA-304). 그때 연 자리 → '목록' 단추로 돌아간다
+   * (lib/use-focus-rescue — 잃었을 때만)
+   */
+  const pickOpener = useRef<Element | null>(null);
+  const listToggle = useRef<HTMLButtonElement>(null);
+  const rescue = useFocusRescue();
+  const onPick = useCallback((p: ReplayPick) => { pickOpener.current = p && typeof document !== "undefined" ? document.activeElement : null; setPick(p); }, []);
+  const closePick = () => { setPick(null); rescue(() => [pickOpener.current, listToggle.current]); };
   const ac = pick?.kind === "aircraft" && frame ? frame.aircraft.find((a) => a.hex === pick.hex) ?? null : null;
   const sg = pick?.kind === "sigmet" && frame ? frame.sigmets.find((s) => s.id === pick.id) ?? null : null;
   return (
@@ -86,7 +96,7 @@ export default function ReplayPage() {
             {REPLAY_STEPS.map(([d, l]) => <button key={l} className="btn px-1.5 normal-case!" onClick={() => { setPlaying(false); setAt((t) => stepAt(t, d, range)); }} disabled={!at}>{l}</button>)}
           </div>
           <button className="btn" aria-pressed={showRadar} onClick={() => setShowRadar(!showRadar)} disabled={!frame?.radar}>레이더</button>
-          <button className="btn" aria-expanded={showList} aria-controls={showList ? "replay-list" : undefined} onClick={() => setShowList(!showList)} data-testid="replay-list-toggle">목록</button>
+          <button ref={listToggle} className="btn" aria-expanded={showList} aria-controls={showList ? "replay-list" : undefined} onClick={() => setShowList(!showList)} data-testid="replay-list-toggle">목록</button>
         </div>
         <div className="px-3 pt-0.5" data-testid="replay-slider-row">
           <input type="range" min={min} max={max} step={10_000} value={Math.min(max, Math.max(min, at))} onChange={(e) => { setPlaying(false); setAt(Number(e.target.value)); }} className="block w-full"
@@ -99,7 +109,7 @@ export default function ReplayPage() {
         </div>
       </div>
       <div className="relative min-h-0 flex-1">
-        <ReplayMap frame={frame} onBbox={onBbox} onPick={setPick} showRadar={showRadar} onBasemapFailed={setBasemapFailed} />
+        <ReplayMap frame={frame} onBbox={onBbox} onPick={onPick} showRadar={showRadar} onBasemapFailed={setBasemapFailed} />
         {/* 오고 가는 알림(조회 실패 · 면적 상한)은 지도 위에 띄운다 — 위 줄에 넣으면 줄이 접혀 지도 높이가 바뀌고, 바뀐 영역으로 다시 조회했다
             (E2E 2026-10-01: 503 알림이 뜨고 사라질 때마다 bbox 가 33.243 ↔ 33.234 로 흔들려 같은 시각을 새로 조회). 오른쪽 아래 출처 표시는 가리지 않는다. */}
         {err || clamped || basemapFailed ? (
@@ -113,14 +123,14 @@ export default function ReplayPage() {
         {/* 키보드 경로(R-40): 지도 클릭 없이 그 시각의 SIGMET·항공기를 고른다 */}
         {showList ? (
           <div id="replay-list" className="panel absolute top-3 left-12 z-10 flex max-h-[calc(100%-1.5rem)] w-[260px] max-w-[calc(100%-4rem)] flex-col overflow-hidden" role="region" aria-label="재생 항목 목록" data-testid="replay-list">
-            <ReplayList frame={frame} onPick={setPick} />
+            <ReplayList frame={frame} onPick={onPick} />
           </div>
         ) : null}
         {pick ? (
           <div className="panel absolute top-3 right-3 z-10 w-[320px] max-w-[calc(100%-1.5rem)] text-[12px]" data-testid="replay-inspector" role="region" aria-label="재생 항목 상세">
             <div className="row">
               <span className="label">{pick.kind === "aircraft" ? "Aircraft · 기록" : "SIGMET · 그 시각"}</span>
-              <button className="btn" onClick={() => setPick(null)}>닫기</button>
+              <button className="btn" onClick={closePick}>닫기</button>
             </div>
             <div className="max-h-[60vh] overflow-y-auto px-2 py-1">
               {pick.kind === "aircraft" ? (ac ? <ReplayAircraftDetail ac={ac} at={frame!.at} />

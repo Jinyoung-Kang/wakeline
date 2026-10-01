@@ -26,6 +26,7 @@ import { TrafficGridFill } from "@/components/TrafficGridFill";
 import { OpsRunsDrill } from "@/components/OpsRunsDrill";
 import { drillGoneText, runKeyId, runKeyOf, summaryHasKey, summaryLastError, summarySince, type RunKey } from "@/lib/ops-runs";
 import { AUDIT_PAGE_LIMIT } from "@/lib/ops-audit";
+import { useFocusRescue } from "@/lib/use-focus-rescue";
 
 type Any = Record<string, unknown>;
 /** 연 요약 행: 열쇠와 연 때의 summary_since(목록의 창) */
@@ -155,6 +156,15 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
   }, [onLeave]);
   /** 감사 탭: 첫 쪽(15 s 주기) + '더 보기'로 쌓은 앞 기록(QA-307) */
   const auditPages = useAuditPages(audit, (e) => { void authMiss(e); });
+  /**
+   * 누른 단추가 사라지는 조작(감사 '더 보기' — 끝 쪽을 받으면 사라짐, 실행 목록 '닫기') 뒤 초점(WCAG 2.4.3 — QA-304): 초점이 body 로 떨어졌으면
+   * 탭 본문으로, 실행 목록을 닫으면 그 행의 '실행' 단추로(lib/use-focus-rescue — 잃었을 때만). '더 보기'는 받는 동안 disabled 가 아니라 aria-disabled
+   * (초점을 지닌 채 쉰다 — 두 번 누름은 useAuditPages 가 막는다)
+   */
+  const tabBody = useRef<HTMLDivElement>(null);
+  const auditMore = useRef<HTMLButtonElement>(null);
+  const drillOpener = useRef<HTMLElement | null>(null);
+  const rescue = useFocusRescue(10_000);
   /** 공급자 오류 해결 확인 패널(한 번에 하나 — 그 공급자 행 아래) · 마지막 해결 쓰기 결과(상태 줄) */
   const { open: resolveOpen, show: showResolve, close: closeResolve, closeIf: closeResolveIf, panelId: resolvePanelId, openerProps: resolveOpener } = useResolveSlot();
   const [resolveNote, setResolveNote] = useState<string | null>(null);
@@ -211,7 +221,7 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
         <span className="label mr-2">Operations</span>
         {/* 좁은 화면(375 · 320 px)에서는 탭 줄이 줄바꿈한다 — 전에는 한 줄로 화면 밖에 넘쳐 audit · dlq · pipeline 을 누를 수 없었다(QA-302, WCAG 1.4.10) */}
         <div className="flex min-w-0 flex-wrap gap-1" role="group" aria-label="운영 탭">{TABS.map((t) => (
-          <button key={t} className="btn" aria-pressed={tab === t} onClick={() => setTab(t)} data-testid={`ops-tab-${t}`}>
+          <button key={t} className="btn" aria-pressed={tab === t} onClick={() => setTab(t)} data-testid={`ops-tab-${t}`} data-session-focus={tab === t || undefined}>
             {t}{t === "pipeline" && losses ? <span className="ml-1 text-bad" title="0 이 아닌 손실 지표 수">● {losses}</span> : null}
             {tabErr[t] ? <span className="ml-1 text-warn" title={`마지막 요청 실패 — 표시 값은 ${fmtKstClock(lastOk[t])} 기준`} data-testid="ops-tab-stale">갱신 실패</span> : null}
           </button>
@@ -226,7 +236,7 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
         ) : null}
         <span className="ml-auto text-[11px] text-fg-3">{me.username}</span><button className="btn" onClick={logout}>sign out</button>
       </div>
-      <div className="min-h-0 flex-1 overflow-auto p-3 text-[12px]">
+      <div ref={tabBody} tabIndex={-1} className="min-h-0 flex-1 overflow-auto p-3 text-[12px]" role="region" aria-label={`${tab} 탭`} data-testid="ops-tab-body">
         {tab === "providers" && prov ? <>
           <div className="mb-2 flex flex-wrap gap-3 text-[11px]">
             {/* 작업별 공급자 — 공급자 없음(수집기 {job}_none_*, 운영 로그 2026-09-30)이면 빨간 배지와 까닭. 전에는 마지막으로 쓴 공급자를 초록으로 보였다 */}
@@ -309,10 +319,10 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
                       </div>}</td>
                   <td><button className={SMALL_BTN} disabled={!key} aria-expanded={open} aria-controls={open ? RUNS_DRILL_ID : undefined} data-testid="runs-drill-open"
                     aria-label={`${open ? "실행 목록 닫기" : "실행 목록 열기"}: ${label}`} title={SUMMARY_OPEN_TITLE}
-                    onClick={() => key && setDrill(open ? null : { k: key, since: summarySince(runs) })}>{open ? "접기" : "실행"}</button></td>
+                    onClick={() => { drillOpener.current = document.activeElement as HTMLElement | null; if (key) setDrill(open ? null : { k: key, since: summarySince(runs) }); }}>{open ? "접기" : "실행"}</button></td>
                 </tr>
                 {open && drill ? <tr><td colSpan={8}>
-                  <OpsRunsDrill id={RUNS_DRILL_ID} k={drill.k} since={drill.since} onClose={() => setDrill(null)} onAuthMiss={(e) => { void authMiss(e); }} />
+                  <OpsRunsDrill id={RUNS_DRILL_ID} k={drill.k} since={drill.since} onClose={() => { setDrill(null); rescue(() => [drillOpener.current, tabBody.current]); }} onAuthMiss={(e) => { void authMiss(e); }} />
                 </td></tr> : null}
               </Fragment>;
             })}</tbody></table>
@@ -341,7 +351,8 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
             <tbody>{auditPages.rows.map((a) => <tr key={String(a.id)}><TimeCell v={a.at} /><td>{String(a.username ?? "")}</td><td>{String(a.action)}</td><td className="mono">{String(a.target ?? "")}</td><td className="mono text-fg-3">{String(a.before ?? "")}</td><td className="mono">{String(a.after ?? "")}</td><td className="mono">{String(a.ip ?? "")}</td><td className="mono text-fg-3">{String(a.request_id ?? "")}</td></tr>)}</tbody></table>
           {auditPages.err ? <div className="mt-1 text-[11px] text-bad" role="alert" data-testid="audit-more-failed"><ErrorNote prefix="앞선 감사 기록을 불러오지 못함(보인 행은 그대로) — " error={auditPages.err} /></div> : null}
           {auditPages.next != null ? (
-            <button className="btn mt-1 normal-case!" onClick={() => void auditPages.more()} disabled={auditPages.busy} aria-busy={auditPages.busy || undefined}
+            <button ref={auditMore} className="btn mt-1 normal-case!" onClick={() => { rescue(() => [auditMore.current, tabBody.current]); void auditPages.more(); }}
+              aria-disabled={auditPages.busy || undefined} aria-busy={auditPages.busy || undefined}
               title={`cursor ${auditPages.next} — 이 id 보다 앞선 기록 ${AUDIT_PAGE_LIMIT}건`} data-testid="audit-more">더 보기(이전 {AUDIT_PAGE_LIMIT}건)</button>
           ) : null}
         </> : null}
@@ -376,10 +387,17 @@ function SettingsForm({ items, msg, setMsg, onSaved, onAuthMiss }: {
    */
   const saving = useRef(new Set<string>());
   const [busy, setBusy] = useState<ReadonlySet<string>>(() => new Set());
+  /**
+   * 키마다 값 입력 — save 를 누르면 단추가 비활성이 되어(보내는 동안 · 저장 뒤 바뀐 값 없음) 초점이 body 로 떨어졌다(QA-304). 그때 그 키의 입력으로 옮긴다
+   * (결과는 위 role=status · alert 문구가 읽힌다)
+   */
+  const inputs = useRef(new Map<string, HTMLElement>());
+  const rescue = useFocusRescue();
   const drop = (k: string) => setEdit((e) => { const c = { ...e }; delete c[k]; return c; });
   const save = async (k: string) => {
     const ed = edit[k];
     if (ed === undefined || saving.current.has(k)) return;
+    rescue(() => [inputs.current.get(k)]);
     // 서버 검증 규칙(SettingsService.validate)을 보내기 전에 — 규칙을 모르는 키는 서버가 검사
     const parsed = parseSetting(k, ed.value);
     if (!parsed.ok) { setFieldErr((f) => ({ ...f, [k]: parsed.error })); setMsg({ ok: false, text: `${k}: 저장하지 않음 — ${parsed.error}` }); return; }
@@ -414,7 +432,8 @@ function SettingsForm({ items, msg, setMsg, onSaved, onAuthMiss }: {
           const conflict = settingConflict(ed, s);
           return <tr key={s.key} data-testid="setting-row" data-conflict={conflict ? "true" : undefined}><td className="mono">{s.key}</td>
             <td>
-              <SettingInput k={s.key} value={ed?.value ?? String(s.value)} error={fieldErr[s.key] ?? null} onChange={(v) => setEdit({ ...edit, [s.key]: editSetting(ed, s, v) })} />
+              <SettingInput k={s.key} value={ed?.value ?? String(s.value)} error={fieldErr[s.key] ?? null} onChange={(v) => setEdit({ ...edit, [s.key]: editSetting(ed, s, v) })}
+                inputRef={(el) => { if (el) inputs.current.set(s.key, el); else inputs.current.delete(s.key); }} />
               {conflict && ed ? (
                 <div className="mt-1 text-[11px] text-warn" role="alert" data-testid="setting-conflict">
                   편집하는 동안 서버 값이 바뀜(v{ed.version} → v{s.version}: <span className="mono">{String(s.value)}</span>)
@@ -432,10 +451,10 @@ function SettingsForm({ items, msg, setMsg, onSaved, onAuthMiss }: {
 }
 
 /** 키별 입력(R-56): 정수 → number(min/max), 켜기/끄기 → checkbox, 형식이 정해진 문자열 → text + 형식 안내. 값은 문자열로 편집한다(R-35 편집 상태). */
-function SettingInput({ k, value, error, onChange }: { k: string; value: string; error: string | null; onChange: (v: string) => void }) {
+function SettingInput({ k, value, error, onChange, inputRef }: { k: string; value: string; error: string | null; onChange: (v: string) => void; inputRef?: (el: HTMLInputElement | null) => void }) {
   const spec = settingSpec(k);
   const describedBy = error ? `setting-err-${k}` : spec && spec.kind !== "bool" ? `setting-hint-${k}` : undefined;
-  const common = { "aria-label": `${k} 값`, "aria-invalid": error ? true : undefined, "aria-describedby": describedBy };
+  const common = { "aria-label": `${k} 값`, "aria-invalid": error ? true : undefined, "aria-describedby": describedBy, ref: inputRef };
   return (
     <div>
       {spec?.kind === "bool" ? (

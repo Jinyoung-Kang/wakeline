@@ -20,6 +20,7 @@ import { KstTime } from "../KstTime";
 import { ResolveConfirm, useResolveSlot, type ResolveResult } from "../ResolveConfirm";
 import { revokeLogGroup } from "./logGroupTargets";
 import { useLogFeed, type LogView } from "./useLogFeed";
+import { useFocusRescue } from "@/lib/use-focus-rescue";
 
 type Tab = "logs" | "gaps";
 type View = LogView;
@@ -181,14 +182,22 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
     setFilter((f) => ({ ...f, q: draftQ.trim().slice(0, LOG_Q_MAX), rid }));
   };
   const reset = () => { setFilter(DEFAULT_LOG_FILTER); setDraftQ(""); setDraftRid(""); setRidError(null); };
-  const filterFp = useCallback((fp: string) => { setView("list"); setFilter((f) => ({ ...f, fp })); }, []);
+  /**
+   * 누른 단추가 사라지는 조작(상세 '닫기' · '새 항목 N건' · 묶음의 '목록으로') 뒤 초점(WCAG 2.4.3 — QA-304): 초점이 body 로 떨어졌으면 목록 표(grid)로,
+   * 목록을 받는 동안이면 목록 영역으로(lib/use-focus-rescue — 초점을 잃었을 때만)
+   */
+  const listRegion = useRef<HTMLDivElement>(null);
+  const grid = useRef<HTMLTableElement>(null);
+  const rescue = useFocusRescue();
+  const backToList = useCallback(() => rescue(() => [grid.current, listRegion.current]), [rescue]);
+  const filterFp = useCallback((fp: string) => { setView("list"); setFilter((f) => ({ ...f, fp })); backToList(); }, [backToList]);
   /** 요청 id 로 거르기(상세 · 오류 문구) — 요청 시각을 모르므로 가장 긴 기간 */
   const filterRid = useCallback((rid: string) => {
     setTab("logs"); setView("list"); setDraftRid(rid); setRidError(null);
     setFilter((f) => ({ ...f, rid, period: "7d" }));
   }, []);
   const openEntry = useCallback((e: LogEntry) => { openSeq.current++; setDetail(e); setDetailMiss(null); }, []);
-  const closeDetail = useCallback(() => { openSeq.current++; setDetail(null); setDetailMiss(null); }, []);
+  const closeDetail = useCallback(() => { openSeq.current++; setDetail(null); setDetailMiss(null); backToList(); }, [backToList]);
   const logout = () => { void signOut(() => signOutRequest(), onLeave); };
 
   /** 열린 상세 — 해결 쓰기 뒤 다시 읽을 항목(콜백이 상세가 바뀔 때마다 새로 만들어지지 않게 ref) */
@@ -233,8 +242,8 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
       <div className="flex min-h-9 shrink-0 flex-wrap items-center gap-2 border-b border-line bg-bg-1 px-3 py-1">
         <span className="label mr-2">System logs</span>
         <div className="flex gap-1" role="group" aria-label="로그 탭">
-          <button type="button" className="btn" aria-pressed={tab === "logs"} onClick={() => setTab("logs")}>로그</button>
-          <button type="button" className="btn" aria-pressed={tab === "gaps"} onClick={() => setTab("gaps")}>AIS 수신 공백</button>
+          <button type="button" className="btn" aria-pressed={tab === "logs"} onClick={() => setTab("logs")} data-session-focus={tab === "logs" || undefined}>로그</button>
+          <button type="button" className="btn" aria-pressed={tab === "gaps"} onClick={() => setTab("gaps")} data-session-focus={tab === "gaps" || undefined}>AIS 수신 공백</button>
         </div>
         {tab === "logs" ? <>
           <button type="button" className="btn" onClick={() => void load(view, filter)} disabled={loading}>새로고침</button>
@@ -301,7 +310,7 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
               </span>
             ) : null}
             {pending.items.length ? (
-              <button type="button" className="btn border-accent! text-accent!" data-testid="logs-new" onClick={showPending}>
+              <button type="button" className="btn border-accent! text-accent!" data-testid="logs-new" onClick={() => { showPending(); backToList(); }}>
                 {pending.more ? `새 항목 ${n(pending.items.length)}건 이상 — 다시 불러오기` : `새 항목 ${n(pending.items.length)}건`}
               </button>
             ) : null}
@@ -316,7 +325,7 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
             {groups?.scanTruncated ? <span className="text-warn">스캔 상한({n(LOG_SCAN_MAX)}건 — 두 스트림 합)에서 잘림 — 묶음·건수가 기간의 일부만</span> : null}
             {groups?.invalid ? <span className="text-warn">형식 오류 묶음 {groups.invalid}개 건너뜀</span> : null}
             {groups ? <HiddenLine show={filter.resolved === "show"} hidden={groups.hiddenResolved} pages={1} state={groups.resolutionState} /> : null}
-            {freshGroups ? <button type="button" className="btn border-accent! text-accent!" data-testid="logs-new" onClick={showFreshGroups}>묶음에 새 항목 — 반영</button> : null}
+            {freshGroups ? <button type="button" className="btn border-accent! text-accent!" data-testid="logs-new" onClick={() => { showFreshGroups(); backToList(); }}>묶음에 새 항목 — 반영</button> : null}
             <span className="text-fg-3">묶음 보기는 서비스·수준·기간만 적용(글자 검색·요청 id·지문 제외)</span>
           </>}
           <span role="status" aria-live="polite" data-testid="logs-note" className={note?.ok === false ? "text-bad" : "text-ok"}>{note?.text ?? ""}</span>
@@ -327,11 +336,11 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
           edge(nginx) 로그는 컨테이너 표준 출력에만(수집 에이전트 없음) · 키보드(목록): ↑/↓ 이동 · Enter 상세 · c 텍스트 복사
         </div>
         <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
-          <div className="min-h-0 flex-1 overflow-auto" role="region" aria-label="로그 목록" data-testid="log-list">
+          <div ref={listRegion} tabIndex={-1} className="min-h-0 flex-1 overflow-auto" role="region" aria-label="로그 목록" data-testid="log-list">
             {view === "list" ? <>
               {items.length ? (
                 // 키보드: 표(grid)에 초점을 두고 고른 줄은 aria-activedescendant 로 알린다(화면 읽기 프로그램이 그 줄을 읽는다)
-                <table role="grid" aria-readonly="true" tabIndex={0} onKeyDown={onKey} aria-label="로그 목록 — ↑/↓ 이동 · Enter 상세 · c 텍스트 복사"
+                <table ref={grid} role="grid" aria-readonly="true" tabIndex={0} onKeyDown={onKey} aria-label="로그 목록 — ↑/↓ 이동 · Enter 상세 · c 텍스트 복사"
                   aria-activedescendant={selIdx >= 0 ? rowDomId(entryKey(items[selIdx])) : undefined} data-testid="log-grid">
                   <thead className="sticky top-0 bg-bg-1"><tr>
                     <th scope="col" title="한국 표준시(KST) — 칸에 마우스를 올리면 연도 · ms 까지">시각(KST)</th><th scope="col">수준</th><th scope="col">서비스</th><th scope="col">로거</th><th scope="col">메시지(첫 줄)</th>
