@@ -265,6 +265,19 @@ CI 의 web job 이 운영 빌드 뒤 `npm run check:first-js -- --in-image`(빌�
 - 이름 정렬(기본)은 선박 수와 상관없이 50줄을 다시 그리는 값만 남는다(10,000척에서 틱당 약 6.8 → 1.3 ms). 경과 정렬은 거르기만 빠진다(약 −30 %).
 - 재현: `cd apps/web && WAKELINE_PERF=1 npx vitest run tests/perf-ship-list.test.ts -t measure`. 전 = 커밋 `6bda549`(이 변경의 부모).
 
+**P1 — 숨긴 알림 패널(`AlertPanel`, 오른쪽 패널의 다른 탭을 보는 동안)**: R-08 로 마운트된 채 숨겨 두는데, 예측 행마다의 ETA 배지(1 s 시계)가 숨긴 동안에도 1초마다
+다시 그려졌다. 이제 내용은 React 19.3 `<Activity mode="hidden">` 아래 — 상태(펼친 행 · 범위)와 DOM 은 남고 효과(시계 · 스토어 구독)는 떼어 숨긴 동안 0번, 다시 보이면 그 순간의
+값으로 그린다. 겉 상자(`data-testid="alert-panel"`)는 Activity 밖이라 서버 렌더에도 늘 있다(숨긴 Activity 의 내용은 서버가 그리지 않는다).
+시험 `tests/perf-alert-panel.test.ts`: 보일 때 시계 10번 → 커밋 10, 숨긴 동안 → **0**(전: 10), 다시 보이면 줄어든 ETA · 펼친 행 그대로.
+
+| 시계 10번(10 s)의 React 작업 | 보일 때(전 · 후 — 같은 일) | 숨긴 동안 전 | 숨긴 동안 후 |
+|---|---|---|---|
+| 예측 50행 | 1.8 · 2.1 → 2.1 · 1.8 ms | 2.1 · 6.5 ms(커밋 10) | **0 ms(커밋 0)** |
+| 예측 225행 | 16.1 · 9.5 → 9.1 · 10.8 ms | 10.4 · 10.9 ms(커밋 10) | **0 ms(커밋 0)** |
+| 예측 525행 | 22.7 · 37.0 → 21.3 · 20.3 ms | 49.9 · 28.4 ms(커밋 10) | **0 ms(커밋 0)** |
+
+- 재현: `cd apps/web && WAKELINE_PERF=1 npx vitest run tests/perf-alert-panel.test.ts -t measure`. 전 = 커밋 `f4ba9d0`.
+
 ## 재현
 ```bash
 make bench SHIPS=1               # k6 REST + WS(선박 포함), api 층 직접
