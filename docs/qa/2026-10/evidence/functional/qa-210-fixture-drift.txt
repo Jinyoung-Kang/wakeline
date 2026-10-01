@@ -5,3 +5,7 @@ fixture(t=0) 반경 안: 127 / 127
 780de6 fixture: 32.983378 127.978223 track 249.98 gs 400.2
 780de6 API: 2026-10-01T18:12:01.210Z 34.93408 135.20694 track 249.98 gs 400.2
 780de6 API: 2026-10-01T18:12:21.470Z 34.9444 135.25094 track 249.98 gs 400.2
+## /api/v1/ops/quality?days=1 (qa-b) — 같은 때 품질 탭
+rule_counts [{'day': '2026-10-02', 'rule': 'position_jump', 'count': 131}]
+recent 50 건 · hex 별 [('4ba94e', 4), ('71c007', 3), ('aa94ed', 3), ('71ba13', 3), ('71c586', 3)]
+예: {'id': 131, 'run_id': 583, 'rule': 'position_jump', 'hex': '71c014', 'detail': '{"nm": 344.0, "dt_s": 10.1}', 'created_at': '2026-10-01T18:13:23.782Z'}
