@@ -1,0 +1,14 @@
+# QA-203 · QA-204 증거 — 스택 A /ws/v1 (Origin http://localhost:8701), 2026-10-01T18:03:46Z
+## ws_probe(ws-20261001T173159Z.md)의 해당 줄
+| size_4096_ok | ok |  | pong,welcome |  |  |
+| size_4097 | ok | (1009, 'The decoded text message was too big for the output buffer and the endpoint does not support partial messages') | welcome |  |  |
+| multibyte_4096_bytes | ok |  | pong,welcome |  |  |
+| bbox_1e400 | ok |  | error,welcome | BAD_BBOX |  |
+| bbox_bigint_400 | fail | (1002, 'BAD_MESSAGE') | error,welcome | BAD_MESSAGE | 열린 채여야 하는데 닫힘 (1002, 'BAD_MESSAGE'); error BAD_BBOX 기대, 실제 ['BAD_MESSAGE'] |
+| zoom_bigint_400 | ok | (1002, 'BAD_MESSAGE') | error,welcome | BAD_MESSAGE |  |
+## QA-203 api WARN(스택 없음, 분에 한 줄)
+2026-10-01T17:33:43.850Z  WARN 7 --- [wakeline-api] [at-handler-1072] dev.wakeline.ws.WakelineWsHandler        : ws 'subscribe' message failed — closed that connection with 1002 (protocol error): tools.jackson.databind.exc.JsonNodeException: 'BigIntegerNode' method `asDouble()` cannot convert value 1000000000000000000000000000
+## QA-204 직접 측정(python3 — tools/qa/ws_probe.WS)
+글자 4096 · 바이트 12240 → 받은 종류 ['pong'] · 닫힘 None
+글자 4097 · 바이트 12243 → 받은 종류 [] · 닫힘 (1009, 'The decoded text message was too big for the output buffer and the endpoint does not support partial messages')
+글자 4097 · 바이트 4097 → 받은 종류 [] · 닫힘 (1009, 'The decoded text message was too big for the output buffer and the endpoint does not support partial messages')
