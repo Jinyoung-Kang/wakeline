@@ -1,12 +1,12 @@
 "use client";
-import { Fragment, useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useRef, useState } from "react";
 import { ApiError } from "@/lib/api";
-import { opsSession, opsTab, opsTabPath, saveSetting, setProviderEnabled, signOutRequest, type OpsTab } from "@/lib/endpoints/ops";
+import { opsSession, opsTabPath, saveSetting, setProviderEnabled, signOutRequest, type OpsTab } from "@/lib/endpoints/ops";
 import { DISPLAY_TZ, fmtKst, fmtKstClock, fmtTimeTitle, utcDayWindowKst } from "@/lib/time";
 import { fmtBudgetLimit, fmtLatencyMs } from "@/lib/format";
-import { liveNote, mirrorDiffers, switchCell, toggleNote, type SwitchNote, type SwitchState } from "@/lib/provider-switch";
+import { liveNote, mirrorDiffers, switchCell, toggleNote, type SwitchNote } from "@/lib/provider-switch";
 import {
-  classifyOpsError, editSetting, isAuthMiss, parseSetting, pipelineLossCount, providerLastError, providerMissing, providersNowMs, rebaseSetting, RequestOrder,
+  classifyOpsError, editSetting, isAuthMiss, parseSetting, pipelineLossCount, providerLastError, providerMissing, providersNowMs, rebaseSetting,
   RUN_STATUS_TITLE, runStatusClass, runStatusTone, SESSION_EXPIRED_NOTE, settingConflict, qualityPartialDay, settingIfMatch, settingSpec, signOut, withProviderResolutions,
   type SettingEdit,
 } from "@/lib/ops";
@@ -14,7 +14,7 @@ import { hiddenCount, hiddenText, parseResolutionState, RESOLUTION_STATE_TEXT, R
 import { ResolveConfirm, useResolveSlot, type ResolveResult, type ResolveTarget } from "@/components/ResolveConfirm";
 import { OpsLogin } from "@/components/OpsLogin";
 import { useOpsSession } from "@/components/ops/useOpsSession";
-import { useVisibleInterval } from "@/lib/use-visible-interval";
+import { OPS_TABS, useOpsTabs, type Runs, type Settings } from "@/components/ops/useOpsTabs";
 import { OpsSessionError } from "@/components/ops/OpsSessionError";
 import { OpsPipeline } from "@/components/OpsPipeline";
 import { ErrorNote, RequestIdOf } from "@/components/logs/ErrorNote";
@@ -26,28 +26,11 @@ import { OpsRunsDrill } from "@/components/OpsRunsDrill";
 import { drillGoneText, runKeyId, runKeyOf, summaryHasKey, summaryLastError, summarySince, type RunKey } from "@/lib/ops-runs";
 
 type Any = Record<string, unknown>;
-/** provider_switch: 켜고 끄기의 원본(DB)과 수집기가 따르는 Redis 미러(R-94) — providers[].disabled 는 미러 값 */
-/** resolution_state = 해결 기록의 상태(ok | stale | unavailable — ADR-024). providers[] 마다 last_error_resolution · last_error_resolved */
-interface Providers {
-  providers: Any[]; active: Record<string, string>; collector: Record<string, string>; switches: Any[]; budget_days: Any[]; budget_day_zone?: unknown; provider_switch?: SwitchState[]; resolution_state?: unknown;
-  /** 응답을 만든 서버 시각(UTC ISO) — '파일 없음' 줄의 '확인 멈춤'을 서버 기준 지금으로 판정한다(providersNowMs) */
-  generated_at?: unknown;
-}
-/**
- * hidden_resolved_errors = 해결 처리로 요약에서 뺀 오류 실행 수(ADR-024). mode = 이 응답을 요청한 해결 표시(화면 문구는 받은 응답의 것을 말한다).
- * summary_since = 요약 창의 시작(UTC ISO — 계약 v5 §G14 개정 2026-10-01): 행을 열면 그 값을 since 로 보낸다(연 때의 요약 창)
- */
-interface Runs { items: Any[]; summary_24h: Any[]; hidden_resolved_errors?: unknown; summary_since?: unknown; mode: ResolvedMode }
 /** 연 요약 행: 열쇠와 연 때의 summary_since(목록의 창) */
 interface Drill { k: RunKey; since: string | null }
-/** counted_since = V16 이 격리 수를 KST 날짜로 세기 시작한 순간(UTC ISO) — 그 KST 날짜는 부분 값(lib/ops qualityPartialDay) */
-interface Quality { rule_counts: Any[]; recent: Any[]; day_zone?: unknown; counted_since?: unknown }
-interface Settings { items: { key: string; value: unknown; version: number; updated_by?: string; updated_at?: string }[] }
-/** 탭 = 엔드포인트 하나(경로는 lib/endpoints/ops — 실행 요약은 해결 표시를 늘 명시한다) */
+/** 탭 = 엔드포인트 하나 — 불러오기 · 순서 · 주기는 components/ops/useOpsTabs */
 type Tab = OpsTab;
-const TABS: readonly Tab[] = ["providers", "runs", "quality", "settings", "audit", "dlq", "pipeline"];
-/** 탭마다 요청 순서(lib/ops RequestOrder) — 대시보드마다 하나 */
-const newOrders = () => Object.fromEntries(TABS.map((t) => [t, new RequestOrder()])) as Record<Tab, RequestOrder>;
+const TABS = OPS_TABS;
 /** 해결 처리 뒤 다시 읽는 탭: 공급자(해결됨 표시) · 실행 요약(오류 행) · 감사(RESOLVE · UNRESOLVE) */
 const RESOLVE_AFFECTS: readonly Tab[] = ["providers", "runs", "audit"];
 /** 응답 필드 → 시각 값(ISO 문자열 · epoch ms). 그 밖은 모름(null) */
@@ -147,94 +130,27 @@ export default function OpsPage() {
 
 function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (note: string | null) => void }) {
   const [tab, setTab] = useState<Tab>("providers");
-  const [prov, setProv] = useState<Providers | null>(null);
-  const [runs, setRuns] = useState<Runs | null>(null);
-  const [quality, setQuality] = useState<Quality | null>(null);
-  const [settings, setSettings] = useState<Settings | null>(null);
-  const [audit, setAudit] = useState<{ items: Any[] } | null>(null);
-  const [dlq, setDlq] = useState<{ items: Any[] } | null>(null);
-  const [pipeline, setPipeline] = useState<unknown>(null);
-  /** 마지막 오류(문구 + ApiError 면 요청 id — 계약 v5 §C8) */
-  const [err, setErr] = useState<unknown>(null);
-  /** 탭(엔드포인트)마다 마지막 성공 시각과 마지막 요청의 실패(성공하면 지운다) — 한 탭만 계속 실패해도 드러난다(R-12) */
-  const [lastOk, setLastOk] = useState<Partial<Record<Tab, number>>>({});
-  const [tabErr, setTabErr] = useState<Partial<Record<Tab, unknown>>>({});
-  /** 실행 요약의 해결 표시(ADR-024): hide(기본) = 해결 처리한 공급자 오류의 error 실행을 요약에서 뺀다 · show = 뺀 것 없이. ref 는 요청을 떠날 때의 값을 읽는다 */
-  const [runsMode, setRunsMode] = useState<ResolvedMode>("hide");
   /** 연 요약 행(한 번에 하나) — k 는 연 때 만든 객체 그대로(목록이 15 s 새로고침마다 다시 부르지 않게), since 는 연 때의 summary_since */
   const [drill, setDrillState] = useState<Drill | null>(null);
   /** 연 행이 새로 받은 요약에서 빠져 닫은 목록(알림 — 그 응답의 해결 표시와 함께). 행을 열거나 닫거나 알림을 닫으면 지운다 */
   const [drillGone, setDrillGone] = useState<{ k: RunKey; mode: ResolvedMode } | null>(null);
-  /** 연 행 — 요약 응답을 받을 때 본다(reload 는 한 번 만든 콜백이라 state 대신 ref 로 지금 값을 읽는다) */
+  /** 연 행 — 요약 응답을 받을 때 본다(탭 불러오기는 한 번 만든 콜백이라 state 대신 ref 로 지금 값을 읽는다) */
   const drillRef = useRef<Drill | null>(null);
   const setDrill = useCallback((d: Drill | null) => { drillRef.current = d; setDrillState(d); setDrillGone(null); }, []);
-  const runsModeRef = useRef<ResolvedMode>("hide");
-  /**
-   * 탭마다 요청 순서(lib/ops RequestOrder): 기준 요청(쓰기 뒤 · 해결 표시 토글 · 새로고침 단추) 전에 떠난 요청의 응답은 버리고 — 해결 쓰기 뒤 다시 읽은 값을
-   * 그 전에 떠난 주기 요청이 덮지 않게, 토글 전 해결 표시의 요약이 표에 오지 않게 — 새로고침보다 느린 응답(실패 포함)은 더 새 응답이 없으면 반영한다.
-   */
-  const order = useRef<Record<Tab, RequestOrder> | null>(null);
-  /** 오류 처리: 세션 만료면 로그인으로(대시보드 상태는 언마운트로 사라진다), 아니면 오류 문구 */
-  const fail = useCallback((e: unknown) => {
-    if (!isAuthMiss(e)) { setErr(e); return; }
-    void classifyOpsError(e, () => opsSession()).then((k) => (k === "expired" ? onLeave(SESSION_EXPIRED_NOTE) : setErr(e)));
-  }, [onLeave]);
+  /** 연 행이 새 요약에 없으면(창 밖 · 해결로 모두 가려짐) 목록을 닫고 알린다 — 말없이 사라졌다가 행이 돌아오면 저절로 다시 열려 다시 부르지 않게(리뷰 2026-10-01) */
+  const onRuns = useCallback((v: Omit<Runs, "mode">, mode: ResolvedMode) => {
+    const d = drillRef.current;
+    if (d && !summaryHasKey(v.summary_24h, d.k)) { drillRef.current = null; setDrillState(null); setDrillGone({ k: d.k, mode }); }
+  }, []);
+  const {
+    providers: prov, setProviders: setProv, runs, quality, settings, audit, dlq, pipeline, err, fail, lastOk, tabErr, runsMode, toggleRunsMode, reload, refresh,
+  } = useOpsTabs({ onLeave, onRuns });
   /** 해결 쓰기의 401/404: 세션 확인만(문구는 확인 패널이 보인다) — 만료면 로그인으로 */
   const authMiss = useCallback(async (e: unknown) => {
     const k = await classifyOpsError(e, () => opsSession());
     if (k === "expired") onLeave(SESSION_EXPIRED_NOTE);
     return k;
   }, [onLeave]);
-  /**
-   * 탭 불러오기 — only 를 주면 그 탭만(해결 쓰기 뒤 · 해결 표시 토글), 없으면 모두(15 s 주기 · 새로고침 단추).
-   * periodic = 15 s 주기: 기준 요청이 아니고, 요청이 아직 떠 있는 탭은 건너뛴다. 그 밖(처음 · 새로고침 단추 · 쓰기 뒤 · 토글)은 기준 요청이다.
-   */
-  const reload = useCallback((only?: readonly Tab[], periodic = false) => {
-    if (!only) setErr(null);
-    let authMiss = false; // 한 번의 새로고침에서 세션 확인은 한 번만
-    const load = <T,>(t: Tab, set: (v: T, mode: ResolvedMode) => void) => {
-      if (only && !only.includes(t)) return;
-      const ord = (order.current ??= newOrders())[t];
-      if (periodic && ord.busy) return;
-      const mode = runsModeRef.current;
-      const my = ord.begin(!periodic);
-      void opsTab<T>(t, mode).then(
-        (v) => { if (!ord.settle(my)) return; set(v, mode); setLastOk((o) => ({ ...o, [t]: Date.now() })); setTabErr((m) => { const c = { ...m }; delete c[t]; return c; }); },
-        (e: unknown) => {
-          if (!ord.settle(my)) return;
-          // 이 탭의 값은 마지막 성공 시각 기준으로 남는다 — 실패를 탭에 붙인다. 세션 만료면 로그인으로(확인은 한 번만)
-          setTabErr((m) => ({ ...m, [t]: e }));
-          if (!isAuthMiss(e) || authMiss) return;
-          authMiss = true;
-          void classifyOpsError(e, () => opsSession()).then((k) => { if (k === "expired") onLeave(SESSION_EXPIRED_NOTE); });
-        });
-    };
-    load<Providers>("providers", setProv);
-    load<Omit<Runs, "mode">>("runs", (v, mode) => {
-      setRuns({ ...v, mode });
-      // 연 행이 새 요약에 없으면(창 밖 · 해결로 모두 가려짐) 목록을 닫고 알린다 — 말없이 사라졌다가 행이 돌아오면 저절로 다시 열려 다시 부르지 않게(리뷰 2026-10-01)
-      const d = drillRef.current;
-      if (d && !summaryHasKey(v.summary_24h, d.k)) { drillRef.current = null; setDrillState(null); setDrillGone({ k: d.k, mode }); }
-    });
-    load<Quality>("quality", setQuality);
-    load<Settings>("settings", setSettings);
-    load<{ items: Any[] }>("audit", setAudit);
-    load<{ items: Any[] }>("dlq", setDlq);
-    load<unknown>("pipeline", setPipeline);
-  }, [onLeave]);
-  const refresh = useCallback(() => reload(), [reload]);
-  useEffect(() => {
-    const first = setTimeout(refresh, 0);
-    return () => clearTimeout(first);
-  }, [refresh]);
-  // 15 s 주기는 탭이 보일 때만 — 숨긴 탭에서 엔드포인트 7개를 분당 28번 부르지 않는다. 다시 보이면 곧바로(PLAN §5 결정 2, web-review B12)
-  useVisibleInterval(() => reload(undefined, true), 15_000);
-  const toggleRunsMode = () => {
-    const next: ResolvedMode = runsModeRef.current === "show" ? "hide" : "show";
-    runsModeRef.current = next;
-    setRunsMode(next);
-    reload(["runs"]);
-  };
   /** 공급자 오류 해결 확인 패널(한 번에 하나 — 그 공급자 행 아래) · 마지막 해결 쓰기 결과(상태 줄) */
   const { open: resolveOpen, show: showResolve, close: closeResolve, closeIf: closeResolveIf, panelId: resolvePanelId, openerProps: resolveOpener } = useResolveSlot();
   const [resolveNote, setResolveNote] = useState<string | null>(null);
@@ -251,7 +167,7 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
       setResolveNote(`되돌림: 해결 #${r.id} — 공급자 · 실행 요약 · 감사를 다시 불러옴`);
     }
     reload(RESOLVE_AFFECTS);
-  }, [reload, closeResolveIf]);
+  }, [reload, closeResolveIf, setProv]);
   const logout = () => { void signOut(() => signOutRequest(), onLeave); };
   const losses = pipelineLossCount(pipeline);
   /** 마지막 토글 결과(R-94): DB 원본에 커밋됐어도 Redis 미러에 실패했으면(mirrored=false) 수집기는 아직 이전 값을 따른다 — 경고로 보인다 */
