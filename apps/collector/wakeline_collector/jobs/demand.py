@@ -40,7 +40,7 @@ from wakeline_collector.http import ProviderHttpError
 from wakeline_collector.jobs.context import JobContext
 from wakeline_collector.jobs.route import RouteLookup
 from wakeline_collector.models import AircraftState, ProviderResult
-from wakeline_collector.normalize import Rejected, normalize_readsb, readsb_reference_time
+from wakeline_collector.normalize import readsb_batch
 from wakeline_collector.publisher import STREAM_AIRCRAFT
 from wakeline_collector.quality import AircraftGate, Quarantine
 from wakeline_collector.ratelimit import RateLimiter, Throttled
@@ -413,26 +413,9 @@ class DemandTracker:
     async def _normalize(
         self, res: ProviderResult, gate: AircraftGate, keep: Callable[[str | None], bool]
     ) -> tuple[list[AircraftState], list[Quarantine], set[str]]:
-        """(통과한 상태, 격리, 응답에 들어 있던 hex). keep(hex) 가 False 인 레코드는 보지 않는다(요청하지 않은 항공기)."""
-        states: list[AircraftState] = []
-        pre: list[Quarantine] = []
-        seen: set[str] = set()
-        ref = readsb_reference_time(res.data, res.fetched_at)  # 같은 관측은 어느 작업이 받아도 같은 seen_at
-        for ac in res.data.get("ac") or []:
-            if not isinstance(ac, dict):
-                continue
-            raw_hex = ac.get("hex")
-            h = raw_hex.strip().lower() if isinstance(raw_hex, str) else None
-            if not keep(h):
-                continue
-            if h:
-                seen.add(h)
-            r = normalize_readsb(ac, self.provider.name, res.fetched_at, ref)
-            if isinstance(r, Rejected):
-                pre.append(Quarantine(r.rule, r.hex, r.detail))
-            else:
-                states.append(r)
-        g = gate.apply(states, 0, datetime.now(UTC), pre=pre)
+        """(통과한 상태, 격리, 응답에 들어 있던 hex). keep(hex) 가 False 인 레코드는 보지 않는다(요청하지 않은 항공기). 관심 지역 작업과 같은
+        정규화 · 게이트(normalize.readsb_batch — 같은 관측은 어느 작업이 받아도 같은 seen_at). 이벤트 루프 위에서 돈다."""
+        _records, g, seen = readsb_batch(res.data, self.provider.name, res.fetched_at, gate, keep=keep)
         return g.kept, g.quarantined, seen
 
     async def _raw_ref(self, res: ProviderResult, kind: str) -> str:

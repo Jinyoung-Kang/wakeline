@@ -18,10 +18,9 @@ from wakeline_collector.errors import describe_error
 from wakeline_collector.fallback import ProviderChain
 from wakeline_collector.http import PreSendFailed, ProviderHttpError
 from wakeline_collector.jobs.context import JobContext
-from wakeline_collector.models import AircraftState
-from wakeline_collector.normalize import Rejected, normalize_opensky, normalize_readsb, readsb_reference_time
+from wakeline_collector.normalize import gate_records, normalize_opensky, readsb_batch
 from wakeline_collector.publisher import STREAM_AIRCRAFT
-from wakeline_collector.quality import AircraftGate, Quarantine
+from wakeline_collector.quality import AircraftGate
 from wakeline_collector.ratelimit import Throttled
 from wakeline_collector.raw_store import archive
 from wakeline_collector.send_outcome import classify_send
@@ -165,14 +164,9 @@ class AircraftJob:
         fetched_at = result.fetched_at
         if provider == "opensky":
             results = [normalize_opensky(v, fetched_at) for v in result.data.get("states") or []]
-        else:
-            ref = readsb_reference_time(result.data, fetched_at)
-            results = [
-                normalize_readsb(ac, provider, fetched_at, ref) for ac in result.data.get("ac") or [] if isinstance(ac, dict)
-            ]
-        states = [r for r in results if isinstance(r, AircraftState)]
-        pre = [Quarantine(r.rule, r.hex, r.detail) for r in results if isinstance(r, Rejected)]
-        gate = self.gate.apply(states, 0, datetime.now(UTC), pre=pre)
+            gate = gate_records(results, self.gate, datetime.now(UTC))
+        else:  # demand(focus · hot)와 같은 정규화 · 게이트(normalize.readsb_batch)
+            results, gate, _seen = readsb_batch(result.data, provider, fetched_at, self.gate)
         lat, lon, radius = region
         payload = {
             "region": None if self.scope == "global" else {"lat": lat, "lon": lon, "radius_nm": radius},
