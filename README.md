@@ -45,7 +45,7 @@
 flowchart LR
   B[브라우저<br/>Next.js · MapLibre] -->|HTTP · WS :8700| E[edge · nginx<br/>Host 허용 목록 · XFF 덮어쓰기 · limit_req]
   E -->|/| W[web · Next.js]
-  E -->|/api /ws| A[api · Spring Boot<br/>ingest · engine · ws · demand · rest · ops · persist]
+  E -->|/api /ws| A[api · Spring Boot<br/>ingest · aircraft · ships · weather · ws · ops · platform]
   C[collector · Python<br/>항공기·기상 폴링 · 정규화 · 품질 게이트 · 예산 · 속도 상한] -->|XADD| R[(redis · Streams · ACL<br/>예산 Lua · 세션 · 수요 임대)]
   S[ais · Python<br/>구역별 WebSocket(최대 3) · 대기열 · MMSI 별 최신 · 10 s 배치] -->|XADD| R
   R -->|XREADGROUP → XACK| A
@@ -70,6 +70,10 @@ flowchart LR
   WebSocket 메시지도 `schemas/ws/*.json`(ADR-020): api 시험이 실제 빌더의 출력을 검증해 표본을 웹 fixture 로 남기고, 웹은 번들에 스키마 검증기를 싣지 않는 대신 손으로 쓴 검증기(`lib/ws-validate.ts`)를 그 표본과 스키마 잎 제약 전수 시험으로 묶는다.
   버린 메시지는 종류에 맞게 다시 받는다(항공기 · 선박 `resync`, 알림 · SIGMET · 레이더 `resync` scope — status · 선택 · demand 는 요청하지 않고 다음 주기 메시지를 기다린다).
 - **핫 상태는 메모리, 이력은 DB**: 불변 스냅샷 참조 교체(락 없음), STRtree 는 SIGMET 갱신 때만 재구축, 항적·선박 위치는 비동기 배치 저장(일 파티션 · 보존 정책).
+- **api 는 기능 단위 패키지**(ADR-028): 항공기 · 선박 · 기상은 기능마다 `core`(업무 규칙 · 메모리 상태 — JDBC · Redis · 서블릿을 쓰지 않는다) · `data`(DB · Redis) ·
+  `web`(컨트롤러 · 응답 JSON)으로, 작은 기능(운영 · 설정 · 상태 · 이력 · 교통량 · 수신 범위 · 수요 · 노선 · 입출항 · 로그)은 평평하게, 기반은 `platform.*` · `geo` 에 둔다.
+  의존은 바깥 → 업무 규칙 한 방향이고 패키지 순환이 없다. 컨트롤러는 데이터에 직접 닿지 않고, `ws` 는 누구도 import 하지 않으며, `ingest` 는 스트림 어댑터다 —
+  `ArchitectureTest` 가 소스의 import 로 이 규칙들을 검사한다(받아들인 예외 0).
 
 ### 결정과 그 근거(발췌)
 | 결정 | 근거(측정·문서) |
@@ -169,7 +173,7 @@ make rotate-db-passwords P=wakeline-e2e sync=1   # 격리 스택(데모·E2E)의
 
 ## 6. 저장소 구조
 ```
-apps/api         Spring Boot — dev.wakeline.{ingest,engine,ws,demand,rest,persist,ops,logs,route,portcalls,coverage,domain,config} · Flyway V1–V17 · JUnit/Testcontainers
+apps/api         Spring Boot — dev.wakeline.{platform.*,geo,aircraft·ships·weather.{core,data,web},ingest,ws,ops,settings,status,history,traffic,coverage,demand,route,portcalls,logs}(ADR-028) · Flyway V1–V17 · JUnit/Testcontainers
 apps/collector   Python — providers · normalize · quality · sigmet_parse · budget · ratelimit · demand · jobs · ais/(수신·대기열·정리·발행·공백)
 apps/web         Next.js — app/(상황판·replay·stats·airports·ops·logs·about·guide) · lib(ws·store·ships·demand·viewport·interpolate) · e2e
 schemas/         aircraft_state · ship_state · ship_static · sigmet · stream_envelope · log_event · ws/(WS 메시지) · vectors/(가림 · 억제 · 선종 순서 — 언어 간 시험 벡터) (계약의 단일 원천)
