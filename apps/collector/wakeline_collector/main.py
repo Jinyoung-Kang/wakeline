@@ -152,6 +152,7 @@ async def main(stop: asyncio.Event | None = None, redis: Any = None, db: Db | No
     http = HttpClient(limiter)
     limits = build_limits(settings)
     publisher = Publisher(redis)
+    raw = RawStore()
     tracker: DemandTracker | None = None
     portcalls: PortCallIndexJob | None = None
     logsink: LogSink | None = None
@@ -174,6 +175,9 @@ async def main(stop: asyncio.Event | None = None, redis: Any = None, db: Db | No
             "http_throttled": str(limiter.throttled),
             # 계약 v5 §C2: 로그 싱크가 wakeline:logs 로 보낸 수 · 대기열 상한으로 버린 수(기동 뒤 누계, 끄면 빈 값)
             **sink_metrics(logsink),
+            # F6: 원천 보관 · 정리 실패(기동 뒤 누계 — 0 이 아니면 /data/raw 가 가득 찼거나 읽기 전용이다)
+            "raw_unsaved": str(raw.unsaved),
+            "raw_purge_failed": str(raw.purge_failed),
         }
         if tracker is not None:
             m.update(tracker.metrics())
@@ -185,7 +189,7 @@ async def main(stop: asyncio.Event | None = None, redis: Any = None, db: Db | No
         budget=Budget(redis, limits),
         db=db,
         publisher=publisher,
-        raw=RawStore(),
+        raw=raw,
         status=ProviderStatus(redis, metrics=metrics),
         rt=RuntimeSettings(redis),
         fixture=fixture,
