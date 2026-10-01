@@ -13,7 +13,8 @@ export default defineConfig({
   reporter: [["list"], ["html", { open: "never" }]],
   // API 를 직접 부르는 요청 제한 시험은 화면 시험이 끝난 뒤 혼자 돈다(같은 IP 의 페이지 로드와 edge 양동이를 나눠 쓰지 않게)
   projects: [
-    { name: "app", testIgnore: /edge-limits\.spec\.ts/ },
+    // e2e/qa/ = QA 2026-10 점검 · 재현 시험(따로 돈다 — e2e/qa/playwright.qa.config.ts). 재현 시험은 고치기 전까지 실패하므로 이 묶음에 넣지 않는다
+    { name: "app", testIgnore: [/edge-limits\.spec\.ts/, /[\\/]qa[\\/]/] },
     { name: "edge-limits", testMatch: /edge-limits\.spec\.ts/, dependencies: ["app"] },
   ],
 });
