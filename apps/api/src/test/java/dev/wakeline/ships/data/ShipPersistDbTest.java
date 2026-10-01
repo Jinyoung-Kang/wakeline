@@ -1,7 +1,7 @@
 package dev.wakeline.ships.data;
 
 import dev.wakeline.DbTestSupport;
-import dev.wakeline.persist.MaintenanceJobs;
+import dev.wakeline.history.MaintenanceJobs;
 import dev.wakeline.platform.data.DbErrors;
 import dev.wakeline.platform.data.OrderedWriter;
 import dev.wakeline.platform.data.Sql;

@@ -1,6 +1,6 @@
 package dev.wakeline.it;
 
-import dev.wakeline.rest.TrafficGridReader;
+import dev.wakeline.traffic.TrafficGridReader;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIf;
 import org.springframework.beans.factory.annotation.Autowired;

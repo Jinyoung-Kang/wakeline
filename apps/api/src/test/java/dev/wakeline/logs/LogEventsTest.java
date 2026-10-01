@@ -71,7 +71,7 @@ class LogEventsTest {
         var ex = new LogEvents.Ex("java.lang.IllegalStateException", "boom", "java.lang.IllegalStateException: boom\n\tat x.Y.z(Y.java:1)");
         Map<String, Object> ctx = new LinkedHashMap<>();
         ctx.put("job", "retention");
-        var d = new LogEvents.Draft(T, "api", "api-host:1", "WARN", "dev.wakeline.persist.MaintenanceJobs", null, "failed 3 times", ex,
+        var d = new LogEvents.Draft(T, "api", "api-host:1", "WARN", "dev.wakeline.history.MaintenanceJobs", null, "failed 3 times", ex,
                 "0199a3b4c5d6e7f8a9b0c1d2", ctx, false);
         String s = LogEvents.serialize(d, "0123456789abcdef", 4);
         assertThat(SCHEMA.validate(s)).as(s).isNull();

@@ -1,4 +1,4 @@
-package dev.wakeline.rest;
+package dev.wakeline.traffic;
 
 import dev.wakeline.platform.web.Etags;
 import dev.wakeline.platform.web.Meta;

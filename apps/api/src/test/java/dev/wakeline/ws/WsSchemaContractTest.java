@@ -3,7 +3,7 @@ package dev.wakeline.ws;
 import dev.wakeline.aircraft.core.AircraftState;
 import dev.wakeline.demand.CollectorDemandStatus;
 import dev.wakeline.demand.DemandStats;
-import dev.wakeline.domain.HotCell;
+import dev.wakeline.demand.HotCell;
 import dev.wakeline.platform.support.Receipt;
 import dev.wakeline.portcalls.PortCallFixtures;
 import dev.wakeline.portcalls.PortCallIndex;

@@ -1,8 +1,5 @@
-package dev.wakeline.rest;
+package dev.wakeline.coverage;
 
-import dev.wakeline.coverage.CoverageSource;
-import dev.wakeline.coverage.ShipCoverage;
-import dev.wakeline.coverage.ShipCoverageFixtures;
 import dev.wakeline.platform.web.ProblemAdvice;
 import dev.wakeline.ships.core.ShipEvents;
 import dev.wakeline.ships.core.ShipState;

@@ -6,7 +6,7 @@ import dev.wakeline.demand.DemandStats;
 import dev.wakeline.aircraft.core.AircraftState;
 import dev.wakeline.geo.Bbox;
 import dev.wakeline.geo.Geo;
-import dev.wakeline.domain.HotCell;
+import dev.wakeline.demand.HotCell;
 import dev.wakeline.aircraft.core.SnapshotStore;
 import dev.wakeline.settings.RegionSettings;
 import dev.wakeline.route.RouteReader;

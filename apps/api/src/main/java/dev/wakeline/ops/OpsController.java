@@ -42,14 +42,14 @@ public class OpsController {
     private final StringRedisTemplate redis;
     private final SettingsService settings;
     private final AuditService audit;
-    private final dev.wakeline.persist.MaintenanceJobs jobs;
+    private final dev.wakeline.history.MaintenanceJobs jobs;
     private final TransactionTemplate tx;
     private final ProviderSwitchService switches;
     private final ResolutionService resolutions;
     private final IngestRunRepository ingestRuns;
 
     public OpsController(StatusService status, JdbcClient db, StringRedisTemplate redis, SettingsService settings, AuditService audit,
-                         dev.wakeline.persist.MaintenanceJobs jobs, TransactionTemplate tx, ProviderSwitchService switches,
+                         dev.wakeline.history.MaintenanceJobs jobs, TransactionTemplate tx, ProviderSwitchService switches,
                          ResolutionService resolutions) {
         this.status = status;
         this.db = db;
@@ -69,7 +69,7 @@ public class OpsController {
      */
     @PostMapping("/stats/aggregate")
     public ResponseEntity<Map<String, Object>> aggregate(@RequestParam(required = false) java.time.LocalDate day, HttpServletRequest req, Authentication auth) {
-        java.time.LocalDate today = dev.wakeline.persist.MaintenanceJobs.today();
+        java.time.LocalDate today = dev.wakeline.history.MaintenanceJobs.today();
         java.time.LocalDate d = day == null ? today.minusDays(1) : day;
         if (!d.isBefore(today)) throw Problem.badRequest("BAD_DAY", "day must be before today (KST, Asia/Seoul) — a day is aggregated once it has ended");
         tx.executeWithoutResult(st -> {
@@ -185,7 +185,7 @@ public class OpsController {
         // day 는 KST 날짜 "YYYY-MM-DD"(계약 v5 §G20 — 수집기가 실행이 시작된 KST 날짜로 센다 · R-45 — JVM 시간대의 자정 시각이 아니다). 최근 d 일(KST 오늘 포함 d+1 개 날)
         // counted_since = V16 이 이 표를 KST 날짜 셈으로 바꾼 순간(kst_day_cutover, UTC ISO) — 그 KST 날짜의 수는 그 뒤 실행만 든 부분 값이다(화면이 '부분' 으로 적는다).
         // 그보다 앞 KST 날짜의 행은 내지 않는다: 배포 중 아직 돌던 이전 수집기가 UTC 날짜로 쓴 행뿐이다(V16 앞의 수는 보관 표에 있다).
-        String zone = dev.wakeline.persist.MaintenanceJobs.DAY_ZONE_ID;
+        String zone = dev.wakeline.history.MaintenanceJobs.DAY_ZONE_ID;
         String since = db.sql("SELECT to_char(cut_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"') FROM kst_day_cutover WHERE table_name = 'quality_rule_count'")
                 .query(String.class).optional().orElse(null);
         var counts = db.sql("""
@@ -193,7 +193,7 @@ public class OpsController {
                 WHERE day >= :from
                   AND day >= coalesce((SELECT (cut_at AT TIME ZONE :zone)::date FROM kst_day_cutover WHERE table_name = 'quality_rule_count'), day)
                 ORDER BY 1 DESC, rule""")
-                .param("from", dev.wakeline.persist.MaintenanceJobs.today().minusDays(d)).param("zone", zone).query().listOfRows();
+                .param("from", dev.wakeline.history.MaintenanceJobs.today().minusDays(d)).param("zone", zone).query().listOfRows();
         var recent = db.sql("SELECT id, run_id, rule, hex, detail::text detail, created_at FROM quality_event ORDER BY id DESC LIMIT 50").query().listOfRows();
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("rule_counts", counts);

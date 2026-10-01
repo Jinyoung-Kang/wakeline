@@ -1,4 +1,4 @@
-package dev.wakeline.domain;
+package dev.wakeline.demand;
 
 import dev.wakeline.geo.Bbox;
 import dev.wakeline.geo.Geo;

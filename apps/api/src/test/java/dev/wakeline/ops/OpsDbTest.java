@@ -3,7 +3,7 @@ package dev.wakeline.ops;
 import dev.wakeline.DbTestSupport;
 import dev.wakeline.platform.config.AppProperties;
 import dev.wakeline.platform.web.Problem;
-import dev.wakeline.persist.MaintenanceJobs;
+import dev.wakeline.history.MaintenanceJobs;
 import dev.wakeline.settings.RegionSettings;
 import dev.wakeline.settings.SettingsService;
 import org.junit.jupiter.api.AfterAll;

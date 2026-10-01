@@ -4,7 +4,7 @@ import dev.wakeline.aircraft.core.AircraftEvents;
 import dev.wakeline.aircraft.core.AircraftState;
 import dev.wakeline.aircraft.core.Snapshot;
 import dev.wakeline.aircraft.core.SnapshotStore;
-import dev.wakeline.domain.HotCell;
+import dev.wakeline.demand.HotCell;
 import dev.wakeline.platform.support.Receipt;
 import dev.wakeline.ships.core.AisGap;
 import dev.wakeline.ships.core.ShipEvents;

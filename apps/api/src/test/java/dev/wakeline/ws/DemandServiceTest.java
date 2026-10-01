@@ -3,7 +3,7 @@ package dev.wakeline.ws;
 import dev.wakeline.demand.DemandLeases;
 import dev.wakeline.demand.DemandStats;
 import dev.wakeline.aircraft.core.AircraftState;
-import dev.wakeline.domain.HotCell;
+import dev.wakeline.demand.HotCell;
 import dev.wakeline.ships.core.ShipStatic;
 import dev.wakeline.aircraft.core.Snapshot;
 import dev.wakeline.settings.RegionSettings;

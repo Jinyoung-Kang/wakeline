@@ -1,7 +1,5 @@
-package dev.wakeline.rest;
+package dev.wakeline.coverage;
 
-import dev.wakeline.coverage.CoverageGrid;
-import dev.wakeline.coverage.ShipCoverage;
 import dev.wakeline.platform.web.Etags;
 import dev.wakeline.platform.web.Meta;
 import jakarta.servlet.http.HttpServletRequest;

@@ -1,4 +1,4 @@
-package dev.wakeline.persist;
+package dev.wakeline.history;
 
 import dev.wakeline.platform.config.AppProperties;
 import dev.wakeline.geo.Bbox;

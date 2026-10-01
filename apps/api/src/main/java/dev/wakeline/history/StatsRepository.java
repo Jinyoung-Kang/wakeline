@@ -1,4 +1,4 @@
-package dev.wakeline.persist;
+package dev.wakeline.history;
 
 import dev.wakeline.platform.data.Sql;
 import org.springframework.jdbc.core.simple.JdbcClient;
