@@ -141,4 +141,42 @@ class StatusServiceTest {
         assertThat(StatusService.radarKr(Map.of("available", "1", "missing_since_tm", ""))).doesNotContainKey("missing");
         assertThat(StatusService.radarKr(Map.of("missing_since_tm", "202609300815", "missing_tms", "20"))).doesNotContainKey("missing"); // 핵심 값이 없다
     }
+
+    /**
+     * 리뷰 cto-2026-10 S13(I-1): 공개 status 의 active_providers 는 수집기 해시 wakeline:active 의 허용 목록 필드만 — 작업(region · global)마다 수집기가 쓰는
+     * {job} · _since · _reason · _none_since · _none_reason · _none_next · _none_retry(status.py set_active · set_none, 웹 lib/active-provider.ts 가 읽는 것).
+     * 예전에는 해시 전체를 실어 수집기가 새 필드를 쓰면 저절로 공개됐다. 순서는 수집기가 쓴 순서 그대로. Redis 를 읽지 못하면 예전처럼 error 표시.
+     */
+    @Test
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    void activeProvidersCarryOnlyTheAllowListedCollectorFields() {
+        Map<String, Object> hash = new java.util.LinkedHashMap<>();
+        hash.put("global", "opensky");
+        hash.put("region", "adsb_lol");
+        hash.put("region_since", "2026-09-30T03:16:32Z");
+        hash.put("region_reason", "fallback — adsb_lol 429");
+        hash.put("hot", "adsb_fi");                        // 수집기가 쓰지 않는 작업
+        hash.put("region_debug", "x");                     // 모르는 꼬리
+        hash.put("collector_token", "secret-like");        // 모르는 필드
+        for (String k : List.of("none_since", "none_reason", "none_next", "none_retry")) hash.put("global_" + k, "v-" + k);
+        org.springframework.data.redis.core.HashOperations<String, Object, Object> ops = org.mockito.Mockito.mock(org.springframework.data.redis.core.HashOperations.class);
+        org.mockito.Mockito.when(ops.entries(org.mockito.ArgumentMatchers.anyString()))
+                .thenAnswer(inv -> "wakeline:active".equals(inv.getArgument(0)) ? (Map) hash : Map.of());
+        StringRedisTemplate redis = new StringRedisTemplate() {
+            @Override public <HK, HV> org.springframework.data.redis.core.HashOperations<String, HK, HV> opsForHash() {
+                return (org.springframework.data.redis.core.HashOperations) ops;
+            }
+        };
+        SnapshotStore snapshots = new SnapshotStore();
+        EngineService engine = new EngineService(snapshots, new SigmetStore(), e -> { }, new SimpleMeterRegistry());
+        Map<String, Object> pub = (Map<String, Object>) new StatusService(snapshots, new SigmetStore(), new RadarStore(), engine, redis, () -> new RegionSettings.Region(36.5, 127.8, 250))
+                .publicStatus().get("active_providers");
+        assertThat(pub.keySet()).containsExactly("global", "region", "region_since", "region_reason", "global_none_since", "global_none_reason",
+                "global_none_next", "global_none_retry");
+        assertThat(pub.get("region_reason")).isEqualTo("fallback — adsb_lol 429");
+        assertThat(pub.get("global_none_retry")).isEqualTo("v-none_retry");
+        // Redis 를 읽지 못하면(연결 없음) 예전과 같은 표시
+        assertThat(new StatusService(snapshots, new SigmetStore(), new RadarStore(), engine, new StringRedisTemplate(), () -> new RegionSettings.Region(36.5, 127.8, 250))
+                .publicStatus().get("active_providers")).isEqualTo(Map.of("error", "redis unavailable"));
+    }
 }

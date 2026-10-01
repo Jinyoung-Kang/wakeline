@@ -45,7 +45,7 @@ class OpsSessionControllerTest {
     boolean registryDown;
 
     MockMvc mvc(Supplier<long[]> limiterResult, OpsUserService.AuthResult auth) {
-        RateLimiter limiter = new RateLimiter(new StringRedisTemplate()) {
+        RateLimiter limiter = new RateLimiter(new StringRedisTemplate(), meters) {
             @Override public long[] hitStrict(String bucket, String ip, int windowS) { return limiterResult.get(); }
         };
         OpsUserService users = new OpsUserService(null, null) {
@@ -64,7 +64,8 @@ class OpsSessionControllerTest {
                 unregistered.add(userId + ":" + sessionId);
             }
         };
-        var controller = new OpsSessionController(users, new HttpSessionSecurityContextRepository(), audit, limiter, PROPS, meters, registry);
+        var controller = new OpsSessionController(users, new HttpSessionSecurityContextRepository(), audit, limiter, PROPS, meters, registry,
+                org.springframework.security.web.csrf.CookieCsrfTokenRepository.withHttpOnlyFalse());
         return MockMvcBuilders.standaloneSetup(controller).setControllerAdvice(new ProblemAdvice()).build();
     }
 

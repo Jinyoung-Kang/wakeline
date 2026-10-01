@@ -325,12 +325,15 @@ public class TrackWriter implements SmartLifecycle {
                             pending == null ? 0 : pending.rows().size(), queued(), e.toString());
                     continue;
                 }
-                if (!isPermanent(e)) {
+                boolean unclassified = isUnclassified(e);
+                if (!unclassified && !isPermanent(e)) {
                     log.warn("track batch ({} rows) failed, retry in {} ms (queue {}): {}", pending == null ? 0 : pending.rows().size(), backoff, queued(), e.toString());
                 } else if (++permanentFailures >= PERMANENT_ATTEMPTS) {
                     int n = pending == null ? 0 : pending.rows().size();
                     failedRows.increment(n);
-                    log.warn("track batch ({} rows) failed permanently after {} attempts, dropped: {}", n, permanentFailures, e.toString());
+                    if (unclassified) log.error("track batch ({} rows) failed {} times with an error that has no SQLState (not a known transient error) — dropped: {}",
+                            n, permanentFailures, e.toString(), e);
+                    else log.warn("track batch ({} rows) failed permanently after {} attempts, dropped: {}", n, permanentFailures, e.toString());
                     pending = null;
                     batchResolved(); // 다시 처리해도 같은 결과 — 그 메시지들은 ACK(failed 로 셌다)
                     permanentFailures = 0;
@@ -463,6 +466,19 @@ public class TrackWriter implements SmartLifecycle {
             }
         }
         return false;
+    }
+
+    /**
+     * 분류할 수 없는 오류(리뷰 cto-2026-10 D3): 일시 장애로 아는 종류({@link OrderedWriter#isTransient})도 아니고 원인 사슬에 SQLState 도 없다 — 쓰기 코드의
+     * 결함(예: 문장 값을 채우는 람다의 예외)이나 상태 없는 드라이버 · 번역 예외다. 예전에는 일시 장애처럼 같은 배치를 끝없이 다시 시도해 큐 머리를 막았다
+     * (새 행이 넘쳐 버려지고 영수증이 묶였다). 영구 오류처럼 {@value #PERMANENT_ATTEMPTS}번 뒤 버리고 ERROR 로 남긴다(OrderedWriter 와 같은 결과).
+     * SQLState 가 있는데 영구 · 일시 어느 쪽도 아닌 것은 전처럼 다시 시도한다.
+     */
+    static boolean isUnclassified(Throwable e) {
+        if (OrderedWriter.isTransient(e)) return false;
+        for (Throwable c = e; c != null; c = c.getCause() == c ? null : c.getCause())
+            if (c instanceof SQLException s && s.getSQLState() != null) return false;
+        return true;
     }
 
     int queued() {

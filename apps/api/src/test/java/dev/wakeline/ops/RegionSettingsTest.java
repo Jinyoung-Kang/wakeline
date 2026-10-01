@@ -118,4 +118,19 @@ class RegionSettingsTest {
         update.join(5_000);
         assertThat(region.current()).isEqualTo(new RegionSettings.Region(35.5, 139.7, 150));
     }
+
+    /**
+     * 리뷰 cto-2026-10 A2(B5-b): 정수 설정의 검사(intRange)가 int 밖의 정수에 asInt() 를 불러 던졌다 — 운영자의 PUT 이 400 BAD_VALUE 대신 500 이었다.
+     * 정수가 아니거나 int 밖이거나 범위 밖이면 모두 400(Problem).
+     */
+    @Test
+    void integerSettingsRejectOutOfRangeAndNonIntegerValuesAsBadValue() {
+        var f = JsonNodeFactory.instance;
+        assertThatCode(() -> SettingsService.validate("region_poll_s", f.numberNode(15))).doesNotThrowAnyException();
+        assertThatCode(() -> SettingsService.validate("region_poll_s", f.numberNode(15L))).doesNotThrowAnyException();
+        for (var bad : List.of(f.numberNode(4_294_967_306L), f.numberNode(-4_294_967_306L), f.numberNode(new java.math.BigInteger("123456789012345678901234567890")),
+                f.numberNode(4), f.numberNode(121), f.numberNode(15.0), f.numberNode(1e10), f.stringNode("15"), f.booleanNode(true), f.nullNode()))
+            assertThatThrownBy(() -> SettingsService.validate("region_poll_s", bad)).as(bad.toString()).isInstanceOf(Problem.class)
+                    .satisfies(e -> assertThat(((Problem) e).code()).isEqualTo("BAD_VALUE"));
+    }
 }

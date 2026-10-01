@@ -9,7 +9,6 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 
 /** /api/** 요청을 IP당 분당 N 회로 제한. 초과 시 429 + Retry-After + RFC 9457 본문. */
 @org.springframework.context.annotation.Profile("!cli & !migrate")
@@ -40,14 +39,9 @@ public class RateLimitFilter extends OncePerRequestFilter {
         res.setHeader("X-RateLimit-Remaining", String.valueOf(remaining));
         res.setHeader("X-RateLimit-Reset", String.valueOf(r[1]));
         if (r[0] > limit) {
-            res.setStatus(429);
             res.setHeader("Retry-After", String.valueOf(Math.max(1, r[1])));
-            res.setContentType("application/problem+json");
-            String body = """
-                    {"type":"https://wakeline.invalid/problems/rate-limited","title":"rate limited","status":429,
-                    "detail":"%d requests per minute per IP","instance":"%s","code":"RATE_LIMITED","request_id":"%s"}"""
-                    .formatted(limit, req.getRequestURI(), RequestIdFilter.current(req));
-            res.getOutputStream().write(body.getBytes(StandardCharsets.UTF_8));
+            // 다른 필터 · 밸브의 오류 본문과 같은 모양 · 같은 이스케이프(리뷰 cto-2026-10 I-2 — 예전에는 경로를 이스케이프하지 않고 이어 붙였다)
+            ProblemJson.write(res, req, 429, "RATE_LIMITED", "rate limited", limit + " requests per minute per IP");
             return;
         }
         chain.doFilter(req, res);

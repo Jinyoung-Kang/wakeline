@@ -15,6 +15,8 @@ import dev.wakeline.portcalls.PortCallsInfo;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.SmartLifecycle;
 import org.springframework.context.annotation.Profile;
@@ -72,6 +74,7 @@ import java.util.function.LongSupplier;
 @Profile("!cli & !migrate")
 @Component
 public class ShipFanout implements SmartLifecycle {
+    private static final Logger log = LoggerFactory.getLogger(ShipFanout.class);
     public static final int POINTS_MIN_ZOOM = 7;
     public static final int MAX_SHIPS_PER_MESSAGE = 5_000;
     /** 계약 v4 §C: 줌 4~6 에서도 뷰포트 안 선박이 적으면 개별로 보낸다. */
@@ -106,6 +109,7 @@ public class ShipFanout implements SmartLifecycle {
     private volatile boolean running = true;
     /** 선택 선박의 DB 조회(저장 정적 보고 · 입출항 — 우편함 밖). 시험은 바로 실행하는 것을 쓰거나 바꿔 넣는다({@link #useLookups}). */
     private volatile ShipLookups lookups;
+    private final Counter refreshErrors;
     private final Counter snapshots;
     private final Counter diffs;
     private final Counter grids;
@@ -152,6 +156,8 @@ public class ShipFanout implements SmartLifecycle {
         this.store = store;
         this.timer = timer;
         this.clock = clock;
+        this.refreshErrors = Counter.builder("wakeline_ws_ship_refresh_errors_total")
+                .description("선택 선박 다시 계산(주기 작업)의 예외 — 다음 주기에 다시 한다").register(meters);
         this.snapshots = Counter.builder("wakeline_ws_ship_messages_total").tag("type", "ships_snapshot").register(meters);
         this.diffs = Counter.builder("wakeline_ws_ship_messages_total").tag("type", "ships_diff").register(meters);
         this.grids = Counter.builder("wakeline_ws_ship_messages_total").tag("type", "ships_grid").register(meters);
@@ -221,7 +227,9 @@ public class ShipFanout implements SmartLifecycle {
         try {
             for (WsSession s : hub.sessionsView()) recheckSelected(s);
         } catch (RuntimeException e) {
-            // 다음 주기에 다시
+            // 다음 주기에 다시 — 흔적은 남긴다(리뷰 cto-2026-10 A4: 예전에는 조용히 삼켰다)
+            refreshErrors.increment();
+            log.debug("selected-ship refresh failed, retried next period: {}", e.toString());
         }
     }
 

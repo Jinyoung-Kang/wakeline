@@ -31,7 +31,7 @@ final class KrRadarFrames {
 
     private KrRadarFrames() { }
 
-    /** 항목 하나. 객체가 아니거나 tm 이 틀리면 null(목록에서 뺀다). */
+    /** 항목 하나. 객체가 아니거나 tm 이 틀리면 null(목록에서 뺀다). echo_cells 가 틀려도 null(센다). */
     static Map<String, Object> frame(JsonNode f, Consumer<String> parseError) {
         if (f == null || !f.isObject()) return null;
         String tm = f.path("tm").asString("");
@@ -40,7 +40,14 @@ final class KrRadarFrames {
         fr.put("tm", tm);
         fr.put("obs_tm", f.path("obs_tm").asString());
         fr.put("fetched_at", f.path("fetched_at").asString());
-        fr.put("echo_cells", f.path("echo_cells").asInt());
+        // 0 이상 정수만(계약 — tools/rest_contract_check.py). 틀리면 프레임을 빼고 센다(리뷰 cto-2026-10 A2 — 예전에는 asInt() 가 던져 /radar/kr 이 500).
+        // 없거나 null 인 옛 항목은 예전처럼 0.
+        JsonNode ec = f.get("echo_cells");
+        if (ec != null && !ec.isNull() && !(ec.isIntegralNumber() && ec.canConvertToInt() && ec.intValue() >= 0)) {
+            parseError.accept("echo_cells");
+            return null;
+        }
+        fr.put("echo_cells", ec == null || ec.isNull() ? 0 : ec.intValue());
         fr.put("url", url(tm, StatusService.isoInstant(f.path("fetched_at").asString(null))));
         Integer stations = count(f, "stations", 0, MAX_STATIONS, parseError);
         if (stations != null) fr.put("stations", stations);

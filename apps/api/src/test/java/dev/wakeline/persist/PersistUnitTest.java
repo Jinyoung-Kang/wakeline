@@ -258,4 +258,42 @@ class PersistUnitTest {
         tw.stop();
         assertThat(acked.get()).as("nothing else was durable").isEqualTo(1);
     }
+
+    /**
+     * 리뷰 cto-2026-10 D3(B6): 원인 사슬에 SQLState 가 없고 일시 장애로 아는 종류도 아닌 예외(쓰기 코드의 결함 등)는 영구 오류처럼 3번 뒤 버린다 —
+     * ERROR 로 남기고 failed 로 세고 영수증을 놓는다. 예전에는 일시 장애로 보고 같은 배치를 끝없이 다시 시도해 큐 머리를 막았다(새 행이 넘쳐 버려졌다).
+     */
+    @Test
+    void aTrackWriteErrorWithoutSqlStateIsGivenUpAfterThreeAttemptsNotRetriedForever(CapturedOutput out) throws Exception {
+        java.util.concurrent.atomic.AtomicInteger calls = new java.util.concurrent.atomic.AtomicInteger();
+        org.springframework.jdbc.core.JdbcTemplate jdbc = new org.springframework.jdbc.core.JdbcTemplate() {
+            @Override
+            public <T> int[][] batchUpdate(String sql, java.util.Collection<T> args, int batchSize,
+                                           org.springframework.jdbc.core.ParameterizedPreparedStatementSetter<T> pss) {
+                calls.incrementAndGet();
+                throw new IllegalStateException("bug in the statement setter");
+            }
+        };
+        AircraftRepository aircraft = new AircraftRepository(null, null) {
+            @Override public int touch(java.util.Collection<dev.wakeline.domain.AircraftState> states) { return states.size(); }
+        };
+        var meters = new io.micrometer.core.instrument.simple.SimpleMeterRegistry();
+        TrackWriter tw = new TrackWriter(jdbc, aircraft, meters, 1, 1);
+        tw.start();
+        try {
+            java.util.concurrent.atomic.AtomicInteger acked = new java.util.concurrent.atomic.AtomicInteger();
+            dev.wakeline.ingest.Receipt r = new dev.wakeline.ingest.Receipt(acked::incrementAndGet);
+            tw.enqueue(java.util.List.of(ac("a00001")), r);
+            r.release();
+            long end = System.currentTimeMillis() + 5_000;
+            while (acked.get() == 0 && System.currentTimeMillis() < end) Thread.sleep(5);
+            Thread.sleep(50);
+            assertThat(acked.get()).as("receipt released").isEqualTo(1);
+            assertThat(calls.get()).as("attempts").isEqualTo(TrackWriter.PERMANENT_ATTEMPTS);
+            assertThat(meters.counter("wakeline_track_rows_total", "result", "failed").count()).isEqualTo(1.0);
+            assertThat(out.getAll()).contains("ERROR").contains("track batch (1 rows) failed 3 times with an error that has no SQLState");
+        } finally {
+            tw.stop();
+        }
+    }
 }

@@ -197,6 +197,8 @@ public class SettingsService {
     }
 
     private static void intRange(JsonNode v, int min, int max) {
-        if (!v.isIntegralNumber() || v.asInt() < min || v.asInt() > max) throw Problem.badRequest("BAD_VALUE", "integer in [" + min + "," + max + "] required");
+        // canConvertToInt: int 밖의 정수(4294967306 등)에 asInt() 를 부르면 Jackson 3 은 던진다 — 400 이 아니라 500 이었다(리뷰 cto-2026-10 A2)
+        if (!v.isIntegralNumber() || !v.canConvertToInt() || v.intValue() < min || v.intValue() > max)
+            throw Problem.badRequest("BAD_VALUE", "integer in [" + min + "," + max + "] required");
     }
 }

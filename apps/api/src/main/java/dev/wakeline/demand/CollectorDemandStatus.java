@@ -34,7 +34,8 @@ public record CollectorDemandStatus(String state, Integer intervalS, Instant las
         if (st == null || !st.isString() || !STATES.contains(st.asString())) return null;
         Integer interval = null;
         JsonNode iv = n.get("interval_s");
-        if (iv != null && iv.isIntegralNumber() && iv.asLong() >= 1 && iv.asLong() <= MAX_INTERVAL_S) interval = iv.asInt();
+        // canConvertToInt: 범위 밖의 큰 정수면 asLong() 이 던졌다(Jackson 3, 리뷰 cto-2026-10 A2) — 상한(MAX_INTERVAL_S)은 int 안이다
+        if (iv != null && iv.isIntegralNumber() && iv.canConvertToInt() && iv.intValue() >= 1 && iv.intValue() <= MAX_INTERVAL_S) interval = iv.intValue();
         Instant last = null;
         JsonNode ls = n.get("last_success_at");
         if (ls != null && ls.isString() && ls.asString().length() <= 40) {

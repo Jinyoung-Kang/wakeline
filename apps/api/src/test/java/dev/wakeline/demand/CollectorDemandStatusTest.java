@@ -53,4 +53,12 @@ class CollectorDemandStatusTest {
         s.update(null);
         assertThat(s.counts()).isEqualTo(DemandStats.Counts.NONE);
     }
+
+    /** 리뷰 cto-2026-10 A2(B5-c): interval_s 가 long 밖의 정수면 asLong() 이 던졌다 — 다른 틀린 선택 필드처럼 그 값만 모른다. */
+    @Test void parse_anIntervalOutsideTheLongRangeIsUnknownNotAnException() {
+        for (String v : java.util.List.of("123456789012345678901234567890", "-123456789012345678901234567890", "4294967297", "1e10", "\"5\"")) {
+            var c = CollectorDemandStatus.parse("{\"state\":\"active\",\"interval_s\":" + v + "}", JSON);
+            assertThat(c).as(v).isEqualTo(new CollectorDemandStatus("active", null, null));
+        }
+    }
 }

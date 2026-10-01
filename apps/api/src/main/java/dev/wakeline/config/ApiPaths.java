@@ -22,4 +22,6 @@ public final class ApiPaths {
     /** 운영 로그인. */
     public static final String OPS_LOGIN_PATH = "/api/v1/ops/session";
     public static final RequestMatcher OPS_LOGIN = PATHS.matcher(HttpMethod.POST, OPS_LOGIN_PATH);
+    /** 운영 로그아웃(권한을 줄이는 요청 — 자격 확인을 건너뛴다, {@link OpsSessionLifetimeFilter}). */
+    public static final RequestMatcher OPS_LOGOUT = PATHS.matcher(HttpMethod.DELETE, OPS_LOGIN_PATH);
 }

@@ -83,7 +83,7 @@ wakeline:
   ws-diff-interval-s: 10
   ws-resync-interval-s: 30
   ws-resync-world-interval-s: 120        # 줌 ≤ 5(전세계) 세션의 주기 전체 스냅샷(계약 §1)
-  allowed-origins: ${WAKELINE_ALLOWED_ORIGINS:http://localhost:8700,http://127.0.0.1:8700}   # WS Origin 명시 허용 목록(쉼표 구분)
+  allowed-origins: ${WAKELINE_ALLOWED_ORIGINS:http://localhost:8700,http://127.0.0.1:8700}   # 브라우저 Origin 명시 허용 목록(쉼표 구분) — WS 핸드셰이크 · 운영 변경 요청(S1)
   max-bbox-area-sqdeg: 2500
   fixture-mode: ${WAKELINE_FIXTURE_MODE:0}
   schemas-dir: ${WAKELINE_SCHEMAS_DIR:classpath:schemas}

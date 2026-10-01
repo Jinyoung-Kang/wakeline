@@ -29,6 +29,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.SmartLifecycle;
 import org.springframework.context.annotation.Profile;
 import org.springframework.context.event.EventListener;
+import org.springframework.core.Ordered;
+import org.springframework.core.annotation.Order;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.CloseStatus;
@@ -408,7 +410,9 @@ public class WsHub implements SmartLifecycle {
 
     // ---- 이벤트(스트림 소비·엔진 스레드 — 예약만 하고 돌아간다) ----
 
+    /** 엔진(EngineService#onSnapshot — HIGHEST_PRECEDENCE)이 그 스냅샷의 판정 주기를 끝낸 뒤에 팬아웃 · selected 를 예약한다(명시 — 예전에는 클래스 스캔 순서였다, ListenerWiringIT). */
     @EventListener
+    @Order(Ordered.LOWEST_PRECEDENCE)
     public void onSnapshot(IngestEvents.SnapshotUpdated e) {
         String scope = e.current().scope();
         if (SnapshotStore.HOT.equals(scope) || SnapshotStore.FOCUS.equals(scope)) onDemandSnapshot(e, SnapshotStore.FOCUS.equals(scope));

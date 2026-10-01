@@ -666,4 +666,20 @@ class ShipFanoutTest {
         ShipState manual = new ShipState("440000001", 35, 129, 12.0, 45.0, 44, 0, 3, "manual", T.plusSeconds(5), "aisstream", "PositionReport", "A");
         assertThat(ShipFanout.changed(a, new ShipStore.Ship(manual, null))).isTrue();
     }
+
+    /**
+     * 리뷰 cto-2026-10 A4(B10): 선택 선박 다시 계산(입출항 색인 갱신 · 오래됨 — 주기 작업)의 예외는 주기를 멈추지 않게 삼킨다. 예전에는 흔적이 없었다 —
+     * 이제 wakeline_ws_ship_refresh_errors_total 로 세고 DEBUG 한 줄.
+     */
+    @Test
+    void aFailingSelectedShipRefreshIsCountedAndDoesNotEscape() throws Exception {
+        try (WsTestKit k = new WsTestKit()) {
+            ShipFanout f = new ShipFanout(k.hub, k.ships, k.meters, null, k.shipClock::get) {
+                @Override void recheckSelected(WsSession s) { throw new IllegalStateException("bug"); }
+            };
+            k.subscribed("s1", "1.2.3.4");
+            org.assertj.core.api.Assertions.assertThatCode(f::refreshSelected).doesNotThrowAnyException();
+            assertThat(k.meters.find("wakeline_ws_ship_refresh_errors_total").counter().count()).isEqualTo(1.0);
+        }
+    }
 }

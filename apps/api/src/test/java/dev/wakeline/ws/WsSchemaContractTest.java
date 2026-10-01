@@ -157,6 +157,7 @@ class WsSchemaContractTest {
                         Map.entry("missing_listed", "EXT,KMA"), Map.entry("missing_probe_every_s", "900"), // 계약 v5 §G26 — 늦춘 확인 간격
                         // 계약 v5 §G26 개정(2026-10-01): 마지막 확인의 목록 — 가장 새 tm 이 last_tm 이고 그 뒤로 싣지 않았다(목록도 자라지 않음)
                         Map.entry("missing_list_tm", "202609290525"), Map.entry("missing_list_newer", "0")),
+                // hot: 수집기가 쓰지 않는 필드 — 공개 status 의 active_providers 에 실리지 않는다(허용 목록, 리뷰 cto-2026-10 S13)
                 "wakeline:active", Map.of("region", "adsb_lol", "global", "opensky", "hot", "adsb_fi"),
                 AisStatus.KEY, Map.of("provider", "aisstream", "connected", "1", "state", "receiving", "updated_at", now.minusSeconds(3).toString(),
                         "last_msg_at", now.minusSeconds(1).toString(), "msgs_per_s", "12.5",

@@ -419,4 +419,94 @@ class ShipWriterTest {
         assertThat(repo.gaps).hasSize(1);
         assertThat(acked.get()).isEqualTo(1);
     }
+
+    static IngestEvents.ShipsUpdated statics(ShipStatic... st) {
+        return new IngestEvents.ShipsUpdated(T, "aisstream", List.of(), List.of(st), Set.of(), Set.of(), Receipt.NONE);
+    }
+
+    static boolean waitFor(java.util.function.BooleanSupplier done, long ms) throws InterruptedException {
+        long until = System.currentTimeMillis() + ms;
+        while (!done.getAsBoolean() && System.currentTimeMillis() < until) Thread.sleep(5);
+        return done.getAsBoolean();
+    }
+
+    /**
+     * 리뷰 cto-2026-10 D1(B3): 정적 정보의 '이미 씀' 기억은 큐에 넣을 때 적었다. 그 행이 쓰이지 못하고 버려지면(영구 실패 — 같은 배치의 다른 행 하나가
+     * 23514 여도 배치 전체) 수집기가 30분마다 같은 updated_at 으로 다시 보내도 '같은 내용' 으로 건너뛰어 api 를 다시 띄울 때까지 ship 행이 비거나 낡았다.
+     * 행을 버리면 기억을 비워 다음 재전송을 다시 쓴다.
+     */
+    @Test void aStaticWhoseBatchFailedPermanentlyIsWrittenWhenTheCollectorResendsTheSameContent() throws Exception {
+        FakeRepo repo = new FakeRepo();
+        repo.fail = new org.springframework.dao.DataIntegrityViolationException("poison batch", new java.sql.SQLException("check violation", "23514"));
+        SimpleMeterRegistry meters = new SimpleMeterRegistry();
+        ShipWriter w = new ShipWriter(repo, null, meters, 1, 1);
+        w.start();
+        try {
+            w.onShips(statics(stat("440000001", T)));
+            assertThat(waitFor(() -> meters.find("wakeline_ship_rows_total").tag("result", "failed").counter().count() == 1.0, 5_000))
+                    .as("dropped after %d permanent failures", ShipWriter.PERMANENT_ATTEMPTS).isTrue();
+            assertThat(repo.statics).isEmpty();
+            repo.fail = null;
+            w.onShips(statics(stat("440000001", T))); // 30분 뒤 재전송 — 같은 updated_at
+            assertThat(waitFor(() -> !repo.statics.isEmpty(), 3_000)).as("re-sent static written").isTrue();
+            assertThat(repo.statics).extracting(r -> r.stat().mmsi()).containsExactly("440000001");
+            // 쓴 뒤의 같은 재전송은 예전처럼 건너뛴다(기억은 쓰기에 성공하면 그대로)
+            w.onShips(statics(stat("440000001", T)));
+            Thread.sleep(100);
+            assertThat(w.queued()).isZero();
+            assertThat(repo.statics).hasSize(1);
+        } finally {
+            w.stop();
+        }
+    }
+
+    /** D1 의 넘침 판: DB 가 막혀 큐(100,000 행)가 넘치면 가장 오래된 행부터 버린다 — 그 안의 정적 정보도 다음 재전송에 다시 쓴다. */
+    @Test void aStaticDroppedByQueueOverflowIsWrittenWhenTheCollectorResendsTheSameContent() throws Exception {
+        GateRepo repo = new GateRepo();
+        repo.laterWritesFail = false;
+        SimpleMeterRegistry meters = new SimpleMeterRegistry();
+        ShipWriter w = new ShipWriter(repo, null, meters, 1, 1);
+        w.start();
+        try {
+            w.onShips(statics(stat("440000009", T)));
+            assertThat(repo.entered.await(5, TimeUnit.SECONDS)).as("the worker is stuck in a slow write").isTrue();
+            w.onShips(statics(stat("440000001", T)));
+            List<ShipState> burst = new ArrayList<>(ShipWriter.QUEUE_MAX);
+            for (int i = 0; i < ShipWriter.QUEUE_MAX; i++) burst.add(pos(String.valueOf(300_000_000 + i), T.plusSeconds(1)));
+            w.onShips(new IngestEvents.ShipsUpdated(T, "aisstream", burst, List.of(), Set.of(), Set.of(), Receipt.NONE));
+            assertThat(dropped(meters)).as("the oldest queued row — the static — overflowed").isEqualTo(1.0);
+            repo.gate.countDown();
+            assertThat(waitFor(() -> w.queued() == 0 && repo.positions.size() == ShipWriter.QUEUE_MAX, 20_000)).isTrue();
+            assertThat(repo.statics).extracting(r -> r.stat().mmsi()).containsExactly("440000009");
+            w.onShips(statics(stat("440000001", T))); // 같은 updated_at 의 재전송
+            assertThat(waitFor(() -> repo.statics.size() == 2, 3_000)).as("re-sent static written").isTrue();
+            assertThat(repo.statics).extracting(r -> r.stat().mmsi()).containsExactly("440000009", "440000001");
+        } finally {
+            w.stop();
+        }
+    }
+
+    /** D3(B6)의 선박 판: SQLState 없는 예외는 3번 뒤 버리고(ERROR · failed · ACK) — 끝없이 다시 시도해 큐 머리를 막지 않는다(예전: 3 s 에 22번). */
+    @Test void aShipWriteErrorWithoutSqlStateIsGivenUpAfterThreeAttemptsNotRetriedForever(CapturedOutput out) throws Exception {
+        FakeRepo repo = new FakeRepo();
+        repo.fail = new IllegalStateException("bug in a write");
+        SimpleMeterRegistry meters = new SimpleMeterRegistry();
+        ShipWriter w = new ShipWriter(repo, null, meters, 1, 1);
+        w.start();
+        try {
+            AtomicInteger acked = new AtomicInteger();
+            Receipt r = new Receipt(acked::incrementAndGet);
+            w.enqueue(List.of(new ShipWriter.Pos(pos("440000001", T), true)), r);
+            r.release();
+            long end = System.currentTimeMillis() + 5_000;
+            while (acked.get() == 0 && System.currentTimeMillis() < end) Thread.sleep(5);
+            Thread.sleep(50);
+            assertThat(acked.get()).as("receipt released").isEqualTo(1);
+            assertThat(repo.attempts.get()).isEqualTo(ShipWriter.PERMANENT_ATTEMPTS);
+            assertThat(meters.find("wakeline_ship_rows_total").tag("result", "failed").counter().count()).isEqualTo(1.0);
+            assertThat(out.getAll()).contains("ERROR").contains("ship batch (1 rows) failed 3 times with an error that has no SQLState");
+        } finally {
+            w.stop();
+        }
+    }
 }

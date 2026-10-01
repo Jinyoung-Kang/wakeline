@@ -27,11 +27,12 @@ import java.util.function.Consumer;
  * <ul>
  *   <li>줄이기: MMSI 별 60 s 창(에포크 정렬)마다 첫 보고 하나만 쓴다 — 메모리 필터(여기, 소비 스레드) + DB 가드(ShipRepository — 재시작 뒤에도
  *       창마다 하나). 걸러 낸 보고는 wakeline_ship_rows_total{result=downsampled}. ship.last_seen 은 위치로는 10분에 한 번만 넓힌다(쓰기 증폭 방지).</li>
- *   <li>정적 정보: updated_at 이 이미 쓴 것보다 새 것만(수집기는 같은 내용을 30분마다 다시 보낸다 — 같은 것은 다시 쓰지 않는다). 있는 행은 받은 필드만
+ *   <li>정적 정보: updated_at 이 이미 쓴 것보다 새 것만(수집기는 같은 내용을 30분마다 다시 보낸다 — 같은 것은 다시 쓰지 않는다. 행을 버리면 그 기억을
+ *       비워 다음 재전송을 다시 쓴다). 있는 행은 받은 필드만
  *       덮는다(계약 v5 §G19 — ShipRepository.STATIC_SQL). 받은 필드를 싣지 않은 정적 정보(이전 수집기 — 배포 전환 중)는 값이 있는 필드만 덮고
  *       wakeline_ship_static_unknown_fields_total 로 센다.</li>
  *   <li>큐 상한 100,000 행 — 넘치면 오래된 것부터 버리고 result=dropped 로 센다. 실패는 TrackWriter 와 같다: 일시 장애는 같은 배치를 백오프(2 s → 30 s)로
- *       재시도, 영구 오류(SQLState 21·22·23·42)는 3회 뒤 버리고 result=failed — 배치 하나가 저장기를 멈추지 못한다.</li>
+ *       재시도, 영구 오류(SQLState 21·22·23·42)와 SQLState 없는 결함은 3회 뒤 버리고 result=failed — 배치 하나가 저장기를 멈추지 못한다.</li>
  *   <li>at-least-once(API-CONC-8): 메시지의 행이 모두 커밋(또는 버림)된 뒤 영수증을 놓는다 → XACK. 공백은 순서 큐(OrderedWriter)가 같은 규칙으로.</li>
  *   <li>종료: 스트림 소비·WS 뒤(phase) 워커가 진행 중 배치를 끝내고 <b>스스로</b> 남은 행을 쓴다(DB 를 쓰는 스레드는 종료 때도 하나 — 조사 2026-10-01
  *       종료 F3: 예전에는 stop 이 2 s 기다린 뒤 다른 스레드가 flush 해, 느린 쓰기와 같은 배치를 동시에 쓰고 쓰지 못한 배치의 영수증을 놓을 수 있었다).
@@ -94,6 +95,12 @@ public class ShipWriter implements SmartLifecycle {
     /** MMSI → 마지막으로 큐에 넣은 정적 정보의 updated_at. */
     private final Map<String, Instant> staticSeen = lru(MEMORY_MAX);
     // ----
+    /**
+     * 큐의 행을 쓰지 못하고 버렸다(넘침 · 영구 실패) — 다음 {@link #select} 가 정적 정보 기억을 비운다(리뷰 cto-2026-10 D1). 기억은 '큐에 넣음' 을 적으므로
+     * 버린 정적 정보를 그대로 두면 수집기의 30분 재전송(같은 updated_at)을 '이미 씀' 으로 건너뛰어 다시 띄울 때까지 ship 행이 비거나 낡았다.
+     * 비운 뒤에는 정적 정보마다 한 번씩 다시 쓴다(upsert · updated_at 가드라 멱등). 기억 자체는 소비 스레드만 만진다.
+     */
+    private volatile boolean forgetStatics;
     private final Counter written;
     private final Counter staticWritten;
     private final Counter staticUnknownFields;
@@ -178,6 +185,10 @@ public class ShipWriter implements SmartLifecycle {
 
     /** 소비 스레드: 저장할 행을 고른다(60 s 창마다 첫 보고 · 새 정적 정보). */
     List<Item> select(List<ShipState> states, List<ShipStatic> statics, Instant receivedAt) {
+        if (forgetStatics) {
+            forgetStatics = false;
+            staticSeen.clear();
+        }
         List<Item> out = new ArrayList<>(statics.size() + states.size());
         for (ShipStatic st : statics) {
             Instant prev = staticSeen.get(st.mmsi());
@@ -212,11 +223,15 @@ public class ShipWriter implements SmartLifecycle {
     void enqueue(List<Item> items, Receipt receipt) {
         if (items.isEmpty()) return;
         if (!running) {
+            forgetStatics = true;
             dropped.increment(items.size());
             return;
         }
         ReceiptBatchQueue.Added a = queue.add(items, receipt);
-        if (a.dropped() > 0) dropped.increment(a.dropped());
+        if (a.dropped() > 0) {
+            forgetStatics = true; // 넘쳐 버린 행에 정적 정보가 있었을 수 있다
+            dropped.increment(a.dropped());
+        }
         if (a.forced() > 0) forced.increment(a.forced());
     }
 
@@ -304,11 +319,15 @@ public class ShipWriter implements SmartLifecycle {
                             n, queue.size(), e.toString());
                     continue;
                 }
-                if (!TrackWriter.isPermanent(e)) {
+                boolean unclassified = TrackWriter.isUnclassified(e); // SQLState 없는 결함 — 영구 오류처럼 3번 뒤 버린다(리뷰 cto-2026-10 D3)
+                if (!unclassified && !TrackWriter.isPermanent(e)) {
                     log.warn("ship batch ({} rows) failed, retry in {} ms (queue {}): {}", n, backoff, queue.size(), e.toString());
                 } else if (++permanentFailures >= PERMANENT_ATTEMPTS) {
+                    if (pending != null && pending.items().stream().anyMatch(it -> it instanceof Stat)) forgetStatics = true;
                     failed.increment(n);
-                    log.warn("ship batch ({} rows) failed permanently after {} attempts, dropped: {}", n, permanentFailures, e.toString());
+                    if (unclassified) log.error("ship batch ({} rows) failed {} times with an error that has no SQLState (not a known transient error) — dropped: {}",
+                            n, permanentFailures, e.toString(), e);
+                    else log.warn("ship batch ({} rows) failed permanently after {} attempts, dropped: {}", n, permanentFailures, e.toString());
                     pending = null;
                     queue.resolved(); // 다시 처리해도 같은 결과 — 그 메시지들은 ACK(failed 로 셌다)
                     permanentFailures = 0;

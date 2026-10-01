@@ -152,7 +152,8 @@ public class TrafficGridReader {
         } catch (RuntimeException e) {
             return fail("json");
         }
-        if (n == null || !n.isObject() || !n.path("v").isIntegralNumber() || n.path("v").intValue() != 1) return fail("version");
+        // canConvertToInt: int 밖의 정수면 intValue() 가 던진다(Jackson 3 — isIntegralNumber 는 범위를 보지 않는다, 리뷰 cto-2026-10 A2)
+        if (n == null || !n.isObject() || !n.path("v").isIntegralNumber() || !n.path("v").canConvertToInt() || n.path("v").intValue() != 1) return fail("version");
         Instant regUtc = instant(n.get("reg_dt_utc"));
         String regKst = n.path("reg_dt_kst").isString() ? n.path("reg_dt_kst").asString() : null;
         if (regUtc == null || regKst == null || !kstOf(regKst, regUtc)) return fail("reg_dt");

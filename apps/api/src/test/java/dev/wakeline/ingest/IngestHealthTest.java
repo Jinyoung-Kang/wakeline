@@ -78,4 +78,31 @@ class IngestHealthTest {
         real.refresh(); // 연결 팩토리 없음 → 조회 실패
         assertThat(real.sample(StreamConsumer.S_AIRCRAFT).lag()).isNaN();
     }
+
+    /**
+     * 리뷰 cto-2026-10 A1(B1): 관심 지역 스냅샷이 아직 없으면 health() 가 던졌다 — Boot 4 의 withDetail 은 null 값을 받지 않는다(region_lag_s = null).
+     * 그 순간(기동 유예 · 유예 뒤 스냅샷 없음)이 바로 이 지표가 알려야 하는 상태인데 /actuator/health/ingest 와 /actuator/health 가 500 이었다.
+     * 상태 표(액추에이터 기본 HTTP 대응 — application.yml 은 바꾸지 않는다): 유예 중 UNKNOWN 200 · 유예 뒤 스냅샷 없음 DOWN 503 · 스냅샷 있음 UP 200.
+     * 모르는 지연은 키를 뺀다(0 을 지어내지 않는다).
+     */
+    @Test
+    void healthStatesAndTheirHttpCodesWithAndWithoutARegionSnapshot() {
+        var http = org.springframework.boot.health.actuate.endpoint.HttpCodeStatusMapper.getDefault();
+        org.springframework.boot.health.contributor.Health starting = health.health();
+        assertThat(starting.getStatus()).isEqualTo(Status.UNKNOWN);
+        assertThat(http.getStatusCode(starting.getStatus())).isEqualTo(200);
+        assertThat(starting.getDetails()).isEmpty();
+
+        clock.addAndGet(IngestHealthIndicator.STARTUP_GRACE_MS + 1);
+        org.springframework.boot.health.contributor.Health down = health.health();
+        assertThat(down.getStatus()).isEqualTo(Status.DOWN);
+        assertThat(http.getStatusCode(down.getStatus())).isEqualTo(503);
+        assertThat(down.getDetails()).containsOnlyKeys("reasons").containsEntry("reasons", java.util.List.of("no_region_snapshot"));
+
+        regionFetchedSecondsAgo(10);
+        org.springframework.boot.health.contributor.Health up = health.health();
+        assertThat(up.getStatus()).isEqualTo(Status.UP);
+        assertThat(http.getStatusCode(up.getStatus())).isEqualTo(200);
+        assertThat(up.getDetails()).containsOnlyKeys("region_lag_s").containsEntry("region_lag_s", 10L);
+    }
 }

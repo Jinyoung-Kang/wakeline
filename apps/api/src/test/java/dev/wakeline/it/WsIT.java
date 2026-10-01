@@ -238,4 +238,33 @@ class WsIT extends IntegrationTest {
         c.send("{\"type\":\"subscribe\",\"bbox\":[124,33,132,39],\"zoom\":7}");
         assertThat(c.closed.get(5, TimeUnit.SECONDS)).isEqualTo(1002);
     }
+
+    /**
+     * 특성 시험(리뷰 cto-2026-10 api §5.4-5): REST /api/v1/status(meta 제외)와 WS status 메시지의 status 는 같은 맵이다 — 둘 다 같은 3 s 캐시(R-53)에서
+     * 나온다. 상태 서비스 · 캐시를 옮겨도(패키지 정리) 두 출구가 갈라지지 않게 고정한다. 캐시가 그사이 바뀌면(server_time 이 다름) 다시 잰다.
+     */
+    @Test
+    void restStatusAndTheWsStatusMessageCarryTheSameMap() throws Exception {
+        for (int attempt = 1; attempt <= 3; attempt++) {
+            Client c = open(ORIGIN);
+            JsonNode ws;
+            try {
+                c.send("{\"type\":\"hello\",\"proto\":1}");
+                c.next("welcome");
+                c.send("{\"type\":\"subscribe\",\"bbox\":[124,33,132,39],\"zoom\":7}");
+                ws = c.next("status").path("status");
+            } finally {
+                c.close();
+            }
+            Res r = get("/api/v1/status");
+            assertThat(r.status()).isEqualTo(200);
+            var rest = (tools.jackson.databind.node.ObjectNode) r.json();
+            assertThat(rest.remove("meta")).as("REST adds meta").isNotNull();
+            if (!rest.path("server_time").equals(ws.path("server_time"))) continue; // 3 s 캐시가 그사이 새로 찼다 — 다시
+            assertThat(ws.isObject()).isTrue();
+            assertThat(rest).isEqualTo(ws);
+            return;
+        }
+        throw new AssertionError("the status cache refreshed between the WS and the REST read three times in a row");
+    }
 }

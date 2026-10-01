@@ -13,6 +13,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.event.EventListener;
+import org.springframework.core.Ordered;
+import org.springframework.core.annotation.Order;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
@@ -106,7 +108,12 @@ public class EngineService {
         }
     }
 
+    /**
+     * 스냅샷마다 판정 주기. 같은 스냅샷의 다른 리스너보다 먼저 돈다(명시 — 예전에는 클래스 스캔 순서였다): WS 의 selected 가 싣는 예측 가능 여부
+     * ({@link #predictionAvailability} ← lastTurning)가 이 스냅샷의 주기 뒤 값이어야 한다(WsHub#onSnapshot 은 LOWEST_PRECEDENCE — ListenerWiringIT).
+     */
     @EventListener
+    @Order(Ordered.HIGHEST_PRECEDENCE)
     public void onSnapshot(IngestEvents.SnapshotUpdated e) {
         run(Instant.now());
     }

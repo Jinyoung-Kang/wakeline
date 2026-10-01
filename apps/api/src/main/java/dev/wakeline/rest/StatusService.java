@@ -106,7 +106,7 @@ public class StatusService {
                 "stale", lag(rf.fetchedAt(), now) > 600 || rf.fetchedAt().equals(Instant.EPOCH))); // 받은 적 없음 = 오래됨(SIGMET 과 같은 규칙)
         m.put("radar_kr", radarKr(safeHash("wakeline:radar_kr:meta")));
         m.put("engine", kv("index_polygons", engine.indexSize(), "last_cycle_ms", engine.lastCycleMs()));
-        m.put("active_providers", safeHash("wakeline:active"));
+        m.put("active_providers", activeProviders(safeHash("wakeline:active")));
         // 수요 기반 추적(계약 v2 §A3): 수만(hex·셀은 내보내지 않는다). adsb.fi 호출률은 수집기가 실제로 보낸 최근 60 s 호출 수 / 60.
         DemandStats.Counts dc = demand.counts();
         m.put("demand", kv("hot_active", dc.hotActive(), "focus_active", dc.focusActive(), "adsb_fi_rps_1m", adsbFiRps(hb, now)));
@@ -206,9 +206,31 @@ public class StatusService {
 
     public Map<String, Object> collectorHeartbeat() { return safeHash("wakeline:collector"); }
 
+    /** Redis 를 읽지 못했다는 표시(api 가 붙인다 — 수집기 값이 아니다). */
+    private static final Map<String, Object> REDIS_UNAVAILABLE = Map.of("error", "redis unavailable");
+
     @SuppressWarnings({"unchecked", "rawtypes"})
     private Map<String, Object> safeHash(String key) {
-        try { return (Map) redis.opsForHash().entries(key); } catch (RuntimeException e) { return Map.of("error", "redis unavailable"); }
+        try { return (Map) redis.opsForHash().entries(key); } catch (RuntimeException e) { return REDIS_UNAVAILABLE; }
+    }
+
+    /** 수집기가 wakeline:active 에 쓰는 작업(collector main.py — ProviderChain("region") · ProviderChain("global")). */
+    static final List<String> ACTIVE_JOBS = List.of("region", "global");
+    /** 작업마다 쓰는 필드의 꼬리(collector status.py set_active · set_none · NONE_FIELDS — "" 는 쓰는 공급자 이름). */
+    static final List<String> ACTIVE_FIELD_SUFFIXES = List.of("", "_since", "_reason", "_none_since", "_none_reason", "_none_next", "_none_retry");
+    private static final java.util.Set<String> ACTIVE_FIELDS = ACTIVE_JOBS.stream()
+            .flatMap(j -> ACTIVE_FIELD_SUFFIXES.stream().map(x -> j + x)).collect(java.util.stream.Collectors.toUnmodifiableSet());
+
+    /**
+     * 공개 status(REST · WS)의 active_providers: 수집기 해시 wakeline:active 에서 허용 목록 필드만, 수집기가 쓴 순서대로(리뷰 cto-2026-10 S13 — 예전에는
+     * 해시 전체를 실어 수집기가 새 필드를 쓰면 저절로 공개됐다). 화면(web lib/active-provider.ts)이 읽는 것이 이 필드들이다. 값은 수집기가 이미 가린 글이다.
+     * 새 필드를 공개하려면 여기(와 웹 · 계약 문서)에 더한다. Redis 를 읽지 못했으면 그 표시를 그대로.
+     */
+    static Map<String, Object> activeProviders(Map<?, ?> hash) {
+        if (hash == REDIS_UNAVAILABLE) return REDIS_UNAVAILABLE;
+        Map<String, Object> out = new LinkedHashMap<>();
+        for (var e : hash.entrySet()) if (ACTIVE_FIELDS.contains(String.valueOf(e.getKey()))) out.put(String.valueOf(e.getKey()), e.getValue());
+        return out;
     }
 
     /** Map.of 는 null 값을 거부한다 — 값이 없는 필드는 null 로 그대로 내보낸다(추정하지 않는다). */
