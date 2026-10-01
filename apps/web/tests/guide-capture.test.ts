@@ -8,9 +8,10 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
-  anchorPoint, checkLocalBase, credentialFileWarning, findColumn, hashedName, maskedVariant, mergeManifest, parseArgs, parseCredentials, realDataVerdict, sizeReport, staleFiles,
-  statsPanelsVerdict,
+  anchorPoint, checkLocalBase, credentialFileWarning, findColumn, fixtureVariant, hashedName, maskedVariant, mergeManifest, parseArgs, parseCredentials, realDataVerdict, sizeReport,
+  stackNote, staleFiles, statsPanelsVerdict, withStackNote,
 } from "../scripts/guide-capture-lib.mjs";
+import manifestJson from "@/lib/guide-manifest.json";
 import { GUIDE_FILE_RE, parseManifest, PLAN } from "@/lib/guide";
 
 const SECRET = "correct-horse-battery";
@@ -55,6 +56,41 @@ describe("real-data guard (/api/v1/status, before and after the captures)", () =
     expect(realDataVerdict(0, null)).toMatch(/응답 없음/);
     expect(realDataVerdict(200, null)).toMatch(/객체가 아님/);
     expect(realDataVerdict(200, [real])).toMatch(/객체가 아님/);
+  });
+});
+
+/**
+ * --allow-fixture 로 찍은 그림은 캡처 조건 맨 앞에 그 스택이 실데이터가 아니라고 적는다 — 전에는 운영자가 manifest 를 손으로 고쳐 '격리 fixture 스택' 을 붙였다.
+ * README 내보내기(scripts/readme-images.mjs)는 이 표시(fixtureVariant)로 fixture 그림을 알아보고, README 캡션이 밝히지 않으면 내보내지 않는다.
+ */
+describe("a stack not confirmed live (--allow-fixture) is named in every capture condition", () => {
+  const real = { fixture_mode: false, collector_mode_known: true };
+  it("stackNote: null for a live stack; the fixture stack, or an unknown collector mode, otherwise", () => {
+    expect(stackNote(200, real)).toBeNull();
+    expect(stackNote(200, { ...real, fixture_mode: true })).toBe("fixture 스택(가짜 자료)");
+    expect(stackNote(200, { ...real, collector_mode_known: false })).toBe("수집 모드 모름(fixture 허용으로 찍음)");
+    expect(stackNote(0, null)).toBe("수집 모드 모름(fixture 허용으로 찍음)");
+    expect(stackNote(503, null)).toBe("수집 모드 모름(fixture 허용으로 찍음)");
+  });
+  it("withStackNote puts the note first; both notes, and the hand-written labels of the committed ops/logs figures, read as fixture", () => {
+    expect(withStackNote("fixture 스택(가짜 자료)", "providers 탭")).toBe("fixture 스택(가짜 자료) · providers 탭");
+    expect(withStackNote(null, "providers 탭")).toBe("providers 탭");
+    expect(withStackNote("fixture 스택(가짜 자료)", null)).toBe("fixture 스택(가짜 자료)");
+    expect(withStackNote(null, null)).toBeNull();
+    for (const note of [stackNote(200, { ...real, fixture_mode: true }), stackNote(0, null)]) expect(fixtureVariant(withStackNote(note, "providers 탭"))).toBe(true);
+    const committed = (manifestJson as { shots: Record<string, { variant: string | null }> }).shots;
+    expect(fixtureVariant(committed.ops?.variant)).toBe(true);
+    expect(fixtureVariant(committed.logs?.variant)).toBe(true);
+    expect(fixtureVariant(committed.dashboard?.variant)).toBe(false);
+    expect(fixtureVariant(null)).toBe(false);
+  });
+  it("the script asks /api/v1/status even with --allow-fixture and prefixes every condition with the note", () => {
+    const src = readFileSync(new URL("../scripts/guide-screenshots.mjs", import.meta.url), "utf8");
+    const at = src.indexOf("async function assertRealData(");
+    const fn = src.slice(at, src.indexOf("\n}\n", at));
+    expect(fn).not.toMatch(/if \(args\.allowFixture\) return;\n\s*let code/); // 묻기 전에 돌아가지 않는다
+    expect(fn).toMatch(/stackNote\(code, body\)/);
+    expect(src).toMatch(/maskedVariant\(withStackNote\(stack, condition\)/);
   });
 });
 

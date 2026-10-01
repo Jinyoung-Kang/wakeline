@@ -69,6 +69,33 @@ export function realDataVerdict(httpStatus, body) {
   return null;
 }
 
+/** --allow-fixture 로 찍을 때 캡처 조건 앞에 붙는 표시 — 둘 다 "fixture" 를 담는다(fixtureVariant 가 알아본다) */
+const FIXTURE_NOTE = "fixture 스택(가짜 자료)";
+const UNKNOWN_MODE_NOTE = "수집 모드 모름(fixture 허용으로 찍음)";
+
+/**
+ * 실데이터로 확인되지 않은 스택(--allow-fixture 로만 찍는다)의 표시 — 그 스택에서 찍은 모든 그림의 캡처 조건 맨 앞에 붙는다(설명서 · README 가 밝히게).
+ * 확실히 실데이터(realDataVerdict 가 null)면 null, FIXTURE MODE 면 "fixture 스택(가짜 자료)", 그 밖(수집 모드 모름 · 응답 없음)은 모른다고 적는다.
+ */
+export function stackNote(httpStatus, body) {
+  if (!realDataVerdict(httpStatus, body)) return null;
+  return isObj(body) && body.fixture_mode === true ? FIXTURE_NOTE : UNKNOWN_MODE_NOTE;
+}
+
+/** 캡처 조건 앞에 스택 표시를 붙인다(" · " 로). 둘 다 없으면 null */
+export function withStackNote(note, variant) {
+  const parts = [note, variant].filter((x) => x != null && x !== "");
+  return parts.length ? parts.join(" · ") : null;
+}
+
+/**
+ * 이 캡처 조건이 실데이터가 아닌 스택의 그림인가 — "fixture" 가 들어 있으면(stackNote 의 두 표시 · 예전에 손으로 붙인 '격리 fixture 스택').
+ * README 내보내기(scripts/readme-images.mjs)가 이것으로 fixture 그림을 알아보고, README 캡션이 밝히지 않으면 내보내지 않는다.
+ */
+export function fixtureVariant(variant) {
+  return typeof variant === "string" && /fixture/i.test(variant);
+}
+
 /** 통계 화면의 패널 수(app/stats/page.tsx — FIR · 위험 유형 · 시간대별 항공기 · 알림) */
 export const STATS_PANELS = 4;
 const STATS_STATES = new Set(["loading", "ready", "empty", "error"]);

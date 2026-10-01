@@ -6,7 +6,8 @@
 // - 운영 · 로그 화면은 /ops 로그인이 필요하다: 자격 증명은 인자로 받은 파일에서만 읽는다(인자 값 · 환경 변수로 받지 않는다). 끝나면 sign out.
 // - 로컬 스택만 찍는다(로그인 정보를 보낸다).
 // - 실데이터 확인: 찍기 전과 다 찍은 뒤(manifest 를 쓰기 전) 두 번 /api/v1/status 를 읽어, 확실히 실데이터일 때만 진행한다 — FIXTURE MODE(가짜 자료)이거나
-//   수집 모드를 모르면(heartbeat 없음 · 응답 없음) 이번 결과를 버리고 멈춘다. 모든 스크린샷(상황판 밖 재생 · 통계 · 공항 · 운영 · 로그 포함)에 적용된다(--allow-fixture 로만 무시).
+//   수집 모드를 모르면(heartbeat 없음 · 응답 없음) 이번 결과를 버리고 멈춘다. 모든 스크린샷(상황판 밖 재생 · 통계 · 공항 · 운영 · 로그 포함)에 적용된다(--allow-fixture 로만 무시 —
+//   그때는 모든 캡처 조건 맨 앞에 'fixture 스택(가짜 자료)' · '수집 모드 모름(…)' 을 붙인다: 설명서 그림 아래와 README 캡션이 밝히게, README 내보내기가 확인).
 // - 조회 오류가 보이는 화면(오류 문구 · 요청 id)은 싣지 않는다 — 건너뛰고 이유를 보고한다.
 // - 가림(계획의 masks): 설명서는 로그인 없이 누구나 본다. 운영 · 로그 화면은 운영자 이름과 운영 정보 · 브라우저가 보낸 글자가 든 열(마지막 오류 · 전환 사유 ·
 //   로거 · 메시지 · 요청 id)을 회색 상자로 가려 찍고, 무엇을 가렸는지 캡처 조건에 적는다. 가릴 자리를 하나라도 찾지 못하면 그 스크린샷을 싣지 않는다.
@@ -17,8 +18,8 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync,
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  anchorPoint, checkLocalBase, credentialFileWarning, ERROR_MARKS, findColumn, hashedName, maskedVariant, mergeManifest, parseArgs, parseCredentials, realDataVerdict, sizeReport, staleFiles,
-  statsPanelsVerdict,
+  anchorPoint, checkLocalBase, credentialFileWarning, ERROR_MARKS, findColumn, hashedName, maskedVariant, mergeManifest, parseArgs, parseCredentials, realDataVerdict, sizeReport, stackNote,
+  staleFiles, statsPanelsVerdict, withStackNote,
 } from "./guide-capture-lib.mjs";
 
 const WEB = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -89,9 +90,16 @@ async function openMap(path) {
   // 연결이 열린 뒤(LayerPanel 이 저장된 켜짐을 읽은 뒤) 끈다 — 앞 그림이 켠 레이어를 이 그림에 남기지 않는다
   for (const id of OVERLAY_LAYERS) await setPressed(id, false);
 }
-/** 실데이터 스택인지 /api/v1/status 로 확인(찍기 전 · 다 찍은 뒤). 아니면 전체를 멈춘다 */
+/**
+ * --allow-fixture 로 실데이터가 아닌 스택을 찍을 때의 표시(stackNote — 예 "fixture 스택(가짜 자료)"). 모든 캡처 조건 맨 앞에 붙는다:
+ * 설명서 그림 아래와 README 캡션이 그 그림이 가짜 자료임을 밝히게(README 내보내기가 이 표시로 확인한다). 전에는 manifest 를 손으로 고쳐 붙였다.
+ */
+let stack = null, stackChecked = false;
+/**
+ * 실데이터 스택인지 /api/v1/status 로 확인(찍기 전 · 다 찍은 뒤). 아니면 전체를 멈춘다 — --allow-fixture 면 멈추지 않고 표시(stack)를 정한다.
+ * 두 번의 표시가 다르면(찍는 사이에 스택이 바뀜) 캡처 조건이 그림과 어긋나므로 멈춘다.
+ */
 async function assertRealData(when) {
-  if (args.allowFixture) return;
   let code = 0, body = null;
   try {
     const r = await page.request.get(`${BASE}/api/v1/status`, { timeout: 15_000 });
@@ -99,7 +107,11 @@ async function assertRealData(when) {
     body = await r.json().catch(() => null);
   } catch { /* 응답 없음 → code 0 */ }
   const why = realDataVerdict(code, body);
-  if (why) throw new Fatal(`${when}: ${why} — 가짜 자료가 설명서에 실리지 않게 이번 결과를 버리고 멈춤(실데이터 스택에서 다시 찍거나 --allow-fixture)`);
+  if (why && !args.allowFixture) throw new Fatal(`${when}: ${why} — 가짜 자료가 설명서에 실리지 않게 이번 결과를 버리고 멈춤(실데이터 스택에서 다시 찍거나 --allow-fixture)`);
+  const note = stackNote(code, body);
+  if (stackChecked && note !== stack) throw new Fatal(`${when}: 찍는 사이에 스택 상태가 바뀜(${stack ?? "실데이터"} → ${note ?? "실데이터"}) — 캡처 조건이 그림과 어긋나지 않게 이번 결과를 버리고 멈춤`);
+  stack = note;
+  stackChecked = true;
 }
 async function setPressed(testId, on) {
   const b = page.getByTestId(testId);
@@ -465,7 +477,7 @@ for (const shot of fatal ? [] : shots) {
     const condition = await recipe(shot);
     await assertNoErrors();
     const mask = await maskLocators(shot);
-    const variant = maskedVariant(condition, (shot.masks ?? []).map((m) => m.label));
+    const variant = maskedVariant(withStackNote(stack, condition), (shot.masks ?? []).map((m) => m.label));
     await page.evaluate(() => document.fonts?.ready);
     const positions = await measure(shot.callouts);
     const png = await page.screenshot({ type: "png", mask, maskColor: MASK_COLOR });

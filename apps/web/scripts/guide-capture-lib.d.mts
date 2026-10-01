@@ -13,6 +13,9 @@ export const USAGE: string;
 export function parseArgs(argv: string[]): CaptureArgs;
 export function checkLocalBase(s: string): string;
 export function realDataVerdict(httpStatus: number, body: unknown): string | null;
+export function stackNote(httpStatus: number, body: unknown): string | null;
+export function withStackNote(note: string | null, variant: string | null): string | null;
+export function fixtureVariant(variant: string | null | undefined): boolean;
 export const STATS_PANELS: number;
 /** 통계 패널 하나(app/stats/page.tsx 의 data-stats-panel · data-state · 글자) */
 export interface StatsPanel { id: string | null; state: string | null; text?: string | null }
