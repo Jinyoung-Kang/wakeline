@@ -65,9 +65,41 @@ class ArchitectureTest {
         return out;
     }
 
-    /** 블록 · 줄 주석을 뺀다(주석 속 이름은 의존이 아니다). */
+    /**
+     * 블록 · 줄 주석을 뺀다(주석 속 이름은 의존이 아니다). 문자열 · 문자 · 텍스트 블록은 그대로 둔다 — 그 안의 '/*' · '//' 는 주석이 아니고(예: "/api/**"),
+     * 문자열 속 클래스 이름(직렬화 허용 목록 등)은 계속 센다.
+     */
     static String stripComments(String code) {
-        return code.replaceAll("(?s)/\\*.*?\\*/", "").replaceAll("(?m)//.*$", "");
+        StringBuilder out = new StringBuilder(code.length());
+        int n = code.length();
+        int i = 0;
+        while (i < n) {
+            char c = code.charAt(i);
+            int j;
+            if (code.startsWith("\"\"\"", i)) { // 텍스트 블록: \""" 은 끝이 아니다
+                j = i + 3;
+                while (j < n && !code.startsWith("\"\"\"", j)) j += code.charAt(j) == '\\' ? 2 : 1;
+                j = Math.min(n, j + 3);
+                out.append(code, i, j);
+            } else if (c == '"' || c == '\'') { // 문자열 · 문자: 같은 따옴표나 줄 끝까지(\ 다음 글자는 건너뛴다)
+                j = i + 1;
+                while (j < n && code.charAt(j) != c && code.charAt(j) != '\n') j += code.charAt(j) == '\\' ? 2 : 1;
+                j = Math.min(n, j + 1);
+                out.append(code, i, j);
+            } else if (code.startsWith("//", i)) { // 줄 주석: 줄바꿈은 남긴다
+                j = code.indexOf('\n', i);
+                if (j < 0) j = n;
+            } else if (code.startsWith("/*", i)) {
+                j = code.indexOf("*/", i + 2);
+                j = j < 0 ? n : j + 2;
+                out.append(' ');
+            } else {
+                out.append(c);
+                j = i + 1;
+            }
+            i = j;
+        }
+        return out.toString();
     }
 
     /** a.b.Cls / a.b.Cls.member / a.b → a.b */
@@ -174,6 +206,25 @@ class ArchitectureTest {
         gone.removeAll(now);
         assertThat(added).as("new package-rule violations (see the rule name before the first '|')").isEmpty();
         assertThat(gone).as("fixed — delete these from KNOWN").isEmpty();
+    }
+
+    /**
+     * 최종 리뷰: 주석 제거가 문자열을 몰라 "/api/**" 같은 글자 속 '/*' 부터 다음 '*' + '/' 까지를 지웠다 — 그 사이의 완전한 이름 참조(예: ApiPaths 의
+     * 다음 줄)가 검사에서 빠졌다. 문자열 · 문자 · 텍스트 블록 안의 주석 모양은 코드다(문자열 속 클래스 이름은 계속 센다).
+     */
+    @Test
+    void commentStrippingKnowsStringLiterals() {
+        String code = """
+                static final String ALL = "/api/**"; // 줄 주석 dev.wakeline.hidden.A
+                static final Class<?> X = dev.wakeline.ws.WsHub.class;
+                static final String URL = "http://x"; char c = '"'; String t = \"""
+                    /* 텍스트 블록 */ \""";
+                /** 문서 dev.wakeline.hidden.B */
+                static final String CLS = "dev.wakeline.ops.OpsAuthentication";
+                """;
+        String out = stripComments(code);
+        assertThat(out).contains("dev.wakeline.ws.WsHub").contains("\"/api/**\"").contains("\"dev.wakeline.ops.OpsAuthentication\"")
+                .contains("/* 텍스트 블록 */").doesNotContain("hidden");
     }
 
     @Test
