@@ -234,6 +234,60 @@ describe("/logs: an auto-check compares its answer with the list on screen, not 
   });
 });
 
+/**
+ * 자동 확인은 앞 확인이 떠 있으면 그 주기를 건너뛴다(ADR-029 §5 — 쌓지 않는다). 막는 것이 없어 api 가 멈추면 15 s 마다 요청이 쌓였고,
+ * 늦게 온 앞 확인이 더 새 확인의 대기열을 덮었다(리뷰 cto-2026-10 최종)
+ */
+describe("/logs: the auto-check is not sent while the previous check is still out", () => {
+  it("list: four ticks with the api hanging send one check; an answer (or a failure) frees the next tick", async () => {
+    let hold = false;
+    let fail = false;
+    const s = stub((u) => (!isList(u) ? json(404, {}) : hold ? null : fail ? json(503, { detail: "log store unavailable" }) : json(200, page([T(1)]))));
+    await open();
+    const first = s.lists().length;
+    hold = true;
+    for (let i = 0; i < 4; i++) await tick();
+    expect(s.lists().length - first).toBe(1);
+    hold = false;
+    s.held[0].answer(json(503, { detail: "log store unavailable" }));
+    await m.settle();
+    fail = true;
+    await tick(); // 실패한 확인도 다음 주기를 막지 않는다
+    expect(s.lists().length - first).toBe(2);
+    fail = false;
+    await tick();
+    expect(s.lists().length - first).toBe(3);
+    expect(rows()).toEqual([T(1)]);
+  });
+
+  it("groups: four ticks with the api hanging send one check", async () => {
+    let hold = false;
+    const s = stub((u) => (isGroups(u) ? (hold ? null : json(200, { groups: [group(17)], scanned: 10, scan_truncated: false })) : isList(u) ? json(200, page([T(1)])) : json(404, {})));
+    await open();
+    await m.click(m.button("묶음(fp)"));
+    const groupsAsked = () => s.asked.filter(isGroups).length;
+    const first = groupsAsked();
+    hold = true;
+    for (let i = 0; i < 4; i++) await tick();
+    expect(groupsAsked() - first).toBe(1);
+  });
+
+  it("a check left hanging under the previous filter does not hold back the checks for the new one", async () => {
+    let hold = false;
+    const s = stub((u) => (!isList(u) ? json(404, {}) : u.includes("level=ERROR") ? json(200, page([T(5)])) : hold ? null : json(200, page([T(1)]))));
+    await open();
+    hold = true;
+    await tick();
+    expect(s.held).toHaveLength(1); // 앞 필터의 확인이 떠 있다
+    await m.click(m.button("ERROR"));
+    expect(rows()).toEqual([T(5)]);
+    const errorAsked = () => s.lists().filter((u) => u.includes("level=ERROR")).length;
+    const before = errorAsked();
+    await tick();
+    expect(errorAsked() - before).toBe(1);
+  });
+});
+
 describe("/logs list: errors, the last-success time and the selection across reloads", () => {
   it("a failed load shows its error with the request id; the next successful check clears it and sets 갱신", async () => {
     let fail = true;
