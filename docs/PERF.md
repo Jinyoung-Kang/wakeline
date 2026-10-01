@@ -278,6 +278,17 @@ CI 의 web job 이 운영 빌드 뒤 `npm run check:first-js -- --in-image`(빌�
 
 - 재현: `cd apps/web && WAKELINE_PERF=1 npx vitest run tests/perf-alert-panel.test.ts -t measure`. 전 = 커밋 `f4ba9d0`.
 
+**P5 — 상단 통합 검색(`AircraftSearch`, 늘 마운트된 머리 줄)**: 결과가 닫혀 있어도 1 s 시계를 구독해 1초마다 다시 그렸다. 시계는 결과(선박 표의 경과)를 보일 때만 필요하다 —
+이제 `useServerNow(1000, 결과가 보이는가)`(lib/clock `useNow` 의 active — 구독하지 않으면 렌더할 때 마지막 값을 읽는다). 선박을 고를 때의 '지금'은 고른 순간에 읽는다.
+시험 `tests/perf-search-clock.test.ts`(상황판처럼 다른 1 s 시계 구독자가 있는 채로): 닫힘 → 시계 10번에 커밋 **0**(전: 10), 결과 열림 → 10, Esc 로 닫으면 다시 0.
+
+| 시계 10번(10 s)의 React 작업 | 전 | 후 |
+|---|---|---|
+| 결과 닫힘 | 2.05 · 2.11 ms(커밋 10) | **0 ms(커밋 0)** |
+| 결과 열림(항공기 1 · 선박 10) | 24.97 · 31.46 ms(커밋 10) | 39.57 · 27.23 ms(커밋 10 — 같은 일, 흔들림) |
+
+- 작다(틱당 약 0.2 ms) — 늘 마운트된 자리라 없앴다. 재현: `cd apps/web && WAKELINE_PERF=1 npx vitest run tests/perf-search-clock.test.ts -t measure`. 전 = 커밋 `c6e22c0`.
+
 ## 재현
 ```bash
 make bench SHIPS=1               # k6 REST + WS(선박 포함), api 층 직접
