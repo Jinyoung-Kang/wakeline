@@ -29,7 +29,7 @@ from collections import Counter, defaultdict
 from datetime import UTC, datetime
 
 PROJECT = "wakeline-qa"
-ALLOWED_PROJECTS = {"wakeline-qa"}
+ALLOWED_PROJECTS = {"wakeline-qa", "wakeline-e2e"}  # 격리 스택 B · A 만(운영 스택 wakeline 은 막는다)
 WINDOW_S = 60
 KEEP_PAST_S = 24 * 3600
 KEEP_FUTURE_S = 5 * 60

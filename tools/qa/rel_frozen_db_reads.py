@@ -8,7 +8,10 @@ import json, os, subprocess, sys, threading, time, urllib.error, urllib.request
 from datetime import UTC, datetime, timedelta
 from urllib.parse import quote
 
-BASE = "http://localhost:8702"
+PROJECT = os.environ.get("QA_PROJECT", "wakeline-qa")  # 격리 스택만 — B(기본) · A(고친 빌드 재확인)
+if PROJECT not in ("wakeline-qa", "wakeline-e2e"):
+    raise SystemExit("QA_PROJECT must be wakeline-qa or wakeline-e2e")
+BASE = {"wakeline-qa": "http://localhost:8702", "wakeline-e2e": "http://localhost:8701"}[PROJECT]
 HOLD_S = int(os.environ.get("HOLD_S", "45"))
 out_dir = sys.argv[1] if len(sys.argv) > 1 else "docs/qa/2026-10/evidence/reliability/db-frozen-reads"
 now = datetime.now(UTC)
@@ -28,7 +31,7 @@ def hit(i, p):
     except Exception as e:
         res[i] = {"path": p, "status": None, "error": type(e).__name__, "s": round(time.time() - t, 1)}
 
-subprocess.run(["docker", "pause", "wakeline-qa-db-1"], check=True)
+subprocess.run(["docker", "pause", f"{PROJECT}-db-1"], check=True)
 t_pause = time.time()
 try:
     ths = [threading.Thread(target=hit, args=(i, p)) for i, p in enumerate(paths)]
@@ -37,7 +40,7 @@ try:
     elapsed = time.time() - t_pause
     if elapsed < HOLD_S: time.sleep(HOLD_S - elapsed)
 finally:
-    subprocess.run(["docker", "unpause", "wakeline-qa-db-1"], check=True)
+    subprocess.run(["docker", "unpause", f"{PROJECT}-db-1"], check=True)
 for th in ths: th.join(timeout=60)
 over = [r for r in res if r is None or r["s"] > 10 or r["status"] not in (200, 503) or (r["status"] == 503 and not r.get("retry_after"))]
 summary = {"hold_s": HOLD_S, "results": res, "over_limit": len(over)}

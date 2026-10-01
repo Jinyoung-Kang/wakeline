@@ -14,7 +14,8 @@
 #   bash tools/qa/qa_100_api_crash_ship_loss.sh [증거 폴더]
 set -uo pipefail
 cd "$(dirname "$0")/../.."
-P=wakeline-qa
+P="${QA_PROJECT:-wakeline-qa}"  # 격리 스택만: wakeline-qa(B, 기본) · wakeline-e2e(A — 고친 빌드를 다시 확인할 때)
+case "$P" in wakeline-qa|wakeline-e2e) ;; *) echo "QA_PROJECT must be wakeline-qa or wakeline-e2e" >&2; exit 2 ;; esac
 OUT="${1:-docs/qa/2026-10/evidence/reliability/qa-100-$(date +%H%M%S)}"
 mkdir -p "$OUT"
 ms() { python3 -c 'import time; print(int(time.time()*1000))'; }
@@ -52,7 +53,7 @@ docker logs --since "$KILL_AT" "$P-api-1" 2>&1 | grep -E 'Starting WakelineAppli
 dropped=$(metric 'wakeline_ship_rows_total{result="dropped"}')
 written=$(metric 'wakeline_ship_rows_total{result="written"}')
 echo "new process: wakeline_ship_rows_total dropped=${dropped:-?} written=${written:-?}" | tee -a "$OUT/run.log"
-python3 tools/qa/stream_db_integrity.py --since-ms $((T0 - 60000)) --until-ms $(( $(ms) - 15000 )) --settle-s 120 --json "$OUT/integrity.json" >/dev/null
+python3 tools/qa/stream_db_integrity.py --project "$P" --since-ms $((T0 - 60000)) --until-ms $(( $(ms) - 15000 )) --settle-s 120 --json "$OUT/integrity.json" >/dev/null
 lost=$(python3 -c "import json; print(json.load(open('$OUT/integrity.json'))['defects']['ship_windows_lost'])")
 echo "ship windows lost (stream ↔ DB): $lost" | tee -a "$OUT/run.log"
 python3 -c "import json; d=json.load(open('$OUT/integrity.json')); print('missing sample:', d['ships']['missing_sample'][:3])" | tee -a "$OUT/run.log"
