@@ -1,8 +1,13 @@
 package dev.wakeline.ws;
 
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.web.socket.CloseStatus;
+import org.springframework.web.socket.TextMessage;
 import tools.jackson.databind.JsonNode;
 
 import java.util.ArrayList;
@@ -17,6 +22,7 @@ import static org.assertj.core.api.Assertions.assertThatCode;
  * 오류 메시지(그 연결만, 닫힘 여부는 코드마다 계약대로)이거나 받아들인다(범위 밖 zoom 은 0–24 로 자른다). 예외가 나오면 Spring 이 ERROR 스택을 남기고
  * 1011 로 닫는다 — 익명 클라이언트가 서버 오류 로그를 만들 수 있었다(Jackson 3 의 asInt() 는 범위 밖이면 던진다: zoom 1e10).
  */
+@ExtendWith(OutputCaptureExtension.class)
 class WsInputRobustnessTest {
     /** 기대: 받아들임(오류 없음) · 오류(연결 유지) · 치명(오류 뒤 1002 로 닫음). */
     record Row(String name, boolean subscribeFirst, String message, String errorCode, boolean fatal) {
@@ -104,5 +110,31 @@ class WsInputRobustnessTest {
 
     static Stream<String> badProtos() {
         return Stream.of("1e10", "-1e10", "4294967297", "123456789012345678901234567890", "1e400", "2", "\"x\"", "null", "{}", "[1]");
+    }
+
+    /**
+     * 처리기의 마지막 그물(리뷰 cto-2026-10 S4): 메시지를 처리하다 우리 코드에서 예외가 나도(여기서는 선박 팬아웃이 던진다) 처리기 밖으로 나가지 않는다 —
+     * 그 연결만 BAD_MESSAGE 로 알리고 1002(프로토콜 오류)로 닫는다. 예전에는 Spring 이 ERROR 스택을 남기고 1011 로 닫았다. WARN 은 분에 한 번 스택 없이.
+     */
+    @Test
+    void anExceptionWhileHandlingAMessageClosesThatClientWithAProtocolErrorAndOneWarning(CapturedOutput out) throws Exception {
+        try (WsTestKit k = new WsTestKit()) {
+            ShipFanout throwing = new ShipFanout(k.hub, k.ships, k.meters, null, k.shipClock::get) {
+                @Override void layersChanged(WsSession s) { throw new IllegalStateException("bug in the ship fan-out"); }
+            };
+            WakelineWsHandler h = new WakelineWsHandler(k.hub, k.props, WsTestKit.JSON, k.snapshots, throwing);
+            List<FakeWsSession> clients = new ArrayList<>();
+            for (int i = 0; i < 3; i++) {
+                FakeWsSession f = new FakeWsSession("s" + i, "1.2.3.4");
+                h.afterConnectionEstablished(f);
+                h.handleMessage(f, new TextMessage("{\"type\":\"hello\",\"proto\":1}"));
+                assertThatCode(() -> h.handleMessage(f, new TextMessage("{\"type\":\"layers\",\"ships\":true}"))).doesNotThrowAnyException();
+                assertThat(WsTestKit.ofType(f, "error")).extracting(n -> n.path("code").asString()).containsExactly("BAD_MESSAGE");
+                assertThat(f.closedWith).extracting(CloseStatus::getCode).isEqualTo(CloseStatus.PROTOCOL_ERROR.getCode());
+                clients.add(f);
+            }
+            assertThat(out.getAll().split("ws 'layers' message failed", -1)).as("one WARN per minute, not one per message").hasSize(2);
+            assertThat(out.getAll()).doesNotContain("at dev.wakeline.ws.WakelineWsHandler"); // 스택 없음
+        }
     }
 }
