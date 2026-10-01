@@ -86,6 +86,8 @@ public class AircraftController {
     /**
      * 검색(계약 §2): 병합 뷰(관심 지역 + 전세계)에서 hex · 호출부호 · 등록기호 앞부분 일치, 최대 20건. 모자라면 DB(과거에 본 기체의
      * 정적 정보 — 현재 위치가 아니다, last_seen 포함)로 채운다. DB 가 없으면 실시간 결과만 주고 meta.db_unavailable = true(WARN 한 줄).
+     * 실시간 항목은 lite 인코딩에 실시간 상태의 registration · type_code(아는 것만 — 계약 v5 §G33)를 더한다: 등록번호로 찾은 항목에 맞은 근거가
+     * 보이게(QA-206 — 예전에는 lite 라 빠져 웹 검색 목록이 서버가 아는 등록번호를 '—' 로 그렸다).
      */
     @GetMapping("/search")
     public ResponseEntity<Map<String, Object>> search(@RequestParam String q, HttpServletRequest req) {
@@ -103,6 +105,8 @@ public class AircraftController {
                     || (a.registration() != null && a.registration().toUpperCase(java.util.Locale.ROOT).startsWith(needle));
             if (m) {
                 Map<String, Object> item = new LinkedHashMap<>(AircraftJson.encode(a, "lite", false));
+                if (a.registration() != null) item.put("registration", a.registration());
+                if (a.typeCode() != null) item.put("type_code", a.typeCode());
                 item.put("live", true);
                 out.add(item);
                 seen.add(a.hex());

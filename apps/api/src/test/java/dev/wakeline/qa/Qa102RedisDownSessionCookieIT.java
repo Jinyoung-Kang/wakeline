@@ -28,6 +28,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 필터(OpsSessionLifetimeFilter · RateLimitFilter 뒤 보안 필터)에서 그대로 올라가 Tomcat 이 ERROR 스택 세 줄을 남긴다.
  * 로그인한 운영자의 브라우저는 /api 요청마다 이 쿠키를 보내므로 Redis 장애 동안 상황판의 REST(상태 · SIGMET · 이력)가 모두 실패한다.
  * 스택 B 증거: docs/qa/2026-10/evidence/reliability/sweeps/ops-redis-down-cases.json · ops-redis-paused-cases.json.
+ * <p>기대(고친 뒤 — 처음 이 시험은 공개 경로도 503 + Retry-After 를 기대했다): 공개 경로는 세션 저장소에 기대지 않는다 — 쿠키를 실어도 같은 순간 쿠키 없는
+ * 요청과 같은 답(500 아님)이고, 운영 경로는 세션을 확인할 수 없으니 503 + Retry-After 다.
  */
 @EnabledIf("dev.wakeline.DbTestSupport#dockerAvailable")
 class Qa102RedisDownSessionCookieIT extends IntegrationTest {
@@ -80,16 +82,21 @@ class Qa102RedisDownSessionCookieIT extends IntegrationTest {
         DockerClient docker = DockerClientFactory.instance().client();
         String id = redisContainerId();
         Map<String, String> seen = new LinkedHashMap<>();
+        int publicWithoutCookie;
         docker.pauseContainerCmd(id).exec();
         try {
             for (String path : List.of("/api/v1/status", "/api/v1/ops/settings")) {
                 HttpResponse<String> r = send("GET", path, null, Map.of("Accept", "application/json, application/problem+json"));
                 seen.put(path, r.statusCode() + " retry-after=" + r.headers().firstValue("Retry-After").orElse("-"));
             }
+            publicWithoutCookie = CLIENT.send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/api/v1/status")).timeout(Duration.ofSeconds(40))
+                    .header("Accept", "application/json, application/problem+json").GET().build(), HttpResponse.BodyHandlers.ofString()).statusCode();
         } finally {
             docker.unpauseContainerCmd(id).exec();
         }
-        assertThat(seen).as("Redis 가 멈춘 동안 세션 쿠키를 실은 요청 — 503 + Retry-After 여야 한다(500 아님)")
-                .allSatisfy((path, v) -> assertThat(v).startsWith("503 retry-after=").doesNotEndWith("=-"));
+        assertThat(seen.get("/api/v1/ops/settings")).as("Redis 가 멈춘 동안 세션 쿠키를 실은 운영 요청 — 503 + Retry-After 여야 한다(500 아님)")
+                .startsWith("503 retry-after=").doesNotEndWith("=-");
+        assertThat(seen.get("/api/v1/status")).as("Redis 가 멈춘 동안 세션 쿠키를 실은 공개 요청 — 쿠키 없는 요청(%d)과 같아야 한다(세션 저장소에 기대지 않는다)",
+                publicWithoutCookie).startsWith(publicWithoutCookie + " ").doesNotStartWith("500");
     }
 }

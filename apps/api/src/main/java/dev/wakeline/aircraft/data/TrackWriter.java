@@ -5,11 +5,11 @@ import dev.wakeline.aircraft.core.AircraftState;
 import dev.wakeline.platform.data.DbErrors;
 import dev.wakeline.platform.data.OrderedWriter;
 import dev.wakeline.platform.support.Receipt;
+import dev.wakeline.platform.support.StreamPrerequisite;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.context.SmartLifecycle;
 import org.springframework.context.event.EventListener;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
@@ -47,7 +47,7 @@ import java.util.concurrent.locks.ReentrantLock;
  */
 @org.springframework.context.annotation.Profile("!cli & !migrate")  // CLI(ops-user)·마이그레이션 실행에서는 웹·소비자·잡을 띄우지 않는다
 @Component
-public class TrackWriter implements SmartLifecycle {
+public class TrackWriter implements StreamPrerequisite {
     private static final Logger log = LoggerFactory.getLogger(TrackWriter.class);
     static final int QUEUE_MAX = 50_000;
     static final int BATCH = 2_000;
@@ -156,8 +156,8 @@ public class TrackWriter implements SmartLifecycle {
 
     /**
      * 행을 큐에 넣는다(스트림 소비 스레드 — DB 를 기다리지 않는다). 영수증이 있으면 이 메시지의 마지막 행에 표식을 단다.
-     * 종료 뒤에 들어온 행은 쓸 스레드가 없다 — 조용히 잃지 않고 dropped 로 센다(영수증은 잡지 않으므로 그 메시지는 곧 ACK 된다:
-     * 종료 중에는 소비가 먼저 멈추므로 실제로는 오지 않는다).
+     * 시작 전 · 종료 뒤에 들어온 행은 쓸 스레드가 없다 — 조용히 잃지 않고 dropped 로 센다(영수증은 잡지 않으므로 그 메시지는 곧 ACK 된다:
+     * 소비자는 이 저장기에 의존해(StreamPrerequisite) 이것이 시작한 뒤에야 읽고 이것보다 먼저 멈추므로 실제로는 오지 않는다 — QA-100 전에는 기동 때 왔다).
      */
     void enqueue(Collection<AircraftState> states, Receipt receipt) {
         if (!running) {

@@ -27,12 +27,20 @@ import java.util.concurrent.atomic.AtomicBoolean;
  *       CannotGetJdbcConnectionException — 풀 대기 초과 · 문장 상한과 같은 503 + Retry-After, 실시간 결과로 답하는 곳은 meta.db_unavailable).
  *       기다림이 0 이 아닌 까닭: DB 가 멀쩡할 때 한 사용자의 몰림(edge 의 IP 당 burst 30)이 허가 수를 넘었다고 바로 503 이 되지 않게(측정 §13).</li>
  *   <li>지표 wakeline_db_public_reads_rejected_total — 격벽이 돌려보낸 공개 조회(풀 대기 초과는 hikaricp_connections_timeout_total).</li>
+ *   <li>소켓 읽기 상한(QA-104): 빌려준 연결에 {@link Sql#PUBLIC_READ_SOCKET_TIMEOUT_S} s 의 망 상한(Connection.setNetworkTimeout — pgjdbc socketTimeout 과
+ *       같은 것)을 건다. 서버가 답하지 않으면 문장 상한(3 s)의 취소가 닿지 않아 읽기가 서버가 돌아올 때까지 연결과 허가를 잡았다. 그 상한에 걸린 연결은
+ *       끊긴 것으로 풀이 버리고, 요청은 503 + Retry-After 다(SQLSTATE 08006 → DataAccessResourceFailureException). 연결을 돌려주면 Hikari 가 풀 기본
+ *       (상한 없음)으로 되돌린다 — 같은 풀의 기록기 · 운영 · 정기 작업 문장에는 걸리지 않는다.</li>
  * </ul>
  * 공유 풀 크기보다 작아야 한다(기록기에게 하나 이상 남는다). 선택 조회 읽기 풀(ReadPool)은 따로라 이 격벽을 지나지 않는다.
  */
 public final class PublicReadGate {
     public static final int DEFAULT_PERMITS = 6;
     public static final long DEFAULT_WAIT_MS = 1_000;
+    /** 공개 조회 연결의 망 상한(ms) — {@link Sql#PUBLIC_READ_SOCKET_TIMEOUT_S}. */
+    static final int SOCKET_TIMEOUT_MS = Sql.PUBLIC_READ_SOCKET_TIMEOUT_S * 1000;
+    /** setNetworkTimeout 의 실행기 — pgjdbc 는 소켓 SO_TIMEOUT 만 바꾸고 실행기를 쓰지 않는다(JDBC 는 null 을 받지 않는다). */
+    private static final java.util.concurrent.Executor DIRECT = Runnable::run;
 
     private final Semaphore permits;
     private final int size;
@@ -75,7 +83,7 @@ public final class PublicReadGate {
         public Connection getConnection() throws SQLException {
             acquire();
             try {
-                return released(super.getConnection());
+                return released(bounded(super.getConnection()));
             } catch (SQLException | RuntimeException | Error e) {
                 permits.release();
                 throw e;
@@ -86,7 +94,7 @@ public final class PublicReadGate {
         public Connection getConnection(String username, String password) throws SQLException {
             acquire();
             try {
-                return released(super.getConnection(username, password));
+                return released(bounded(super.getConnection(username, password)));
             } catch (SQLException | RuntimeException | Error e) {
                 permits.release();
                 throw e;
@@ -106,6 +114,17 @@ public final class PublicReadGate {
             rejected.increment();
             throw new SQLTransientConnectionException("public read limit reached: " + size + " public reads already use the shared pool (waited "
                     + waitMs + " ms) — the rest of the pool is kept for the writers");
+        }
+    }
+
+    /** 빌린 연결에 망 상한을 건다(풀이 돌려받을 때 되돌린다). 걸지 못하면 연결을 돌려주고 실패한다 — 상한 없는 공개 조회를 내보내지 않는다. */
+    private static Connection bounded(Connection c) throws SQLException {
+        try {
+            c.setNetworkTimeout(DIRECT, SOCKET_TIMEOUT_MS);
+            return c;
+        } catch (SQLException | RuntimeException | Error e) {
+            try { c.close(); } catch (SQLException | RuntimeException suppressed) { e.addSuppressed(suppressed); }
+            throw e;
         }
     }
 

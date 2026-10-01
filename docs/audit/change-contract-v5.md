@@ -1097,3 +1097,36 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
     까닭이 글자가 아니면 `이유 모름`(지어내지 않는다), `error` 가 없거나 null · 빈 글자면 줄이 없다. 줄이 있는 동안 빈 목록을 '스키마 검증에 실패한 메시지가 없습니다.'
     로 적지 않는다(전에는 그렇게 적어 읽지 못함이 없음과 같아 보였다 — 리뷰 cto-2026-10 최종 검토). 항목이 있으면 표는 그대로.
   - 회귀 막기: 웹 `tests/ops-page.test.ts` · `tests/guide-page.test.ts`. api 는 `OpsDbTest.dlqSaysWhenItCouldNotBeRead`(Redis 가 죽으면 빈 목록 + `error`, 살아 있으면 `error` 키 없음).
+
+## G. 22차 개정(2026-10-02 · QA 2026-10 고치기 · 레인 api — 재현 시험으로 찾은 입력 · 응답 결함을 고치며 바뀐 계약)
+- G32(QA-207 · QA-001 · QA-201 · QA-202 · QA-208 · 계약 §2 · ADR-017 §6.2 QA-207) **시각 · 날짜 파라미터의 범위 — 밖이면 400**
+  - 공개 · 운영의 모든 시각(ISO 순간 `Instant`) · 날짜(`YYYY-MM-DD`) 쿼리 파라미터는 **1970-01-01T00:00:00Z ~ 9999-12-31T23:59:59.999999999Z**
+    (날짜는 1970-01-01 ~ 9999-12-31) 안이어야 한다. 밖이면 **400 `BAD_REQUEST`** problem+json(detail `invalid parameter: <이름> — out of the supported
+    range …`) — 저장소에 닿지 않는다. 경로: `/aircraft/{hex}/track?from,to` · `/ships/{mmsi}/track?from,to` · `/ais/gaps?from,to` · `/alerts/history?from,to` ·
+    `/replay?at` · `/stats/sigmet?from,to` · `/stats/alerts?from,to` · `/stats/traffic?day` · `/ops/runs?since` · `/ops/logs?since,until` · `/ops/logs/groups?since` ·
+    `POST /ops/stats/aggregate?day` — 규칙은 api 의 요청 바인더 한 곳(`platform.web.TimeParams`)이라 앞으로 생기는 시각 · 날짜 파라미터도 같다.
+  - 예전: Java 가 받는 범위(연도 ±999,999,999)를 그대로 받아 기원전 4713 년 앞의 날짜는 PostgreSQL 에 `-infinity` 로 가서 `/stats/*` 가 3 s 동안 DB CPU 를
+    다 쓰고(임시 파일 0.5–0.8 GB) 503 '재시도' 로 답했고, 재집계는 `day = -infinity` 행을 썼다. PostgreSQL 범위 밖이나 Instant 끝값은 500 + ERROR 스택이었다.
+  - 범위의 근거: 하한 — 저장하는 시각은 모두 수집 시스템이 받은 관측 · 실행의 유닉스 시각이라 1970 앞의 행은 있을 수 없다. 상한 — ISO 8601 네 자리 연도의 끝
+    (브라우저 `toISOString()` 의 형식). 미래를 묻는 정상 요청(창의 끝 · 오늘까지의 통계)은 그대로 받는다. 경로마다의 창 규칙(항적 24 h · AIS 공백 31일 · 알림
+    이력 30일 · 통계 92일 · 재생 31일과 미래 60 s · 재집계는 오늘 KST 이전 — `BAD_RANGE` · `BAD_AT` · `BAD_DAY`)은 그대로 뒤에서 본다. 해석(받는 글자 형식)과
+    같은 이름이 여럿일 때 첫 값을 쓰는 동작은 바꾸지 않았다.
+  - 웹은 이 범위 밖의 값을 보내지 않는다(서버 시계 · 달력 입력) — 화면 변화 없음.
+  - 회귀 막기: api `TimeParamsTest` · `Qa207StatsBcDateRunsAwayTest` · `Qa201TimeParamOutOfRangeTest` · `Qa201OpsTimeParamOutOfRangeTest` · `Qa202StatsDateOutOfRangeTest` ·
+    `Qa208AggregateBcDayWritesInfinityTest`, 격리 스택 점검 `tools/qa/qa_001_outofrange_time.py`.
+- G33(계약 §2 의 항공기 검색 · QA-206 · ADR-017 §6.2 QA-206) **`GET /api/v1/aircraft/search` 의 실시간 항목에 `registration` · `type_code`**
+  - 실시간 항목(`live: true`)은 지금까지의 lite 필드에 실시간 상태의 `registration`(등록번호) · `type_code`(기종 코드)를 더한다 — 상태가 아는 것만, 모르면 키가
+    없다(다른 lite 필드와 같은 규칙, 지어내지 않는다). DB 항목(`live: false`)은 그대로(`hex` · `registration` · `type_code` · `last_seen`).
+  - 예전: 검색은 등록번호 앞부분으로도 찾지만 실시간 항목은 lite(등록번호 · 기종 없음)라, "B-99" 로 찾은 줄에 맞은 근거가 없고 웹 검색 목록의 등록번호 칸은
+    서버가 아는 값을 '—' 로 그렸다. 웹은 이미 두 종류 모두에서 `registration` · `type_code` 를 읽는다(`lib/search.ts` `parseSearchResponse`) — 웹 변경 없음.
+  - 회귀 막기: api `Qa206AircraftSearchHidesRegistrationTest`, REST 계약 표본 `aircraft_search`(`tools/rest_contract_check.py` 의 실시간 항목 스키마).
+- G34(§G14 의 실행 목록 · QA-205 · QA-002) **`GET /api/v1/ops/runs` 의 `job` · `provider` · `status` 에 제어 문자가 있으면 400 `BAD_FILTER`**
+  - 세 자유 글자 필터는 SQL 매개변수로 간다. 제어 문자(유니코드 Cc — NUL · 줄바꿈 · 탭 포함)가 있으면 저장소에 닿기 전에 400 `BAD_FILTER` problem+json(detail
+    `<이름> must not contain control characters`). 예전: NUL 은 PostgreSQL 이 거절해 500 + ERROR 스택이었다(공개 검색은 같은 입력을 400 `BAD_QUERY` 로 막는다).
+    그 밖의 값 · 의미(같은 값의 실행만, 없으면 조건 없음)는 그대로. 웹(/ops RUNS)은 고른 값만 보낸다 — 화면 변화 없음.
+  - 회귀 막기: api `Qa205OpsRunsFilterNulTest` · `ParamsTest`.
+- G35(계약 §1 의 '클라이언트 메시지 ≤ 4 KB' · `schemas/ws/client.v1.json` · ADR-008 · QA-204 · ADR-017 §6.2 QA-204) **WS 클라이언트 메시지 상한 4 KB = UTF-8 4,096 바이트**
+  - `/ws/v1` 의 텍스트 메시지 하나가 UTF-8 로 4,096 바이트를 넘으면 서버가 **1009**(reason `message too big`)로 닫는다 — 글자 수와 상관없다(한글 · 이모지 등
+    여러 바이트 글자도 바이트로 센다). 예전: Tomcat 의 상한(setTextMessageSizeLimit)이 디코딩한 글자(UTF-16) 수라 3바이트 글자로 채운 메시지는 4,096 글자
+    = 약 12 KB 까지 받았다(ASCII 는 그때도 4,097 바이트에서 1009). 4,096 바이트 이하는 그대로 받는다. 웹이 보내는 메시지는 수백 바이트다 — 화면 변화 없음.
+  - 회귀 막기: api `Qa204WsMessageLimitIsCharsNotBytesTest`(실제 Tomcat) · `RateAndLimitTest.handler_messageOver4096Utf8Bytes_closes1009EvenWithFewCharacters`.

@@ -804,9 +804,10 @@ SCHEMAS: dict[str, dict[str, Any]] = {
                 "items": {
                     "oneOf": [
                         {
+                            # 실시간 항목: lite + 실시간 상태의 registration · type_code(아는 것만 — 계약 v5 §G33, QA-206)
                             **AIRCRAFT_LITE,
                             "required": [*AIRCRAFT_LITE["required"], "live"],
-                            "properties": {**LITE_PROPS, "live": {"const": True}},
+                            "properties": {**LITE_PROPS, "registration": STR, "type_code": STR, "live": {"const": True}},
                         },
                         {
                             "type": "object",

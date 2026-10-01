@@ -23,8 +23,10 @@ import org.springframework.security.web.csrf.CsrfToken;
 import org.springframework.security.web.csrf.CsrfTokenRequestHandler;
 import org.springframework.security.web.csrf.XorCsrfTokenRequestAttributeHandler;
 import org.springframework.security.web.firewall.RequestRejectedHandler;
+import org.springframework.session.web.http.CookieHttpSessionIdResolver;
 import org.springframework.session.web.http.CookieSerializer;
 import org.springframework.session.web.http.DefaultCookieSerializer;
+import org.springframework.session.web.http.HttpSessionIdResolver;
 import org.springframework.util.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -164,6 +166,17 @@ public class SecurityConfig {
         c.setSameSite("Strict");
         c.setUseSecureCookie(secure);
         return c;
+    }
+
+    /**
+     * 세션 id 해석(QA-102): 위 쿠키(이름 · Path · SameSite)를 운영 경로에서만 읽는다({@link OpsSessionIdResolver}) — 공개 경로는 세션 저장소(Redis)에
+     * 닿지 않아, Redis 장애 중에도 쿠키를 실은 공개 요청이 쿠키 없는 요청과 같게 답한다.
+     */
+    @Bean
+    HttpSessionIdResolver httpSessionIdResolver(CookieSerializer cookieSerializer) {
+        CookieHttpSessionIdResolver cookies = new CookieHttpSessionIdResolver();
+        cookies.setCookieSerializer(cookieSerializer);
+        return new OpsSessionIdResolver(cookies);
     }
 
     @Bean

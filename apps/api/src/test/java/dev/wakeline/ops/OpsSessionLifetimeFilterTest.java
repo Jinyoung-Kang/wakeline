@@ -108,6 +108,15 @@ class OpsSessionLifetimeFilterTest {
         MockFilterChain chain = new MockFilterChain();
         down.doFilter(request("/api/v1/ops/providers", kept), res, chain);
         assertThat(res.getStatus()).isEqualTo(503);
+        assertThat(res.getHeader("Retry-After")).as("QA-101: contract §2 default").isEqualTo("10");
+        MockHttpServletResponse list = new MockHttpServletResponse();
+        down.doFilter(request("/api/v1/ops/resolutions", kept), list, new MockFilterChain());
+        assertThat(list.getHeader("Retry-After")).as("QA-101: §G14 — the resolution read interval").isEqualTo("30");
+        MockHttpServletRequest revoke = request("/api/v1/ops/resolutions/12", kept);
+        revoke.setMethod("DELETE");
+        MockHttpServletResponse write = new MockHttpServletResponse();
+        down.doFilter(revoke, write, new MockFilterChain());
+        assertThat(write.getHeader("Retry-After")).isEqualTo("10");
         assertThat(chain.getRequest()).as("not passed on unverified").isNull();
         assertThat(kept.isInvalid()).as("unknown is not a logout").isFalse();
     }
@@ -141,6 +150,26 @@ class OpsSessionLifetimeFilterTest {
         lateLogout.setMethod("DELETE");
         down.doFilter(lateLogout, new MockHttpServletResponse(), new MockFilterChain());
         assertThat(old.isInvalid()).isTrue();
+    }
+
+    /** QA-102: 세션 저장소(Redis)를 읽지 못하면 운영 요청은 503 + Retry-After 10 — 넘기지 않는다(예전: 예외가 필터 밖으로 나가 500). */
+    @Test
+    void anOpsRequestWhoseSessionCannotBeReadIs503WithRetryAfter() throws Exception {
+        for (RuntimeException down : new RuntimeException[] {new org.springframework.data.redis.RedisSystemException("Redis exception",
+                new IllegalStateException("Currently not connected")), new org.springframework.dao.QueryTimeoutException("Redis command timed out")}) {
+            MockHttpServletRequest req = new MockHttpServletRequest("GET", "/api/v1/ops/settings") {
+                @Override public jakarta.servlet.http.HttpSession getSession(boolean create) { throw down; }
+            };
+            req.setRequestURI("/api/v1/ops/settings");
+            MockHttpServletResponse res = new MockHttpServletResponse();
+            MockFilterChain chain = new MockFilterChain();
+            FILTER.doFilter(req, res, chain);
+            assertThat(res.getStatus()).isEqualTo(503);
+            assertThat(res.getHeader("Retry-After")).isEqualTo("10");
+            assertThat(res.getContentType()).isEqualTo("application/problem+json");
+            assertThat(res.getContentAsString()).contains("\"code\":\"UNAVAILABLE\"");
+            assertThat(chain.getRequest()).as("not passed on").isNull();
+        }
     }
 
     @Test

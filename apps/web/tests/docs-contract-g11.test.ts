@@ -158,6 +158,18 @@ describe("contract v5 amendment numbers are unique", () => {
     expect(heading(31)).toMatch(/^## G\. 21차 개정\(2026-10-01 · CTO 리뷰 cto-2026-10 최종 검토 · 레인 web /);
     expect(amendment(31)).toContain("`GET /api/v1/ops/dlq` 의 `error` — DLQ 를 읽지 못함");
     expect(amendment(31)).toContain("스키마 검증 실패 메시지(DLQ)를 읽지 못함");
-    expect(amendment(32)).toBe("");
+    // QA 2026-10 고치기(2026-10-02 · 레인 api): 시각 · 날짜 파라미터의 범위 — 22차 · §G32
+    expect(heading(32)).toMatch(/^## G\. 22차 개정\(2026-10-02 · QA 2026-10 고치기 · 레인 api /);
+    expect(amendment(32)).toContain("시각 · 날짜 파라미터의 범위 — 밖이면 400");
+    // QA 2026-10 고치기: 항공기 검색 실시간 항목의 등록번호 — 같은 22차 · §G33
+    expect(heading(33)).toMatch(/^## G\. 22차 개정\(/);
+    expect(amendment(33)).toContain("`GET /api/v1/aircraft/search` 의 실시간 항목에 `registration` · `type_code`");
+    // QA 2026-10 고치기: 운영 실행 목록 필터의 제어 문자 — 같은 22차 · §G34
+    expect(heading(34)).toMatch(/^## G\. 22차 개정\(/);
+    expect(amendment(34)).toContain("`GET /api/v1/ops/runs` 의 `job` · `provider` · `status` 에 제어 문자가 있으면 400 `BAD_FILTER`");
+    // QA 2026-10 고치기: WS 클라이언트 메시지 상한은 UTF-8 바이트 — 같은 22차 · §G35
+    expect(heading(35)).toMatch(/^## G\. 22차 개정\(/);
+    expect(amendment(35)).toContain("WS 클라이언트 메시지 상한 4 KB = UTF-8 4,096 바이트");
+    expect(amendment(36)).toBe("");
   });
 });
