@@ -10,7 +10,7 @@ export const OPS_SESSION_PATH = "/api/v1/ops/session";
 
 /**
  * 운영 쓰기 경로 — 공급자 이름 · 설정 키는 서버가 준 값이지만 경로 조각으로 인코딩한다('/' · '?' · '#' 가 든 값이 CSRF 헤더가 실린 쓰기를
- * 다른 경로로 보내지 않게, web-review B11). "." · ".." 는 던진다(lib/endpoints/path — 인코딩해도 남는 점 조각)
+ * 다른 경로로 보내지 않게, web-review B11). 빈 값 · "." · ".." 는 던진다(lib/endpoints/path — 인코딩해도 비거나 점 조각으로 남는다)
  */
 export const providerSwitchPath = (name: string, action: "enable" | "disable") => `/api/v1/ops/providers/${pathSegment(name)}/${action}`;
 export const settingPath = (key: string) => `/api/v1/ops/settings/${pathSegment(key)}`;

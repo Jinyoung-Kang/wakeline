@@ -243,7 +243,7 @@ export function logGroupsUrl(f: Pick<LogFilter, "services" | "level" | "period" 
   return `${LOGS_PATH}/groups?${p}`;
 }
 
-/** 항목 하나(§C4). stream 을 주면 그 스트림에서만 — 없으면 api 가 server → client 순으로 찾는다(§G2). id 는 경로 조각("." · ".." 는 던진다 — lib/endpoints/path) */
+/** 항목 하나(§C4). stream 을 주면 그 스트림에서만 — 없으면 api 가 server → client 순으로 찾는다(§G2). id 는 경로 조각(빈 값 · "." · ".." 는 던진다 — lib/endpoints/path) */
 export const logItemUrl = (id: string, stream?: LogStreamName | null) => `${LOGS_PATH}/${pathSegment(id)}${stream ? `?stream=${stream}` : ""}`;
 
 /** 첫 필터: /logs#rid=… 는 시각을 모르므로 가장 긴 기간(7 d)으로, #fp=… 는 그 묶음만. #id=…(&stream=…) 는 그 항목의 상세를 연다 */

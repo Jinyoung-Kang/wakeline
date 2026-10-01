@@ -1,7 +1,7 @@
 /**
  * 기상 REST(web-review §3.1) — 공항 카드 · 공항 목록 · SIGMET 카드(나중에 받는 조각)와 공항 기상 이력 화면이 부른다. 첫 화면 밖이다
  * (tests/first-screen-lazy CARRIED_BY_PARTS). 상황판 지도의 기상청 레이더 · 감시 공항 조회는 조건부 요청(304)이라 lib/etag-poller 가 따로 맡는다.
- * 함수마다 { signal } 을 받아 그대로 넘기고, 경로 조각은 ./path 로 인코딩하고("." · ".." 는 요청하지 않고 거절), 파싱한 값을 돌려준다.
+ * 함수마다 { signal } 을 받아 그대로 넘기고, 경로 조각은 ./path 로 인코딩하고(빈 값 · "." · ".." 는 요청하지 않고 거절), 파싱한 값을 돌려준다.
  */
 import { apiGet } from "@/lib/api";
 import { parseWx, type AirportWx } from "@/lib/airport-wx";
