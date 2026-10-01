@@ -242,7 +242,7 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
             {err ? <>{TABS.some((t) => tabErr[t]) ? " · " : ""}<ErrorNote error={err} /></> : null}
           </span>
         ) : null}
-        <span className="ml-auto text-[11px] text-fg-3">{me.username}</span><button className="btn" onClick={logout}>sign out</button>
+        <span className="ml-auto text-[11px] text-fg-3">{me.username}</span><button className="btn" onClick={logout} lang="en">sign out</button>
       </div>
       {/* 탭 본문: 넘칠 때만 Tab 정지점(QA-305 — quality · audit · pipeline 은 글자뿐이라 키보드로 스크롤할 길이 없었다), 아니면 -1(초점 되살리기 자리) */}
       <div ref={tabBodyRef} className="min-h-0 flex-1 overflow-auto p-3 text-[12px]" role="region" aria-label={`${tab} 탭`} data-testid="ops-tab-body">
@@ -455,7 +455,7 @@ function SettingsForm({ items, msg, setMsg, onSaved, onAuthMiss }: {
             </td>
             <td className="mono">{s.version}</td><td className="text-fg-3"><span className="mono">{s.updated_by ?? "—"}</span> <KstTime v={s.updated_at} variant="cell" /></td>
             <td><button className="btn" onClick={() => save(s.key)} disabled={ed === undefined || conflict || busy.has(s.key)} aria-busy={busy.has(s.key) || undefined}
-              title={conflict ? "서버 값이 바뀜 — 새 값 보기 또는 덮어쓰기를 먼저 고르세요" : undefined}>save</button></td></tr>;
+              title={conflict ? "서버 값이 바뀜 — 새 값 보기 또는 덮어쓰기를 먼저 고르세요" : undefined}><span lang="en">save</span></button></td></tr>;
         })}</tbody></table>
     </div>
   );

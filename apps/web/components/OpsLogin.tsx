@@ -27,7 +27,7 @@ export function OpsLogin({ onLogin, notice }: { onLogin: (u: { username: string 
   return (
     <div className="grid-bg flex h-full items-center justify-center">
       <form onSubmit={submit} noValidate className="panel w-80 max-w-[calc(100vw-1.5rem)] p-4" data-testid="ops-login">
-        <div className="label mb-3">Operator sign-in</div>
+        <div className="label mb-3" lang="en">Operator sign-in</div>
         {notice ? <div className="mb-2 text-[11px] text-warn" role="status" data-testid="ops-login-notice">{notice}</div> : null}
         <label className="label block" htmlFor="ops-user">username</label>
         <input id="ops-user" ref={userRef} data-session-focus className="mb-2 w-full" value={u} onChange={(e) => setU(e.target.value)} autoComplete="username" required
@@ -36,7 +36,7 @@ export function OpsLogin({ onLogin, notice }: { onLogin: (u: { username: string 
         <input id="ops-pass" ref={passRef} className="mb-3 w-full" type="password" value={p} onChange={(e) => setP(e.target.value)} autoComplete="current-password" required minLength={8}
           aria-invalid={invalid("pass")} aria-describedby={err ? "ops-login-err" : undefined} />
         {err ? <div id="ops-login-err" ref={errRef} tabIndex={-1} className="mb-2 text-[11px] text-bad" role="alert" data-testid="ops-login-error">{err.text}<RequestIdOf error={err.error} /></div> : null}
-        <button className="btn w-full" type="submit" disabled={busy}>{busy ? "…" : "Sign in"}</button>
+        <button className="btn w-full" type="submit" disabled={busy} lang="en">{busy ? "…" : "Sign in"}</button>
         <div className="mt-3 text-[10px] text-fg-3">계정은 `make ops-user` 로만 만듭니다. 세션 8 h · HttpOnly · SameSite=Strict · CSRF 이중 제출.</div>
       </form>
     </div>

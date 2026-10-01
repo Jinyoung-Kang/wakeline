@@ -54,18 +54,18 @@ export default function StatsPage() {
   const maxDay = yesterdayKst(openedAt);
   return (
     <ScrollRegion label="통계 본문" main className="h-full overflow-y-auto p-4">
-      <div className="mb-3 flex items-center gap-3"><h1 className="label">Statistics</h1><span className="text-[11px] text-fg-3" title="api 집계 작업은 매일 03:30 KST 에 돈다 — 날짜는 한국 표준시 날짜(00:00–24:00 KST)">매일 {STATS_RUN_KST} 에 전날(KST 날짜) 집계 · 최근 7일 · 빈 칸은 집계 전·자료 없음을 구분해 표시</span></div>
+      <div className="mb-3 flex items-center gap-3"><h1 className="label" lang="en">Statistics</h1><span className="text-[11px] text-fg-3" title="api 집계 작업은 매일 03:30 KST 에 돈다 — 날짜는 한국 표준시 날짜(00:00–24:00 KST)">매일 {STATS_RUN_KST} 에 전날(KST 날짜) 집계 · 최근 7일 · 빈 칸은 집계 전·자료 없음을 구분해 표시</span></div>
       {zoneErr ? <div className="mb-3 text-[11px] text-warn" role="alert" data-testid="stats-zone-error">{STATS_ZONE_ERROR}</div> : null}
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-        <Panel id="fir" head={<h2 className="label mb-2">SIGMET by FIR (7d, top 24)</h2>} p={fir} drawable={firRows.length > 0} empty={statsWeekEmptyText(daysOf(fir.load, today), today)}>
+        <Panel id="fir" head={<h2 className="label mb-2" lang="en">SIGMET by FIR (7d, top 24)</h2>} p={fir} drawable={firRows.length > 0} empty={statsWeekEmptyText(daysOf(fir.load, today), today)}>
           <BarChart id="chart-fir" title="최근 7일 FIR별 SIGMET 발표 건수(상위 24)" rows={topDims(firRows)} />
         </Panel>
-        <Panel id="hazard" head={<h2 className="label mb-2">SIGMET by hazard (7d)</h2>} p={haz} drawable={hazRows.length > 0} empty={statsWeekEmptyText(daysOf(haz.load, today), today)}>
+        <Panel id="hazard" head={<h2 className="label mb-2" lang="en">SIGMET by hazard (7d)</h2>} p={haz} drawable={hazRows.length > 0} empty={statsWeekEmptyText(daysOf(haz.load, today), today)}>
           <BarChart id="chart-hazard" title="최근 7일 위험 유형별 SIGMET 발표 건수" rows={topDims(hazRows)} color="#f59e0b" />
         </Panel>
         <Panel id="traffic" p={traffic} drawable={trafficRows.length > 0} empty={statsEmptyText(agg.traffic, day, today, { ...TRAFFIC_SOURCE, nowMs: openedAt })}
           head={<>
-            <div className="mb-2 flex items-center justify-between gap-2"><h2 className="label">Distinct aircraft by hour (KST)</h2><input type="date" value={day} max={maxDay} aria-label="집계 날짜(KST)" title="집계 날짜 = 한국 표준시 날짜(00:00–24:00 KST) · 어제까지" aria-describedby={clamped ? "stats-day-note" : undefined}
+            <div className="mb-2 flex items-center justify-between gap-2"><h2 className="label" lang="en">Distinct aircraft by hour (KST)</h2><input type="date" value={day} max={maxDay} aria-label="집계 날짜(KST)" title="집계 날짜 = 한국 표준시 날짜(00:00–24:00 KST) · 어제까지" aria-describedby={clamped ? "stats-day-note" : undefined}
               onChange={(e) => { const p = statsPickDay(e.target.value, maxDay); if (p) { setDay(p.day); setClamped(p.clamped); } }} /></div>
             {/* 미래 날짜는 조회하지 않는다 — 최근 집계 날짜로 되돌리고 그렇다고 말한다(QA-309). 패널 상태와 상관없이 머리에.
                 role=status 가 아니라 aria-live: 패널의 status 는 받기 상태('불러오는 중') 하나다 */}
@@ -76,7 +76,7 @@ export default function StatsPage() {
           <div className="mt-1 text-[10px] text-fg-2" data-testid="traffic-hours-note">KST 날짜 {day}(00:00–24:00 KST) · 눈금 = KST 시</div>
           <div className="mt-1 text-[10px] text-fg-3">점선 “—” = 그 시간 자료 없음(수집 중단 또는 집계 전 — 0 대와 구분 불가)</div>
         </Panel>
-        <Panel id="alerts" head={<h2 className="label mb-2">Alerts by kind (7d) · avg dwell</h2>} p={alerts} drawable={alertRows.length > 0} empty={statsWeekEmptyText(daysOf(alerts.load, today), today)}>
+        <Panel id="alerts" head={<h2 className="label mb-2" lang="en">Alerts by kind (7d) · avg dwell</h2>} p={alerts} drawable={alertRows.length > 0} empty={statsWeekEmptyText(daysOf(alerts.load, today), today)}>
           <AlertStatsTable rows={alertRows} />
           {caveat ? <div className="mt-1 text-[10px] text-warn" data-testid="hysteresis-caveat">
             † <KstTime v={HYSTERESIS_FIX_AT} /> 이전에 생성된 관측(OBSERVED) 알림은 수정 전 히스테리시스(엔진 주기를 관측으로 셈 — 위치 보고 1건으로 진입·이탈 확정 가능)로 판정됐습니다.

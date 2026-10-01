@@ -33,7 +33,7 @@ export default function AirportPage({ params }: { params: Promise<{ icao: string
   const catColor = m?.flight_cat && !stale ? CAT_COLORS[m.flight_cat] : undefined;
   return (
     <ScrollRegion label={`${code} 공항 기상 이력`} main className="h-full overflow-y-auto p-4">
-      <h1 className="label mb-2">Airport weather · {code}</h1>
+      <h1 className="label mb-2" lang="en">Airport weather · {code}</h1>
       {err ? <div className="text-bad" role="alert">{err.text}<RequestIdOf error={err.error} /></div> : null}
       {!wx && !err ? <div className="text-fg-3" role="status" data-testid="airport-wx-loading">{code} 기상 이력 불러오는 중…</div> : null}
       {wx ? <>

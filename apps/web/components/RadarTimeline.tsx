@@ -83,7 +83,7 @@ export function RadarTimeline() {
       {kma && !krAvailable
         ? <span className="text-[10px] text-warn" data-testid="radar-kr-unavailable">{krUnavailableText(radarKr, miss)}</span>
         : <span className="text-[10px] text-fg-3">{kma ? `${n} frames · 5 min · 기상청 HSR 500 m(LCC→Mercator 재투영)` : `${n} frames · 10 min · RainViewer(z≤7) · 커버리지 밖 회색`}</span>}
-      <button className="btn" onClick={() => { setPlaying(false); setIdx(null); }} disabled={n === 0} title="최신 프레임으로" data-testid="radar-latest">latest</button>
+      <button className="btn" onClick={() => { setPlaying(false); setIdx(null); }} disabled={n === 0} title="최신 프레임으로" data-testid="radar-latest"><span lang="en">latest</span></button>
       <button className="btn ml-2" aria-pressed={kr} onClick={() => setKr(!kr)} data-testid="kr-radar-toggle">범례·정합</button>
     </div>
   );

@@ -21,7 +21,8 @@ export default function AboutPage() {
   ];
   return (
     <ScrollRegion label="출처·한계 본문" main className="h-full overflow-y-auto p-4 text-[12px]">
-      <h1 className="label mb-2">Data sources · licenses</h1>
+      {/* 영어 구절은 lang="en"(WCAG 3.1.2 — 문서는 ko, QA-313) */}
+      <h1 className="label mb-2" lang="en">Data sources · licenses</h1>
       <table className="mb-4"><thead><tr><th scope="col">역할</th><th scope="col">서비스</th><th scope="col">조건</th></tr></thead><tbody>{rows.map((r) => <tr key={r[0]}><td>{r[0]}</td><td>{r[1]}</td><td>{r[2]}</td></tr>)}</tbody></table>
       <h2 className="label mb-2">한계 · 정직성 규칙</h2>
       <ul className="list-disc space-y-1 pl-5 text-fg-2">
@@ -44,7 +45,7 @@ export default function AboutPage() {
         <li>연안 교통량: 한국해양교통안전공단이 5분마다 집계한 해양격자(0.025°, 약 2.2×2.8 km) 칸별 선박 척수와 밀집도이며 개별 선박 위치가 아닙니다. 칸의 위치는 해양수산부 해양격자 4단계 WFS 에서 받아(약 32 km 상자 하나에 그 안의 칸을 모두 — 상자가 주지 않은 칸만 한 칸씩. 서버가 칸마다 EPSG:5179 를 위경도로 풀고 0.025° 격자에 맞는지 검사 — 맞지 않으면 쓰지 않음) 저장합니다. 칸 번호의 글자로 위치를 짐작하지 않으므로, 처음에는 위치를 확인한 칸만 그리고 확인 중인 칸 수를 레이어 상태 줄에 적습니다. 기준 시각은 KST 로 적고, 자료가 15분 넘게 새로 오지 않으면 칸을 지우고 “자료 멈춤”으로 표시합니다. 색 구간은 표시용 선택입니다.</li>
         <li>비상업·학습·포트폴리오 용도이며 운항 판단에 쓰면 안 됩니다.</li>
       </ul>
-      <h2 className="label mt-4 mb-2">Design</h2>
+      <h2 className="label mt-4 mb-2" lang="en">Design</h2>
       <p className="text-fg-2">설계서(docs/SkyWx_설계서_로컬개발용_v0.2.pdf — 이전 이름 SkyWx 시절 원본, ADR-015), ADR(docs/adr), 검증 기록(docs/VERIFICATION.md), 성능 측정(docs/PERF.md)은 저장소에 있습니다.</p>
     </ScrollRegion>
   );
