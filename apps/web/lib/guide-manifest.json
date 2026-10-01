@@ -58,12 +58,12 @@
       ]
     },
     "traffic": {
-      "file": "traffic.f52801f086.webp",
+      "file": "traffic.9073a50d4f.webp",
       "format": "webp",
       "width": 1440,
       "height": 900,
-      "bytes": 162258,
-      "captured_at": "2026-09-30T17:50:00.740Z",
+      "bytes": 175452,
+      "captured_at": "2026-10-01T00:13:23.695Z",
       "variant": "연안 교통량 #7.2/35.2/128.6",
       "callouts": [
         {
