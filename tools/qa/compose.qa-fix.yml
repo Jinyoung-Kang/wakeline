@@ -1,0 +1,10 @@
+# QA 2026-10 전용 덧붙임: 격리 스택(wakeline-e2e · wakeline-qa)의 컨테이너를 다시 만들 때 고친 빌드(:qa-fix)를 쓴다.
+# compose.yml 은 wakeline-*:local(운영 스택이 쓰는 태그)을 가리키므로 `up --no-build` 만 하면 운영 이미지로 돌아간다 — 이 파일을 두 번째 -f 로 붙인다.
+#   docker compose -p wakeline-e2e -f infra/compose.yml -f tools/qa/compose.qa-fix.yml --env-file .env up -d --no-build --wait <서비스>
+services:
+  web: { image: "wakeline-web:qa-fix" }
+  migrate: { image: "wakeline-api:qa-fix" }
+  api: { image: "wakeline-api:qa-fix" }
+  collector: { image: "wakeline-collector:qa-fix" }
+  ais: { image: "wakeline-collector:qa-fix" }
+  db: { image: "wakeline-db:qa-fix" }
