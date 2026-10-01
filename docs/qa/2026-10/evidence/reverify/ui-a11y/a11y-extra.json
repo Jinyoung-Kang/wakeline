@@ -1,0 +1,265 @@
+{
+  "zoom200-640x400": {
+    "/": {
+      "overflow": {
+        "innerWidth": 640,
+        "scrollWidth": 640,
+        "overflow": false,
+        "offenders": []
+      },
+      "clipped": []
+    },
+    "/replay": {
+      "overflow": {
+        "innerWidth": 640,
+        "scrollWidth": 640,
+        "overflow": false,
+        "offenders": []
+      },
+      "clipped": []
+    },
+    "/stats": {
+      "overflow": {
+        "innerWidth": 640,
+        "scrollWidth": 640,
+        "overflow": false,
+        "offenders": []
+      },
+      "clipped": []
+    },
+    "/airports/RKSI": {
+      "overflow": {
+        "innerWidth": 640,
+        "scrollWidth": 640,
+        "overflow": false,
+        "offenders": []
+      },
+      "clipped": []
+    },
+    "/about": {
+      "overflow": {
+        "innerWidth": 640,
+        "scrollWidth": 640,
+        "overflow": false,
+        "offenders": []
+      },
+      "clipped": []
+    },
+    "/guide": {
+      "overflow": {
+        "innerWidth": 640,
+        "scrollWidth": 640,
+        "overflow": false,
+        "offenders": []
+      },
+      "clipped": []
+    },
+    "/ops": {
+      "overflow": {
+        "innerWidth": 640,
+        "scrollWidth": 640,
+        "overflow": false,
+        "offenders": []
+      },
+      "clipped": []
+    }
+  },
+  "reflow-320x256": {
+    "/": {
+      "overflow": {
+        "innerWidth": 320,
+        "scrollWidth": 341,
+        "overflow": true,
+        "offenders": [
+          {
+            "sel": "button[data-testid=tab-airport].btn.flex-1.border-0",
+            "right": 341,
+            "w": 74
+          }
+        ]
+      },
+      "clipped": [
+        "canvas \"실시간 항공기·위험기상 지도. 화살표 키로 이동, +/- 로 확대. 항공\" — 조상이 잘라 보이지 않음(h-full w-full maplibregl-map)",
+        "button \"Zoom in\" — 조상이 잘라 보이지 않음(h-full w-full maplibregl-map)",
+        "button \"Zoom out\" — 조상이 잘라 보이지 않음(h-full w-full maplibregl-map)",
+        "button[tab-airport] \"airport\" — 오른쪽이 잘림(right 341 > 320)",
+        "a \"OpenFreeMap\" — 창 밖(x 46 · y 263, 창 320×256, 페이지 스크롤 없음)",
+        "a \"OpenMapTiles\" — 창 밖(x 123 · y 263, 창 320×256, 페이지 스크롤 없음)",
+        "a \"OpenStreetMap contributors\" — 창 밖(x 10 · y 278, 창 320×256, 페이지 스크롤 없음)"
+      ]
+    },
+    "/replay": {
+      "overflow": {
+        "innerWidth": 320,
+        "scrollWidth": 321,
+        "overflow": true,
+        "offenders": []
+      },
+      "clipped": [
+        "canvas \"Map\" — 조상이 잘라 보이지 않음(h-full w-full maplibregl-map)",
+        "button \"Zoom in\" — 조상이 잘라 보이지 않음(h-full w-full maplibregl-map)",
+        "button \"Zoom out\" — 조상이 잘라 보이지 않음(h-full w-full maplibregl-map)"
+      ]
+    },
+    "/stats": {
+      "overflow": {
+        "innerWidth": 320,
+        "scrollWidth": 320,
+        "overflow": false,
+        "offenders": []
+      },
+      "clipped": []
+    },
+    "/airports/RKSI": {
+      "overflow": {
+        "innerWidth": 320,
+        "scrollWidth": 320,
+        "overflow": false,
+        "offenders": []
+      },
+      "clipped": []
+    },
+    "/about": {
+      "overflow": {
+        "innerWidth": 320,
+        "scrollWidth": 320,
+        "overflow": false,
+        "offenders": []
+      },
+      "clipped": []
+    },
+    "/guide": {
+      "overflow": {
+        "innerWidth": 320,
+        "scrollWidth": 320,
+        "overflow": false,
+        "offenders": []
+      },
+      "clipped": []
+    },
+    "/ops": {
+      "overflow": {
+        "innerWidth": 320,
+        "scrollWidth": 320,
+        "overflow": false,
+        "offenders": []
+      },
+      "clipped": []
+    }
+  },
+  "ops-signed-in-375": {
+    "overflow": {
+      "innerWidth": 375,
+      "scrollWidth": 375,
+      "overflow": false,
+      "offenders": []
+    },
+    "clipped": [],
+    "tabs": [
+      "ops-tab-providers x=10..100",
+      "ops-tab-runs x=103..158",
+      "ops-tab-quality x=162..236",
+      "ops-tab-settings x=239..321",
+      "ops-tab-audit x=10..69",
+      "ops-tab-dlq x=72..118",
+      "ops-tab-pipeline x=122..197"
+    ]
+  },
+  "ops-signed-in-320": {
+    "clipped": []
+  },
+  "liveRegionsAX": [
+    {
+      "role": "alert",
+      "text": ""
+    },
+    {
+      "role": "generic",
+      "text": ""
+    },
+    {
+      "role": "status",
+      "text": "배경지도를 불러오지 못함 — 항공기·기상 데이터는 계속 수신·표시합니다(새로고침하면 다시 시도)"
+    },
+    {
+      "role": "status",
+      "text": ""
+    },
+    {
+      "role": "status",
+      "text": ""
+    },
+    {
+      "role": "status",
+      "text": "LEFT|이탈| · |MMA802|SIGMET|TS EMBD · RKRR| · |수신 |06:01:51 KST"
+    }
+  ],
+  "searchSelect": {
+    "statusBeforeSelect": "항공기 20건 · 선박 일치하는 선박 없음",
+    "statusAfterSelect": "KAL2065 선택 — 지도 이동",
+    "activeElement": "aircraft-search-input",
+    "cardOpen": true,
+    "liveRegionsAfter": [
+      {
+        "role": "alert",
+        "text": ""
+      },
+      {
+        "role": "generic",
+        "text": "KAL2065 선택 — 지도 이동"
+      },
+      {
+        "role": "status",
+        "text": "배경지도를 불러오지 못함 — 항공기·기상 데이터는 계속 수신·표시합니다(새로고침하면 다시 시도)"
+      },
+      {
+        "role": "status",
+        "text": "집중 추적 대기"
+      },
+      {
+        "role": "status",
+        "text": ""
+      },
+      {
+        "role": "status",
+        "text": "노선 조회 중|· |KAL2065"
+      }
+    ]
+  },
+  "lang": {
+    "/": {
+      "html": "ko",
+      "h1": [
+        "H1:실시간 상황판 — 항공기·선박·위험기상 지도와 알림"
+      ],
+      "elementsWithLangEn": 1
+    },
+    "/stats": {
+      "html": "ko",
+      "h1": [
+        "H1:STATISTICS [lang=en]",
+        "H2:SIGMET BY FIR (7D, TOP 24) [lang=en]",
+        "H2:SIGMET BY HAZARD (7D) [lang=en]",
+        "H2:DISTINCT AIRCRAFT BY HOUR (KST) [lang=en]",
+        "H2:ALERTS BY KIND (7D) · AVG DWELL [lang=en]"
+      ],
+      "elementsWithLangEn": 5
+    },
+    "/about": {
+      "html": "ko",
+      "h1": [
+        "H1:DATA SOURCES · LICENSES [lang=en]",
+        "H2:한계 · 정직성 규칙",
+        "H2:DESIGN [lang=en]"
+      ],
+      "elementsWithLangEn": 2
+    },
+    "/airports/RKSI": {
+      "html": "ko",
+      "h1": [
+        "H1:AIRPORT WEATHER · RKSI [lang=en]"
+      ],
+      "elementsWithLangEn": 1
+    }
+  }
+}
