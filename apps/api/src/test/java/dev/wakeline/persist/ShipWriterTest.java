@@ -485,4 +485,28 @@ class ShipWriterTest {
             w.stop();
         }
     }
+
+    /** D3(B6)의 선박 판: SQLState 없는 예외는 3번 뒤 버리고(ERROR · failed · ACK) — 끝없이 다시 시도해 큐 머리를 막지 않는다(예전: 3 s 에 22번). */
+    @Test void aShipWriteErrorWithoutSqlStateIsGivenUpAfterThreeAttemptsNotRetriedForever(CapturedOutput out) throws Exception {
+        FakeRepo repo = new FakeRepo();
+        repo.fail = new IllegalStateException("bug in a write");
+        SimpleMeterRegistry meters = new SimpleMeterRegistry();
+        ShipWriter w = new ShipWriter(repo, null, meters, 1, 1);
+        w.start();
+        try {
+            AtomicInteger acked = new AtomicInteger();
+            Receipt r = new Receipt(acked::incrementAndGet);
+            w.enqueue(List.of(new ShipWriter.Pos(pos("440000001", T), true)), r);
+            r.release();
+            long end = System.currentTimeMillis() + 5_000;
+            while (acked.get() == 0 && System.currentTimeMillis() < end) Thread.sleep(5);
+            Thread.sleep(50);
+            assertThat(acked.get()).as("receipt released").isEqualTo(1);
+            assertThat(repo.attempts.get()).isEqualTo(ShipWriter.PERMANENT_ATTEMPTS);
+            assertThat(meters.find("wakeline_ship_rows_total").tag("result", "failed").counter().count()).isEqualTo(1.0);
+            assertThat(out.getAll()).contains("ERROR").contains("ship batch (1 rows) failed 3 times with an error that has no SQLState");
+        } finally {
+            w.stop();
+        }
+    }
 }

@@ -32,7 +32,7 @@ import java.util.function.Consumer;
  *       덮는다(계약 v5 §G19 — ShipRepository.STATIC_SQL). 받은 필드를 싣지 않은 정적 정보(이전 수집기 — 배포 전환 중)는 값이 있는 필드만 덮고
  *       wakeline_ship_static_unknown_fields_total 로 센다.</li>
  *   <li>큐 상한 100,000 행 — 넘치면 오래된 것부터 버리고 result=dropped 로 센다. 실패는 TrackWriter 와 같다: 일시 장애는 같은 배치를 백오프(2 s → 30 s)로
- *       재시도, 영구 오류(SQLState 21·22·23·42)는 3회 뒤 버리고 result=failed — 배치 하나가 저장기를 멈추지 못한다.</li>
+ *       재시도, 영구 오류(SQLState 21·22·23·42)와 SQLState 없는 결함은 3회 뒤 버리고 result=failed — 배치 하나가 저장기를 멈추지 못한다.</li>
  *   <li>at-least-once(API-CONC-8): 메시지의 행이 모두 커밋(또는 버림)된 뒤 영수증을 놓는다 → XACK. 공백은 순서 큐(OrderedWriter)가 같은 규칙으로.</li>
  *   <li>종료: 스트림 소비·WS 뒤(phase) 워커가 진행 중 배치를 끝내고 <b>스스로</b> 남은 행을 쓴다(DB 를 쓰는 스레드는 종료 때도 하나 — 조사 2026-10-01
  *       종료 F3: 예전에는 stop 이 2 s 기다린 뒤 다른 스레드가 flush 해, 느린 쓰기와 같은 배치를 동시에 쓰고 쓰지 못한 배치의 영수증을 놓을 수 있었다).
@@ -319,12 +319,15 @@ public class ShipWriter implements SmartLifecycle {
                             n, queue.size(), e.toString());
                     continue;
                 }
-                if (!TrackWriter.isPermanent(e)) {
+                boolean unclassified = TrackWriter.isUnclassified(e); // SQLState 없는 결함 — 영구 오류처럼 3번 뒤 버린다(리뷰 cto-2026-10 D3)
+                if (!unclassified && !TrackWriter.isPermanent(e)) {
                     log.warn("ship batch ({} rows) failed, retry in {} ms (queue {}): {}", n, backoff, queue.size(), e.toString());
                 } else if (++permanentFailures >= PERMANENT_ATTEMPTS) {
                     if (pending != null && pending.items().stream().anyMatch(it -> it instanceof Stat)) forgetStatics = true;
                     failed.increment(n);
-                    log.warn("ship batch ({} rows) failed permanently after {} attempts, dropped: {}", n, permanentFailures, e.toString());
+                    if (unclassified) log.error("ship batch ({} rows) failed {} times with an error that has no SQLState (not a known transient error) — dropped: {}",
+                            n, permanentFailures, e.toString(), e);
+                    else log.warn("ship batch ({} rows) failed permanently after {} attempts, dropped: {}", n, permanentFailures, e.toString());
                     pending = null;
                     queue.resolved(); // 다시 처리해도 같은 결과 — 그 메시지들은 ACK(failed 로 셌다)
                     permanentFailures = 0;
