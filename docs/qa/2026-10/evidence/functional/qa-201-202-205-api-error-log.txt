@@ -1,0 +1,87 @@
+# 스택 A api 로그(docker logs wakeline-e2e-api-1) — 퍼저(fuzz-20261001T172925Z)가 받은 500 의 request_id 와 맞춘 ERROR 줄 · 원인 예외(ProblemAdvice.other — 스택 포함 ERROR)
+2026-10-01T17:31:30.381Z rid=2091349111f18eb8272685135dcd638b /api/v1/aircraft/71be01/track?to=%2B300000-01-01T00:00:00Z
+    → org.springframework.dao.DataIntegrityViolationException: PreparedStatementCallback; SQL [/* wakeline aircraft.track limit_s=3 */ SELECT hex, ts, ST_X(geom) lon, ST_Y(geom) lat, alt_ft, gs_kt, track_deg, provider
+2026-10-01T17:31:31.075Z rid=0010f7d828360e21828e39e499c5ab41 /api/v1/aircraft/71be01/track?to=%2B1000000000-12-31T23:59:59Z
+    → java.time.DateTimeException: Invalid value for EpochDay (valid values -365243219162 - 365241780471): 365241780837
+2026-10-01T17:31:31.405Z rid=6838d966cf5fe0904f6c0b641363c82c /api/v1/aircraft/71be01/track?to=-1000000000-01-01T00:00:00Z
+    → java.time.DateTimeException: Instant exceeds minimum or maximum instant
+2026-10-01T17:31:36.716Z rid=6e51578067e880616139e28165073348 /api/v1/aircraft/71be01/track?from=%2B300000-01-01T00:00:00Z&to=%2B300000-01-01T01:00:00Z
+    → org.springframework.dao.DataIntegrityViolationException: PreparedStatementCallback; SQL [/* wakeline aircraft.track limit_s=3 */ SELECT hex, ts, ST_X(geom) lon, ST_Y(geom) lat, alt_ft, gs_kt, track_deg, provider
+2026-10-01T17:34:18.633Z rid=ad606b5251751106aeadb6a2b2d8364c /api/v1/ships/432952000/track?to=%2B300000-01-01T00:00:00Z
+    → org.springframework.dao.DataIntegrityViolationException: PreparedStatementCallback; SQL [/* wakeline ship.track limit_s=3 */ SELECT ts, ST_X(geom) lon, ST_Y(geom) lat, sog_kn, cog_deg, heading_deg, nav_status, position_source, provider
+2026-10-01T17:34:19.171Z rid=b67ede0a32c4181575f60a3c503b51b1 /api/v1/ships/432952000/track?to=%2B1000000000-12-31T23:59:59Z
+    → java.time.DateTimeException: Invalid value for EpochDay (valid values -365243219162 - 365241780471): 365241780837
+2026-10-01T17:34:19.439Z rid=9eedbe467a4b44f60ee2c233514b18d6 /api/v1/ships/432952000/track?to=-1000000000-01-01T00:00:00Z
+    → java.time.DateTimeException: Instant exceeds minimum or maximum instant
+2026-10-01T17:34:24.466Z rid=94e28baa6c068ba2c24ece648657024a /api/v1/ships/432952000/track?from=%2B300000-01-01T00:00:00Z&to=%2B300000-01-01T01:00:00Z
+    → org.springframework.dao.DataIntegrityViolationException: PreparedStatementCallback; SQL [/* wakeline ship.track limit_s=3 */ SELECT ts, ST_X(geom) lon, ST_Y(geom) lat, sog_kn, cog_deg, heading_deg, nav_status, position_source, provider
+2026-10-01T17:35:20.454Z rid=2fa616581f997f10b246d79892073d8a /api/v1/ais/gaps?to=%2B300000-01-01T00:00:00Z
+    → org.springframework.dao.DataIntegrityViolationException: PreparedStatementCallback; SQL [/* wakeline ais.gaps limit_s=3 */ SELECT started_at, ended_at, reason, provider, scope FROM (
+2026-10-01T17:35:21.092Z rid=9c1b4d97516ad54b39843f8cf2c0be85 /api/v1/ais/gaps?to=%2B1000000000-12-31T23:59:59Z
+    → java.time.DateTimeException: Invalid value for EpochDay (valid values -365243219162 - 365241780471): 365241780836
+2026-10-01T17:35:21.371Z rid=6dc5f5fc2851070528814a4ed916024a /api/v1/ais/gaps?to=-1000000000-01-01T00:00:00Z
+    → java.time.DateTimeException: Instant exceeds minimum or maximum instant
+2026-10-01T17:35:27.109Z rid=489cffade6d66e7454a16bad8069bcfc /api/v1/ais/gaps?from=%2B300000-01-01T00:00:00Z&to=%2B300000-01-01T01:00:00Z
+    → org.springframework.dao.DataIntegrityViolationException: PreparedStatementCallback; SQL [/* wakeline ais.gaps limit_s=3 */ SELECT started_at, ended_at, reason, provider, scope FROM (
+2026-10-01T17:36:31.461Z rid=c17508240b2f8af40a77350ae86c549d /api/v1/alerts/history?from=-1000000000-01-01T00:00:00Z
+    → java.lang.ArithmeticException: long overflow
+2026-10-01T17:37:09.448Z rid=b0ec8afe5baacfbe466d331cdee0c209 /api/v1/alerts/history?to=%2B300000-01-01T00:00:00Z
+    → org.springframework.dao.DataIntegrityViolationException: PreparedStatementCallback; SQL [/* wakeline alerts.history limit_s=3 */ SELECT e.id, e.hex, e.callsign, e.sigmet_id, s.fir_id, s.hazard, s.qualifier, e.kind, e.entered_at, e.left_at, e.close_reason, e.eta_s,
+2026-10-01T17:37:10.247Z rid=6be69da2170b81f564dbcfe8ab0235d0 /api/v1/alerts/history?to=%2B1000000000-12-31T23:59:59Z
+    → java.lang.ArithmeticException: long overflow
+2026-10-01T17:37:10.516Z rid=63fc13107d4c348fe333f50165d5e72a /api/v1/alerts/history?to=-1000000000-01-01T00:00:00Z
+    → java.time.DateTimeException: Instant exceeds minimum or maximum instant
+2026-10-01T17:37:15.659Z rid=1b5583c4d425efc72395ce20734aed4f /api/v1/alerts/history?from=%2B300000-01-01T00:00:00Z&to=%2B300000-01-01T01:00:00Z
+    → org.springframework.dao.DataIntegrityViolationException: PreparedStatementCallback; SQL [/* wakeline alerts.history limit_s=3 */ SELECT e.id, e.hex, e.callsign, e.sigmet_id, s.fir_id, s.hazard, s.qualifier, e.kind, e.entered_at, e.left_at, e.close_reason, e.eta_s,
+2026-10-01T17:37:15.950Z rid=bfacf22bcb2139f44e53e740fcc383ed /api/v1/alerts/history?from=%2B1000000000-12-31T00:00:00Z&to=%2B1000000000-12-31T01:00:00Z
+    → java.lang.ArithmeticException: long overflow
+2026-10-01T17:40:17.387Z rid=f4ab795e4e1fdc6777af13428e0c2ce4 /api/v1/stats/sigmet?to=%2B300000-01-01
+    → org.springframework.dao.DataIntegrityViolationException: PreparedStatementCallback; SQL [/* wakeline stats.days limit_s=3 */ SELECT to_char(d, 'YYYY-MM-DD') AS day,
+2026-10-01T17:40:17.667Z rid=42aa7bfe5d9ff2f3a1bf45446ed6b944 /api/v1/stats/sigmet?to=%2B6000000-01-01
+    → org.springframework.dao.DataIntegrityViolationException: PreparedStatementCallback; SQL [/* wakeline stats.sigmet limit_s=3 */ SELECT to_char(day, 'YYYY-MM-DD') AS day, dim, value FROM stats_daily WHERE metric = ? AND day BETWEEN ? AND ? ORDER BY 1, dim]; ERROR: date out of range: "5999999-12-25"
+2026-10-01T17:40:17.936Z rid=347685b29936a33c393398385f711888 /api/v1/stats/sigmet?to=%2B999999999-12-31
+    → java.time.DateTimeException: Invalid value for EpochDay (valid values -365243219162 - 365241780471): 365241780556
+2026-10-01T17:40:18.214Z rid=debb4de51928cdabd5cee4f8b0e9123c /api/v1/stats/sigmet?to=-999999999-01-01
+    → java.time.DateTimeException: Invalid value for EpochDay (valid values -365243219162 - 365241780471): -365243219169
+2026-10-01T17:40:21.995Z rid=4da1b16547824069bc17ffb7ebb2ae37 /api/v1/stats/sigmet?from=%2B999999999-12-31&to=%2B999999999-12-31
+    → java.time.DateTimeException: Invalid value for EpochDay (valid values -365243219162 - 365241780471): 365241780563
+2026-10-01T17:40:22.935Z rid=43a15746800ca214390bac9a5293d91a /api/v1/stats/sigmet?to=-999999999-01-01
+    → java.time.DateTimeException: Invalid value for EpochDay (valid values -365243219162 - 365241780471): -365243219169
+2026-10-01T17:40:24.196Z rid=efdd0919a0d08a6692c611190508973d /api/v1/stats/sigmet?from=%2B300000-01-01&to=%2B300000-01-02
+    → org.springframework.dao.DataIntegrityViolationException: PreparedStatementCallback; SQL [/* wakeline stats.days limit_s=3 */ SELECT to_char(d, 'YYYY-MM-DD') AS day,
+2026-10-01T17:41:14.440Z rid=cee84564aa43755263ff6cd87a42e3b5 /api/v1/stats/alerts?to=%2B300000-01-01
+    → org.springframework.dao.DataIntegrityViolationException: PreparedStatementCallback; SQL [/* wakeline stats.days limit_s=3 */ SELECT to_char(d, 'YYYY-MM-DD') AS day,
+2026-10-01T17:41:14.716Z rid=1d2d9313044e5443eb2287b1939ad38b /api/v1/stats/alerts?to=%2B6000000-01-01
+    → org.springframework.dao.DataIntegrityViolationException: PreparedStatementCallback; SQL [/* wakeline stats.alerts limit_s=3 */ SELECT to_char(day, 'YYYY-MM-DD') AS day, metric, dim, value FROM stats_daily WHERE metric IN ('alerts_by_kind','alert_dwell_avg_s') AND day BETWEEN ? AND ? ORDER BY 1, metr
+2026-10-01T17:41:14.997Z rid=c76e13c8fe3434abc46c22e2d4cf3cd8 /api/v1/stats/alerts?to=%2B999999999-12-31
+    → java.time.DateTimeException: Invalid value for EpochDay (valid values -365243219162 - 365241780471): 365241780556
+2026-10-01T17:41:15.268Z rid=3640d26d25e4bfffa1d88e7335f54e61 /api/v1/stats/alerts?to=-999999999-01-01
+    → java.time.DateTimeException: Invalid value for EpochDay (valid values -365243219162 - 365241780471): -365243219169
+2026-10-01T17:41:18.950Z rid=d91b79770feeb9532dbf74e60abd667f /api/v1/stats/alerts?from=%2B999999999-12-31&to=%2B999999999-12-31
+    → java.time.DateTimeException: Invalid value for EpochDay (valid values -365243219162 - 365241780471): 365241780563
+2026-10-01T17:41:19.218Z rid=c3d1aee40d8150dce08003dbe2b902c1 /api/v1/stats/alerts?to=-999999999-01-01
+    → java.time.DateTimeException: Invalid value for EpochDay (valid values -365243219162 - 365241780471): -365243219169
+2026-10-01T17:41:19.487Z rid=8d298669da80449f76efe456c1f39835 /api/v1/stats/alerts?from=%2B300000-01-01&to=%2B300000-01-02
+    → org.springframework.dao.DataIntegrityViolationException: PreparedStatementCallback; SQL [/* wakeline stats.days limit_s=3 */ SELECT to_char(d, 'YYYY-MM-DD') AS day,
+2026-10-01T17:41:23.511Z rid=0655f80efa15ac805b8a1952487a1a42 /api/v1/stats/traffic?day=%2B6000000-01-01
+    → org.springframework.dao.DataIntegrityViolationException: PreparedStatementCallback; SQL [/* wakeline stats.traffic_by_hour limit_s=3 */ SELECT to_char(day, 'YYYY-MM-DD') AS day, dim, value FROM stats_daily WHERE metric = 'traffic_by_hour' AND day = ? ORDER BY dim]; ERROR: date out of range: "6000000
+2026-10-01T17:42:10.760Z rid=2805437cf741d684bde9321791f365f4 /api/v1/ops/runs?job=a%00
+    → org.springframework.dao.DataIntegrityViolationException: PreparedStatementCallback; SQL [SELECT id, job, provider, started_at, finished_at, status, http_status, latency_ms, records_in, records_quarantined, raw_ref, error_text FROM ingest_run WHERE job = ? ORDER BY id DESC LIMIT ?]; ERROR: invalid by
+2026-10-01T17:42:12.434Z rid=f9e25dcf39ad105acf82a9735f4f99fe /api/v1/ops/runs?provider=a%00
+    → org.springframework.dao.DataIntegrityViolationException: PreparedStatementCallback; SQL [SELECT id, job, provider, started_at, finished_at, status, http_status, latency_ms, records_in, records_quarantined, raw_ref, error_text FROM ingest_run WHERE provider = ? ORDER BY id DESC LIMIT ?]; ERROR: inval
+2026-10-01T17:42:14.210Z rid=6747da0c5fa73023a81513195ea6e0f8 /api/v1/ops/runs?status=a%00
+    → org.springframework.dao.DataIntegrityViolationException: PreparedStatementCallback; SQL [SELECT id, job, provider, started_at, finished_at, status, http_status, latency_ms, records_in, records_quarantined, raw_ref, error_text FROM ingest_run WHERE status = ? ORDER BY id DESC LIMIT ?]; ERROR: invalid
+2026-10-01T17:42:19.708Z rid=043b5e29b28aaebf0bb9c78f608eef17 /api/v1/ops/runs?since=%2B300000-01-01T00:00:00Z
+    → org.springframework.dao.DataIntegrityViolationException: PreparedStatementCallback; SQL [WITH w AS MATERIALIZED (SELECT id, job, provider, started_at, finished_at, status, http_status, latency_ms, records_in, records_quarantined, raw_ref, error_text FROM ingest_run WHERE started_at > ?) SELECT id, j
+2026-10-01T17:42:20.259Z rid=006a5beefabc329bd7c825ceee38c946 /api/v1/ops/runs?since=%2B1000000000-12-31T23:59:59Z
+    → java.time.DateTimeException: Invalid value for EpochDay (valid values -365243219162 - 365241780471): 365241780837
+2026-10-01T17:42:20.548Z rid=d3f7d08a0c3f000f26f46b3ed960de61 /api/v1/ops/runs?since=-1000000000-01-01T00:00:00Z
+    → java.time.DateTimeException: Invalid value for EpochDay (valid values -365243219162 - 365241780471): -365243219528
+2026-10-01T17:45:15.343Z rid=264bc28d62e65af6108d32ce8394aba7 /api/v1/ops/logs?since=%2B1000000000-12-31T23:59:59Z
+    → java.lang.ArithmeticException
+2026-10-01T17:45:15.684Z rid=67d2d372c01bc613a82c9efb24f249be /api/v1/ops/logs?since=-1000000000-01-01T00:00:00Z
+    → java.lang.ArithmeticException
+2026-10-01T17:47:07.729Z rid=fd6f1d1c69dd584cbb57b8c81ac674ea /api/v1/ops/logs/groups?since=%2B1000000000-12-31T23:59:59Z
+    → java.lang.ArithmeticException
+2026-10-01T17:47:07.999Z rid=326afb50ad511e54a8a679c6c5f66ce6 /api/v1/ops/logs/groups?since=-1000000000-01-01T00:00:00Z
+    → java.lang.ArithmeticException

@@ -1,0 +1,11 @@
+# QA-206 증거 — 스택 A, 2026-10-01T18:03:35Z
+## curl -s "http://localhost:8701/api/v1/aircraft/search?q=B-99"
+{"hex": "780b7a", "lat": 36.908756, "lon": 123.035232, "alt_ft": 30100, "track_deg": 287.0, "on_ground": false, "seen_at": "2026-10-01T18:03:26.098Z", "provider": "fixture", "quality": 1, "live": true}
+{"hex": "780b1d", "lat": 37.46175, "lon": 126.428082, "gs_kt": 10.8, "on_ground": true, "seen_at": "2026-10-01T18:03:26.098Z", "provider": "fixture", "quality": 0, "live": true}
+## 같은 hex 의 상세(detail) — static(DB)·state(full) 에는 등록번호가 있다
+780b7a state.registration= B-9971 static= {"hex": "780b7a", "registration": "B-9971", "type_code": "A321", "category": "A3", "source": "fixture", "first_seen": "2026-10-01T17:15:16.845Z", "last_seen": "
+780b1d state.registration= B-9938 static= {"hex": "780b1d", "registration": "B-9938", "type_code": "A320", "category": "A3", "source": "fixture", "first_seen": "2026-10-01T17:15:16.845Z", "last_seen": "
+## fixture(fixtures/adsb_lol_region.json) 의 r(등록번호)
+780b7a B-9971 None
+780b1d B-9938 None
+## 웹 검색 목록의 등록번호 칸: apps/web/components/AircraftSearch.tsx:268 — {h.registration ?? "—"}
