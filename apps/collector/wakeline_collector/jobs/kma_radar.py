@@ -132,7 +132,6 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 import concurrent.futures
 import functools
 import logging
@@ -192,6 +191,9 @@ from wakeline_collector.kma_rules import (
     tm_span,
 )
 from wakeline_collector.kma_rules import refetch_headroom as _refetch_share
+from wakeline_collector.kma_store import KEY_FRAME as KEY_FRAME
+from wakeline_collector.kma_store import KEY_FRAMES as KEY_FRAMES
+from wakeline_collector.kma_store import KEY_META, KmaStore
 from wakeline_collector.models import ProviderResult
 from wakeline_collector.providers.kma_radar import KmaRadarProvider, kst_now
 from wakeline_collector.ratelimit import KMA_APIHUB_HOST as KMA_HOST
@@ -201,9 +203,6 @@ from wakeline_collector.retry import NOT_SENT, CallFailed, call_retry_once
 from wakeline_collector.status import AUX_TIMEOUT_S
 
 log = logging.getLogger("job.kma_radar")
-KEY_META = "wakeline:radar_kr:meta"  # hash
-KEY_FRAMES = "wakeline:radar_kr:frames"  # JSON list (오래된 → 최신)
-KEY_FRAME = "wakeline:radar_kr:frame:{tm}"  # base64 PNG, TTL
 _sleep = asyncio.sleep  # 다시 부르기 전 기다림 — 시험이 바꿔 끼운다
 
 
@@ -257,6 +256,7 @@ class KmaRadarJob:
 
     def __init__(self, provider: KmaRadarProvider, ctx: JobContext):
         self.p, self.ctx = provider, ctx
+        self.store = KmaStore(ctx.status.redis)  # 프레임 · meta(Redis) — 오류는 올린다(이 작업이 단계별 'error' 로 적는다)
         self._warned = False
         self._bad: dict[str, str] = {}  # tm → 까닭("parse" 해석 불가 · "missing" 끝내 없음). 삽입 순서 유지(오래된 것부터 버림)
         self._not_ready: dict[str, int] = {}  # tm → '아직 없음' 응답 횟수(R-03)
@@ -284,37 +284,17 @@ class KmaRadarJob:
         self._idle: tuple[str, datetime] | None = None
 
     async def _frames(self) -> list[dict]:
-        raw = await self.ctx.status.redis.get(KEY_FRAMES)
-        try:
-            frames = orjson.loads(raw) if raw else []
-        except orjson.JSONDecodeError:
-            return []
-        return [f for f in frames if isinstance(f, dict) and isinstance(f.get("tm"), str)] if isinstance(frames, list) else []
+        """프레임 목록(kma_store) — 이 작업의 프레임 읽기는 모두 여기를 지난다(시험이 바꿔 끼워 n 번째 읽기를 실패시킨다)."""
+        return await self.store.frames()
 
     async def _save_frames(self, frames: list[dict]) -> None:
-        """목록 저장 + 일관성: 목록 키 TTL = 가장 새 이미지의 남은 TTL(expires_at). 비면 키를 지우고 available=0."""
-        r = self.ctx.status.redis
-        if not frames:
-            await r.delete(KEY_FRAMES)
-            await r.hset(KEY_META, "available", "0")
-            return
-        ttl = FRAME_TTL_S
-        try:
-            exp = datetime.fromisoformat(str(frames[-1].get("expires_at", "")).replace("Z", "+00:00"))
-            ttl = max(1, min(FRAME_TTL_S, int((exp - datetime.now(UTC)).total_seconds())))
-        except ValueError:
-            pass  # 옛 항목(expires_at 없음) — 최대 TTL
-        await r.set(KEY_FRAMES, orjson.dumps(frames).decode(), ex=ttl)
+        await self.store.save_frames(frames)
 
     async def prune(self) -> list[dict]:
         """이미지가 만료·삭제된 항목을 목록에서 뺀다. 남은 목록을 돌려준다(비었으면 available=0)."""
-        r = self.ctx.status.redis
         frames = await self._frames()
         if frames:
-            pipe = r.pipeline(transaction=False)
-            for f in frames:
-                pipe.exists(KEY_FRAME.format(tm=f["tm"]))
-            flags = await pipe.execute()
+            flags = await self.store.images_exist(frames)
             kept = [f for f, ok in zip(frames, flags, strict=True) if ok]
             if len(kept) == len(frames):
                 return kept
@@ -754,9 +734,7 @@ class KmaRadarJob:
     async def _latest_stored(self) -> tuple[str, datetime | None]:
         """meta 해시의 (latest_tm — 이 작업이 저장한 가장 새 tm, 프레임이 모두 만료돼도 남는다 · 다시 띄워도 읽는다, fetched_at — 그 tm 을 처음 저장한
         시각 = STALE 시계). 없거나 틀리면 (빈 글자, None)."""
-        v, f = await self.ctx.status.redis.hmget(KEY_META, "latest_tm", "fetched_at")
-        latest = v if isinstance(v, str) and tm_dt(v) is not None else ""
-        return latest, parse_iso(f) if latest else None
+        return await self.store.latest_stored()
 
     def _list_idle(self, listing: list[str], now_tm: str, latest: str, fetched: datetime | None) -> ListIdle | None:
         """kma_rules.list_idle — 이 작업의 연속 · 받아 본 옛 tm · 읽은 목록의 날과 지금(_now)으로."""
@@ -918,7 +896,6 @@ class KmaRadarJob:
     async def _note_refetch(self, tm: str, at: datetime, upgrade: tuple | None = None) -> bool:
         """시도를 항목에 남기고(refetches · refetched_at), upgrade 가 있으면 PNG · 항목 · (최신 프레임이면) meta 의 헤더 값을 바꾼다(fetched_at 은 둔다).
         그 사이 목록에서 빠진 프레임이면 아무것도 쓰지 않는다(목록에 없는 이미지를 만들지 않는다). 바꿨으면 True."""
-        r = self.ctx.status.redis
         frames = await self._frames()
         entry = next((f for f in frames if f.get("tm") == tm), None)
         if entry is None:
@@ -930,7 +907,7 @@ class KmaRadarJob:
             header, png, meta, raw_ref, fetched_at = upgrade
             now = datetime.now(UTC)
             # 이미지를 먼저 바꾼다: 목록 저장이 실패하면 항목은 더 적은 지점(부분 합성)을 말한다 — 반대 순서면 부분 합성 영상을 완전하다고 말할 수 있다
-            await r.set(KEY_FRAME.format(tm=tm), base64.b64encode(png).decode("ascii"), ex=FRAME_TTL_S)
+            await self.store.put_image(tm, png)
             entry |= {
                 "obs_tm": header.tm.strftime("%Y%m%d%H%M"),
                 "fetched_at": iso(fetched_at),
@@ -951,7 +928,7 @@ class KmaRadarJob:
         annotate_partial(frames)
         await self._save_frames(frames)
         mapping |= latest_station_fields(frames)  # 다른 프레임이 늘어 기준이 바뀌면 최신 프레임의 판정도 바뀐다
-        await r.hset(KEY_META, mapping=mapping)  # type: ignore[arg-type]
+        await self.store.write_meta(mapping)
         return upgrade is not None
 
     def _skip_bad(self, tm: str, e: Exception, quality: list[tuple[str, str | None, dict]]) -> None:
@@ -1117,7 +1094,7 @@ class KmaRadarJob:
         carry=False 면 읽기만 한다(해시에 무엇이 있는지 — 지울 때). Redis 를 못 읽으면 다음 주기에 다시 읽는다."""
         try:
             async with asyncio.timeout(AUX_TIMEOUT_S):
-                h = await self.ctx.status.redis.hgetall(KEY_META)
+                h = await self.store.read_meta()
         except Exception as e:  # noqa: BLE001 — 부가 기능
             log.info("kma radar: could not read the missing-file streak — %s (read again next cycle)", describe_error(e))
             return
@@ -1185,12 +1162,10 @@ class KmaRadarJob:
         gap = dict(zip(GAP_KEYS, g, strict=True)) if g is not None else dict.fromkeys(GAP_KEYS, "")
         if fields == self._published and gap == self._published_gap:
             return
-        r = self.ctx.status.redis
+        provider_key = self.ctx.status.key(self.p.name) if fields != self._published else None  # 공급자 해시는 연속이 바뀔 때만
         try:
             async with asyncio.timeout(AUX_TIMEOUT_S):
-                await r.hset(KEY_META, mapping=fields | gap)  # type: ignore[arg-type]
-                if fields != self._published:
-                    await r.hset(self.ctx.status.key(self.p.name), mapping=fields)  # type: ignore[arg-type]
+                await self.store.write_streak(fields, gap, provider_key)
         except Exception as e:  # noqa: BLE001 — 부가 기능
             log.info("kma radar: could not write the missing-file streak — %s (written again next cycle)", describe_error(e))
             return
@@ -1218,10 +1193,9 @@ class KmaRadarJob:
             header, png, meta = await asyncio.get_running_loop().run_in_executor(_DECODE_POOL, _decode, res.raw)
         except Exception as e:  # noqa: BLE001 — 해석 실패는 격리(원천은 남는다)
             raise _BadFrame(f"{type(e).__name__}: {e} (raw={raw_ref})") from e
-        r = ctx.status.redis
         now = datetime.now(UTC)
-        prev_latest, prev_fetched = await r.hmget(KEY_META, "latest_tm", "fetched_at")  # STALE 시계를 옮길지(아래)
-        await r.set(KEY_FRAME.format(tm=tm), base64.b64encode(png).decode("ascii"), ex=FRAME_TTL_S)
+        prev_latest, prev_fetched = await self.store.latest_raw()  # STALE 시계를 옮길지(아래)
+        await self.store.put_image(tm, png)
         frames = [f for f in await self._frames() if f["tm"] != tm]
         entry: dict = {
             "tm": tm,
@@ -1264,10 +1238,10 @@ class KmaRadarJob:
         # 쓰는 순서: 이미지(위) → meta → 목록(D2). 어디서 실패해도 목록이 meta(latest_tm · fetched_at — STALE 시계)보다 앞서지 않는다 — 앞서면 그 tm 은
         # 목록에 있어 다시 받지 않으므로 더 새 tm 이 올 때까지 meta 가 뒤처졌다. meta 가 앞선 채 멈추면(목록 쓰기 실패) 그 tm 은 목록에 없어 다음 주기가
         # 다시 받는다(fetched_at 은 처음 저장한 그대로). 남는 것은 목록에 없는 이미지(TTL 3 h)뿐이다
-        await r.hset(KEY_META, mapping=mapping)  # type: ignore[arg-type]
+        await self.store.write_meta(mapping)
         await self._save_frames(frames)
         if dropped:
-            await r.delete(*[KEY_FRAME.format(tm=f["tm"]) for f in dropped])  # 목록에서 빠진 이미지는 바로 지운다
+            await self.store.drop_images([f["tm"] for f in dropped])  # 목록에서 빠진 이미지는 바로 지운다
         log.info(
             "kma radar: tm=%s %s stations=%d%s echo cells=%d png=%d B (%d frames)",
             tm,

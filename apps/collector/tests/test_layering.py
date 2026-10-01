@@ -89,6 +89,7 @@ LAYERS: dict[str, str] = {m: RULES for m in RULE_FEATURES} | {
     "demand": ADAPTERS,
     "raw_store": ADAPTERS,
     "db": ADAPTERS,
+    "kma_store": ADAPTERS,
     "logsink": ADAPTERS,
     "redis_retry": ADAPTERS,
     "ais.client": ADAPTERS,
