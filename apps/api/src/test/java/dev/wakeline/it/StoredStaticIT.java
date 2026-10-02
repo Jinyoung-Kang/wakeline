@@ -4,6 +4,7 @@ import dev.wakeline.DbTestSupport;
 import dev.wakeline.ships.core.ShipStore;
 import dev.wakeline.platform.data.ReadPool;
 import dev.wakeline.platform.data.Sql;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIf;
@@ -47,6 +48,7 @@ class StoredStaticIT extends IntegrationTest {
 
     @Autowired ShipStore ships;
     @Autowired ReadPool readPool;
+    @Autowired MeterRegistry meters;
 
     /** 다음 ship_selected 까지 받은 것의 type 순서(ship_selected 가 마지막). */
     static List<String> untilSelected(WsIT.Client c, Duration timeout) throws InterruptedException {
@@ -62,6 +64,32 @@ class StoredStaticIT extends IntegrationTest {
             }
         }
         throw new AssertionError("no ship_selected within " + timeout + " — seen " + seen);
+    }
+
+    /** 읽기 풀이 맺어 둔 연결 수(사용 중 + 유휴 — Hikari 지표 hikaricp.connections). */
+    int readPoolTotal() {
+        return (int) meters.get("hikaricp.connections").tag("pool", ReadPool.POOL_NAME).gauge().value();
+    }
+
+    /**
+     * 읽기 풀을 크기만큼 맺어 둔다. 풀은 최소 유휴 0 이라 쓸 때 연결을 맺고, Hikari 는 새 연결을 하나씩 차례로 맺는다 — 채우지 않은 풀을 한꺼번에 잡으면
+     * 늦게 온 잡이가 연결 대기(2 s) 안에 연결을 받지 못하고 끊겨 '모두 잡힘' 이 오지 않는다(CI 러너 2026-10-02: total=3, active=3 에서 시간 초과).
+     * 채운 뒤에는 잡이가 유휴 연결을 곧바로 빌린다. 채우는 읽기는 연결 대기에 끊겨도 다음 바퀴에서 다시 — 연결을 오래 쥐어(2.5 s, 문장 상한 3 s 안)
+     * 기다리는 쪽이 남아 있게 해야 풀이 연결을 더 맺는다.
+     */
+    void fillReadPool(Duration timeout) throws InterruptedException {
+        long end = System.nanoTime() + timeout.toNanos();
+        while (readPoolTotal() < readPool.size()) {
+            if (System.nanoTime() > end)
+                throw new AssertionError("read pool not filled within " + timeout + " — total " + readPoolTotal() + " of " + readPool.size());
+            List<Thread> fillers = new ArrayList<>();
+            for (int i = 0; i < readPool.size(); i++)
+                fillers.add(Thread.ofVirtual().start(() -> {
+                    try { readPool.jdbc().sql("SELECT pg_sleep(2.5)").query((rs, n) -> 1).list(); }
+                    catch (RuntimeException e) { /* 연결 대기에 끊김 — 다음 바퀴에서 다시 */ }
+                }));
+            for (Thread t : fillers) t.join();
+        }
     }
 
     @AfterEach
@@ -200,6 +228,7 @@ class StoredStaticIT extends IntegrationTest {
         WsIT.Client c = connect();
         List<Thread> holders = new ArrayList<>();
         try {
+            fillReadPool(Duration.ofSeconds(30));
             for (int i = 0; i < readPool.size(); i++)
                 holders.add(Thread.ofVirtual().start(() -> readPool.jdbc().sql("SELECT pg_sleep(2.8)").query((rs, n) -> 1).list()));
             await("all read-pool connections taken", Duration.ofSeconds(5), () -> readPool.active() == readPool.size());
