@@ -1,5 +1,6 @@
 "use client";
-import { useState } from "react";
+import { useEscapeClose } from "@/lib/use-escape-close";
+import { useRef, useState } from "react";
 import { logGroups, logsPage } from "@/lib/endpoints/logs";
 import { useApiResource } from "@/lib/use-api-resource";
 import { fmtIsoKst } from "@/lib/time";
@@ -34,6 +35,8 @@ export function LogDetail({ entry, period, resolvedMode, onClose, onOpen, onFilt
   onResolveChanged: (r: ResolveResult) => void;
 }) {
   const [wrap, setWrap] = useState(true);
+  const root = useRef<HTMLDivElement>(null);
+  useEscapeClose(true, onClose, { panel: root }); // Esc 로 닫기(lib/escape-stack) — 해결 확인 창의 Esc 는 그 창이 먼저 다룬다. 초점은 onClose 가 목록으로
   const { open: confirm, show, close, closeIf, panelId, openerProps } = useResolveSlot();
   const setConfirm = (t: ResolveTarget) => show("entry", t);
   /*
@@ -74,7 +77,7 @@ export function LogDetail({ entry, period, resolvedMode, onClose, onOpen, onFilt
   const row = (label: string, value: React.ReactNode) => <tr><th scope="row" className="w-28 align-top">{label}</th><td>{value}</td></tr>;
   const ex = entry.exception;
   return (
-    <div className="p-3 text-[12px]" data-testid="log-detail">
+    <div ref={root} className="p-3 text-[12px]" data-testid="log-detail">
       <div className="mb-2 flex flex-wrap items-center gap-1">
         <span className="label mr-1">항목 상세</span>
         <span className={LEVEL_BADGE[entry.level]}>{entry.level}</span>

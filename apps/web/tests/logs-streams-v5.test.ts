@@ -7,7 +7,7 @@
  */
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import * as L from "@/lib/logs";
-import { installMiniDom, MiniElement } from "./helpers/mini-dom";
+import { installMiniDom, MiniElement, visibleText } from "./helpers/mini-dom";
 
 const entry = (o: Record<string, unknown> = {}): Record<string, unknown> => ({
   id: "1790000000000-0", v: 1, ts: "2026-09-29T01:02:03.456Z", service: "api", instance: "api-7f9c:1", level: "ERROR",
@@ -136,7 +136,7 @@ const findAll = (pred: (e: MiniElement) => boolean, from: MiniElement = dom.cont
 };
 const byTestId = (id: string, from?: MiniElement) => find((e) => e.getAttribute?.("data-testid") === id, from);
 const allByTestId = (id: string) => findAll((e) => e.getAttribute?.("data-testid") === id);
-const button = (text: string, from?: MiniElement) => find((e) => e.tagName === "BUTTON" && e.textContent.trim() === text, from);
+const button = (text: string, from?: MiniElement) => find((e) => e.tagName === "BUTTON" && visibleText(e).trim() === text, from);
 const propsOf = (e: MiniElement): Record<string, (...a: unknown[]) => unknown> => {
   const k = Object.keys(e).find((x) => x.startsWith("__reactProps$"));
   return (e as unknown as Record<string, Record<string, (...a: unknown[]) => unknown>>)[k!];

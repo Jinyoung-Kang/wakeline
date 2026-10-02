@@ -3,7 +3,7 @@
  * 한 엔드포인트만 계속 실패하면(예: /ops/providers 500, /ops/runs 성공) 그 탭이 옛 값을 새 '갱신' 시각 아래 보이지 않는다.
  */
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { installMiniDom, MiniElement } from "./helpers/mini-dom";
+import { installMiniDom, MiniElement, visibleText } from "./helpers/mini-dom";
 import { domUtcLeaks } from "./helpers/kst-only";
 
 const dom = installMiniDom();
@@ -163,7 +163,7 @@ describe("R-94 ops: provider switch source (DB) vs mirror (Redis)", () => {
     expect(cell.textContent).toContain("on v1");
     expect(cell.textContent).toContain("미러 같음");
 
-    await click(find((e) => e.tagName === "BUTTON" && e.textContent === "disable")!);
+    await click(find((e) => e.tagName === "BUTTON" && visibleText(e) === "disable")!);
     const warn = byTestId("switch-unmirrored");
     expect(warn?.getAttribute("role")).toBe("alert");
     expect(warn?.textContent).toContain("adsbdb 끔");
@@ -174,7 +174,7 @@ describe("R-94 ops: provider switch source (DB) vs mirror (Redis)", () => {
     // 새로고침 뒤 표: 원본은 꺼짐(v2), 미러는 모름 — 버튼은 원본을 기준으로 'enable'
     expect(byTestId("provider-switch")!.textContent).toContain("off v2");
     expect(byTestId("provider-switch")!.textContent).toContain("미러 ?");
-    expect(find((e) => e.tagName === "BUTTON" && e.textContent === "enable")).not.toBeNull();
+    expect(find((e) => e.tagName === "BUTTON" && visibleText(e) === "enable")).not.toBeNull();
 
     // Redis 가 돌아왔지만 아직 미러 전: 수집기가 따르는 값(Redis "0" = 켜짐)이 원본(꺼짐)과 다르다고 알린다
     sw = { ...sw, redis_error: undefined, redis_disabled: "0", mirror_differs: true };
@@ -206,7 +206,7 @@ describe("R-94 ops: provider switch source (DB) vs mirror (Redis)", () => {
     await mount();
     // 이관된 행(운영자 없음)은 '시스템(이관)'으로 적는다
     expect(byTestId("provider-switch")!.getAttribute("title")).toContain("시스템(이관)");
-    await click(find((e) => e.tagName === "BUTTON" && e.textContent === "enable")!);
+    await click(find((e) => e.tagName === "BUTTON" && visibleText(e) === "enable")!);
     expect(byTestId("switch-ok")?.textContent).toContain("adsbdb 켬 — DB 원본 반영(v5 · 09-28 10:00:05 KST) · Redis 미러 반영");
     expect(byTestId("switch-unmirrored")).toBeNull();
     expect(byTestId("switch-mirror-differs")).toBeNull();
@@ -560,7 +560,7 @@ describe("ops writes in flight: one request per click burst (web-review B2)", ()
     const k = Object.keys(e).find((x) => x.startsWith("__reactProps$"));
     return (e as unknown as Record<string, Record<string, (...a: unknown[]) => unknown>>)[k!];
   };
-  const button = (text: string) => find((e) => e.tagName === "BUTTON" && e.textContent === text);
+  const button = (text: string) => find((e) => e.tagName === "BUTTON" && visibleText(e) === text);
   const SETTINGS = { items: [{ key: "region_poll_s", value: 10, version: 3, updated_by: "op", updated_at: "2026-09-28T15:00:00Z" }] };
   const PROVIDERS = { ...(BODY["/api/v1/ops/providers"] as object), providers: [{ name: "adsbdb" }], provider_switch: [{ provider: "adsbdb", disabled: false, version: 1, updated_at: "2026-09-28T00:59:00Z", updated_by: "op", redis_disabled: "0", mirror_differs: false }] };
   /** 쓰기(PUT · POST)는 붙잡아 두고 부른 순서대로 writes 에 쌓는다 — 응답 전에 두 번 누르는 상황 */
@@ -649,7 +649,7 @@ describe("ops write failures stay until the next write or a dismiss (web-review 
     const k = Object.keys(e).find((x) => x.startsWith("__reactProps$"));
     return (e as unknown as Record<string, Record<string, (...a: unknown[]) => unknown>>)[k!];
   };
-  const button = (text: string, from?: MiniElement) => find((e) => e.tagName === "BUTTON" && e.textContent === text, from);
+  const button = (text: string, from?: MiniElement) => find((e) => e.tagName === "BUTTON" && visibleText(e) === text, from);
   const click = async (e: MiniElement | null) => { expect(e).not.toBeNull(); await React.act(async () => { await propsOf(e!).onClick(); }); await settle(); };
   const PROVIDERS = { ...(BODY["/api/v1/ops/providers"] as object), providers: [{ name: "adsb_fi" }], provider_switch: [{ provider: "adsb_fi", disabled: false, version: 1, updated_at: "2026-09-28T00:59:00Z", updated_by: "op", redis_disabled: "0", mirror_differs: false }] };
   const SETTINGS = { items: [{ key: "region_poll_s", value: 10, version: 3, updated_by: "op", updated_at: "2026-09-28T15:00:00Z" }] };

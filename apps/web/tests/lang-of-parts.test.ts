@@ -28,7 +28,10 @@ describe("English headings and labels declare lang=\"en\"", () => {
   it("buttons: sign out (ops · logs), save (ops settings), latest (radar) — only the English text, not the Korean tooltip", () => {
     expect(src("app/ops/page.tsx")).toContain('onClick={logout} lang="en">sign out</button>');
     expect(src("components/logs/LogsDashboard.tsx")).toContain('onClick={logout} lang="en">sign out</button>');
-    expect(src("app/ops/page.tsx")).toContain('<span lang="en">save</span></button>');
+    // 화면 읽기용 대상 이름(설정 키 · 공급자)은 영어 글자 밖에 붙인다 — 'save' · 'enable' · 'disable' 은 그대로 영어(QA 2026-10 화면 개선 제안 3)
+    expect(src("app/ops/page.tsx")).toContain('<span lang="en">save</span><span className="sr-only">: {s.key}</span></button>');
+    expect(src("app/ops/page.tsx")).toContain('<span lang="en">enable</span><span className="sr-only">: {String(p.name)}</span></button>');
+    expect(src("app/ops/page.tsx")).toContain('<span lang="en">disable</span><span className="sr-only">: {String(p.name)}</span></button>');
     expect(src("components/RadarTimeline.tsx")).toContain('data-testid="radar-latest"><span lang="en">latest</span></button>');
   });
 });

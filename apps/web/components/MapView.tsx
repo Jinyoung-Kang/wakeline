@@ -26,5 +26,6 @@ export function MapView({ onFirstLoad }: { onFirstLoad?: () => void }) {
   useMapPointer(map, airports);
   useShipLayers(map);
   useSelectionTracks(map, feed);
-  return <div ref={el} className="h-full w-full" data-testid="map" />;
+  // data-escape-neutral: 지도에 초점이 있을 때의 Esc 는 맨 위 패널(카드 · 범례)을 닫는다(lib/escape-stack)
+  return <div ref={el} className="h-full w-full" data-testid="map" data-escape-neutral="" />;
 }

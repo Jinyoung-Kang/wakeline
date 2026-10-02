@@ -1,5 +1,6 @@
 "use client";
-import { useEffect } from "react";
+import { useEscapeClose } from "@/lib/use-escape-close";
+import { useEffect, useRef } from "react";
 import { legendDefaultOpen, loadLayers, loadLegendOpen, loadShipCats, saveLayers, saveLegendOpen } from "@/lib/prefs";
 import { SHIP_CATEGORIES, type ShipCategory } from "@/lib/ships";
 import { useUi, type Layers } from "@/lib/ui-store";
@@ -58,6 +59,10 @@ export function LayerPanelView({ layers, shipCats, legendOpen }: { layers: Layer
     setLegendOpen(next);
     saveLegendOpen(next);
   };
+  // Esc 로 범례 닫기(lib/escape-stack) — 단추로 닫은 것과 같다(이 브라우저에 저장). 초점이 범례 안이었으면 '범례' 단추로
+  const legendBtn = useRef<HTMLButtonElement>(null);
+  useEscapeClose(legendOpen, () => { setLegendOpen(false); saveLegendOpen(false); },
+    { panel: () => (typeof document === "undefined" ? null : document.getElementById(LEGEND_ID)), opener: legendBtn });
   return (
     // bottom-16: 펼친 범례가 지도 오른쪽 아래 출처 표기(AttributionControl)를 가리지 않게(R-31).
     // left-[48px]: 왼쪽 위 줌 단추(여백 10 + 단추 29 + 테두리 2 = 41 px) 옆 — left-12 는 13 px 글꼴 기준 3 rem = 39 px 라 단추와 2 px 겹쳤다(하네스로 잼)
@@ -72,7 +77,7 @@ export function LayerPanelView({ layers, shipCats, legendOpen }: { layers: Layer
           <button className={`btn normal-case! ${shipCats.length < SHIP_CATEGORIES.length ? "text-warn!" : ""}`} onClick={() => { if (!legendOpen) flip(); }}
             title="선종 필터 — 범례의 선종 항목을 눌러 켜고 끕니다(이 브라우저에만 저장)" data-testid="ship-cat-filter-chip">선종 필터 {shipCats.length}/{SHIP_CATEGORIES.length}</button>
         ) : null}
-        <button className="btn" aria-expanded={legendOpen} aria-controls={legendOpen ? LEGEND_ID : undefined} onClick={flip} data-testid="legend-toggle">범례 {legendOpen ? "▾" : "▸"}</button>
+        <button ref={legendBtn} className="btn" aria-expanded={legendOpen} aria-controls={legendOpen ? LEGEND_ID : undefined} onClick={flip} data-testid="legend-toggle">범례 {legendOpen ? "▾" : "▸"}</button>
       </div>
       {/* 두 칸은 남은 높이를 채운다(stretch) — 범례가 그 높이 안에서 줄어들고 스크롤된다(지도 아래 타임라인 · 출처 줄을 덮지 않게) */}
       <div className="flex min-h-0 flex-1 justify-between gap-2">

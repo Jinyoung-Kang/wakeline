@@ -10,7 +10,7 @@
  *   afterAll(() => dom.restore());
  *   afterEach(async () => { await m.unmount(); vi.useRealTimers(); vi.unstubAllGlobals(); });
  */
-import { MiniElement, type installMiniDom } from "./mini-dom";
+import { MiniElement, type installMiniDom, visibleText } from "./mini-dom";
 
 type Dom = ReturnType<typeof installMiniDom>;
 type Handlers = Record<string, (...a: unknown[]) => unknown>;
@@ -64,7 +64,7 @@ export function mounter(dom: Dom) {
     findAll: (pred: (e: MiniElement) => boolean, from?: MiniElement) => findAll(pred, inside(from)),
     byTestId: (id: string, from?: MiniElement) => find((e) => e.getAttribute?.("data-testid") === id, inside(from)),
     allByTestId: (id: string, from?: MiniElement) => findAll((e) => e.getAttribute?.("data-testid") === id, inside(from)),
-    button: (text: string, from?: MiniElement) => find((e) => e.tagName === "BUTTON" && e.textContent.trim() === text, inside(from)),
+    button: (text: string, from?: MiniElement) => find((e) => e.tagName === "BUTTON" && visibleText(e).trim() === text, inside(from)),
     /** onClick 을 부르고(돌려준 약속까지 기다림) 한 번 가라앉힌다 */
     async click(e: MiniElement | null) {
       if (!e) throw new Error("mount: click(null)");

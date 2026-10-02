@@ -1,5 +1,7 @@
 "use client";
+import { useRef } from "react";
 import { useServerData } from "@/lib/store";
+import { useEscapeClose } from "@/lib/use-escape-close";
 import { useServerNow } from "@/lib/clock";
 import { fmtKstTitle, fmtTimeTitle, kstWallMs } from "@/lib/time";
 import { isKrRadarStale, KR_RADAR_STALE_S, legendTextColor } from "@/lib/format";
@@ -15,7 +17,9 @@ import { KstTime } from "./KstTime";
  * 보관 중인 프레임의 부분 합성 수, 지점 코드. 모르면 "—".
  * 기상청 내려받기 '파일 없음' 연속(운영 로그 2026-09-30 — api missing): 새 프레임이 오지 않는 까닭을 주의 문장으로(보관 프레임이 만료돼 '사용 불가'일 때도).
  */
-export function KrRadarPanel({ onClose }: { onClose: () => void }) {
+export function KrRadarPanel({ onClose, opener }: { onClose: () => void; opener?: () => Element | null }) {
+  const root = useRef<HTMLDivElement>(null);
+  useEscapeClose(true, onClose, { panel: root, opener: opener ?? (() => null) }); // Esc 로 닫기 — 초점은 '범례·정합' 단추로
   const d = useServerData((s) => s.radarKr);
   const now = useServerNow(30_000);
   const stale = d?.available ? isKrRadarStale(d, now) : false;
@@ -24,7 +28,7 @@ export function KrRadarPanel({ onClose }: { onClose: () => void }) {
   const miss = krMissing(d?.missing, now);
   const ids = Array.isArray(latest?.station_ids) ? latest.station_ids : [];
   return (
-    <div className="panel absolute bottom-full left-3 z-10 mb-3 w-[380px] max-w-[calc(100vw-1.5rem)] text-[11px]" data-testid="kr-radar-panel">
+    <div ref={root} className="panel absolute bottom-full left-3 z-10 mb-3 w-[380px] max-w-[calc(100vw-1.5rem)] text-[11px]" data-testid="kr-radar-panel">
       <div className="row"><span className="label">기상청 레이더 합성(HSR) · 범례·정합</span><button className="btn" onClick={onClose}>닫기</button></div>
       <div className="p-2">
         {!d ? <div className="text-fg-3">…</div> : d.available ? <>

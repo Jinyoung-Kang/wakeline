@@ -176,10 +176,12 @@ describe("radar timeline controls", () => {
     expect(byId("radar-src-kma")!.getAttribute("aria-pressed")).toBe("true");
     await click(byId("radar-src-rv"));
     expect(useUi.getState().radarSource).toBe("rainviewer");
-    // 애니메이션: 켜고 끈다(이름이 바뀐다)
+    // 애니메이션: 켜고 끈다 — 이름은 고정, 눌림 상태(aria-pressed)가 바뀐다(QA 2026-10 화면 개선 제안 2 — 예전에는 이름이 재생↔정지로 바뀌어 "정지, 눌림")
     await click(byId("radar-play"));
     expect(useUi.getState().radarPlaying).toBe(true);
-    expect(byId("radar-play")!.getAttribute("aria-label")).toBe("레이더 애니메이션 정지");
+    expect(byId("radar-play")!.getAttribute("aria-label")).toBe("레이더 애니메이션");
+    expect(byId("radar-play")!.getAttribute("aria-pressed")).toBe("true");
+    expect(byId("radar-play")!.textContent).toBe("애니메이션 ■");
     // 슬라이더: 그 프레임에서 멈춘다
     const slider = find((e) => e.getAttribute?.("aria-label") === "레이더 프레임")!;
     await act(() => { propsOf(slider).onChange({ target: { value: "1" } }); });

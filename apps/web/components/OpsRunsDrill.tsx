@@ -1,4 +1,5 @@
 "use client";
+import { useEscapeClose } from "@/lib/use-escape-close";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { runsDrill } from "@/lib/endpoints/ops";
 import { isAuthMiss, RUN_STATUS_TITLE, runStatusClass } from "@/lib/ops";
@@ -31,6 +32,7 @@ export function OpsRunsDrill({ id, k, since, onClose, onAuthMiss }: {
   const busyRef = useRef(false);
   const [err, setErr] = useState<unknown>(null);
   const region = useRef<HTMLDivElement>(null);
+  useEscapeClose(true, onClose, { panel: region }); // Esc 로 닫기(lib/escape-stack) — 초점은 onClose 가 연 단추로 돌린다
   const rescue = useFocusRescue(10_000);
   /** 요청 번호 — 다시 불러오기 · 닫기 뒤에 온 옛 응답은 버린다 */
   const seq = useRef(0);

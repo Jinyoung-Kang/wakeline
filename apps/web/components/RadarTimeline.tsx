@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { KrRadarPanelPart } from "./DashboardParts";
 import { useServerNow } from "@/lib/clock";
 import { fmtKstMinute, fmtTimeTitle, kstWallMs } from "@/lib/time";
@@ -53,16 +53,19 @@ export function RadarTimeline() {
   // 툴팁: RainViewer 는 연도 · ms 까지의 같은 순간(KST), 기상청은 tm 이 원래 KST — 그 원문 tm 을 그대로 적는다
   const labelTitle = kma ? (label === "—" ? undefined : `기상청 tm ${krTm} — 기상청이 준 KST 그대로`) : fmtTimeTitle(frameMs);
   const [kr, setKr] = useState(false);
+  const krBtn = useRef<HTMLButtonElement>(null);
   return (
     <div className="relative flex min-h-9 shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-t border-line bg-bg-1 px-3 py-1" data-testid="radar-timeline">
       {/* 범례·정합 패널은 단추를 누른 뒤에 받는다(DashboardParts — ADR-026) */}
-      {kr ? <KrRadarPanelPart onClose={() => setKr(false)} /> : null}
+      {kr ? <KrRadarPanelPart onClose={() => setKr(false)} opener={() => krBtn.current} /> : null}
       <span className="label">Radar</span>
       <button className="btn" aria-pressed={!kma} onClick={() => setSource("rainviewer")} data-testid="radar-src-rv">RainViewer</button>
       <button className="btn" aria-pressed={kma} onClick={() => setSource("kma")} disabled={!krAvailable} title={krAvailable ? "기상청 합성 HSR 500 m" : krMiss?.text || radarKr?.note || "수집 전"} data-testid="radar-src-kma">기상청 HSR</button>
       {/* '재생' 은 상단 메뉴(이력 재생 화면)의 이름이다 — 레이더 애니메이션은 다른 말로(R-60) */}
+      {/* 토글: aria-pressed 가 상태를 말하므로 이름은 고정(QA 2026-10 화면 개선 제안 2 — 예전에는 이름이 재생↔정지로 바뀌어 "정지, 눌림"으로 읽혔다).
+          보이는 글자 '애니메이션' 이 이름 안에 있다(WCAG 2.5.3) — ▶/■ 는 상태 표시 */}
       <button className="btn" onClick={() => setPlaying(!playing)} disabled={n === 0} aria-pressed={playing} data-testid="radar-play"
-        aria-label={playing ? "레이더 애니메이션 정지" : "레이더 애니메이션 재생"}>{playing ? "정지" : "애니메이션 ▶"}</button>
+        aria-label="레이더 애니메이션">애니메이션 {playing ? "■" : "▶"}</button>
       <input type="range" min={0} max={Math.max(0, n - 1)} value={cur} onChange={(e) => { setPlaying(false); setIdx(Number(e.target.value)); }} className="w-40 min-[900px]:w-64" disabled={n === 0}
         aria-label="레이더 프레임" aria-valuetext={label} />
       <span className="mono text-[11px]" title={labelTitle} data-testid="radar-frame-time">{label}</span>
@@ -84,7 +87,7 @@ export function RadarTimeline() {
         ? <span className="text-[10px] text-warn" data-testid="radar-kr-unavailable">{krUnavailableText(radarKr, miss)}</span>
         : <span className="text-[10px] text-fg-3">{kma ? `${n} frames · 5 min · 기상청 HSR 500 m(LCC→Mercator 재투영)` : `${n} frames · 10 min · RainViewer(z≤7) · 커버리지 밖 회색`}</span>}
       <button className="btn" onClick={() => { setPlaying(false); setIdx(null); }} disabled={n === 0} title="최신 프레임으로" data-testid="radar-latest"><span lang="en">latest</span></button>
-      <button className="btn ml-2" aria-pressed={kr} onClick={() => setKr(!kr)} data-testid="kr-radar-toggle">범례·정합</button>
+      <button ref={krBtn} className="btn ml-2" aria-pressed={kr} onClick={() => setKr(!kr)} data-testid="kr-radar-toggle">범례·정합</button>
     </div>
   );
 }

@@ -1,4 +1,6 @@
 "use client";
+import { useRef } from "react";
+import { useEscapeClose } from "@/lib/use-escape-close";
 import Link from "next/link";
 import { airportWx } from "@/lib/endpoints/weather";
 import { useApiResource } from "@/lib/use-api-resource";
@@ -23,6 +25,8 @@ export function AirportCard({ icao }: { icao: string }) {
   // 본문은 parseWx 로 검사한다(web-review B10) — 읽을 수 없으면 그리지 않고 그렇다고 말한다. 오류는 ApiError 면 요청 id 까지(계약 v5 §C8)
   const wx = useApiResource(icao, (signal) => airportWx(icao, { signal }).then((x) => x ?? Promise.reject(new Error(WX_UNREADABLE))));
   const selectAirport = useUi((s) => s.selectAirport);
+  const root = useRef<HTMLDivElement>(null);
+  useEscapeClose(true, () => selectAirport(null), { panel: root }); // Esc 로 닫기(lib/escape-stack)
   const now = useNow(30_000);
   const w = wx.data && wx.data.airport.icao === icao ? wx.data : null;
   const err = wx.error;
@@ -32,7 +36,7 @@ export function AirportCard({ icao }: { icao: string }) {
   const stale = m && nowMs ? isMetarStale(m, nowMs) : false;
   const catColor = m?.flight_cat && !stale ? CAT_COLORS[m.flight_cat] : undefined;
   return (
-    <div className="flex h-full flex-col" data-testid="airport-card">
+    <div ref={root} className="flex h-full flex-col" data-testid="airport-card">
       <div className="row"><span className="label">Airport · {icao}</span><div className="flex gap-1">{isRefusedSegment(icao) ? null : <Link href={`/airports/${encodeURIComponent(icao)}`} className="btn">이력</Link>}<button className="btn" onClick={() => selectAirport(null)}>닫기</button></div></div>
       <div className="min-h-0 flex-1 overflow-y-auto px-2 py-1 text-[12px]">
         {err ? <div className="text-bad"><ErrorNote error={err} /></div> : null}

@@ -1,4 +1,5 @@
 "use client";
+import { useEscapeClose } from "@/lib/use-escape-close";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { shipDetail } from "@/lib/endpoints/ship-detail";
 import { useServerNow } from "@/lib/clock";
@@ -50,6 +51,8 @@ export function ShipCard({ mmsi }: { mmsi: string }) {
  */
 export function ShipCardView({ mmsi, detail: d, error: err, now }: { mmsi: string; detail: ShipDetail | null; error: unknown; now: number }) {
   const selectShip = useUi((s) => s.selectShip);
+  const root = useRef<HTMLDivElement>(null);
+  useEscapeClose(true, () => selectShip(null), { panel: root }); // Esc 로 닫기(lib/escape-stack)
   const live = useServerData((x) => (x.shipSelected && x.shipSelected.mmsi === mmsi ? x.shipSelected : null));
   const track = useServerData((x) => (x.shipTrack && x.shipTrack.mmsi === mmsi ? x.shipTrack : null));
   useServerData((x) => x.ships.version); // 지도 목록 사본이 바뀌면 다시 그린다
@@ -125,7 +128,7 @@ export function ShipCardView({ mmsi, detail: d, error: err, now }: { mmsi: strin
     ["출처", s?.provider ?? st?.provider ?? "—"],
   ];
   return (
-    <div className="flex h-full flex-col" data-testid="ship-card">
+    <div ref={root} className="flex h-full flex-col" data-testid="ship-card">
       <div className="row">
         <span className="label">Ship</span>
         <div className="flex flex-wrap items-center justify-end gap-1">

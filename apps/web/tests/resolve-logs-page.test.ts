@@ -5,7 +5,7 @@
  * 화면은 201/204 뒤에만 바뀌고 영향받는 목록을 다시 불러온다. 지우지 않는다 — 가린 수를 늘 보인다.
  */
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { installMiniDom, MiniElement } from "./helpers/mini-dom";
+import { installMiniDom, MiniElement, visibleText } from "./helpers/mini-dom";
 
 const dom = installMiniDom();
 type Root = import("react-dom/client").Root;
@@ -81,7 +81,7 @@ const findAll = (pred: (e: MiniElement) => boolean, from: MiniElement = dom.cont
 };
 const byTestId = (id: string, from?: MiniElement) => find((e) => e.getAttribute?.("data-testid") === id, from);
 const allByTestId = (id: string, from?: MiniElement) => findAll((e) => e.getAttribute?.("data-testid") === id, from);
-const button = (text: string, from?: MiniElement) => find((e) => e.tagName === "BUTTON" && e.textContent.trim() === text, from);
+const button = (text: string, from?: MiniElement) => find((e) => e.tagName === "BUTTON" && visibleText(e).trim() === text, from);
 const input = (label: string, from?: MiniElement) => find((e) => e.tagName === "INPUT" && e.getAttribute("aria-label") === label, from);
 const propsOf = (e: MiniElement): Record<string, (...a: unknown[]) => unknown> => {
   const k = Object.keys(e).find((x) => x.startsWith("__reactProps$"));

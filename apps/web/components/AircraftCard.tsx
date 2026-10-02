@@ -1,5 +1,6 @@
 "use client";
-import { useMemo } from "react";
+import { useEscapeClose } from "@/lib/use-escape-close";
+import { useMemo, useRef } from "react";
 import { aircraftDetail } from "@/lib/endpoints/aircraft";
 import { useApiResource } from "@/lib/use-api-resource";
 import { aircraftStates, useServerData } from "@/lib/store";
@@ -138,6 +139,8 @@ export function AircraftCard({ hex }: { hex: string }) {
    */
   const res = useApiResource(hex, (signal) => aircraftDetail(hex, { signal }), { refreshMs: DETAIL_REFRESH_MS });
   const select = useUi((s) => s.select);
+  const root = useRef<HTMLDivElement>(null);
+  useEscapeClose(true, () => select(null), { panel: root }); // Esc 로 닫기(lib/escape-stack)
   const selected = useServerData((x) => (x.selected && x.selected.hex === hex ? x.selected : null));
   const alertsMap = useServerData((x) => x.alerts);
   const now = useServerNow(1000);
@@ -185,7 +188,7 @@ export function AircraftCard({ hex }: { hex: string }) {
     ["10분 예측", pred == null ? "—" : pred.available ? "가능 · 지도 점선(추정)" : `안 함 · ${pred.reason ? REASON_LABEL[pred.reason] : "—"}`],
   ];
   return (
-    <div className="flex h-full flex-col" data-testid="aircraft-card">
+    <div ref={root} className="flex h-full flex-col" data-testid="aircraft-card">
       <div className="row">
         <span className="label">Aircraft</span>
         <div className="flex items-center gap-2">
