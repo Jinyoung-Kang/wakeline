@@ -537,3 +537,104 @@ async def test_direct_reads_on_a_slow_db_do_not_starve_the_writers_liveness_prob
         pool.slow.set()
         await asyncio.gather(*readers)
         await db.close(drain_s=1)
+
+
+class HangingPool(FakePool):
+    """쓰기(execute)가 문이 열릴 때까지 멈춘다(느린 · 멈춘 DB) — 진행 중 쓰기를 붙잡아 두고 시험한다."""
+
+    def __init__(self):
+        super().__init__()
+        self.gate = asyncio.Event()
+        self.entered = asyncio.Event()
+
+    async def execute(self, sql, *args):
+        self.entered.set()
+        await self.gate.wait()
+        await super().execute(sql, *args)
+
+
+async def test_close_cancels_a_writer_that_cannot_finish_within_the_drain_time():
+    """종료 마감(drain_s) 안에 쓰기가 끝나지 않으면 writer 를 취소하고, 남은 쓰기는 버린 것으로 센다 — close 는 마감을 넘겨 기다리지 않는다."""
+    pool = HangingPool()
+    closed = []
+
+    async def close_pool():
+        closed.append(True)
+
+    pool.close = close_pool
+
+    async def factory():
+        return pool
+
+    db = Db(factory)
+    db.start()
+    for i in range(3):
+        db.upsert_budget_day(f"p{i}", datetime.now(UTC), i, 10)
+    await asyncio.wait_for(pool.entered.wait(), 2)
+    t0 = asyncio.get_running_loop().time()
+    await db.close(drain_s=0.1)
+    assert asyncio.get_running_loop().time() - t0 < 1.0
+    assert db._task.done()
+    assert db.pending == 0 and db.dropped == 3  # 진행 중이던 것 포함 — 쓰였다고 셀 수 없다
+    assert pool.log == [] and closed == [True]
+
+
+async def test_writes_submitted_while_closing_are_counted_as_dropped():
+    pool = FakePool()
+
+    async def factory():
+        return pool
+
+    db = Db(factory)
+    db.start()
+    await db.close()
+    db.upsert_budget_day("late", datetime.now(UTC), 1, 10)
+    assert db.pending == 0 and db.dropped == 1 and pool.log == []
+
+
+async def test_the_writer_survives_an_unexpected_error_and_keeps_writing(monkeypatch, caplog):
+    """writer 루프 밖으로 새는 예외(예상 못 한 결함)는 남기고 쉬었다 계속한다 — writer 가 죽으면 기록이 조용히 멈춘다."""
+    pool = FakePool()
+    calls = 0
+
+    async def factory():
+        return pool
+
+    db = Db(factory)
+    real = db._ensure_pool
+
+    async def flaky():
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("unexpected")
+        return await real()
+
+    monkeypatch.setattr(db, "_ensure_pool", flaky)
+    db.start()
+    db.upsert_budget_day("p0", datetime.now(UTC), 1, 10)
+    await _settle(db)
+    assert [a[0] for _t, a in pool.log] == ["p0"]
+    assert "db writer: unexpected error" in caplog.text
+    await db.close()
+
+
+async def test_an_in_flight_write_pushed_out_by_overflow_does_not_take_the_next_write_with_it(monkeypatch):
+    """큐가 넘쳐 진행 중이던 맨 앞 작업이 밀려나도(버린 것으로 센다), 그 작업이 끝난 뒤 다음 작업을 대신 지우지 않는다(_pop 의 확인)."""
+    monkeypatch.setattr(dbmod, "QUEUE_MAX", 2)
+    pool = HangingPool()
+
+    async def factory():
+        return pool
+
+    db = Db(factory)
+    db.start()
+    db.upsert_budget_day("a", datetime.now(UTC), 1, 10)
+    await asyncio.wait_for(pool.entered.wait(), 2)  # a 가 쓰는 중
+    db.upsert_budget_day("b", datetime.now(UTC), 1, 10)
+    db.upsert_budget_day("c", datetime.now(UTC), 1, 10)  # 넘침 — 맨 앞(a, 쓰는 중)을 밀어낸다
+    assert db.pending == 2 and db.dropped == 1
+    pool.gate.set()
+    await _settle(db)
+    assert [a[0] for _t, a in pool.log] == ["a", "b", "c"]  # a 는 끝까지 쓰였고 b 를 잃지 않았다
+    await db.close()

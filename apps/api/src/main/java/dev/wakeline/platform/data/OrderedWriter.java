@@ -69,6 +69,8 @@ public class OrderedWriter implements StreamPrerequisite, WriteBacklog {
     /** 일시 장애로 쉬는 동안 DB 가 다시 답하면 곧바로 깨운다(ADR-032 개정 — 쉼을 끝까지 자지 않는다). */
     private final DbRecovery recovery;
     private volatile boolean running;
+    /** 종료 비우기의 마감(시험이 줄인다). */
+    long drainDeadlineMs = DRAIN_DEADLINE_MS;
     /** 종료 후 비우기까지 끝났다 — 이후 제출은 처리될 수 없으므로 받지 않고 센다. */
     private volatile boolean stopped;
     private Thread worker;
@@ -137,7 +139,7 @@ public class OrderedWriter implements StreamPrerequisite, WriteBacklog {
     public void stop() {
         running = false;
         if (worker != null) {
-            try { worker.join(DRAIN_DEADLINE_MS + 2_000); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+            try { worker.join(drainDeadlineMs + 2_000); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
         }
     }
 
@@ -210,7 +212,7 @@ public class OrderedWriter implements StreamPrerequisite, WriteBacklog {
 
     /** 종료 시 남은 작업을 한 번씩 시도한다(마감 6 s). 못 쓴 것은 dropped 로 센다. */
     private void drain() {
-        long deadline = System.currentTimeMillis() + DRAIN_DEADLINE_MS;
+        long deadline = System.currentTimeMillis() + drainDeadlineMs;
         int written = 0, dropped = 0;
         Queued q;
         while ((q = queue.poll()) != null) {

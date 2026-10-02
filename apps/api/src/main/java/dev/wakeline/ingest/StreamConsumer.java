@@ -146,6 +146,7 @@ public class StreamConsumer implements SmartLifecycle {
     private List<String> waitingLogged = List.of();
     private final Counter processed;
     private final Counter rejected;
+    private final Counter dlqWriteFailures;
     private final Counter staleSkipped;
     private final Counter trimmed;
     private final Counter applyErrors;
@@ -213,6 +214,8 @@ public class StreamConsumer implements SmartLifecycle {
         this.meters = meters;
         this.processed = Counter.builder("wakeline_stream_messages_total").tag("result", "ok").register(meters);
         this.rejected = Counter.builder("wakeline_stream_messages_total").tag("result", "rejected").register(meters);
+        this.dlqWriteFailures = Counter.builder("wakeline_stream_dlq_write_failures_total")
+                .description("검증 실패 메시지를 DLQ 에 쓰지 못한 횟수 — 그 메시지는 ACK 하지 않아 PEL 에 남고 다음 PEL 재처리에서 다시 DLQ 로 간다").register(meters);
         this.staleSkipped = Counter.builder("wakeline_stream_messages_total").tag("result", "stale_skipped").register(meters);
         this.trimmed = Counter.builder("wakeline_stream_messages_total").tag("result", "trimmed")
                 .description("PEL 에 남았지만 MAXLEN 으로 이미 잘려 다시 처리할 수 없는 메시지").register(meters);
@@ -517,7 +520,8 @@ public class StreamConsumer implements SmartLifecycle {
         flushAcks();
     }
 
-    private void drainPending(String stream) {
+    /** 한 스트림의 PEL 재처리(시험이 직접 부른다 — 소비 스레드 전용). */
+    void drainPending(String stream) {
         String after = null;
         int total = 0;
         String firstTrimmed = null, lastTrimmed = null;
@@ -592,8 +596,8 @@ public class StreamConsumer implements SmartLifecycle {
             p = parse(r);
         } catch (Exception e) {
             rejected.increment();
-            deadLetter(r, e.getMessage());
-            acks.add(new Ack(stream, id));
+            // DLQ 에 남긴 뒤에만 ACK — 쓰지 못하면 PEL 에 남겨 다음 PEL 재처리(소비 루프 재시도 · 다시 기동)에서 다시 DLQ 로(예전: ACK 해 DLQ 에도 PEL 에도 없었다)
+            if (deadLetter(r, e.getMessage())) acks.add(new Ack(stream, id));
             return;
         }
         String key = stream + "/" + id;
@@ -867,7 +871,8 @@ public class StreamConsumer implements SmartLifecycle {
         return Long.compare(x.length > 1 ? Long.parseLong(x[1]) : 0, y.length > 1 ? Long.parseLong(y[1]) : 0);
     }
 
-    void deadLetter(MapRecord<String, String, String> r, String reason) {
+    /** 검증 실패 메시지를 DLQ 에 남긴다. @return 남겼으면 true — 못 남겼으면 false(호출자가 ACK 하지 않는다, wakeline_stream_dlq_write_failures_total). */
+    boolean deadLetter(MapRecord<String, String, String> r, String reason) {
         try {
             Map<String, String> m = new HashMap<>(r.getValue());
             String payload = m.remove("payload");
@@ -879,8 +884,12 @@ public class StreamConsumer implements SmartLifecycle {
             ops().add(MapRecord.create(S_DLQ, m));
             ops().trim(S_DLQ, 500, true);
             log.warn("message {} from {} moved to DLQ: {}", r.getId(), r.getStream(), reason);
+            return true;
         } catch (Exception e) {
-            log.error("DLQ write failed: {}", e.toString());
+            dlqWriteFailures.increment();
+            log.error("DLQ write failed — message {} from {} stays pending and is dead-lettered on the next pending re-processing: {}",
+                    r.getId(), r.getStream(), e.toString());
+            return false;
         }
     }
 

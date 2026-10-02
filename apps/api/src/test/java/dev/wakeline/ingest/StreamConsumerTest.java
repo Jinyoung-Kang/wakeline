@@ -170,7 +170,7 @@ class StreamConsumerTest {
             super(null, new SchemaValidator(), snapshots, new SigmetStore(), new RadarStore(), publisher, JsonMapper.builder().build(), meters);
         }
 
-        @Override void deadLetter(MapRecord<String, String, String> r, String reason) { deadLettered.add(r.getId().getValue() + ":" + reason); }
+        @Override boolean deadLetter(MapRecord<String, String, String> r, String reason) { deadLettered.add(r.getId().getValue() + ":" + reason); return true; }
         @Override void acknowledge(String stream, List<String> ids) { acked.addAll(ids); }
     }
 
