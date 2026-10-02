@@ -10,6 +10,12 @@ updates:
     cooldown: { default-days: 7 }
     groups:
       web-minor-patch: { update-types: [minor, patch] }
+    # 주 버전은 호환을 확인하는 계획된 작업으로 올린다(PR 을 열지 않는다 — 부 · 패치와 보안 갱신은 그대로 온다). 2026-10-02 첫 PR 들이 CI 에서 깨졌다:
+    # ESLint 10 은 eslint-config-next 가 아직 받지 않는다(CTO 리뷰 2026-10 결정 7) · TypeScript 7(새 컴파일러) · @types/node 는 실행 Node(24)와 맞춘다
+    ignore:
+      - { dependency-name: "eslint", update-types: ["version-update:semver-major"] }
+      - { dependency-name: "typescript", update-types: ["version-update:semver-major"] }
+      - { dependency-name: "@types/node", update-types: ["version-update:semver-major"] }
 
   - package-ecosystem: uv
     directory: /apps/collector
@@ -26,6 +32,9 @@ updates:
     cooldown: { default-days: 7 }
     groups:
       api-minor-patch: { update-types: [minor, patch] }
+    # json-schema-validator 3.x 는 API 가 바뀐 주 버전 — 스트림 검증(SchemaValidator)을 옮기는 계획된 작업으로
+    ignore:
+      - { dependency-name: "com.networknt:json-schema-validator", update-types: ["version-update:semver-major"] }
 
   # 각 앱 Dockerfile 의 기반 이미지 · db(infra/db — 공식 postgres 다이제스트, R-63)
   - package-ecosystem: docker
@@ -33,6 +42,9 @@ updates:
     schedule: { interval: weekly, day: monday, time: "06:00", timezone: Asia/Seoul }
     open-pull-requests-limit: 10
     cooldown: { default-days: 7 }
+    # web 의 Node 주 버전(24 → 26)은 첫 화면 JS 예산(웹 이미지의 Node 로 잰다 — ADR-026) · 런타임을 함께 재는 계획된 작업으로. 같은 주 버전의 새 다이제스트는 그대로 온다
+    ignore:
+      - { dependency-name: "node", update-types: ["version-update:semver-major"] }
 
   # infra/compose.yml 의 제3자 이미지(태그@다이제스트 고정 — 같은 태그의 새 다이제스트도 PR 로 온다)
   - package-ecosystem: docker-compose
