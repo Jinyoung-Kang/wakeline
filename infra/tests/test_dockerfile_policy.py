@@ -62,6 +62,18 @@ class CollectorNativeMemoryTest(unittest.TestCase):
         self.assertRegex(runtime, r"(?m)^ENV\b.*\bMALLOC_ARENA_MAX=2\b")
 
 
+
+class CollectorPythonVersionTest(unittest.TestCase):
+    """CI(setup-uv · `uv run`)는 프로젝트의 .python-version 을 따른다 — 없으면 requires-python(>=3.13)을 만족하는 가장 새 판을 받는다(2026-10-02 CI:
+    CPython 3.14.8, 운영 이미지는 3.13). 시험이 운영과 같은 파이썬에서 돌게 이미지의 판과 묶는다."""
+
+    def test_python_version_file_matches_the_image(self):
+        pin = ROOT / "apps" / "collector" / ".python-version"
+        self.assertTrue(pin.exists(), "apps/collector/.python-version 없음 — CI 가 운영과 다른 파이썬으로 시험한다")
+        image = re.search(r"(?m)^FROM python:(\d+\.\d+)-slim@", DOCKERFILES["collector"].read_text())
+        self.assertIsNotNone(image)
+        self.assertEqual(pin.read_text().strip(), image.group(1))
+
 class RuntimeToolsTest(unittest.TestCase):
     """R-29: 실행 이미지에 쓰지 않는 패키지 관리자를 남기지 않는다(web·collector 의 HIGH 취약점 전부의 출처). 빌드한 이미지는 image_test.sh 가 본다."""
 
