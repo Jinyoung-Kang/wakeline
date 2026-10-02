@@ -10,7 +10,11 @@ import { installMiniDom } from "./helpers/mini-dom";
 import { mounter } from "./helpers/mount";
 import { FakeMap } from "./helpers/fake-maplibre";
 
-vi.mock("maplibre-gl", async () => (await import("./helpers/fake-maplibre")).fakeMaplibreModule);
+// 재생 지도도 public 배포본(lib/maplibre — R-02)을 쓴다: 그 모듈을 대역으로
+vi.mock("@/lib/maplibre", async (orig) => {
+  const fake = (await import("./helpers/fake-maplibre")).fakeMaplibreModule;
+  return { ...(await orig<typeof import("@/lib/maplibre")>()), maplibre: () => fake, loadMaplibre: async () => fake };
+});
 
 const dom = installMiniDom();
 const m = mounter(dom);

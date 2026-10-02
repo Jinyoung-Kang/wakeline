@@ -1,8 +1,9 @@
 "use client";
-import * as maplibregl from "maplibre-gl";
+import type * as maplibregl from "maplibre-gl";
 import { memo, useEffect, useRef } from "react";
 import { subscriptionBbox } from "@/lib/viewport";
-import { addBaseLayers, MAPLIBRE_WORKER_URL, radarTileUrl, STYLE_URL } from "@/lib/maplayers";
+import { addBaseLayers, radarTileUrl, STYLE_URL } from "@/lib/maplayers";
+import { maplibre } from "@/lib/maplibre";
 import { watchBasemapStyle } from "@/lib/basemap-fallback";
 import { mapAttributionHtml, styleHasBasemapCredit } from "@/lib/attribution";
 import { mapAttributionControl } from "@/lib/map-attribution";
@@ -20,6 +21,8 @@ export type ReplayPick = { kind: "aircraft"; hex: string } | { kind: "sigmet"; i
  * memo: 슬라이더를 끄는 동안 재생 화면은 입력마다 다시 그려지지만(시각 라벨), 지도는 frame · 레이더 · 콜백이 바뀔 때만.
  * 배경지도 스타일(외부 호스트)을 받지 못하면 상황판과 같은 규칙(R-01 — lib/basemap-fallback)으로 로컬 대체 스타일에 그 시각의 기록을 그리고
  * onBasemapFailed(true) 로 알린다(재생 화면이 "배경지도를 불러오지 못함"을 띄운다). 전에는 'load' 가 오지 않아 지도가 빈 채로 알림도 없었다(QA-301).
+ * MapLibre 는 상황판과 같은 public 배포본(R-02 — lib/maplibre): 재생 화면이 이 컴포넌트를 불러올 때 loadMaplibre() 를 함께 기다린다(app/replay/page.tsx).
+ * 전에는 maplibre-gl 을 번들해 공용 코드를 두 벌(번들 청크 286 KB + 워커가 받는 공용 청크 149 KB, gzip) 받고 해석했다(PERF §15).
  */
 export const ReplayMap = memo(function ReplayMap({ frame, onBbox, onPick, showRadar, onBasemapFailed }: {
   frame: ReplayFrame | null; onBbox: (bbox: string, clamped: boolean) => void; onPick: (p: ReplayPick) => void; showRadar: boolean; onBasemapFailed?: (failed: boolean) => void;
@@ -32,9 +35,9 @@ export const ReplayMap = memo(function ReplayMap({ frame, onBbox, onPick, showRa
   useEffect(() => { frameRef.current = frame; pickRef.current = onPick; basemapRef.current = onBasemapFailed; });
   useEffect(() => {
     if (!el.current) return;
-    maplibregl.setWorkerUrl(MAPLIBRE_WORKER_URL);
-    const map = new maplibregl.Map({ container: el.current, style: STYLE_URL, center: [127.8, 36.5], zoom: 6, minZoom: 2, maxZoom: 12, attributionControl: false });
-    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-left");
+    const ml = maplibre(); // 워커 경로는 loadMaplibre() 가 지정했다
+    const map = new ml.Map({ container: el.current, style: STYLE_URL, center: [127.8, 36.5], zoom: 6, minZoom: 2, maxZoom: 12, attributionControl: false });
+    map.addControl(new ml.NavigationControl({ showCompass: false }), "top-left");
     mapRef.current = map;
     // 배경지도 시인성(계약 v4 §E — 상황판 지도와 같은 색) · 스타일을 받지 못하면(오류 · 시간 제한) 로컬 대체 스타일로 한 번 바꾸고 알린다(R-01 — 상황판과 같은 규칙)
     const basemap = watchBasemapStyle(map, () => basemapRef.current?.(true));
@@ -51,7 +54,7 @@ export const ReplayMap = memo(function ReplayMap({ frame, onBbox, onPick, showRa
       });
       onBbox(fmtReplayBbox(q.bbox), q.clamped);
     };
-    const popup = new maplibregl.Popup({ closeButton: false, closeOnClick: false, className: "wakeline-tip", offset: 14, maxWidth: "320px" });
+    const popup = new ml.Popup({ closeButton: false, closeOnClick: false, className: "wakeline-tip", offset: 14, maxWidth: "320px" });
     let raf = 0;
     let last: maplibregl.MapMouseEvent | null = null;
     const pickAt = (pt: maplibregl.PointLike) => {
@@ -80,7 +83,7 @@ export const ReplayMap = memo(function ReplayMap({ frame, onBbox, onPick, showRa
       map.addSource("replay-query", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
       map.addLayer({ id: "replay-query", type: "line", source: "replay-query", paint: { "line-color": "#f2b33d", "line-width": 1.5, "line-dasharray": [3, 2] } });
       const styleCredits = Object.keys(map.getStyle().sources ?? {}).map((id) => (map.getSource(id) as { attribution?: string } | undefined)?.attribution);
-      map.addControl(mapAttributionControl(maplibregl, mapAttributionHtml({ extra: "Replay: 로컬 PostGIS 기록", includeMap: !basemap.failed && !styleHasBasemapCredit(styleCredits) })), "bottom-right");
+      map.addControl(mapAttributionControl(ml, mapAttributionHtml({ extra: "Replay: 로컬 PostGIS 기록", includeMap: !basemap.failed && !styleHasBasemapCredit(styleCredits) })), "bottom-right");
       emit();
       map.on("mousemove", (e: maplibregl.MapMouseEvent) => { last = e; if (!raf) raf = requestAnimationFrame(hover); });
       map.on("mouseout", () => { popup.remove(); last = null; });
