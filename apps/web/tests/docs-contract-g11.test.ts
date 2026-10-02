@@ -180,6 +180,12 @@ describe("contract v5 amendment numbers are unique", () => {
     // 같은 24차 · §G38: Redis 무응답 동안 공개 요청 제한은 api 메모리 안에서, 로그인은 곧바로 503
     expect(heading(38)).toMatch(/^## G\. 24차 개정\(/);
     expect(amendment(38)).toContain("공개 요청 제한은 api 메모리 안에서, 로그인은 곧바로 503");
-    expect(amendment(39)).toBe("");
+    // 일관성 정리(2026-10-03 · QA 2026-10 기능 개선 제안 · 사용자 결정): 25차 · §G39–§G42
+    expect(heading(39)).toMatch(/^## G\. 25차 개정\(2026-10-03 · 일관성 정리 /);
+    expect(amendment(39)).toContain("edge 가 직접 만든 오류도 problem+json");
+    expect(amendment(40)).toContain("ICAO · hex 는 ASCII 로만");
+    expect(amendment(41)).toContain("목록 크기(`limit` · `days`)는 범위 밖이면 끝값으로 잘라 쓴다");
+    expect(amendment(42)).toContain("정해진 값 중 하나를 고르는 필터는 모르는 값이면 400 `BAD_FILTER`");
+    expect(amendment(43)).toBe("");
   });
 });

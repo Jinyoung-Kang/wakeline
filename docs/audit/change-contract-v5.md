@@ -21,7 +21,7 @@ Marinesia 는 **연동하지 않는다**(키는 어느 컨테이너에도 넣지
 - A4 시험: 변환 상수 정확값, 경계(0 · 음수 · null · FL 전환 18,000 ft), 각 표시 위치의 렌더.
 
 ## B. 선박 정보·추적(레인 api-ships · web-units-ships)
-- B1 **선박 검색 API**(공개): `GET /api/v1/ships/search?q=&limit=`(limit 1–20, 기본 10). q 는 trim·대문자, 2–40자 `[A-Z0-9 .\-/]`(그 밖 400 `BAD_QUERY`).
+- B1 **선박 검색 API**(공개): `GET /api/v1/ships/search?q=&limit=`(limit 1–20, 기본 10 — 범위 밖은 끝값으로, §G41 개정). q 는 trim·대문자, 2–40자 `[A-Z0-9 .\-/]`(그 밖 400 `BAD_QUERY`).
   일치: 9자리 숫자 → MMSI 정확 일치, 3–8자리 숫자 → MMSI 앞부분, `IMO` 접두 또는 7자리 숫자 → IMO 정확, 그 밖 → 선명 앞부분·호출부호 앞부분.
   원천: 실시간 ShipStore(정적+동적) 먼저, 그다음 DB `ship` 표(실시간에 없는 선박). 응답 `{items:[{mmsi, name, call_sign, imo, ship_type, category, live, lat, lon, sog_kn, seen_at, last_position_at}], meta:{q, count}}` — 실시간이 아니면 위치·속력 null, `last_position_at` 은 DB 의 마지막 저장 시각.
   V10 마이그레이션: `ship` 의 `upper(name) text_pattern_ops` · `upper(call_sign) text_pattern_ops` · `imo` 인덱스(되돌리기 `DROP INDEX` — 머리 주석). REST 계약 검사에 표본 추가.
@@ -1165,3 +1165,29 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
     답, 기다림만 없앴다). 처음 무응답을 본 요청은 상한까지 기다린다.
   - 웹 변화 없음(429 · 503 은 이미 다룬다).
   - 회귀 막기: api `RedisPausedIT`(공개 요청 4–10 ms · `/status` 5 ms · 로그인 503 70 ms — 예전 3.0 s · 12.0 s · 6.2 s) · `RateLimiterTest` · `RedisBreakerTest`.
+
+## G. 25차 개정(2026-10-03 · 일관성 정리 — QA 2026-10 기능 개선 제안 2 · 3 · 5 · 9, 사용자 결정: 목록 크기는 끝값으로 · 모르는 필터 값은 400)
+- G39(계약 §2 의 오류 형식 · 계약 v5 §C8 · REL-20) **edge 가 직접 만든 오류도 problem+json**
+  - edge(nginx)가 상류에 닿기 전 · 닿지 못해 만든 오류 — 400(요청 해석 실패 · 경로의 NUL) · 413(본문 1 MB 넘음) · 414(URI 8 KB 넘음) · 429(IP당 요청 제한) · 502 · 503 · 504
+    (상류 없음 · 시간 초과) — 도 `application/problem+json` 이고 api 와 같은 `type`(`https://wakeline.invalid/problems/<code>`) · `title` · `status` · `detail` ·
+    `code`(상태 이름 — `BAD_REQUEST` · `CONTENT_TOO_LARGE` · `URI_TOO_LONG` · `BAD_GATEWAY` · `SERVICE_UNAVAILABLE` · `GATEWAY_TIMEOUT`, 429 는 api 의 요청 제한과 같은
+    `RATE_LIMITED`) · `request_id`(접근 로그의 rid). `instance` 는 없다(nginx 는 경로를 JSON 으로 이스케이프하지 못한다). 429 는 `Retry-After: 1`, 502–504 는 `Retry-After: 10`.
+    예전: nginx 기본 HTML(Retry-After 없음). 상태 코드는 그대로이고 api · web 이 만든 오류는 바뀌지 않는다(가로채지 않는다).
+  - 웹은 이미 problem+json 의 `code` · `request_id` 와 `Retry-After` 를 읽는다(`lib/api.ts`) — 화면 변화는 edge 429 · 502 에서도 요청 id 가 보이는 것뿐.
+  - 회귀 막기: `infra/tests/edge_test.sh`(실제 응답 7가지) · `infra/tests/test_edge_policy.py`(오류 페이지 · 두 server · 마운트).
+- G40(계약 §2 의 공항 기상 · 항공기 hex · QA 2026-10 기능 개선 제안 5) **ICAO · hex 는 ASCII 로만**
+  - `/airports/{icao}/wx` 의 ICAO 는 ASCII 영숫자 4자(대소문자 무관 — 대문자로 찾는다), hex 를 받는 경로는 ASCII 16진 6자. 대 · 소문자를 바꾸기 **전에** 검사한다 —
+    예전에는 바꾼 뒤 검사해 `rksı`(점 없는 ı — 대문자가 I)가 RKSI 로 찾아졌다. 이제 400 `BAD_ICAO`(hex 는 `BAD_HEX`). ASCII 값은 전과 같다.
+  - 회귀 막기: api `NonAsciiCodesIT` · `ParamsTest.asciiCodesAreCheckedBeforeTheirCaseIsChanged`.
+- G41(계약 v5 §B1 의 선박 검색 · §G36 의 알림 이력 · QA 2026-10 기능 개선 제안 2) **목록 크기(`limit` · `days`)는 범위 밖이면 끝값으로 잘라 쓴다 — 모든 경로**
+  - `/ships/search?limit`(1–20, 기본 10)도 다른 목록(`/alerts/history` · `/ops/runs` · `/ops/audit` · `/ops/logs` 의 `limit`, `/ops/quality` 의 `days`)처럼 범위 밖이면
+    끝값(0 · 음수 → 1, 21 이상 → 20)으로 쓴다. 예전: §B1 대로 400 `BAD_LIMIT`(이 경로만). 정수가 아니면 전과 같이 400. 지금 되던 요청은 모두 그대로 된다.
+  - 회귀 막기: api `FilterRulesIT.aListSizeOutsideItsRangeIsClampedNot400` · `ShipControllerTest.search_validatesQueryAndLimit` · `ShipsIT`.
+- G42(계약 §2 의 알림 · 통계 · 항공기 목록 · QA 2026-10 기능 개선 제안 3) **정해진 값 중 하나를 고르는 필터는 모르는 값이면 400 `BAD_FILTER`**
+  - `/alerts?kind`(observed · predicted — 없으면 둘 다) · `/stats/sigmet?group`(fir · hazard, 기본 fir) · `/aircraft?detail`(lite · full, 기본 lite). 맞는 값은 대소문자를
+    가리지 않는다. 모르는 값은 400 `BAD_FILTER`(detail `<이름> must be one of …`) — 예전에는 경로마다 달랐다: `kind=bogus` → 관측 + 예측 **모두**(오타가 예측 알림을 섞었다),
+    `group=bogus` → fir, `detail=bogus` → lite. 운영 경로의 같은 종류(`resolved` · `level` · `stream`)는 이미 400 이다.
+  - `/sigmets?hazard` 는 **그대로**: 위험 종류는 공급자가 주는 글자(열린 값 — `schemas/sigmet.v1.json` 의 `hazard` 는 문자열)라 '모르는 값'이 없다 — 일치하는 경보가
+    없으면 0건(대소문자 무관).
+  - 웹은 `group=fir|hazard` 만 보낸다 — 화면 변화 없음.
+  - 회귀 막기: api `FilterRulesIT.anUnknownValueForAChoiceFilterIs400` · `ParamsTest.aChoiceFilterAcceptsItsValuesInAnyCaseAndRejectsOthers`.
