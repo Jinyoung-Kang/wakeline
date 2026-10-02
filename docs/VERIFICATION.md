@@ -1202,6 +1202,11 @@
   안에서도 입력 사이가 150 ms 를 넘어, 멈춤이 움직임 수보다 많았다. 이 Mac 에서 SwiftShader 로 재현했다(요청 10건 > 9, 그때 150 ms 이상 멈춤 10번).
   → 상한을 잰 입력 간격의 멈춤 수 + 2 로 바꿨다. GPU · SwiftShader 각 3번 통과, debounce 를 0 으로 바꾼 변이 웹 이미지(따로 태그, 격리 스택에만)에서는 3번 모두 실패
   (요청 26–30건 > 상한 4–6) — 회귀는 그대로 잡는다. debounce 의 정확한 규칙은 가짜 타이머 단위 시험(`tests/replay-slider.test.ts`)이 고정한다. 격리 스택 e2e 43 통과.
+- **api — 느린 러너에서 읽기 풀을 다 잡지 못한 시험**(main `4545229a` CI, 앞 실행에서는 통과): `StoredStaticIT` 의 '읽기 풀이 바닥나면 연결 대기 2 s 에 끊긴다' 가
+  준비 단계(연결 4개를 모두 잡기)에서 시간 초과했다. 읽기 풀은 최소 유휴 0 이고 Hikari 는 새 연결을 하나씩 맺는다 — 거의 빈 풀을 한꺼번에 잡으면 연결 넷을 차례로 맺는 일이
+  연결 대기 2 s 안에 끝나야 하는데, 러너에서 마지막 잡이가 끊겼다(`total=3, active=3`). 읽기 풀 연결의 로그인만 1 s 늦추는 임시 PostgreSQL 18 login 이벤트 트리거로
+  같은 실패를 재현했다(`total=2, active=2`). → 잡기 전에 풀을 크기만큼 채운다(지표 `hikaricp.connections`). 늦춘 로그인에서도 잡기 전 total 4 · 2 ms 뒤 모두 사용 중,
+  트리거 없이 3번 통과. 제품 코드는 그대로다(앞 실행에서는 앞선 시험이 맺어 둔 연결이 남아 있어 드러나지 않았다).
 - 브랜치 확인: collector pytest 1,923 통과 · 23 건너뜀 · ruff · ruff format 통과 · 인프라 정책 unittest 159 · `RestSamplesIT` · rest_contract_check 36 · edge 시험 35 · trivy `wakeline-edge:local` PASS.
 
 ## 자동 검사 현황(2026-10-02 15:5x KST, QA 2026-10 브랜치 `qa/2026-10` — #103 뒤, 깨끗한 `git archive` 내보내기 · 격리 스택)
