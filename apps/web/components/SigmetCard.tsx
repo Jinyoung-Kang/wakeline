@@ -1,4 +1,6 @@
 "use client";
+import { useRef } from "react";
+import { useEscapeClose } from "@/lib/use-escape-close";
 import { sigmetInside } from "@/lib/endpoints/weather";
 import { useApiResource } from "@/lib/use-api-resource";
 import { aircraftStates, useServerData } from "@/lib/store";
@@ -22,6 +24,8 @@ export function SigmetCard({ id }: { id: string }) {
   // SIGMET 마다의 결과(lib/use-api-resource) — 받는 중 · 실패 · 목록 없음은 모름(—): 0 대로 단정하지 않는다
   const inside = useApiResource(id, (signal) => sigmetInside(id, { signal }));
   const selectSigmet = useUi((s) => s.selectSigmet);
+  const root = useRef<HTMLDivElement>(null);
+  useEscapeClose(true, () => selectSigmet(null), { panel: root }); // Esc 로 닫기(lib/escape-stack)
   const now = useServerNow(30_000);
   if (!f) return <div className="p-3 text-[11px] text-fg-3">경보를 찾을 수 없습니다(만료되었거나 목록에서 빠짐).</div>;
   const p = f.properties;
@@ -39,7 +43,7 @@ export function SigmetCard({ id }: { id: string }) {
     ["판정", p.excluded_reason ? `제외 (${p.excluded_reason})` : pending ? "발효 전 — 발효 시각부터 폴리곤·고도대 검사" : "폴리곤·고도대·유효시간 검사"],
   ];
   return (
-    <div className="flex h-full flex-col" data-testid="sigmet-card">
+    <div ref={root} className="flex h-full flex-col" data-testid="sigmet-card">
       <div className="row"><span className="label">SIGMET</span><button className="btn" onClick={() => selectSigmet(null)}>닫기</button></div>
       <div className="min-h-0 flex-1 overflow-y-auto px-2 py-1 text-[12px]">
         <div className="mb-1 flex items-center gap-2">

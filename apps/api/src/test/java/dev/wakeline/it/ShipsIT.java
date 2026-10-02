@@ -265,7 +265,7 @@ class ShipsIT extends IntegrationTest {
 
         assertProblem(get("/api/v1/ships/search?q=a"), 400, "BAD_QUERY", "/api/v1/ships/search");
         assertProblem(get("/api/v1/ships/search?q=it%25"), 400, "BAD_QUERY", "/api/v1/ships/search");
-        assertProblem(get("/api/v1/ships/search?q=it%20search&limit=21"), 400, "BAD_LIMIT", "/api/v1/ships/search");
+        assertThat(get("/api/v1/ships/search?q=it%20search&limit=21").status()).as("범위 밖 limit 은 잘라 쓴다(계약 v5 §G41 — 예전 400 BAD_LIMIT)").isEqualTo(200);
     }
 
     // ---------- WS 격자 → 점(계약 v2 §B3) ----------

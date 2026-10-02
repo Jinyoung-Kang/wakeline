@@ -444,7 +444,8 @@ describe("RadarTimeline: KMA chosen but unavailable says why (R-11)", () => {
     await mountTimeline();
     const btn = byTestId("radar-play");
     expect(btn?.textContent).toBe("애니메이션 ▶");
-    expect(btn?.getAttribute("aria-label")).toBe("레이더 애니메이션 재생");
+    expect(btn?.getAttribute("aria-label")).toBe("레이더 애니메이션"); // 토글 — 이름 고정, 상태는 aria-pressed(QA 2026-10 화면 개선 제안 2)
+    expect(btn?.getAttribute("aria-pressed")).toBe("false");
     expect(dom.container.textContent).not.toMatch(/(^|[^이])재생/);
   });
 

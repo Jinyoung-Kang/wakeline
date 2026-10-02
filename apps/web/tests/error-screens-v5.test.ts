@@ -5,7 +5,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { installMiniDom, MiniElement } from "./helpers/mini-dom";
+import { installMiniDom, MiniElement, visibleText } from "./helpers/mini-dom";
 import { domUtcLeaks } from "./helpers/kst-only";
 import { ApiError } from "@/lib/api";
 
@@ -211,7 +211,7 @@ describe("v5-C8 screens show the request id of a failed call", () => {
     await React.act(async () => { propsOf(byTestId("ops-tab-settings")!).onClick({}); });
     const input = find((e) => e.tagName === "INPUT" && e.getAttribute("aria-label") === "region_poll_s 값")!;
     await React.act(async () => { propsOf(input).onChange({ target: { value: "12" } }); });
-    const save = find((e) => e.tagName === "BUTTON" && e.textContent === "save")!;
+    const save = find((e) => e.tagName === "BUTTON" && visibleText(e) === "save")!;
     await React.act(async () => { await propsOf(save).onClick({}); });
     await settle();
     const e = byTestId("settings-error")!;

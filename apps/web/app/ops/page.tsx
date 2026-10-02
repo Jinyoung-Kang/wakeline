@@ -280,8 +280,9 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
               <td className={NUM_CELL} title="한도 — = 아직 보고되지 않음(성공한 수집이 없음) · ∞ = 한도 0(설정상 무제한)">{String(p.budget_used ?? "—")} / {fmtBudgetLimit(p.budget_limit)}</td><td className={NUM_CELL}>{String(p.budget_remaining ?? "—")}</td>
               <ProviderErrorCell p={p} onOpen={(target) => showResolve(String(p.name), target)} opener={resolveOpener(String(p.name))} />
               <td className="whitespace-nowrap" title={cell.title} data-testid="provider-switch"><span className="mono">{cell.source}</span> <span className={`badge ${cell.tone}`}>{cell.mirror}</span>{" "}
-                {off ? <button className="btn" disabled={busy} aria-busy={busy || undefined} onClick={() => toggle(String(p.name), "enable")}>enable</button>
-                  : <button className="btn" disabled={busy} aria-busy={busy || undefined} onClick={() => toggle(String(p.name), "disable")}>disable</button>}</td>
+                {/* 같은 이름 단추가 공급자 수만큼 — 화면 읽기 단추 목록에서 구분되게 대상 이름을 붙인다(QA 2026-10 화면 개선 제안 3, 보이는 글자는 그대로) */}
+                {off ? <button className="btn" disabled={busy} aria-busy={busy || undefined} onClick={() => toggle(String(p.name), "enable")}><span lang="en">enable</span><span className="sr-only">: {String(p.name)}</span></button>
+                  : <button className="btn" disabled={busy} aria-busy={busy || undefined} onClick={() => toggle(String(p.name), "disable")}><span lang="en">disable</span><span className="sr-only">: {String(p.name)}</span></button>}</td>
             </tr>
             {/* 기상청 내려받기 '파일 없음' 연속(운영 로그 2026-09-30) — 호출은 성공해도 새 프레임이 오지 않는 까닭. 수집기는 그동안 last success 를 갱신하지 않는다 */}
             {miss ? <tr data-testid="provider-missing"><td colSpan={9} className="text-[11px] text-warn" title={miss.title}>
@@ -455,7 +456,7 @@ function SettingsForm({ items, msg, setMsg, onSaved, onAuthMiss }: {
             </td>
             <td className="mono">{s.version}</td><td className="text-fg-3"><span className="mono">{s.updated_by ?? "—"}</span> <KstTime v={s.updated_at} variant="cell" /></td>
             <td><button className="btn" onClick={() => save(s.key)} disabled={ed === undefined || conflict || busy.has(s.key)} aria-busy={busy.has(s.key) || undefined}
-              title={conflict ? "서버 값이 바뀜 — 새 값 보기 또는 덮어쓰기를 먼저 고르세요" : undefined}><span lang="en">save</span></button></td></tr>;
+              title={conflict ? "서버 값이 바뀜 — 새 값 보기 또는 덮어쓰기를 먼저 고르세요" : undefined}><span lang="en">save</span><span className="sr-only">: {s.key}</span></button></td></tr>;
         })}</tbody></table>
     </div>
   );

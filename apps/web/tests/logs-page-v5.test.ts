@@ -3,7 +3,7 @@
  * 목록 · 자동 새로 고침(새 항목은 단추로만) · 키보드 · 상세 · 복사 · 내려받기 · 묶음 · AIS 수신 공백 탭.
  */
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { installMiniDom, MiniElement } from "./helpers/mini-dom";
+import { installMiniDom, MiniElement, visibleText } from "./helpers/mini-dom";
 import { domUtcLeaks } from "./helpers/kst-only";
 
 const dom = installMiniDom();
@@ -61,7 +61,7 @@ const findAll = (pred: (e: MiniElement) => boolean, from: MiniElement = dom.cont
 };
 const byTestId = (id: string, from?: MiniElement) => find((e) => e.getAttribute?.("data-testid") === id, from);
 const allByTestId = (id: string) => findAll((e) => e.getAttribute?.("data-testid") === id);
-const button = (text: string, from?: MiniElement) => find((e) => e.tagName === "BUTTON" && e.textContent.trim() === text, from);
+const button = (text: string, from?: MiniElement) => find((e) => e.tagName === "BUTTON" && visibleText(e).trim() === text, from);
 const propsOf = (e: MiniElement): Record<string, (...a: unknown[]) => unknown> => {
   const k = Object.keys(e).find((x) => x.startsWith("__reactProps$"));
   return (e as unknown as Record<string, Record<string, (...a: unknown[]) => unknown>>)[k!];

@@ -5,7 +5,7 @@
  * 쓰기는 CSRF 헤더 · 세션 만료 처리 · 요청 id 를 붙인 오류, 화면은 201/204 뒤에만 바뀌고 영향받는 목록(providers · runs · audit)을 다시 불러온다.
  */
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { installMiniDom, MiniElement } from "./helpers/mini-dom";
+import { installMiniDom, MiniElement, visibleText } from "./helpers/mini-dom";
 import { utcLeaks } from "./helpers/kst-only";
 
 const dom = installMiniDom();
@@ -75,7 +75,7 @@ const find = (pred: (e: MiniElement) => boolean, from: MiniElement = dom.contain
   return null;
 };
 const byTestId = (id: string, from?: MiniElement) => find((e) => e.getAttribute?.("data-testid") === id, from);
-const button = (text: string, from?: MiniElement) => find((e) => e.tagName === "BUTTON" && e.textContent.trim() === text, from);
+const button = (text: string, from?: MiniElement) => find((e) => e.tagName === "BUTTON" && visibleText(e).trim() === text, from);
 const propsOf = (e: MiniElement): Record<string, (...a: unknown[]) => unknown> => {
   const k = Object.keys(e).find((x) => x.startsWith("__reactProps$"));
   return (e as unknown as Record<string, Record<string, (...a: unknown[]) => unknown>>)[k!];

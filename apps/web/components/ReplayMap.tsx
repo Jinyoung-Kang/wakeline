@@ -138,5 +138,5 @@ export const ReplayMap = memo(function ReplayMap({ frame, onBbox, onPick, showRa
     if (map.getSource("aircraft")) apply(); else map.once("load", apply);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [radarKey, showRadar]);
-  return <div ref={el} className="h-full w-full" data-testid="replay-map" />;
+  return <div ref={el} className="h-full w-full" data-testid="replay-map" data-escape-neutral="" />;
 });

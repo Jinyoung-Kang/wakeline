@@ -44,6 +44,8 @@ services:
       - ./edge/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./edge/proxy_headers.conf:/etc/nginx/proxy_headers.conf:ro
       - ./edge/security_headers.conf:/etc/nginx/security_headers.conf:ro
+      - ./edge/problem.conf:/etc/nginx/problem.conf:ro                # edge 가 만든 오류의 problem+json(problem_pages.conf)
+      - ./edge/problem_pages.conf:/etc/nginx/problem_pages.conf:ro
     depends_on:
       web: { condition: service_healthy }
       api: { condition: service_healthy }

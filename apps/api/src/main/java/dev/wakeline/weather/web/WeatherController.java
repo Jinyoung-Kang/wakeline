@@ -98,7 +98,7 @@ public class WeatherController {
 
     @GetMapping("/alerts")
     public ResponseEntity<Map<String, Object>> alerts(@RequestParam(required = false) String kind, HttpServletRequest req) {
-        List<Alert> list = engine.activeAlerts(kind);
+        List<Alert> list = engine.activeAlerts(Params.choice("kind", kind, null, "observed", "predicted")); // 없으면 둘 다(§G42)
         return ResponseEntity.ok().cacheControl(CacheControl.maxAge(5, TimeUnit.SECONDS).cachePublic()).body(Map.of("items", list, "meta", Meta.of(req, "engine", Instant.now(), 60)));
     }
 
@@ -271,8 +271,7 @@ public class WeatherController {
 
     @GetMapping("/airports/{icao}/wx")
     public ResponseEntity<Map<String, Object>> airportWx(@PathVariable String icao, HttpServletRequest req) {
-        String code = icao.trim().toUpperCase();
-        if (!code.matches("^[A-Z0-9]{4}$")) throw Problem.badRequest("BAD_ICAO", "icao must be 4 chars");
+        String code = Params.icao(icao);
         Map<String, Object> wx = airports.wx(code);
         if (wx == null) throw Problem.notFound("airport not watched: " + code);
         Object ft = wx.get("fetched_at");

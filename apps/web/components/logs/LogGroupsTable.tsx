@@ -89,8 +89,9 @@ export function LogGroupsTable({ groups, onFilterFp, onCopyGroup, onChanged, onA
                     }}>{res ? "되돌리기" : "해결 처리"}</button>
                 </td>
                 <td className="whitespace-nowrap">
-                  <button type="button" className="btn mr-1" onClick={() => onFilterFp(g.fp)}>목록으로</button>
-                  <button type="button" className="btn" onClick={() => onCopyGroup(g)}>묶음 복사</button>
+                  {/* 묶음마다 같은 이름 — 화면 읽기 단추 목록에서 구분되게 지문을 붙인다(해결 단추와 같은 방식, QA 2026-10 화면 개선 제안 3) */}
+                  <button type="button" className="btn mr-1" onClick={() => onFilterFp(g.fp)}>목록으로<span className="sr-only">: 지문 {g.fp}</span></button>
+                  <button type="button" className="btn" onClick={() => onCopyGroup(g)}>묶음 복사<span className="sr-only">: 지문 {g.fp}</span></button>
                 </td>
               </tr>
               {open?.at === g.fp ? <tr><td colSpan={COLS}>{panel(g.fp)}</td></tr> : null}

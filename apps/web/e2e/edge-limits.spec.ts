@@ -2,7 +2,7 @@ import { expect, test, type APIRequestContext } from "@playwright/test";
 
 /*
  * API 를 직접 부르는 시험 — playwright.config 의 "edge-limits" 프로젝트로, 화면 시험(app)이 모두 끝난 뒤에 돈다.
- * 화면 시험의 두 작업자가 같은 IP 로 페이지를 여는 동안에는 edge 의 IP당 요청 제한(10 r/s · burst)이 차서 nginx 가 HTML 429 를 준다.
+ * 화면 시험의 두 작업자가 같은 IP 로 페이지를 여는 동안에는 edge 의 IP당 요청 제한(10 r/s · burst)이 차서 edge 가 429(problem+json · Retry-After 1)를 준다.
  */
 
 test.describe.configure({ mode: "serial" }); // 이 파일 안에서도 한 번에 하나씩

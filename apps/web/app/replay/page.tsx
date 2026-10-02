@@ -1,4 +1,5 @@
 "use client";
+import { useEscapeClose } from "@/lib/use-escape-close";
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { replayFrame } from "@/lib/endpoints/replay";
@@ -75,6 +76,8 @@ export default function ReplayPage() {
   const rescue = useFocusRescue();
   const onPick = useCallback((p: ReplayPick) => { pickOpener.current = p && typeof document !== "undefined" ? document.activeElement : null; setPick(p); }, []);
   const closePick = () => { setPick(null); rescue(() => [pickOpener.current, listToggle.current]); };
+  const inspector = useRef<HTMLDivElement>(null);
+  useEscapeClose(pick != null, closePick, { panel: inspector }); // Esc 로 상세 닫기(lib/escape-stack) — 초점은 closePick 이 연 자리로
   const ac = pick?.kind === "aircraft" && frame ? frame.aircraft.find((a) => a.hex === pick.hex) ?? null : null;
   const sg = pick?.kind === "sigmet" && frame ? frame.sigmets.find((s) => s.id === pick.id) ?? null : null;
   return (
@@ -89,7 +92,8 @@ export default function ReplayPage() {
       <div className="shrink-0 border-b border-line bg-bg-1 text-[11px]">
         <div className="flex min-h-9 flex-wrap items-center gap-x-3 gap-y-1 px-3 py-1 whitespace-nowrap" data-testid="replay-controls">
           <span className="label">Replay</span>
-          <button className="btn min-w-[4.5em]" onClick={() => setPlaying(!playing)} aria-pressed={playing}>{playing ? "정지" : "재생"}</button>
+          {/* 행동 단추: 이름이 지금 할 일(재생 · 정지)이라 aria-pressed 는 쓰지 않는다 — 둘을 함께 쓰면 "정지, 눌림"으로 읽혔다(QA 2026-10 화면 개선 제안 2) */}
+          <button className="btn min-w-[4.5em]" onClick={() => setPlaying(!playing)}>{playing ? "정지" : "재생"}</button>
           <div className="flex gap-1" role="group" aria-label="재생 속도">
             {SPEEDS.map((s) => <button key={s} className="btn" aria-pressed={speed === s} onClick={() => setSpeed(s)}>{s}×</button>)}
           </div>
@@ -131,7 +135,7 @@ export default function ReplayPage() {
           </div>
         ) : null}
         {pick ? (
-          <div className="panel absolute top-3 right-3 z-10 w-[320px] max-w-[calc(100%-1.5rem)] text-[12px]" data-testid="replay-inspector" role="region" aria-label="재생 항목 상세">
+          <div ref={inspector} className="panel absolute top-3 right-3 z-10 w-[320px] max-w-[calc(100%-1.5rem)] text-[12px]" data-testid="replay-inspector" role="region" aria-label="재생 항목 상세">
             <div className="row">
               <span className="label">{pick.kind === "aircraft" ? "Aircraft · 기록" : "SIGMET · 그 시각"}</span>
               <button className="btn" onClick={closePick}>닫기</button>

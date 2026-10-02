@@ -132,3 +132,13 @@ export function installMiniDom(): { document: MiniDocument; container: MiniEleme
     },
   };
 }
+
+/**
+ * 보이는 글자: 화면 읽기 전용(sr-only) 조각을 뺀 textContent — 단추를 보이는 이름으로 찾는다(같은 이름 단추에 대상을 화면 읽기용으로 붙인 곳:
+ * 운영 save · enable · disable, 로그 묶음 '목록으로' · '묶음 복사' — QA 2026-10 화면 개선 제안 3).
+ */
+export function visibleText(n: MiniNode): string {
+  if (n instanceof MiniElement && ` ${n.className || n.getAttribute("class") || ""} `.includes(" sr-only ")) return "";
+  if (n.nodeType === 3) return n.textContent ?? "";
+  return n.childNodes.map(visibleText).join("");
+}
