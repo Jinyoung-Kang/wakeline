@@ -1,0 +1,11 @@
+# 화면 성능 과제(QA-402/403) 측정 전용 덧붙임: 격리 스택 A(wakeline-e2e)의 web 만 개선 빌드(wakeline-web:perf)로 바꾼다.
+# 나머지 서비스는 기준 빌드(:perf-base) — compose.yml 의 :local(운영 스택 태그)을 쓰지 않는다.
+#   docker build -t wakeline-web:perf apps/web
+#   <격리 env> docker compose -p wakeline-e2e -f infra/compose.yml -f tools/qa/compose.perf.yml --env-file .env up -d --no-build --no-deps --wait web
+services:
+  web: { image: "wakeline-web:perf" }
+  migrate: { image: "wakeline-api:perf-base" }
+  api: { image: "wakeline-api:perf-base" }
+  collector: { image: "wakeline-collector:perf-base" }
+  ais: { image: "wakeline-collector:perf-base" }
+  db: { image: "wakeline-db:perf-base" }
