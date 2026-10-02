@@ -22,7 +22,7 @@ pid /tmp/nginx.pid;
 events {}
 http {
   client_body_temp_path /tmp/c; proxy_temp_path /tmp/p; fastcgi_temp_path /tmp/f; uwsgi_temp_path /tmp/u; scgi_temp_path /tmp/s;
-  server { listen 8000; location / { default_type application/json; return 200 '{"host":"$http_host","xff":"$http_x_forwarded_for","xfh":"$http_x_forwarded_host","rid":"$http_x_request_id","uri":"$request_uri"}'; } }
+  server { listen 8000; location = /api/v1/upstream-404 { default_type application/problem+json; return 404 '{"code":"NOT_FOUND","from":"api"}'; } location / { default_type application/json; return 200 '{"host":"$http_host","xff":"$http_x_forwarded_for","xfh":"$http_x_forwarded_host","rid":"$http_x_request_id","uri":"$request_uri"}'; } }
   server { listen 3000; location / { default_type text/plain; return 200 'web'; } }
 }
 CONF
@@ -38,7 +38,9 @@ HARDEN=(--user 101:101 --read-only --tmpfs /tmp --cap-drop ALL --security-opt no
   -e NGINX_ENTRYPOINT_QUIET_LOGS=1
   -v "$ROOT/infra/edge/nginx.conf:/etc/nginx/nginx.conf:ro"
   -v "$ROOT/infra/edge/proxy_headers.conf:/etc/nginx/proxy_headers.conf:ro"
-  -v "$ROOT/infra/edge/security_headers.conf:/etc/nginx/security_headers.conf:ro")
+  -v "$ROOT/infra/edge/security_headers.conf:/etc/nginx/security_headers.conf:ro"
+  -v "$ROOT/infra/edge/problem.conf:/etc/nginx/problem.conf:ro"
+  -v "$ROOT/infra/edge/problem_pages.conf:/etc/nginx/problem_pages.conf:ro")
 
 echo "image: $IMAGE"
 echo "[nginx -t (비root·read-only)]"
@@ -94,6 +96,29 @@ hdr="$(curl -s -D - -o /dev/null -H "Host: localhost:8700" "http://127.0.0.1:$PO
 grep -qi "^cache-control: public, max-age=31536000, immutable" <<<"$hdr" && grep -qi "^x-frame-options: DENY" <<<"$hdr"; check "/maplibre 캐시 + 보안 헤더" $? "$hdr"
 sleep 7   # 화면 양동이(10 r/s · burst 60)가 비워진 뒤 다음 시험
 
+echo "[edge 가 만든 /api 오류 — api 와 같은 problem+json(type · title · status · detail · code · request_id), 상류가 만든 오류는 그대로]"
+# problem <설명> <기대 상태> <기대 code> <Retry-After 필요(1|0)> <curl 인자…>
+problem() {
+  local what="$1" want="$2" wcode="$3" ra="$4"; shift 4
+  local out hdr body st
+  out="$(curl -s -D - "$@")"; hdr="${out%%$'\r\n\r\n'*}"; body="${out#*$'\r\n\r\n'}"
+  st="$(head -1 <<<"$hdr" | awk '{print $2}')"
+  [ "$st" = "$want" ] && grep -qi '^content-type: application/problem+json' <<<"$hdr" \
+    && grep -q "\"status\":$want" <<<"$body" && grep -q "\"code\":\"$wcode\"" <<<"$body" \
+    && grep -Eq '"request_id":"[0-9a-f]{32}"' <<<"$body" && grep -q '"type":"https://wakeline.invalid/problems/' <<<"$body" \
+    && grep -qi '^x-content-type-options: nosniff' <<<"$hdr" \
+    && { [ "$ra" = 0 ] || grep -qi '^retry-after: [0-9]' <<<"$hdr"; }
+  check "$what → $want problem+json $wcode" $? "$st $(tr -d '\r' <<<"$hdr" | grep -i '^content-type\|^retry-after' | tr '\n' ' ')$(head -c 200 <<<"$body")"
+}
+problem "/api 본문 1 MB 넘음" 413 CONTENT_TOO_LARGE 0 -H "Host: localhost:8700" -H "Content-Type: application/json" --data-binary @<(head -c 1100000 /dev/zero | tr '\0' 'a') "http://127.0.0.1:$PORT/api/v1/client-errors"
+problem "/api URI 8 KB 넘음" 414 URI_TOO_LONG 0 -H "Host: localhost:8700" "http://127.0.0.1:$PORT/api/v1/status?x=$(head -c 9000 /dev/zero | tr '\0' 'a')"
+problem "/api 경로에 NUL" 400 BAD_REQUEST 0 -H "Host: localhost:8700" "http://127.0.0.1:$PORT/api/v1/%00"
+seq 1 80 | xargs -P 20 -I{} curl -s -o /dev/null -H "Host: localhost:8700" "http://127.0.0.1:$PORT/api/v1/status"  # 동시에 — 10 r/s · burst 30 을 넘긴다
+problem "/api 양동이 넘침" 429 RATE_LIMITED 1 -H "Host: localhost:8700" "http://127.0.0.1:$PORT/api/v1/status"
+sleep 7
+body="$(curl -s -H "Host: localhost:8700" "http://127.0.0.1:$PORT/api/v1/upstream-404")"
+grep -q '"from":"api"' <<<"$body"; check "api 가 만든 오류는 바꾸지 않고 그대로" $? "$body"
+
 echo "[망 분리 — internal 망만 있는 상류는 기본 경로(인터넷)가 없고, 게시 포트는 public 망으로 닿는다]"
 route="$(docker exec "$STUB" awk '$2=="00000000"{print $1}' /proc/net/route)"
 [ -z "$route" ]; check "internal 망의 상류: 기본 경로 없음" $? "$route"
@@ -104,6 +129,15 @@ st="$(docker exec "$EDGE" sh -c 'for p in $(pgrep nginx); do awk "/^(Uid|CapEff|
 ! grep -vqE '^101 0000000000000000 1 $' <<<"$st"; check "모든 nginx 프로세스 uid=101 CapEff=0 NoNewPrivs=1" $? "$st"
 out="$(docker exec "$EDGE" sh -c 'touch /etc/nginx/x 2>&1 || true')"; grep -q "Read-only" <<<"$out"; check "root FS read-only" $? "$out"
 out="$(docker exec "$EDGE" wget -qO- http://127.0.0.1:8700/healthz 2>&1 || true)"; grep -q '"host":"127.0.0.1:8700"' <<<"$out"; check "compose 헬스체크(wget 127.0.0.1:8700/healthz)" $? "$out"
+
+echo "[상류가 내려감 — edge 가 만든 502 도 problem+json + Retry-After]"
+docker stop "$STUB" >/dev/null
+# 멈춘 상류의 주소로 연결하면 망에 따라 곧바로 거절(502)이거나 연결 시간 초과(5 s → 504)다 — 어느 쪽이든 problem+json
+for path in /api/v1/status /healthz; do
+  st="$(code -H "Host: localhost:8700" "http://127.0.0.1:$PORT$path")"
+  case "$st" in 502) problem "$path 상류 없음" 502 BAD_GATEWAY 1 -H "Host: localhost:8700" "http://127.0.0.1:$PORT$path" ;;
+                *) problem "$path 상류 없음" 504 GATEWAY_TIMEOUT 1 -H "Host: localhost:8700" "http://127.0.0.1:$PORT$path" ;; esac
+done
 
 echo "edge test: $passes passed, $fails failed"
 [ "$fails" -eq 0 ]

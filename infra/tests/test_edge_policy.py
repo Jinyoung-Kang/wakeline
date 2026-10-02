@@ -67,5 +67,48 @@ class StaticAssetsTest(unittest.TestCase):
                 self.assertIn("include /etc/nginx/security_headers.conf;", m.group(1), "add_header 상속 함정")
 
 
+
+class EdgeProblemJsonTest(unittest.TestCase):
+    """edge 가 직접 만든 오류(400 · 413 · 414 · 429 · 502 · 503 · 504)도 api 와 같은 problem+json — QA 2026-10 기능 개선 제안 9 (edge_test.sh 가 실제 응답을 본다)."""
+
+    def setUp(self):
+        self.conf = (EDGE / "nginx.conf").read_text(encoding="utf-8")
+
+    def test_every_problem_location_uses_the_shared_snippet_and_returns_its_own_status(self):
+        pages = (EDGE / "problem_pages.conf").read_text(encoding="utf-8")
+        locs = re.findall(r"location = /\.edge-problem/(\d{3}) \{(.*?)\}\s*$", pages, re.M)
+        self.assertEqual(sorted(code for code, _ in locs), ["400", "413", "414", "429", "502", "503", "504"])
+        for code, body in locs:
+            with self.subTest(status=code):
+                self.assertIn("internal;", body, "밖에서 이 URI 로 부를 수 없다")
+                self.assertIn("include /etc/nginx/problem.conf;", body)
+                self.assertIn(f"return {code} '", body)
+                self.assertIn(f'"status":{code},', body)
+                self.assertIn('"request_id":"$request_id"', body)
+
+    def test_api_location_maps_its_errors_to_problem_json(self):
+        m = re.search(r"location /api/ \{(.*?)\n        \}", self.conf, re.S)
+        self.assertIsNotNone(m)
+        for code in ("400", "413", "414", "429", "502", "503", "504"):
+            self.assertIn(f"error_page {code} /.edge-problem/{code};", m.group(1))
+        self.assertNotIn("proxy_intercept_errors on", self.conf, "api 가 만든 오류는 가로채지 않는다")
+
+    def test_snippet_keeps_the_security_headers_and_compose_mounts_it(self):
+        snippet = (EDGE / "problem.conf").read_text(encoding="utf-8")
+        self.assertIn("default_type application/problem+json;", snippet)
+        self.assertIn("include /etc/nginx/security_headers.conf;", snippet, "add_header 상속 함정")
+        compose = (EDGE.parent / "compose.yml").read_text(encoding="utf-8")
+        self.assertIn("./edge/problem.conf:/etc/nginx/problem.conf:ro", compose)
+        self.assertIn("./edge/problem_pages.conf:/etc/nginx/problem_pages.conf:ro", compose)
+
+    def test_both_servers_send_parse_errors_to_problem_json(self):
+        """요청 줄을 해석하다 난 400 · 414 는 Host 를 읽기 전이면 기본 서버(421)로 간다 — 두 server 모두 같은 error_page 와 include."""
+        servers = re.findall(r"\n    server \{(.*?)\n    \}", self.conf, re.S)
+        self.assertEqual(len(servers), 2)
+        for body in servers:
+            for line in ("error_page 400 /.edge-problem/400;", "error_page 414 /.edge-problem/414;", "include /etc/nginx/problem_pages.conf;"):
+                self.assertIn(line, body)
+
+
 if __name__ == "__main__":
     unittest.main()
