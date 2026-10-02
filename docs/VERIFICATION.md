@@ -1150,21 +1150,37 @@
 - **E2E 를 돌리지 않은 레인의 병합**: 운영 화면 신호 병합(`69512105`)이 수집기 묶음에도 `loop_lag_max_s` 행을 더해 `ops-screens` E2E 가 같은 키 2행을 만나 실패(43 중 1) — 시험을 AIS 묶음으로 좁혔다(`953fceeb`, 제품은 의도대로).
 - **`make e2e` 가 운영 스택의 `:local` 이미지 태그를 덮었다**(같은 태그를 쓴다). 돌던 컨테이너는 영향 없었고, main 코드로 `:local` 을 다시 만들어 `:mainsafe` 로 고정했다. 이후 E2E 는 끝나면 `:mainsafe` → `:local` 로 되돌린다(최종 검증의 세 번도 그렇게 했다 — 브랜치 이미지는 `:cto`).
 
-## 자동 검사 현황(2026-10-02 00:0x KST, CTO 리뷰 2026-10 브랜치 `review/cto-2026-10` — #97–#102 뒤, 깨끗한 `git archive` 내보내기 · 격리 스택)
+## #103 QA 2026-10 — 실무 출시 기준 검증 · 결함 32건(29건 수정) — 계획 [QA-PLAN](qa/2026-10/QA-PLAN.md) · 결함 [DEFECTS](qa/2026-10/DEFECTS.md) · 보고 [REPORT](qa/2026-10/REPORT.md)
+- **범위 · 환경** 보안 · 기능 · 화면 · 접근성(WCAG 2.1 AA) · 신뢰성 · 성능 · 회귀를 격리 스택 둘(A `wakeline-e2e` 8701 · B `wakeline-qa` 8702, fixture 모드 — 외부 호출 0)에서만 했다.
+  운영 스택(8700)의 데이터 · 계정은 쓰지 않았고 시험 운영자 계정은 격리 스택에만 두었다가 함께 지웠다. 영역마다 별도 에이전트, 결함마다 재현 시험을 먼저 커밋(실패) → 고친 커밋(통과).
+- **높음 3** QA-100 api 재기동 때 스트림 소비자가 기록기 · 단일 인스턴스 가드보다 먼저 시작해 선박 위치를 쓰지 않고 ACK(영구 손실 51 · 237행) → 의존으로 순서를 정함
+  (`StreamPrerequisite` · `4daccc6d` — 스택에서 api kill 뒤 버린 행 0 · 창 손실 0). QA-207 기원전 날짜 하나로 `generate_series` 가 끝나지 않아 요청당 DB CPU 100 % · 임시 0.5–0.8 GB,
+  6개면 공개 조회 전부 503 → 시각 · 날짜 파라미터의 저장소 범위 검사(`TimeParams` · `8a840867`, QA-001 · 201 · 202 · 208 같은 원인). QA-401(성능 단계) 공개 알림 이력의 오래된 창이
+  기본 키를 최신부터 훑어(행 100만) 익명 2 r/s 로 공개 조회 고갈 → `(entered_at, id)` 키셋(`6d35f209` · 계약 §G36 — 공격 중 다른 조회 실패 28.5 % → 0 %, db CPU 131 % → 8–13 %).
+- **보통 · 낮음** QA-102 Redis 장애 중 세션 쿠키가 실린 공개 요청 500(→ 세션 저장소는 운영 경로만) · QA-104 DB 멈춤 중 공개 조회 45 s(→ 공개 조회 연결의 소켓 시간 초과 4 s ·
+  취소 대기 1 s — 스택에서 8건 모두 ≤ 5.1 s 503) · QA-206 검색 등록부호 · QA-301/302/307 화면(재생 배경지도 대체 · 모바일 운영 탭 · 감사 페이지) · 낮음 20건(WS 큰 수 · 바이트 한도 ·
+  NUL · Retry-After · README · 연도 형식 · fixture 항공기 · '@' 호출부호 · 초점 · 스크롤 영역 · 대비 · lang 등) — 모두 [DEFECTS](qa/2026-10/DEFECTS.md).
+- **남은 것(결정 필요)** QA-400 api 메모리(NFR-03 ≤ 512 MB): 운영 규모 상태 100 rps 에서 512–564 MiB, 몰림 뒤 약 680 MiB — JVM 설정 6가지 × 3번 모두 GC · REST 목표를 깨지 않고는
+  512 아래가 되지 않음(힙 밖 281–298 MiB 고정, PERF §14.2). QA-402/403 지도 화면 CWV(headless 소프트웨어 GL) — 지도 초기화 구조를 바꿔야 해 이번에 고치지 않음.
+- **독립 재검토** 별도 에이전트가 결함 28건을 원본(고치기 전 커밋 · 원본 이미지)에서 적힌 대로 재현 — 28건 재현(부분 2), QA-001 을 보통 → 낮음으로 조정.
+- **과정에서 생긴 결함(이력은 다시 쓰지 않음)**: 웹 레인이 QA-309 커밋(`de90ce72`)을 vitest 실패 하나와 함께 커밋했다(검사 명령을 grep 에 넘겨 종료 코드를 잃음 — `fe11e51d` 가 고침).
+  QA-303 을 웹 레인 지시에서 빠뜨려 리드가 따로 고쳤다(`13246546`). 고친 빌드로 점검 스크립트를 다시 돌리자 원래 증거 파일을 덮어써 원본을 되돌리고 다시 돌린 결과는
+  `evidence/reverify/` 에 두었다. QA 도구 줄 셋이 gitleaks generic-api-key 에 걸려(비밀값 아님 — `--redact` 로 확인) 정확한 지문으로 허용(`d7eb5af9`). 영역별 기록의 재현 명령은
+  스택 A 를 가리키는데 A 가 고친 이미지로 바뀌어, 원본 재현은 스택 B(8702)로 해야 한다(DEFECTS 에 적음). QA-101 · 102 의 고친 커밋은 지시대로 재현 시험의 기대를 바꿨다.
+  격리 스택 빌드가 운영의 `:local` 태그를 덮는 문제는 `:qa-prod` 로 지키고 되돌렸다(끝에 운영 컨테이너 이미지 = `:local` = `:qa-prod` 확인).
+
+## 자동 검사 현황(2026-10-02 15:5x KST, QA 2026-10 브랜치 `qa/2026-10` — #103 뒤, 깨끗한 `git archive` 내보내기 · 격리 스택)
 | 층 | 도구 | 수 |
 |---|---|---|
-| collector · ais 단위·통합 | pytest | 1,919 통과(+190 — 보안 · 신뢰성 수정 · 규칙 모듈 표 시험 · 계층 가드 · 루프 지연. 23 건너뜀 = 실 Redis 16 · 실 PostgreSQL 7, 아래 두 줄에서 돈다) · 커버리지 98 %(10,539문 중 249 빠짐) |
-| collector 실 Redis · 실 PostgreSQL | `infra/tests/collector_redis_test.sh` · `collector_pg_test.sh`(버리는 컨테이너 — 이번에 `make infra-docker-test` 에 넣었다) | 16 · 7 통과 |
-| api 단위·통합 | JUnit 5 + Testcontainers(PostGIS · Redis 실물) | 1,071 통과(+103 — 보안 · 데이터 손실 수정 · 패키지 가드 · 격벽 · 측정 시험 5종은 `@Tag("perf")` 로 따로) · JaCoCo LINE 97.18 %(9,750줄 중 275 빠짐) · BRANCH 86.53 %(7,000 중 943 빠짐 · 하한 95 / 80 — 검증 통과) |
-| web 단위 | Vitest | 1,658 통과(+245) · 3 건너뜀(측정 시험 — `WAKELINE_PERF=1`), 127 파일 |
-| 정적 검사 · 빌드 | ruff check · ruff format --check · mypy(88 파일) · tsc --noEmit · eslint(오류 0, 경고 1 — 전부터) · next build | 모두 통과 |
-| 언어 간 계약 · REST 계약 | tools/contract_check.py · tools/rest_contract_check.py | PASSED · 36종 PASSED |
-| 구조 가드 | api `ArchitectureTest`(KNOWN 0 · 순환 import 0) · collector `test_layering.py`(ALLOWED 0) | 통과 |
+| collector · ais 단위·통합 | pytest | 1,923 통과(+4 — QA 재현) · 23 건너뜀(아래 줄) · 커버리지 98 % |
+| collector 실 Redis · 실 PostgreSQL | `infra/tests/collector_redis_test.sh` · `collector_pg_test.sh` | 16 · 7 통과 |
+| api 단위·통합 | JUnit 5 + Testcontainers | 1,135 통과(+64 — QA 재현 39 · 고친 뒤 보강) · JaCoCo LINE 97.32 % · BRANCH 86.66 %(하한 95 / 80) |
+| web 단위 | Vitest | 1,698 통과(+40) · 3 건너뜀, 137 파일 |
+| 정적 검사 · 빌드 | ruff · ruff format · mypy(88) · tsc · eslint(오류 0) · next build | 모두 통과 |
+| 언어 간 계약 · REST 계약 | contract_check · rest_contract_check | PASSED · 36종 |
 | 인프라 정책 | infra/tests(unittest) | 157 |
-| 버리는 컨테이너 시험 | edge · Redis ACL · db 권한 · 백업·복원 · 비밀번호 교체 · 이전 → 새 db 이미지 교체 | 35 · 299 · 36 · 48 · 27 · 11 = 456 — `make infra-docker-test` 모두 통과(+ 실행 이미지 검사 `image_test.sh` 11) |
-| E2E | Playwright(격리된 fixture 스택 8701, 작업자 1명) | 43 통과(2.0 분 — 마지막 코드로 두 번. 처음 판은 43 중 1 실패 → `953fceeb`, #102) |
-| 첫 화면 JS 예산 | `npm run check:first-js -- --in-image` · 브라우저 `measure:first-js -- --serve 8790` | 545,458 B / 550,000 B(여유 4,542 B — 웹 이미지의 Node) · 브라우저: 빌드 결과 목록과 같은 18개 · 543,168 B(호스트 Node) · 실패 0, 첫 화면 뒤 미리 받은 조각 10개 62,946 B(예산 밖) |
-| 성능 측정 | api `./gradlew perfTest` · web `WAKELINE_PERF=1 vitest` · collector `tests/perf/*.py` | [PERF](PERF.md) §11 · §12 · §13(#100) |
-| 보안 게이트 | `make security`(`SECURITY_OWN_IMAGES` = 브랜치 이미지 `:cto`) | PASS(2026-10-02 00:0x KST) — gitleaks 1,136 커밋 누출 0 · 자체 api · collector · web · db 고칠 수 있는 HIGH · CRITICAL 0(`abf337ee` 뒤 — 그 전에는 새로 나온 OS CVE 로 api 3 · collector 7 · db 6) · 제3자 edge · redis PASS · npm audit 0 · pip-audit 0 |
-| 독립 리뷰 | 별도 에이전트(전체 다섯 영역 + 증분) | #101 — 치명 · 높음 · 보통 0, 낮음은 고치거나 남은 위험으로 적음 |
-| 배포 뒤 확인 | `make up`(main `d5d6bdbd`) · 컨테이너 로그(`docker logs`) · `/healthz` | 2026-10-02 01:29 KST 배포 — 배포 전 새 `:local` 이미지 trivy PASS · 이미지 검사 11 · db 권한 36 · 이미지 교체 11 · 백업·복원 48. redis(ACL 파일 — AOF 80키 다시 읽음) · db(OS 보안 갱신, PostgreSQL 18.6 그대로) · api · collector · ais · web 다시 만듦, migrate 0 으로 끝. 8분 동안 api · collector · ais · web WARN · ERROR 0, `/healthz` ok(region_lag_s 6) · 스냅샷 판 10 → 112. 되돌리기: `:mainsafe` 태그 + `e0e1eba0` |
+| 버리는 컨테이너 시험 | edge · Redis ACL · db 권한 · 백업·복원 · 비밀번호 교체 · 이미지 교체 | 35 · 299 · 36 · 48 · 27 · 11 = 456 · 실행 이미지 검사 11 |
+| E2E | Playwright(격리 스택) | 43 통과 · QA 화면 spec 35 통과(고친 빌드) |
+| 첫 화면 JS 예산 | `check:first-js -- --in-image` | 546,721 B / 550,000 B(여유 3,279 B) |
+| 성능 | k6 · Lighthouse · JVM 설정 | [PERF](PERF.md) §14 · [QA 성능 기록](qa/2026-10/findings/performance.md) |
+| 보안 게이트 | `make security`(브랜치 이미지) | PASS — gitleaks 1,229 커밋 누출 0 · trivy 자체 4 · 제3자 2 · npm audit 0 · pip-audit 0 |
