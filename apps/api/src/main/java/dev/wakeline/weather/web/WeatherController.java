@@ -98,7 +98,7 @@ public class WeatherController {
 
     @GetMapping("/alerts")
     public ResponseEntity<Map<String, Object>> alerts(@RequestParam(required = false) String kind, HttpServletRequest req) {
-        List<Alert> list = engine.activeAlerts(kind);
+        List<Alert> list = engine.activeAlerts(Params.choice("kind", kind, null, "observed", "predicted")); // 없으면 둘 다(§G42)
         return ResponseEntity.ok().cacheControl(CacheControl.maxAge(5, TimeUnit.SECONDS).cachePublic()).body(Map.of("items", list, "meta", Meta.of(req, "engine", Instant.now(), 60)));
     }
 

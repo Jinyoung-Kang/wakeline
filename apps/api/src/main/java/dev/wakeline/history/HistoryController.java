@@ -1,5 +1,6 @@
 package dev.wakeline.history;
 
+import dev.wakeline.platform.web.Params;
 import dev.wakeline.aircraft.data.TrackRepository;
 import dev.wakeline.geo.Bbox;
 import dev.wakeline.platform.config.AppProperties;
@@ -77,7 +78,7 @@ public class HistoryController {
     public ResponseEntity<Map<String, Object>> statsSigmet(@RequestParam(required = false) LocalDate from, @RequestParam(required = false) LocalDate to,
                                                            @RequestParam(defaultValue = "fir") String group, HttpServletRequest req) {
         var range = range(from, to);
-        String g = "hazard".equals(group) ? "hazard" : "fir";
+        String g = Params.choice("group", group, "fir", "fir", "hazard"); // 모르는 값은 400(§G42 — 예전에는 fir 로)
         return ok(Map.of("group", g, "items", stats.sigmet(range[0], range[1], g),
                 "days", stats.days(range[0], range[1], MaintenanceJobs.FAMILY_SIGMET)), req);
     }

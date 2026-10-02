@@ -571,11 +571,11 @@ class ShipControllerTest {
                     .andExpect(header().string("Content-Type", containsString("application/problem+json")))
                     .andExpect(jsonPath("$.code").value("BAD_QUERY"));
         mvc.perform(get("/api/v1/ships/search")).andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("BAD_QUERY"));
-        for (String bad : new String[]{"0", "21", "-1"})
-            mvc.perform(get("/api/v1/ships/search").param("q", "HANJIN").param("limit", bad)).andExpect(status().isBadRequest())
-                    .andExpect(jsonPath("$.code").value("BAD_LIMIT"));
         mvc.perform(get("/api/v1/ships/search").param("q", "HANJIN").param("limit", "x")).andExpect(status().isBadRequest());
         assertThat(repo.searchCalls).isZero();
+        // 범위 밖 limit 은 끝값으로 잘라 쓴다(계약 v5 §G41 — 다른 목록과 같은 규칙, 예전에는 400 BAD_LIMIT)
+        for (String out : new String[]{"0", "21", "-1"})
+            mvc.perform(get("/api/v1/ships/search").param("q", "HANJIN").param("limit", out)).andExpect(status().isOk());
     }
 
     /** 실시간(메모리) 결과: 위치·속력·보고 시각은 메모리 값, last_position_at 은 DB 의 마지막 저장 시각, 분류는 선종 코드의 결정적 변환. */

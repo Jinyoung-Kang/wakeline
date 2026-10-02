@@ -164,7 +164,7 @@ public class ShipController {
         } catch (IllegalArgumentException e) {
             throw Problem.badRequest("BAD_QUERY", e.getMessage());
         }
-        if (limit < 1 || limit > SEARCH_MAX_LIMIT) throw Problem.badRequest("BAD_LIMIT", "limit must be 1.." + SEARCH_MAX_LIMIT);
+        limit = Math.max(1, Math.min(SEARCH_MAX_LIMIT, limit)); // 범위 밖은 끝값으로(§G41 — 다른 목록과 같은 규칙, 예전에는 400 BAD_LIMIT)
         ShipStore.View v = store.view();
         java.util.Comparator<ShipStore.Ship> order = java.util.Comparator.comparing((ShipStore.Ship s) -> !query.exact(s.mmsi(), s.stat()))
                 .thenComparing((ShipStore.Ship s) -> s.state().seenAt(), java.util.Comparator.reverseOrder()).thenComparing(ShipStore.Ship::mmsi);

@@ -64,6 +64,7 @@ public class AircraftController {
     @GetMapping(produces = "application/geo+json")
     public ResponseEntity<Map<String, Object>> snapshot(@RequestParam String bbox, @RequestParam(defaultValue = "lite") String detail, HttpServletRequest req) {
         Bbox b = BboxParam.parse(bbox, props.maxBboxAreaSqdeg());
+        String d = Params.choice("detail", detail, "lite", "lite", "full"); // 모르는 값은 400(§G42 — 예전에는 lite 로)
         Instant now = Instant.now();
         SnapshotStore.View view = snapshots.view(now);
         String etag = "\"v" + view.version() + "-" + Long.toString(view.recheckAtMs(), 36) + "\"";
@@ -72,7 +73,7 @@ public class AircraftController {
         List<Map<String, Object>> features = new ArrayList<>();
         for (AircraftState a : view.states().values()) {
             if (!b.contains(a.lat(), a.lon())) continue;
-            features.add(feature(a, "full".equals(detail) ? "full" : "lite"));
+            features.add(feature(a, d));
         }
         Map<String, Object> fc = new LinkedHashMap<>();
         fc.put("type", "FeatureCollection");

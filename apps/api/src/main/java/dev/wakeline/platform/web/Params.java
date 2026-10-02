@@ -30,6 +30,18 @@ public final class Params {
     }
 
     /**
+     * 정해진 값 중 하나를 고르는 필터(계약 v5 §G42 — QA 2026-10 기능 개선 제안 3): 없거나 빈 값이면 def, 맞는 값은 대소문자를 가리지 않고 소문자로 돌려준다.
+     * 모르는 값이면 400 BAD_FILTER — 예전에는 경로마다 달랐다(모르는 kind → 관측 + 예측 모두, group → fir, detail → lite). 열린 값(SIGMET hazard 처럼 공급자가 주는
+     * 글자)에는 쓰지 않는다.
+     */
+    public static String choice(String name, String value, String def, String... allowed) {
+        if (value == null || value.isBlank()) return def;
+        String v = value.trim();
+        for (String a : allowed) if (a.equalsIgnoreCase(v)) return a;
+        throw Problem.badRequest("BAD_FILTER", name + " must be one of " + String.join(", ", allowed));
+    }
+
+    /**
      * 공항 ICAO 코드: 앞뒤 공백을 빼고 ASCII 영숫자 4자 — 대문자로 돌려준다. 아니면 400 BAD_ICAO. ASCII 를 먼저 검사한다(QA 2026-10 기능 개선 제안 5 —
      * 예전에는 대문자로 바꾼 뒤 검사해 'rksı'(점 없는 ı — 어느 로캘에서든 대문자가 I)가 RKSI 로 찾아졌다).
      */
