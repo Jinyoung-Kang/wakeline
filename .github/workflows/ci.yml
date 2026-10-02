@@ -230,10 +230,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }
+      # build-mode none: 빌드 없이 소스를 읽는다(Java 지원). autobuild 는 Gradle 프로젝트가 저장소 루트가 아니라 apps/api 에 있어 빌드 명령을 찾지
+      # 못하고 실패했다(2026-10-02 첫 main 실행 — "Could not detect a suitable build command"). Kotlin 소스는 없다(build.gradle.kts 는 빌드 스크립트).
       - uses: github/codeql-action/init@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
-        with: { languages: "${{ matrix.language }}" }
-      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
-        if: matrix.language == 'java-kotlin'
-        with: { distribution: temurin, java-version: "25" }
-      - uses: github/codeql-action/autobuild@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        with: { languages: "${{ matrix.language }}", build-mode: none }
       - uses: github/codeql-action/analyze@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
