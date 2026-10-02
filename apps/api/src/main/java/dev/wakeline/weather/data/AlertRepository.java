@@ -119,8 +119,15 @@ public class AlertRepository {
     /**
      * 이력(커서 페이지). close_reason 포함(계약 §2). eta_at 은 새 형식 PREDICTED(근거에 entry·judged_at 이 있는 행)만
      * judged_at + eta_s 로 계산한다 — 이전 엔진은 eta 를 관측 시각에서 쟀으므로 그 행에는 만들지 않는다.
-     * hex 가 있으면 hex 조건을 문장에 직접 둔다(R-15): 한 문장이 (hex IS NULL OR e.hex = hex) 로 두 경우를 모두 받으면, 몇 번 실행된 뒤
-     * 쓰이는 일반 계획이 hex 인덱스를 쓰지 못해 기간 안의 행을 모두 훑는다. hex 비교는 char(6) 끼리(인덱스 alert_event_hex_id (hex, id DESC)).
+     * <p>순서는 entered_at 최신순, 같은 시각은 id 역순(계약 v5 §G36). 창 조건(entered_at)과 같은 열로 정렬해야 인덱스
+     * alert_event_entered (entered_at DESC) · alert_event_hex (hex, entered_at DESC) 를 창의 끝(to)부터 읽다가 한 쪽(limit + 1행)을 채우면 멈춘다
+     * (같은 시각 묶음의 id 순서는 Incremental Sort 가 맞춘다). 예전의 {@code ORDER BY e.id DESC} 는 플래너가 기본 키를 역순으로 훑으며 창 조건을 필터로
+     * 거는 계획을 골라, 오래된 창(15–29일 전)이면 그보다 새로운 알림 전부(스택 A 약 100만 행)를 읽고 버리느라 공개 조회 상한 3 s 에 끊겼다(QA-401).
+     * 알림 id 는 시각에서 만들지만(AlertIds) 플래너는 그 상관을 모른다.</p>
+     * <p>커서(공개 계약)는 여전히 앞 쪽 마지막 행의 id 다. 문장 안에서 그 행의 (entered_at, id) 를 기본 키로 찾아 그 뒤부터 잇는다 — 찾은 entered_at 은
+     * 인덱스 조건(entered_at ≤ 그 값)이 되어 커서 쪽도 limit + 1행 남짓만 읽는다. 없는 id(보존 삭제로 지워진 행 · 지어낸 값)면 빈 쪽이다.</p>
+     * <p>hex · 커서 조건은 있을 때만 문장에 직접 둔다(R-15): 한 문장이 (x IS NULL OR …) 로 두 경우를 모두 받으면, 몇 번 실행된 뒤 쓰이는 일반 계획이
+     * 그 조건을 인덱스에 쓰지 못한다(hex 면 기간 안의 행을 모두, 커서면 앞 쪽들의 행을 모두 다시 읽는다). hex 비교는 char(6) 끼리.</p>
      */
     public Page history(Instant from, Instant to, String hex, Long cursor, int limit) {
         var q = Sql.publicRead(db, "alerts.history", """
@@ -129,10 +136,13 @@ public class AlertRepository {
                             THEN (e.evidence->>'judged_at')::timestamptz + make_interval(secs => e.eta_s) END eta_at,
                        e.alt_ft_at_entry, e.evidence::text evidence
                 FROM alert_event e JOIN sigmet s ON s.id = e.sigmet_id
-                WHERE e.entered_at BETWEEN :from AND :to%s AND (:cursor::bigint IS NULL OR e.id < :cursor)
-                ORDER BY e.id DESC LIMIT :n""".formatted(hex == null ? "" : " AND e.hex = :hex::bpchar"))
-                .param("from", Sql.ts(from)).param("to", Sql.ts(to)).param("cursor", cursor).param("n", limit + 1);
+                WHERE e.entered_at BETWEEN :from AND :to%s%s
+                ORDER BY e.entered_at DESC, e.id DESC LIMIT :n""".formatted(
+                        hex == null ? "" : " AND e.hex = :hex::bpchar",
+                        cursor == null ? "" : " AND (e.entered_at, e.id) < ((SELECT c.entered_at FROM alert_event c WHERE c.id = :cursor), :cursor)"))
+                .param("from", Sql.ts(from)).param("to", Sql.ts(to)).param("n", limit + 1);
         if (hex != null) q = q.param("hex", hex);
+        if (cursor != null) q = q.param("cursor", cursor);
         List<Map<String, Object>> rows = q.query().listOfRows().stream().map(r -> {
             var m = new java.util.LinkedHashMap<>(r);
             Object ev = m.get("evidence");

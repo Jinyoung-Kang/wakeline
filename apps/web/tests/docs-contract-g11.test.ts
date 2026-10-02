@@ -170,6 +170,10 @@ describe("contract v5 amendment numbers are unique", () => {
     // QA 2026-10 고치기: WS 클라이언트 메시지 상한은 UTF-8 바이트 — 같은 22차 · §G35
     expect(heading(35)).toMatch(/^## G\. 22차 개정\(/);
     expect(amendment(35)).toContain("WS 클라이언트 메시지 상한 4 KB = UTF-8 4,096 바이트");
-    expect(amendment(36)).toBe("");
+    // QA 2026-10 성능 고치기(2026-10-02 · 레인 perf): 알림 이력의 순서 · 커서(QA-401) — 23차 · §G36
+    expect(heading(36)).toMatch(/^## G\. 23차 개정\(2026-10-02 · QA 2026-10 성능 고치기 · 레인 perf /);
+    expect(amendment(36)).toContain("`GET /api/v1/alerts/history` 의 순서는 `entered_at` 최신순 · 같은 시각은 `id` 역순");
+    expect(amendment(36)).toContain("없는 id 의 `cursor`");
+    expect(amendment(37)).toBe("");
   });
 });

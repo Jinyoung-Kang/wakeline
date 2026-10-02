@@ -1130,3 +1130,21 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
     여러 바이트 글자도 바이트로 센다). 예전: Tomcat 의 상한(setTextMessageSizeLimit)이 디코딩한 글자(UTF-16) 수라 3바이트 글자로 채운 메시지는 4,096 글자
     = 약 12 KB 까지 받았다(ASCII 는 그때도 4,097 바이트에서 1009). 4,096 바이트 이하는 그대로 받는다. 웹이 보내는 메시지는 수백 바이트다 — 화면 변화 없음.
   - 회귀 막기: api `Qa204WsMessageLimitIsCharsNotBytesTest`(실제 Tomcat) · `RateAndLimitTest.handler_messageOver4096Utf8Bytes_closes1009EvenWithFewCharacters`.
+
+## G. 23차 개정(2026-10-02 · QA 2026-10 성능 고치기 · 레인 perf — 공개 조회 격벽을 차지하던 알림 이력 문장을 고치며 순서를 계약에 적는다)
+- G36(계약 §2 의 알림 이력 · R-15 · R-74 · QA-401 · ADR-017 §6.2 QA-401) **`GET /api/v1/alerts/history` 의 순서는 `entered_at` 최신순 · 같은 시각은 `id` 역순 — `cursor` · `next_cursor` 는 그대로 id**
+  - 쪽의 항목은 `entered_at` 이 늦은 것부터, 같은 `entered_at` 이면 `id` 가 큰 것부터. `next_cursor` 는 전과 같이 그 쪽 마지막 항목의 `id`(다음이 없으면 null — R-74)이고,
+    `cursor` 를 주면 그 id 의 행의 (`entered_at`, `id`) 바로 뒤부터 잇는다 — 같은 시각 묶음이 쪽 경계를 넘어도 빠짐 · 겹침이 없다. **없는 id 의 `cursor`**(보존 삭제로
+    지워진 행 · 지어낸 값)는 이을 자리를 모르므로 **빈 쪽**(`items: []`, `next_cursor: null`) — 예전에는 그 수보다 작은 id 를 이어 냈다. 창(`from` · `to`, 30일 이하 —
+    넘으면 400 `BAD_RANGE`) · `hex` · `limit`(1–200, 기본 50, 밖이면 잘라 씀) · 항목 필드(`close_reason` · `eta_at` · `estimated` …) · 캐시는 그대로.
+  - 예전: `ORDER BY id DESC`(문서에는 순서가 없었고 코드만 있었다). 알림 id 는 만들 때의 시각에서 나오고(`AlertIds` — epoch ms × 1000 + 순번) `entered_at` 도 그
+    판정 시각이라 운영 자료의 순서는 거의 같다 — 달라지는 것은 id 가 시각 순이 아닌 행(이전 형식 id · 손으로 넣은 행)과 같은 시각 묶음 안뿐이다. 그러나 정렬 열이 창 조건
+    (`entered_at`)과 달라 플래너가 기본 키를 역순으로 훑으며 창 조건을 필터로 거는 계획을 골랐고, 15–29일 전 창은 그보다 새로운 알림(스택 A 약 100만 행)을 읽고 버리느라
+    공개 조회 상한 3 s 에 늘 끊겨 503 이었다(EXPLAIN 8.1–9.5 s · Rows Removed by Filter 1,009,071 — 익명 클라이언트 하나가 초당 2건으로 공개 조회 격벽을 차지, QA-401).
+    이제 인덱스 `alert_event_entered (entered_at DESC)` · `alert_event_hex (hex, entered_at DESC)` 를 창의 끝부터 읽다가 한 쪽(limit + 1행)을 채우면 멈춘다(같은 시각 묶음의
+    id 순서는 Incremental Sort). 커서 쪽은 커서 행을 기본 키로 같은 문장 안에서 찾고 그 `entered_at` 이 인덱스 조건이 된다. hex · 커서 조건은 있을 때만 문장에 둔다(R-15 —
+    일반 계획도 같은 인덱스 조건). 마이그레이션 없음 — `alert_event_hex_id (hex, id DESC)`(R-15)는 이 문장이 더 쓰지 않지만 지우지 않았다(다음 마이그레이션에서 지울 후보).
+  - 웹은 이 경로를 부르지 않는다 — 화면 변화 없음.
+  - 회귀 막기: api `Qa401AlertHistoryOldWindowScansNewerRowsDbTest`(오래된 · 최근 · 30일 창 × hex 유무 × 첫 쪽 · 커서 쪽을 맞춤 계획과 일반 계획으로
+    `EXPLAIN (ANALYZE, BUFFERS)` — alert_event 에서 읽은 행이 한 쪽 남짓: 잰 값 52 · 54, 상한 56) · `AlertHistoryPageDbTest`(순서 · 같은 시각 묶음을 넘는 쪽 넘김 ·
+    없는 커서) · `QueryPlanDbTest` · `CursorPagesIT`, 격리 스택 점검 `tools/qa/value_checks.py`(순서 검사를 (`entered_at`, `id`) 역순으로).
