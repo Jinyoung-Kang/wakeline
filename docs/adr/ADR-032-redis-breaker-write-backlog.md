@@ -1,0 +1,42 @@
+# ADR-032 Redis 무응답 차단기 · 공개 요청 제한의 메모리 대체 · /healthz 의 저장 지연
+
+**상태** 채택 · 2026-10-02 · 사용자 결정("Redis 장애 중 요청 제한은 api 메모리 안 제한으로" — 권장안 승인) · 근거 [QA 신뢰성 기록](../qa/2026-10/findings/reliability.md)
+'개선 제안' 3 · 4 · [QA 보고](../qa/2026-10/REPORT.md) §7-4 · 계약 [v5 §G37 · §G38](../audit/change-contract-v5.md) · 함께 보는 기록: [ADR-017](ADR-017-review-v1-contract-changes.md) §5(R-18 — 공개 신호는
+`/healthz` 의 `status` + `reasons`) · [VERIFICATION](../VERIFICATION.md) #106
+
+## 맥락
+- Redis 가 답하지 않으면(멈춤 · 끊김) Lettuce 명령은 상한(`spring.data.redis.timeout` 3 s)까지 기다린다. 요청 경로에서 Redis 를 부르는 곳이 그 기다림을 요청마다 되풀이했다.
+  QA 2026-10 격리 스택(redis pause 30 · 75 · 150 s): 모든 공개 REST 가 3.05–3.1 s(공개 요청 제한기 — 열어 두기는 했지만 매번 기다린 뒤였다), `/status` 12 s(제한기 3 s +
+  공개 상태의 Redis 조회 셋 × 3 s), 로그인 503 은 6 s(공개 제한 3 s + 로그인 제한 3 s). 이 저장소의 재현 시험(`RedisPausedIT`)이 같은 값을 쟀다: 3,009–3,021 ms ·
+  12,033 ms · 6,172 ms.
+- 공개 요청 제한은 Redis 오류면 열렸다(가용성 우선 — edge 의 IP당 1차 제한만 남음). 무응답이 아닌 오류에도 열렸다.
+- `/healthz`(edge 가 노출 · edge 헬스체크가 HTTP 200 만 본다 — REL-20)는 수집 경로만 판정했다. DB 를 60 s 멈추고 40 s 끈 동안 내내 `ok` 였고 그동안 항적 큐 887 행 ·
+  선박 큐 347 행이 쌓였다. Redis 무응답은 소비 루프가 30 s 넘게 돌아오지 않아야(`consumer_stalled`) 보였다.
+
+## 결정
+1. **Redis 무응답 차단기**(`platform.data.RedisBreaker`): 연결 실패 · 명령 시간 초과(무응답)를 한 번 보면 5 s 동안 열린다 — 쓰는 쪽은 그동안 Redis 를 부르지 않는다.
+   연 시간이 지나면 처음 묻는 쪽이 뒤 스레드 하나로 PING 을 보내 답하면 닫고, 아니면 다시 5 s 연다. 요청은 확인을 기다리지 않는다. 다른 Redis 오류(WRONGTYPE ·
+   LOADING 등 — 곧바로 답한 것)는 열지 않는다. 지표 `wakeline_redis_breaker_open` · `wakeline_redis_breaker_opened_total`, WARN(열림) · INFO(닫힘 · 열려 있던 시간).
+2. **쓰는 쪽은 요청이 기다리는 곳만**: 공개 요청 제한기와 공개 상태(`/status` · WS status). 스트림 소비 · 수요 임대 · 운영 경로는 쓰지 않는다 — 요청이 기다리는 길이
+   아니거나(뒤 작업), 이미 503 으로 답한다(운영 세션 — QA-102).
+3. **공개 요청 제한은 Redis 를 쓰지 못하면 api 메모리 안에서 같은 창 · 같은 한도로 센다**(사용자 결정 — 열어 두기 대신). api 는 한 인스턴스라(SingleInstanceGuard)
+   메모리 안 카운터가 곧 전체다. 한 창의 열쇠(IP) 수 상한 10,000 — 넘으면 새 열쇠는 세지 않고 연다(요청으로 메모리를 키울 수 없게, `result="open"` 으로 센다).
+   Redis 가 돌아오면 Redis 카운터로 돌아간다(그 창은 Redis 쪽 수부터 다시 — 장애 앞뒤의 합은 세지 않는다).
+   보안 경로(로그인 · 브라우저 오류 보고)는 전처럼 실패 시 닫힘(503 + Retry-After) — 차단기가 열린 동안은 Redis 를 기다리지 않고 곧바로.
+4. **`/healthz` 의 `reasons` 에 둘을 더한다**(HTTP 200 · `status` 규칙 그대로 — 사유가 있으면 `degraded`): `writer_backlog`(항적 · 선박 · 순서 쓰기 중 아직 쓰지 못한 것의
+   가장 오래된 나이 > 60 s — 쓰는 중 · 재시도 중인 배치 포함, 평소 1 s 안팎 · DB 백오프 상한 30 s 의 두 배) · `redis_unavailable`(차단기가 열린 동안). 수치는 내부
+   지표로만(`wakeline_writer_oldest_pending_seconds{writer}`) — 공개 응답은 원인 코드만 싣는다(ADR-017 §5). 같은 판정이 내부 헬스 그룹 `ingest`(/actuator/health/ingest)를
+   DOWN 으로 만든다(readiness · liveness 에는 넣지 않는다 — 저장 장애로 api 를 재시작하면 실시간 조회까지 끊긴다).
+   `/healthz` 도 차단기에 묻는다(확인 PING 을 시작할 수 있다) — edge 헬스체크가 10 s 마다 부르므로 공개 요청이 없어도 Redis 가 돌아오면 닫힌다.
+
+## 버린 대안
+- **열어 두기 + 차단기만**(QA 제안 그대로): 기다림은 사라지지만 Redis 장애 동안 api 의 공개 제한이 없다. 메모리 안 제한은 코드 몇 줄로 같은 보호를 남긴다.
+- **명령 상한을 줄이기**(3 s → 0.5 s): 모든 Redis 사용(스트림 소비 · 임대 · 운영)에 걸리고, 느린 순간을 장애로 오인한다. 요청은 여전히 매번 기다린다.
+- **차단기가 스스로 주기 확인**(열린 동안 뒤 스레드가 5 s 마다 PING): 묻는 쪽이 늘 있다(요청 · edge 헬스체크 10 s) — 실행 스레드를 따로 두지 않는다.
+- **`/healthz` 를 503 으로**: edge 헬스체크가 HTTP 상태만 보므로 저장 장애에 edge · api 가 '비정상' 이 된다(REL-20 이 막은 것).
+
+## 결과
+- Redis 가 멈춘 동안(재현 시험 `RedisPausedIT`, 명령 상한 3 s): 처음 무응답을 본 요청만 3,065 ms, 그 뒤 공개 요청 4–10 ms · `/status` 5 ms · 로그인 503 70 ms,
+  `/healthz` reasons `[redis_unavailable]`. 다시 풀면 5,026 ms 뒤 닫혔다.
+- Redis 장애 동안 공개 요청이 분당 한도를 넘으면 429 가 난다(예전: 열려 있어 edge 제한만 걸렸다). 그 동안의 `X-RateLimit-*` 은 메모리 안 카운터의 값이다.
+- 남은 것: 저장기 백오프 상한 30 s(DB 회복 뒤 첫 쓰기까지 최대 30 s — QA 개선 제안 5)는 이번 범위 밖이다. Redis 장애 중 AIS 위치가 최신값으로 합쳐지는 것(제안 2)도 그대로.

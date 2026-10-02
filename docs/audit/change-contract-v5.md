@@ -1148,3 +1148,20 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
   - 회귀 막기: api `Qa401AlertHistoryOldWindowScansNewerRowsDbTest`(오래된 · 최근 · 30일 창 × hex 유무 × 첫 쪽 · 커서 쪽을 맞춤 계획과 일반 계획으로
     `EXPLAIN (ANALYZE, BUFFERS)` — alert_event 에서 읽은 행이 한 쪽 남짓: 잰 값 52 · 54, 상한 56) · `AlertHistoryPageDbTest`(순서 · 같은 시각 묶음을 넘는 쪽 넘김 ·
     없는 커서) · `QueryPlanDbTest` · `CursorPagesIT`, 격리 스택 점검 `tools/qa/value_checks.py`(순서 검사를 (`entered_at`, `id`) 역순으로).
+
+## G. 24차 개정(2026-10-02 · Redis 장애 동작 — ADR-032 · QA 2026-10 신뢰성 개선 제안 3 · 4)
+- G37(REL-20 · ADR-017 §5 의 `/healthz` · ADR-032) **`GET /healthz` 의 `reasons` 에 `writer_backlog` · `redis_unavailable`**
+  - `writer_backlog`: api 의 저장기(항적 · 선박 · 순서 쓰기) 중 아직 DB 에 쓰지 못한 것의 가장 오래된 나이가 60 s 를 넘음(쓰는 중 · 재시도 중인 배치 포함 — DB 멈춤 ·
+    끊김 · 느림). `redis_unavailable`: api 의 요청 경로가 Redis 무응답(연결 실패 · 명령 시간 초과)을 보고 차단기가 열린 동안(5 s 단위, Redis 가 답하면 닫힘).
+    사유가 하나라도 있으면 `status: degraded` — 그 밖의 규칙(HTTP 200 · `region_lag_s` · `snapshot_version` · 다른 사유 코드)은 그대로. 수치(나이)는 싣지 않는다
+    (내부 지표 `wakeline_writer_oldest_pending_seconds{writer}` · `wakeline_redis_breaker_open`). 예전: DB 를 멈추거나 꺼도 `ok`, Redis 무응답은 `consumer_stalled`(30 s 뒤)로만.
+  - 웹은 `/healthz` 를 읽지 않는다 — 화면 변화 없음. 같은 판정이 내부 헬스 그룹 `ingest` 를 DOWN 으로 만든다(readiness · liveness 는 그대로).
+  - 회귀 막기: api `IngestHealthTest.writerBacklogAndRedisNoAnswerAreReasons` · `RedisPausedIT`(실제 Redis 멈춤) · 저장기별 `oldestPending…` 시험.
+- G38(계약 §2 의 요청 제한 · 리뷰 cto-2026-10 A4 · ADR-032) **Redis 가 답하지 않는 동안 — 공개 요청 제한은 api 메모리 안에서, 로그인은 곧바로 503**
+  - `/api/**` 의 IP당 분당 제한(429 + `Retry-After` · `X-RateLimit-*`)은 Redis 를 쓰지 못하면 api 메모리 안에서 같은 창(epoch 분) · 같은 한도로 센다 — Redis 장애
+    중에도 한도를 넘으면 429. 예전: 제한을 열었다(edge 의 IP당 1차 제한만 남음). Redis 가 돌아오면 Redis 카운터로 돌아간다.
+  - Redis 무응답을 본 뒤 5 s 동안(그 뒤 확인이 Redis 의 답을 볼 때까지) 요청은 Redis 를 기다리지 않는다: 공개 요청 · `/status` 가 명령 상한(3 s)을 되풀이해 기다리지
+    않고(`/status` 의 Redis 에서 오는 값은 예전 실패 때와 같은 '읽지 못함' 모양), 로그인 · `POST /client-errors` 는 곧바로 503 + `Retry-After`(실패 시 닫힘 — 예전과 같은
+    답, 기다림만 없앴다). 처음 무응답을 본 요청은 상한까지 기다린다.
+  - 웹 변화 없음(429 · 503 은 이미 다룬다).
+  - 회귀 막기: api `RedisPausedIT`(공개 요청 4–10 ms · `/status` 5 ms · 로그인 503 70 ms — 예전 3.0 s · 12.0 s · 6.2 s) · `RateLimiterTest` · `RedisBreakerTest`.

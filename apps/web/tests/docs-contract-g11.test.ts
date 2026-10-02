@@ -174,6 +174,12 @@ describe("contract v5 amendment numbers are unique", () => {
     expect(heading(36)).toMatch(/^## G\. 23차 개정\(2026-10-02 · QA 2026-10 성능 고치기 · 레인 perf /);
     expect(amendment(36)).toContain("`GET /api/v1/alerts/history` 의 순서는 `entered_at` 최신순 · 같은 시각은 `id` 역순");
     expect(amendment(36)).toContain("없는 id 의 `cursor`");
-    expect(amendment(37)).toBe("");
+    // Redis 장애 동작(2026-10-02 · ADR-032): /healthz 의 writer_backlog · redis_unavailable — 24차 · §G37
+    expect(heading(37)).toMatch(/^## G\. 24차 개정\(2026-10-02 · Redis 장애 동작 — ADR-032 /);
+    expect(amendment(37)).toContain("`GET /healthz` 의 `reasons` 에 `writer_backlog` · `redis_unavailable`");
+    // 같은 24차 · §G38: Redis 무응답 동안 공개 요청 제한은 api 메모리 안에서, 로그인은 곧바로 503
+    expect(heading(38)).toMatch(/^## G\. 24차 개정\(/);
+    expect(amendment(38)).toContain("공개 요청 제한은 api 메모리 안에서, 로그인은 곧바로 503");
+    expect(amendment(39)).toBe("");
   });
 });

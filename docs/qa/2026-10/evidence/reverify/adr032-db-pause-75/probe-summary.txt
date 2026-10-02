@@ -1,0 +1,12 @@
+/healthz
+      0.2s ..    76.3s  n= 20  max_ms=    35  status=200 health=ok
+     80.3s ..   108.3s  n=  8  max_ms=    14  status=200 health=degraded reasons=['writer_backlog']
+    112.3s ..   148.4s  n= 10  max_ms=    17  status=200 health=ok
+/api/v1/ships?bbox=120,30,135,40
+      0.2s ..   148.4s  n= 38  max_ms=    41  status=200
+/api/v1/aircraft?bbox=124,33,132,39
+      0.2s ..   148.4s  n= 38  max_ms=    46  status=200
+/api/v1/alerts/history
+      0.2s ..    12.2s  n=  4  max_ms=    46  status=200
+     16.2s ..    84.3s  n= 18  max_ms=  5070  status=503 retry-after=10 code=UNAVAILABLE
+     88.3s ..   148.4s  n= 16  max_ms=  2040  status=200

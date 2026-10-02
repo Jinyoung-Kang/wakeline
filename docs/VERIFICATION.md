@@ -1209,6 +1209,28 @@
   트리거 없이 3번 통과. 제품 코드는 그대로다(앞 실행에서는 앞선 시험이 맺어 둔 연결이 남아 있어 드러나지 않았다).
 - 브랜치 확인: collector pytest 1,923 통과 · 23 건너뜀 · ruff · ruff format 통과 · 인프라 정책 unittest 159 · `RestSamplesIT` · rest_contract_check 36 · edge 시험 35 · trivy `wakeline-edge:local` PASS.
 
+## #106 Redis 장애 동작 — 무응답 차단기 · 공개 요청 제한의 메모리 대체 · /healthz 의 저장 지연([ADR-032](adr/ADR-032-redis-breaker-write-backlog.md) · 계약 v5 §G37 · §G38, 브랜치 `fix/redis-outage-2026-10`)
+- **출발점**: QA 2026-10 신뢰성 '개선 제안' 3 · 4(결함 수에 넣지 않은 것 — [기록](qa/2026-10/findings/reliability.md)). 사용자 결정: Redis 장애 중 공개 요청 제한은 api 메모리 안 제한으로(권장안).
+- **재현(고치기 전 — 시험 먼저)**: `RedisPausedIT`(Testcontainers Redis 를 docker pause, 명령 상한 3 s) — 처음 무응답 뒤의 공개 요청 3,009–3,021 ms · `/status` 12,033 ms ·
+  로그인 503 6,172 ms(공개 제한 3 s + 로그인 제한 3 s) · `/healthz` reasons 없음. QA 스택 증거와 같은 값(3.05–3.1 s · 12 s).
+- **고침**: `RedisBreaker`(무응답 — 연결 실패 · 명령 시간 초과 — 을 보면 5 s 열림, 그 뒤 처음 묻는 쪽이 뒤 스레드로 PING · 답하면 닫힘, 요청은 기다리지 않음 · 곧바로 답한
+  오류는 열지 않음)를 공개 요청 제한기 · 공개 상태가 쓴다. 공개 제한은 Redis 를 쓰지 못하면 api 메모리 안에서 같은 창 · 한도(열쇠 상한 10,000), 로그인 · 브라우저 오류
+  보고는 곧바로 503. `/healthz` 에 `redis_unavailable` · `writer_backlog`(항적 · 선박 · 순서 쓰기의 가장 오래된 미기록 것 > 60 s — 쓰는 중 · 재시도 중 배치 포함,
+  `WriteBacklog` · 지표 `wakeline_writer_oldest_pending_seconds{writer}`).
+- **과정에서 고친 것**: 처음에는 차단기 확인(PING)을 요청 경로만 시작해, 요청이 없으면 Redis 가 돌아와도 `/healthz` 가 `redis_unavailable` 을 계속 말할 수 있었다 —
+  `/healthz` 도 차단기에 묻게 했다(edge 헬스체크가 10 s 마다 부른다). Redis 를 멈추는 다른 시험(`Qa102RedisDownSessionCookieIT`)은 열린 차단기를 다음 시험에 물려주지
+  않게 닫힘을 기다린다. 저장기 시험 하나는 처음에 `start()` 전에 넣어 행이 무시됐다(설계대로 — 시험을 고침).
+- **고친 뒤(`RedisPausedIT`)**: 처음 무응답을 본 요청 3,065 ms, 그 뒤 공개 요청 4–10 ms · `/status` 5 ms · 로그인 503 70 ms · `/healthz` `[redis_unavailable]`,
+  다시 풀면 5,026 ms 뒤 닫힘.
+- **격리 스택 B(8702, 새 api 를 따로 태그 · 나머지는 운영 이미지) — QA 와 같은 장애 주입**(`tools/qa/rel_fault.sh`, 증거 `qa/2026-10/evidence/reverify/adr032-*`):
+  | 시나리오 | 장애 중(+15–90 s) 공개 API 표본 | /healthz | 무결성(스트림 ↔ DB) |
+  |---|---|---|---|
+  | redis pause 75 s — QA(2026-10-01) | 57건 중 ≥ 2.5 s 54건 · 가운데 3,030 ms · p90 3,062 ms | 33 s 뒤 `consumer_stalled` 만 | 손실 0 |
+  | redis pause 75 s — 고친 뒤 | 57건 중 ≥ 2.5 s 3건(장애 시작에 이미 나가 있던 요청) · 가운데 21 ms · p90 42 ms | 곧바로 `redis_unavailable`, 회복 뒤 ok | 손실 0 · 중복 0 |
+  | db pause 75 s — 고친 뒤 | 항공기 · 선박 200(메모리) · 알림 이력 503 + Retry-After 10(설계 — 공개 조회 상한) | 약 65 s 뒤 `writer_backlog`, 회복 22 s 뒤 ok(QA: 내내 ok) | 손실 0 |
+- 확인: api 1,146 통과(+11) · JaCoCo LINE 97.3 % · BRANCH 86.8 % · REST 계약 36 · 웹 계약 고정 시험(§G37 · §G38) · 인프라 정책(README ADR 32건).
+- **남은 것**: 저장기 백오프 상한 30 s(DB 회복 뒤 `writer_backlog` 가 풀리기까지 22 s — QA 개선 제안 5) · Redis 장애 중 AIS 위치가 최신값으로 합쳐짐(제안 2)은 그대로.
+
 ## 자동 검사 현황(2026-10-02 15:5x KST, QA 2026-10 브랜치 `qa/2026-10` — #103 뒤, 깨끗한 `git archive` 내보내기 · 격리 스택)
 | 층 | 도구 | 수 |
 |---|---|---|
