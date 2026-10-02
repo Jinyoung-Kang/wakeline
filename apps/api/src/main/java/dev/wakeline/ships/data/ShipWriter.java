@@ -1,6 +1,7 @@
 package dev.wakeline.ships.data;
 
 import dev.wakeline.platform.data.DbErrors;
+import dev.wakeline.platform.data.DbRecovery;
 import dev.wakeline.platform.data.OrderedWriter;
 import dev.wakeline.platform.data.ReceiptBatchQueue;
 import dev.wakeline.platform.data.WriteBacklog;
@@ -125,10 +126,12 @@ public class ShipWriter implements StreamPrerequisite, WriteBacklog {
     private Thread worker;
     /** 실패해서 다시 쓸 배치. 워커 스레드에서만(종료 flush 도 워커가 한다). */
     private volatile ReceiptBatchQueue.Batch<Item> pending;
+    /** 일시 장애로 쉬는 동안 DB 가 다시 답하면 곧바로 깨운다(ADR-032 개정 — 쉼을 끝까지 자지 않는다). */
+    private final DbRecovery recovery;
 
     @org.springframework.beans.factory.annotation.Autowired
-    public ShipWriter(ShipRepository repo, OrderedWriter ordered, MeterRegistry meters, ApplicationEventPublisher events) {
-        this(repo, ordered, meters, BACKOFF_START_MS, BACKOFF_MAX_MS, events::publishEvent);
+    public ShipWriter(ShipRepository repo, OrderedWriter ordered, MeterRegistry meters, ApplicationEventPublisher events, DbRecovery recovery) {
+        this(repo, ordered, meters, BACKOFF_START_MS, BACKOFF_MAX_MS, events::publishEvent, recovery);
     }
 
     /** 테스트용: 재시도 간격을 줄인다(고른 위치는 알리지 않는다). */
@@ -138,6 +141,13 @@ public class ShipWriter implements StreamPrerequisite, WriteBacklog {
 
     /** 테스트용: 고른 위치의 알림을 받는다. */
     ShipWriter(ShipRepository repo, OrderedWriter ordered, MeterRegistry meters, long backoffStartMs, long backoffMaxMs, Consumer<Object> publish) {
+        this(repo, ordered, meters, backoffStartMs, backoffMaxMs, publish, DbRecovery.none());
+    }
+
+    /** 테스트용: DB 회복 확인을 바꿔 쓴다. */
+    ShipWriter(ShipRepository repo, OrderedWriter ordered, MeterRegistry meters, long backoffStartMs, long backoffMaxMs, Consumer<Object> publish,
+               DbRecovery recovery) {
+        this.recovery = recovery;
         this.publish = publish;
         this.repo = repo;
         this.ordered = ordered;
@@ -328,7 +338,8 @@ public class ShipWriter implements StreamPrerequisite, WriteBacklog {
                     continue;
                 }
                 boolean unclassified = DbErrors.isUnclassified(e); // SQLState 없는 결함 — 영구 오류처럼 3번 뒤 버린다(리뷰 cto-2026-10 D3)
-                if (!unclassified && !DbErrors.isPermanent(e)) {
+                boolean transientError = !unclassified && !DbErrors.isPermanent(e);
+                if (transientError) {
                     log.warn("ship batch ({} rows) failed, retry in {} ms (queue {}): {}", n, backoff, queue.size(), e.toString());
                 } else if (++permanentFailures >= PERMANENT_ATTEMPTS) {
                     if (pending != null && pending.items().stream().anyMatch(it -> it instanceof Stat)) forgetStatics = true;
@@ -344,7 +355,8 @@ public class ShipWriter implements StreamPrerequisite, WriteBacklog {
                 } else {
                     log.info("ship batch failed (attempt {}/{}), retry in {} ms: {}", permanentFailures, PERMANENT_ATTEMPTS, backoff, e.toString());
                 }
-                sleepWhileRunning(backoff);
+                if (transientError) recovery.pause(backoff, () -> running); // DB 가 다시 답하면 일찍 깬다
+                else sleepWhileRunning(backoff);
                 backoff = Math.min(backoffMaxMs, backoff * 2);
             }
         }

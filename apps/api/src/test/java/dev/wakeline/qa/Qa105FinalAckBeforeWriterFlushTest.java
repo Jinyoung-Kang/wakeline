@@ -71,7 +71,8 @@ class Qa105FinalAckBeforeWriterFlushTest {
         ctx.registerBean(TrackWriter.class);
         ctx.registerBean(SingleInstanceGuard.class);
         ctx.registerBean(StreamAckFinalizer.class);
-        ctx.registerBean(OrderedWriter.class, () -> new OrderedWriter(meters));
+        ctx.registerBean(OrderedWriter.class, () -> new OrderedWriter(meters, dev.wakeline.platform.data.DbRecovery.none()));
+        ctx.registerBean(dev.wakeline.platform.data.DbRecovery.class, dev.wakeline.platform.data.DbRecovery::none);
         ctx.registerBean(ShipWriter.class);
         ctx.refresh();
         ctx.close();

@@ -183,9 +183,9 @@ class SharedPoolStarvationPerfTest {
         PublicReadGate gate = gate(meters);
         // 공개 조회는 운영과 같은 길: 앱의 JdbcClient(SharedJdbcClient)를 거친 Sql.publicRead — 격벽이 있으면 그것을 지난다
         JdbcClient readers = gate == null ? JdbcClient.create(pool) : new SharedJdbcClient(JdbcClient.create(pool), JdbcClient.create(gate.guard(pool)));
-        TrackWriter tw = new TrackWriter(new JdbcTemplate(trackDs), new AircraftRepository(JdbcClient.create(trackDs), DbTestSupport.JSON), meters);
-        OrderedWriter ordered = new OrderedWriter(meters);
-        ShipWriter sw = new ShipWriter(new ShipRepository(new JdbcTemplate(shipDs), JdbcClient.create(shipDs)), ordered, meters, e -> {});
+        TrackWriter tw = new TrackWriter(new JdbcTemplate(trackDs), new AircraftRepository(JdbcClient.create(trackDs), DbTestSupport.JSON), meters, DbRecovery.none());
+        OrderedWriter ordered = new OrderedWriter(meters, DbRecovery.none());
+        ShipWriter sw = new ShipWriter(new ShipRepository(new JdbcTemplate(shipDs), JdbcClient.create(shipDs)), ordered, meters, e -> {}, DbRecovery.none());
         ShipRepository orderedRepo = new ShipRepository(new JdbcTemplate(orderedDs), JdbcClient.create(orderedDs));
         tw.start();
         ordered.start();

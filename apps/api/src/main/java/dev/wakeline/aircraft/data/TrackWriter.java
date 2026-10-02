@@ -3,6 +3,7 @@ package dev.wakeline.aircraft.data;
 import dev.wakeline.aircraft.core.AircraftEvents;
 import dev.wakeline.aircraft.core.AircraftState;
 import dev.wakeline.platform.data.DbErrors;
+import dev.wakeline.platform.data.DbRecovery;
 import dev.wakeline.platform.data.OrderedWriter;
 import dev.wakeline.platform.data.WriteBacklog;
 import dev.wakeline.platform.support.Receipt;
@@ -123,14 +124,21 @@ public class TrackWriter implements StreamPrerequisite, WriteBacklog {
     private long staticRetryAtMs;
     private final long backoffStartMs;
     private final long backoffMaxMs;
+    /** 일시 장애로 쉬는 동안 DB 가 다시 답하면 곧바로 깨운다(ADR-032 개정 — 쉼을 끝까지 자지 않는다). */
+    private final DbRecovery recovery;
 
     @org.springframework.beans.factory.annotation.Autowired
-    public TrackWriter(JdbcTemplate jdbc, AircraftRepository aircraft, MeterRegistry meters) {
-        this(jdbc, aircraft, meters, BACKOFF_START_MS, BACKOFF_MAX_MS);
+    public TrackWriter(JdbcTemplate jdbc, AircraftRepository aircraft, MeterRegistry meters, DbRecovery recovery) {
+        this(jdbc, aircraft, meters, BACKOFF_START_MS, BACKOFF_MAX_MS, recovery);
     }
 
-    /** 테스트용: 재시도 간격을 줄여 쓴다. */
+    /** 테스트용: 재시도 간격을 줄여 쓴다(DB 회복 확인 없이 — 쉼을 끝까지 잔다). */
     TrackWriter(JdbcTemplate jdbc, AircraftRepository aircraft, MeterRegistry meters, long backoffStartMs, long backoffMaxMs) {
+        this(jdbc, aircraft, meters, backoffStartMs, backoffMaxMs, DbRecovery.none());
+    }
+
+    TrackWriter(JdbcTemplate jdbc, AircraftRepository aircraft, MeterRegistry meters, long backoffStartMs, long backoffMaxMs, DbRecovery recovery) {
+        this.recovery = recovery;
         this.backoffStartMs = backoffStartMs;
         this.backoffMaxMs = backoffMaxMs;
         this.jdbc = jdbc;
@@ -333,7 +341,8 @@ public class TrackWriter implements StreamPrerequisite, WriteBacklog {
                     continue;
                 }
                 boolean unclassified = DbErrors.isUnclassified(e);
-                if (!unclassified && !DbErrors.isPermanent(e)) {
+                boolean transientError = !unclassified && !DbErrors.isPermanent(e);
+                if (transientError) {
                     log.warn("track batch ({} rows) failed, retry in {} ms (queue {}): {}", pending == null ? 0 : pending.rows().size(), backoff, queued(), e.toString());
                 } else if (++permanentFailures >= PERMANENT_ATTEMPTS) {
                     int n = pending == null ? 0 : pending.rows().size();
@@ -349,7 +358,8 @@ public class TrackWriter implements StreamPrerequisite, WriteBacklog {
                 } else {
                     log.info("track batch failed (attempt {}/{}), retry in {} ms: {}", permanentFailures, PERMANENT_ATTEMPTS, backoff, e.toString());
                 }
-                sleepWhileRunning(backoff);
+                if (transientError) recovery.pause(backoff, () -> running); // DB 가 다시 답하면 일찍 깬다
+                else sleepWhileRunning(backoff);
                 backoff = Math.min(backoffMaxMs, backoff * 2);
             }
         }
