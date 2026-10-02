@@ -1,0 +1,41 @@
+# QA-401 동안 db 의 '문장 취소'(공개 조회 상한 3 s) — 전체 359건 중 처음 20건
+2026-10-01 23:18:02.211 UTC [33011] ERROR:  canceling statement due to user request
+2026-10-01 23:18:02.211 UTC [33011] STATEMENT:  /* wakeline alerts.history limit_s=3 */ SELECT e.id, e.hex, e.callsign, e.sigmet_id, s.fir_id, s.hazard, s.qualifier, e.kind, e.entered_at, e.left_at, e.close_reason, e.eta_s,
+--
+2026-10-01 23:20:31.097 UTC [33482] ERROR:  canceling statement due to user request
+2026-10-01 23:20:31.097 UTC [33482] STATEMENT:  /* wakeline alerts.history limit_s=3 */ SELECT e.id, e.hex, e.callsign, e.sigmet_id, s.fir_id, s.hazard, s.qualifier, e.kind, e.entered_at, e.left_at, e.close_reason, e.eta_s,
+--
+2026-10-01 23:20:31.581 UTC [33238] ERROR:  canceling statement due to user request
+2026-10-01 23:20:31.581 UTC [33238] STATEMENT:  /* wakeline alerts.history limit_s=3 */ SELECT e.id, e.hex, e.callsign, e.sigmet_id, s.fir_id, s.hazard, s.qualifier, e.kind, e.entered_at, e.left_at, e.close_reason, e.eta_s,
+--
+2026-10-01 23:20:32.094 UTC [33564] ERROR:  canceling statement due to user request
+2026-10-01 23:20:32.094 UTC [33564] STATEMENT:  /* wakeline alerts.history limit_s=3 */ SELECT e.id, e.hex, e.callsign, e.sigmet_id, s.fir_id, s.hazard, s.qualifier, e.kind, e.entered_at, e.left_at, e.close_reason, e.eta_s,
+--
+2026-10-01 23:20:32.580 UTC [34013] ERROR:  canceling statement due to user request
+2026-10-01 23:20:32.580 UTC [34013] STATEMENT:  /* wakeline alerts.history limit_s=3 */ SELECT e.id, e.hex, e.callsign, e.sigmet_id, s.fir_id, s.hazard, s.qualifier, e.kind, e.entered_at, e.left_at, e.close_reason, e.eta_s,
+--
+2026-10-01 23:20:33.079 UTC [34064] ERROR:  canceling statement due to user request
+2026-10-01 23:20:33.079 UTC [34064] STATEMENT:  /* wakeline alerts.history limit_s=3 */ SELECT e.id, e.hex, e.callsign, e.sigmet_id, s.fir_id, s.hazard, s.qualifier, e.kind, e.entered_at, e.left_at, e.close_reason, e.eta_s,
+--
+2026-10-01 23:20:33.580 UTC [33737] ERROR:  canceling statement due to user request
+2026-10-01 23:20:33.580 UTC [33737] STATEMENT:  /* wakeline alerts.history limit_s=3 */ SELECT e.id, e.hex, e.callsign, e.sigmet_id, s.fir_id, s.hazard, s.qualifier, e.kind, e.entered_at, e.left_at, e.close_reason, e.eta_s,
+--
+2026-10-01 23:20:34.134 UTC [33482] ERROR:  canceling statement due to user request
+2026-10-01 23:20:34.134 UTC [33482] STATEMENT:  /* wakeline alerts.history limit_s=3 */ SELECT e.id, e.hex, e.callsign, e.sigmet_id, s.fir_id, s.hazard, s.qualifier, e.kind, e.entered_at, e.left_at, e.close_reason, e.eta_s,
+--
+2026-10-01 23:20:34.600 UTC [33238] ERROR:  canceling statement due to user request
+2026-10-01 23:20:34.600 UTC [33238] STATEMENT:  /* wakeline alerts.history limit_s=3 */ SELECT e.id, e.hex, e.callsign, e.sigmet_id, s.fir_id, s.hazard, s.qualifier, e.kind, e.entered_at, e.left_at, e.close_reason, e.eta_s,
+--
+2026-10-01 23:20:35.138 UTC [33564] ERROR:  canceling statement due to user request
+2026-10-01 23:20:35.138 UTC [33564] STATEMENT:  /* wakeline alerts.history limit_s=3 */ SELECT e.id, e.hex, e.callsign, e.sigmet_id, s.fir_id, s.hazard, s.qualifier, e.kind, e.entered_at, e.left_at, e.close_reason, e.eta_s,
+--
+2026-10-01 23:20:35.793 UTC [34013] ERROR:  canceling statement due to user request
+2026-10-01 23:20:35.793 UTC [34013] STATEMENT:  /* wakeline alerts.history limit_s=3 */ SELECT e.id, e.hex, e.callsign, e.sigmet_id, s.fir_id, s.hazard, s.qualifier, e.kind, e.entered_at, e.left_at, e.close_reason, e.eta_s,
+--
+2026-10-01 23:20:36.109 UTC [34064] ERROR:  canceling statement due to user request
+2026-10-01 23:20:36.109 UTC [34064] STATEMENT:  /* wakeline alerts.history limit_s=3 */ SELECT e.id, e.hex, e.callsign, e.sigmet_id, s.fir_id, s.hazard, s.qualifier, e.kind, e.entered_at, e.left_at, e.close_reason, e.eta_s,
+--
+2026-10-01 23:20:36.611 UTC [33737] ERROR:  canceling statement due to user request
+2026-10-01 23:20:36.611 UTC [33737] STATEMENT:  /* wakeline alerts.history limit_s=3 */ SELECT e.id, e.hex, e.callsign, e.sigmet_id, s.fir_id, s.hazard, s.qualifier, e.kind, e.entered_at, e.left_at, e.close_reason, e.eta_s,
+--
+2026-10-01 23:20:37.163 UTC [33482] ERROR:  canceling statement due to user request
