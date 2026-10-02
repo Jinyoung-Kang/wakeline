@@ -1197,6 +1197,11 @@
   `d385bb80`). edge 는 이제 자체 이미지라 trivy 실패가 막는 검사가 되었다(제3자 표에서 뺐다).
 - **Dependabot 메이저 갱신**: eslint 10 · typescript 7 · @types/node 26 · json-schema-validator 3 · node 26 이미지 PR 은 각자 실패했고, 코드를 함께 바꿔야 하는 계획된 이전이다 →
   semver-major 무시 규칙(`0b716df6`)을 넣고 PR 5개(#1 · #3 · #4 · #5 · #6)를 사유를 달아 닫았다. 마이너 · 패치 묶음과 보안 갱신은 그대로 받는다(#2 는 열어 둠).
+- **e2e — 앞 단계가 실패해 가려져 있던 실패 하나**(위 넷을 고친 뒤 main CI 에서 처음 돌았다, `45adf36f`): 재생 슬라이더 시험이 끄는 동안의 재생 요청을
+  '움직임 수(8)+1' 이하로 묶었는데 CI 에서 12건이었다. 제품은 설계대로다(입력이 150 ms 멈춘 뒤에만 보낸다). GPU 없는 러너(SwiftShader)에서는 그리기가 느려 한 움직임(4단계)
+  안에서도 입력 사이가 150 ms 를 넘어, 멈춤이 움직임 수보다 많았다. 이 Mac 에서 SwiftShader 로 재현했다(요청 10건 > 9, 그때 150 ms 이상 멈춤 10번).
+  → 상한을 잰 입력 간격의 멈춤 수 + 2 로 바꿨다. GPU · SwiftShader 각 3번 통과, debounce 를 0 으로 바꾼 변이 웹 이미지(따로 태그, 격리 스택에만)에서는 3번 모두 실패
+  (요청 26–30건 > 상한 4–6) — 회귀는 그대로 잡는다. debounce 의 정확한 규칙은 가짜 타이머 단위 시험(`tests/replay-slider.test.ts`)이 고정한다. 격리 스택 e2e 43 통과.
 - 브랜치 확인: collector pytest 1,923 통과 · 23 건너뜀 · ruff · ruff format 통과 · 인프라 정책 unittest 159 · `RestSamplesIT` · rest_contract_check 36 · edge 시험 35 · trivy `wakeline-edge:local` PASS.
 
 ## 자동 검사 현황(2026-10-02 15:5x KST, QA 2026-10 브랜치 `qa/2026-10` — #103 뒤, 깨끗한 `git archive` 내보내기 · 격리 스택)
