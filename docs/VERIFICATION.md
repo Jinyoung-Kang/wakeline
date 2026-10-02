@@ -1184,3 +1184,4 @@
 | 첫 화면 JS 예산 | `check:first-js -- --in-image` | 546,721 B / 550,000 B(여유 3,279 B) |
 | 성능 | k6 · Lighthouse · JVM 설정 | [PERF](PERF.md) §14 · [QA 성능 기록](qa/2026-10/findings/performance.md) |
 | 보안 게이트 | `make security`(브랜치 이미지) | PASS — gitleaks 1,229 커밋 누출 0 · trivy 자체 4 · 제3자 2 · npm audit 0 · pip-audit 0 |
+| 배포 뒤 확인 | `make up`(main `f96f3f8a`) · `docker logs` · api 지표 · `/healthz` | 2026-10-02 16:03 KST 배포 — 배포 전 새 `:local` 이미지 trivy PASS · 이미지 검사 11 · db 권한 36 · 이미지 교체 11 · 백업·복원 48, 되돌리기용 `:rollback` 태그. api · web · collector · ais 다시 만듦(db · redis 그대로 — PostgreSQL 18.6), migrate 0. 7분 동안 api · ais · web WARN · ERROR 0, collector WARN 1(기상청 목록 읽기 시간 초과 15 s — 한 번 다시 시도, 외부). **QA-100 수정이 운영에서 동작**: 가드가 임대를 쥔 뒤(07:03:28.210Z) 소비자 부트스트랩(07:03:29.572Z), `wakeline_ship_rows_total{result="dropped"}` 0 · 항적 dropped 0(쓴 선박 21,610 · 항적 38,924행). `/healthz` ok |
