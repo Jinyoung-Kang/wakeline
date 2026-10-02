@@ -271,8 +271,7 @@ public class WeatherController {
 
     @GetMapping("/airports/{icao}/wx")
     public ResponseEntity<Map<String, Object>> airportWx(@PathVariable String icao, HttpServletRequest req) {
-        String code = icao.trim().toUpperCase();
-        if (!code.matches("^[A-Z0-9]{4}$")) throw Problem.badRequest("BAD_ICAO", "icao must be 4 chars");
+        String code = Params.icao(icao);
         Map<String, Object> wx = airports.wx(code);
         if (wx == null) throw Problem.notFound("airport not watched: " + code);
         Object ft = wx.get("fetched_at");

@@ -19,10 +19,23 @@ public final class Params {
         return value;
     }
 
-    /** 항공기 hex(ICAO 24-bit 주소): 앞뒤 공백을 빼고 소문자 6자리 16진수만. 아니면 400 BAD_HEX. */
+    /**
+     * 항공기 hex(ICAO 24-bit 주소): 앞뒤 공백을 빼고 ASCII 6자리 16진수만 — 소문자로 돌려준다. 아니면 400 BAD_HEX.
+     * ASCII 를 먼저 검사하고 Locale.ROOT 로 바꾼다(QA 2026-10 기능 개선 제안 5 — 바꾼 뒤 검사하면 비 ASCII 글자가 ASCII 로 바뀌어 지날 수 있다).
+     */
     public static String hex(String hex) {
-        String h = hex == null ? "" : hex.trim().toLowerCase();
-        if (!h.matches("^[0-9a-f]{6}$")) throw Problem.badRequest("BAD_HEX", "hex must be 6 hex chars");
-        return h;
+        String h = hex == null ? "" : hex.trim();
+        if (!h.matches("^[0-9A-Fa-f]{6}$")) throw Problem.badRequest("BAD_HEX", "hex must be 6 hex chars");
+        return h.toLowerCase(java.util.Locale.ROOT);
+    }
+
+    /**
+     * 공항 ICAO 코드: 앞뒤 공백을 빼고 ASCII 영숫자 4자 — 대문자로 돌려준다. 아니면 400 BAD_ICAO. ASCII 를 먼저 검사한다(QA 2026-10 기능 개선 제안 5 —
+     * 예전에는 대문자로 바꾼 뒤 검사해 'rksı'(점 없는 ı — 어느 로캘에서든 대문자가 I)가 RKSI 로 찾아졌다).
+     */
+    public static String icao(String icao) {
+        String c = icao == null ? "" : icao.trim();
+        if (!c.matches("^[A-Za-z0-9]{4}$")) throw Problem.badRequest("BAD_ICAO", "icao must be 4 chars");
+        return c.toUpperCase(java.util.Locale.ROOT);
     }
 }

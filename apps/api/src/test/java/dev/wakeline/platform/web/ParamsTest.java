@@ -26,4 +26,16 @@ class ParamsTest {
         assertThatThrownBy(() -> Params.hex("71be0")).isInstanceOf(Problem.class);
         assertThatThrownBy(() -> Params.hex(null)).isInstanceOf(Problem.class);
     }
+
+    /** QA 2026-10 기능 개선 제안 5: ASCII 코드는 ASCII 로만 — 바꾸기 전에 검사한다(비 ASCII 글자가 대 · 소문자 바꾸기로 ASCII 가 되어 지나지 않게). */
+    @Test
+    void asciiCodesAreCheckedBeforeTheirCaseIsChanged() {
+        assertThat(Params.icao(" rksi ")).isEqualTo("RKSI");
+        assertThatThrownBy(() -> Params.icao("rks\u0131")).isInstanceOf(Problem.class).hasMessageContaining("icao"); // 점 없는 ı — 대문자는 I
+        assertThatThrownBy(() -> Params.icao("RKS\u0130")).isInstanceOf(Problem.class); // 점 있는 İ
+        assertThatThrownBy(() -> Params.icao("RKS")).isInstanceOf(Problem.class);
+        assertThat(Params.hex("71BE01")).isEqualTo("71be01");
+        assertThatThrownBy(() -> Params.hex("71be0\u212a")).isInstanceOf(Problem.class); // 켈빈 기호 K — 소문자는 k
+        assertThatThrownBy(() -> Params.hex("\uff17\uff11be01")).isInstanceOf(Problem.class); // 전각 숫자
+    }
 }
