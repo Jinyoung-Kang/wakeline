@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import errno
+
 import httpx
 import pytest
 
@@ -113,8 +115,13 @@ def test_connect_error_empty_message_says_connection_failed():
 
 def test_connect_error_adds_the_cause_text():
     e = _with_request(httpx.ConnectError(""), _req("https://api.adsb.lol/x"))
-    e.__cause__ = OSError(111, "Connection refused")
-    assert describe_error(e) == "ConnectError — 연결 실패 (api.adsb.lol): OSError: [Errno 111] Connection refused"
+    # 이 OS 의 ECONNREFUSED 로 만든다 — OSError(errno, …) 는 errno 가 ECONNREFUSED 이면 ConnectionRefusedError 가 된다(PEP 3151). 111 을 박으면
+    # Linux(111)에서는 ConnectionRefusedError, macOS(61)에서는 OSError 가 되어 플랫폼마다 글자가 달랐다(CI 실패 2026-10-02)
+    e.__cause__ = OSError(errno.ECONNREFUSED, "Connection refused")
+    assert (
+        describe_error(e)
+        == f"ConnectError — 연결 실패 (api.adsb.lol): ConnectionRefusedError: [Errno {errno.ECONNREFUSED}] Connection refused"
+    )
 
 
 def test_connect_error_with_message_and_protocol_error():

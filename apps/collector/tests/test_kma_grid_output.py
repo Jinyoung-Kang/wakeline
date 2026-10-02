@@ -1,15 +1,18 @@
 """kma_grid.render_mercator_png 의 출력(PNG 바이트 · 에코 셀 수 · 관측 셀 수)을 고정한다 — 임계값을 실수에서 정수로 바꾸기 전(collector-review F9 ·
 PLAN Phase 4-2). 실제 헤더(fixtures/kma_rdr_cmp_head.bin — 2305 × 2881)에 합성 격자를 싣는다: 관측 반경 밖 · 안(비관측 · 에코 없음)과, 에코 칸에는
-무작위 값과 함께 모든 경계값(min_dbz 와 색 구간마다 ×100 의 −1 · 0 · +1)과 int16 의 양 끝을 넣는다. 같은 입력이면 PNG 는 바이트까지 같아야 한다
-(Pillow 는 uv.lock 으로 고정)."""
+무작위 값과 함께 모든 경계값(min_dbz 와 색 구간마다 ×100 의 −1 · 0 · +1)과 int16 의 양 끝을 넣는다. 같은 입력이면 그린 그림(디코딩한 RGBA 화소 ·
+크기)이 같아야 한다. PNG 압축 바이트는 고정하지 않는다 — 같은 Pillow 판(uv.lock)이라도 플랫폼마다 휠에 든 zlib 이 달라 압축 결과가 다르다(CI · Linux x86_64 에서
+macOS 의 해시와 달랐다 — 화소는 같다)."""
 
 from __future__ import annotations
 
 import hashlib
+import io
 from pathlib import Path
 
 import numpy as np
 import pytest
+from PIL import Image
 
 from wakeline_collector.kma_grid import DBZ_STOPS, DISPLAY_MIN, NULL_OUTSIDE, NULL_UNOBSERVED, parse_header, render_mercator_png
 
@@ -45,14 +48,18 @@ def synthetic_grid(seed: int) -> np.ndarray:
 def render_digest(seed: int, width: int) -> tuple[str, int, int]:
     h = parse_header(FIX.read_bytes())
     png, meta = render_mercator_png(h, synthetic_grid(seed), width=width)
-    return hashlib.sha256(png).hexdigest(), meta["echo_cells"], meta["observed_cells"]
+    assert png[:8] == b"\x89PNG\r\n\x1a\n"
+    img = Image.open(io.BytesIO(png))
+    pixels = hashlib.sha256(f"{img.mode} {img.size[0]}x{img.size[1]} ".encode() + img.tobytes()).hexdigest()
+    return pixels, meta["echo_cells"], meta["observed_cells"]
 
 
-# 현재 코드(실수 임계값 — kma_grid 의 grid.astype(float32) / 100 ≥ min_dbz)로 만든 값
+# 디코딩한 화소의 해시 · 에코 셀 · 관측 셀. 실수 임계값(grid.astype(float32) / 100 ≥ min_dbz) 때의 PNG 해시(ffd26b3c… · 3eff2d18… · db2d850b… — macOS)와
+# 같은 PNG 바이트를 디코딩한 값이다(정수 임계값으로 바꾼 뒤에도 그 PNG 해시가 같았다 — 화소가 같다). 화소는 플랫폼과 상관없다(Linux x86_64 에서도 같음).
 GOLDEN = {
-    (1, 1152): ("ffd26b3c3296b70cff031f0f803ad230e92e2da6d982a55b74391d23369c993e", 659549, 3141421),
-    (2, 576): ("3eff2d18ad105962c09dd275e92539cc0f184f417510133e25e10abb4a7d406a", 659413, 3141421),
-    (3, 288): ("db2d850bb14120612d82b39a134d9d803d5cd92845f140322b6b85fa9951a2de", 658807, 3141421),
+    (1, 1152): ("e856e4f1b52ce657bda164269f4137ab27f0e6698752efeb146924cb3d3d0522", 659549, 3141421),
+    (2, 576): ("07b5d5405772f0d64f53f405615e7b801fcfe7ec0cbbf44470dc119909860fb5", 659413, 3141421),
+    (3, 288): ("24fd2dfd0e44bf4b6e2f88fe6a27bc4d58b4f0d6130bb898305471f6f24119ba", 658807, 3141421),
 }
 
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 로컬 보안 게이트(make security, R-07) — 원격 CI 가 없어도 ci.yml 의 security · third-party-images job 과 같은 기준으로 막는다.
 #   1) gitleaks: git 이력 전체(새 clone · --network none). 허용은 .gitleaksignore 의 정확한 지문(시험용 가짜 값만 — 목록은 그 파일)뿐 — 하나라도 더 나오면 실패
-#   2) trivy: 자체 이미지 wakeline-api·collector·web:local — 고칠 수 있는(ignore-unfixed) HIGH/CRITICAL 이 있으면 실패
+#   2) trivy: 자체 이미지 wakeline-api·collector·web·db·edge:local — 고칠 수 있는(ignore-unfixed) HIGH/CRITICAL 이 있으면 실패
 #   3) trivy: compose 에 고정된 제3자 이미지 + make bench 의 k6 — 차단 여부는 ci.yml third-party-images 행렬(blocking)을 그대로 읽는다
 #   4) 의존성 감사: ci.yml 의 npm audit(web) · pip-audit(collector)와 같은 명령(tools/dependency_audit.sh, S2) — 취약점이 있거나 돌리지 못하면 실패
 # 이미지를 빌드하지 않는다 — 현재 코드로 스캔하려면 먼저 `make build` 한다. 스캐너 규칙(다이제스트 고정·docker.sock 없음·네트워크 없음)은 tools/scan_lib.sh.
@@ -29,7 +29,7 @@ verdict gitleaks "$rc" 1
 trivy_db_update || exit 2
 echo "== trivy 자체 이미지 (HIGH·CRITICAL, 고칠 수 있는 것만, 차단)"
 # SECURITY_OWN_IMAGES 로 다른 태그를 볼 수 있다(예: 방금 빌드한 :review-check). 기본은 compose 가 붙이는 태그.
-for img in ${SECURITY_OWN_IMAGES:-wakeline-api:local wakeline-collector:local wakeline-web:local wakeline-db:local}; do
+for img in ${SECURITY_OWN_IMAGES:-wakeline-api:local wakeline-collector:local wakeline-web:local wakeline-db:local wakeline-edge:local}; do
   if ! docker image inspect "$img" >/dev/null 2>&1; then echo "FAIL  $img 이미지 없음 — make build 먼저"; fail=1; continue; fi
   rc=0; trivy_image "$img" "$WORK" --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 --format table || rc=$?
   verdict "trivy $img" "$rc" 1

@@ -128,7 +128,7 @@ class CiPolicyTest(unittest.TestCase):
         self.assertRegex(st[build], r"(?m)^\s+if:\s*\$\{\{\s*!cancelled\(\)\s*\}\}\s*$",
                          "build 에 if 가 없으면 gitleaks 실패 시 skipped 가 되고 trivy 3단계도 모두 건너뛴다")
         trivy = [s for s in st if "aquasecurity/trivy-action@" in s]
-        self.assertEqual(len(trivy), 4)  # api · collector · web · db(R-63 — 자체 빌드)
+        self.assertEqual(len(trivy), 5)  # api · collector · web · db(R-63 — 자체 빌드) · edge(2026-10-02 — 자체 빌드)
         for s in trivy:
             with self.subTest(step=s.splitlines()[0]):
                 self.assertIn("steps.build.outcome == 'success'", s)
@@ -175,7 +175,7 @@ class CiPolicyTest(unittest.TestCase):
         sed_re = pattern.group(1).split("/")[1]  # s/<ERE>/\1 \2/p — 이 ERE 는 파이썬 re 로도 같게 읽힌다
         rows = [m.groups() for ln in self.jobs["third-party-images"].splitlines() if (m := re.search(sed_re, ln))]
         self.assertEqual({t for t, _ in rows}, set(re.findall(r"\{\s*target:\s*([\w-]+)\s*,", self.jobs["third-party-images"])))
-        self.assertIn(("edge", "1"), rows)
+        self.assertNotIn("edge", {t for t, _ in rows}, "edge 는 자체 이미지(security job 의 차단 스캔) — 상류 그대로를 따로 재지 않는다")
         self.assertIn(("redis", "1"), rows)
 
     # --- R-41: 수집기의 실제 Redis 대조 시험(예산 Lua·ACL)이 CI 에서 건너뛰어지지 않는다 ---

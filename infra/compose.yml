@@ -30,8 +30,10 @@ x-collector-build: &collector_build
 
 services:
   edge:
-    # 비root nginx(uid 101). 1.27 계열은 2025-06 이후 재빌드가 없어 현재 stable(1.30) 을 쓴다.
-    image: nginxinc/nginx-unprivileged:1.30-alpine@sha256:ed04ec1ff34502c339ee5c3ae3f855442398edc1d05591e2b98981dcbbd20b1e
+    # 비root nginx(uid 101). 1.27 계열은 2025-06 이후 재빌드가 없어 현재 stable(1.30) 을 쓴다. 상류 이미지(다이제스트 고정)에 빌드 때 Alpine 보안 갱신을
+    # 얹은 자체 이미지다(infra/edge/Dockerfile — 상류 재빌드 전에도 고칠 수 있는 HIGH 가 남지 않게, 2026-10-02).
+    image: wakeline-edge:local
+    build: ./edge
     <<: *hardened
     user: "101:101"
     tmpfs: ["/tmp:size=64m"]                        # pid · 프록시 임시 파일(nginx.conf)

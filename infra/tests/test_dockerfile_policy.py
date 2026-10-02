@@ -62,6 +62,35 @@ class CollectorNativeMemoryTest(unittest.TestCase):
         self.assertRegex(runtime, r"(?m)^ENV\b.*\bMALLOC_ARENA_MAX=2\b")
 
 
+
+
+class EdgeImageTest(unittest.TestCase):
+    """edge(nginx) — 상류 nginxinc/nginx-unprivileged 를 다이제스트로 고정하고, 빌드 때 Alpine 보안 갱신(apk upgrade)만 얹는다. 상류가 고친 패키지로
+    다시 빌드하기 전에도 고칠 수 있는 HIGH 가 남지 않게(2026-10-02 CI trivy: pcre2 CVE-2026-103111). 실행은 그대로 비root uid 101."""
+
+    def test_edge_dockerfile_pins_upstream_and_takes_security_updates(self):
+        path = ROOT / "infra" / "edge" / "Dockerfile"
+        self.assertTrue(path.exists(), "infra/edge/Dockerfile 없음 — edge 가 상류 이미지를 그대로 쓴다")
+        text = path.read_text()
+        froms = re.findall(r"(?mi)^FROM\s+(\S+)", text)
+        self.assertEqual(len(froms), 1)
+        self.assertRegex(froms[0], r"^nginxinc/nginx-unprivileged:[\w.-]+@sha256:[0-9a-f]{64}$")
+        runs = " ".join(re.findall(r"(?m)^RUN\s+(.*)$", re.sub(r"\\\n", " ", text)))
+        self.assertRegex(runs, r"apk upgrade --no-cache")
+        users = re.findall(r"(?m)^USER\s+(\S+)", text)
+        self.assertEqual(users[-1], "101", "마지막 USER 는 비root 101(nginx)")
+
+class CollectorPythonVersionTest(unittest.TestCase):
+    """CI(setup-uv · `uv run`)는 프로젝트의 .python-version 을 따른다 — 없으면 requires-python(>=3.13)을 만족하는 가장 새 판을 받는다(2026-10-02 CI:
+    CPython 3.14.8, 운영 이미지는 3.13). 시험이 운영과 같은 파이썬에서 돌게 이미지의 판과 묶는다."""
+
+    def test_python_version_file_matches_the_image(self):
+        pin = ROOT / "apps" / "collector" / ".python-version"
+        self.assertTrue(pin.exists(), "apps/collector/.python-version 없음 — CI 가 운영과 다른 파이썬으로 시험한다")
+        image = re.search(r"(?m)^FROM python:(\d+\.\d+)-slim@", DOCKERFILES["collector"].read_text())
+        self.assertIsNotNone(image)
+        self.assertEqual(pin.read_text().strip(), image.group(1))
+
 class RuntimeToolsTest(unittest.TestCase):
     """R-29: 실행 이미지에 쓰지 않는 패키지 관리자를 남기지 않는다(web·collector 의 HIGH 취약점 전부의 출처). 빌드한 이미지는 image_test.sh 가 본다."""
 
