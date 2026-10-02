@@ -81,8 +81,9 @@ python3 -m unittest discover -s infra/tests                                     
 - **`make e2e` · `make build` · `make infra-docker-test`(db) 는 운영 스택이 쓰는 `wakeline-*:local` 태그를 덮는다.** 돌던 컨테이너는 그대로지만 다음
   `make up` 이 그 이미지를 쓴다 — 브랜치 작업 중에는 main 이미지를 `:mainsafe` 로 태그해 두고 끝나면 `:local` 로 되돌린다. 다른 태그를 검사할 때는
   `SECURITY_OWN_IMAGES="wakeline-api:<tag> …" bash tools/security_gate.sh`.
-- 배포는 `make up`. Redis(AOF)를 다시 만들면 한동안 `LOADING` 이고 api 는 503 + Retry-After 로 답한다. 실행 이미지는 빌드 때 `apt-get upgrade` 로 OS 보안
-  갱신을 받는다(기반 이미지는 다이제스트 고정) — 새 CVE 로 trivy 가 실패하면 캐시 없이 다시 빌드해 본다(`docker build --no-cache`).
+- 배포는 `make up`. Redis(AOF)를 다시 만들면 한동안 `LOADING` 이고 api 는 503 + Retry-After 로 답한다. 실행 이미지(edge 포함 — `infra/edge/Dockerfile` 은 `apk upgrade`)는
+  빌드 때 OS 보안 갱신을 받는다(기반 이미지는 다이제스트 고정) — 새 CVE 로 trivy 가 실패하면 캐시 없이 다시 빌드해 본다(`docker build --no-cache`).
+  이 Mac 의 trivy DB 는 GitHub CI 보다 늦을 수 있다 — 로컬 PASS 여도 CI 의 trivy 가 실패하면 CI 로그의 CVE 와 이미지 안 패키지 판으로 판단한다.
 - main 병합 · 배포 · GitHub push · 데이터를 지우거나 바꾸는 일은 사용자에게 먼저 묻는다.
 
 ## 함정

@@ -1183,6 +1183,22 @@
 - 측정 중 호스트에 다른 프로그램(브라우저 렌더러 · 다른 프로젝트의 빌드 · java)이 돌아 1분 부하가 4–10 이었다 — Lighthouse benchmarkIndex 를 실행마다 남겼다(2,037–2,840).
 
 - **주인의 결정(2026-10-02)**: 모바일 지도 화면의 남은 TBT(배경지도를 그리면 442–474 ms)는 지금 상태로 둔다 — 배경지도 층 · 글자 줄이기, 한가할 때 지도 싣기, 첫 화면 UI 빼기를 하지 않는다(PERF §15.6).
+## #105 GitHub CI(main) 실패 — 이 Mac 에서는 통과하고 ubuntu x86_64 러너에서만 깨진 것 4가지(브랜치 `fix/ci-2026-10`, main `c746d7eb`)
+- **collector — 플랫폼에 기대는 시험 둘**: KMA 렌더 고정값이 PNG 바이트의 sha256 이었다 — Pillow 휠이 플랫폼마다 다른 zlib 를 묶어 같은 픽셀도 압축 바이트가 다르다 →
+  복호한 픽셀(모드 · 크기 · RGBA)의 sha256 으로 고정(`ed0d112b`). 연결 거부 오류 문장이 macOS 의 errno 61 을 박아 두었다(Linux 111) → `errno.ECONNREFUSED` 로.
+  두 시험 모두 macOS 와 Linux 컨테이너(`uv:python3.13-bookworm-slim`)에서 통과를 확인했다.
+- **collector — CI 가 3.14 로 시험했다**: `requires-python >=3.13` 이고 `.python-version` 이 없어 uv 가 러너에서 CPython 3.14 를 골랐다(이미지는 3.13) →
+  `apps/collector/.python-version` = 3.13, Dockerfile 의 `python:X.Y-slim` 과 같은지 정책 시험(`7677190e`).
+- **api — REST 시료의 시각 정밀도**: Linux 시계는 나노초라 PostgreSQL 이 마이크로초로 반올림하면 저장된 선박 위치 시각이 live `seen_at` 뒤로 갈 수 있다 →
+  시료의 선박 시각을 밀리초로 자름(`91601aab`, `RestSamplesIT`).
+- **CodeQL(java-kotlin)**: autobuild 가 `apps/api` 아래 Gradle 프로젝트를 찾지 못했다 → `build-mode: none`(빌드 없이 분석, `77bb482f`).
+- **trivy 제3자(edge)**: 위로 받은 `nginx-unprivileged:1.30-alpine` 에 고칠 수 있는 HIGH(pcre2 CVE-2026-103111, 10.48-r0)가 있었다. 이 Mac 의 trivy DB 는 아직 이 CVE 를 몰라
+  로컬 게이트는 PASS 였다 — 근거는 CI 로그와 이미지 안 `apk info` 판이다. → edge 이미지를 직접 만든다(`infra/edge/Dockerfile` — 고정한 위 이미지 + 빌드 때 `apk upgrade`, uid 101 그대로,
+  `d385bb80`). edge 는 이제 자체 이미지라 trivy 실패가 막는 검사가 되었다(제3자 표에서 뺐다).
+- **Dependabot 메이저 갱신**: eslint 10 · typescript 7 · @types/node 26 · json-schema-validator 3 · node 26 이미지 PR 은 각자 실패했고, 코드를 함께 바꿔야 하는 계획된 이전이다 →
+  semver-major 무시 규칙(`0b716df6`)을 넣고 PR 5개(#1 · #3 · #4 · #5 · #6)를 사유를 달아 닫았다. 마이너 · 패치 묶음과 보안 갱신은 그대로 받는다(#2 는 열어 둠).
+- 브랜치 확인: collector pytest 1,923 통과 · 23 건너뜀 · ruff · ruff format 통과 · 인프라 정책 unittest 159 · `RestSamplesIT` · rest_contract_check 36 · edge 시험 35 · trivy `wakeline-edge:local` PASS.
+
 ## 자동 검사 현황(2026-10-02 15:5x KST, QA 2026-10 브랜치 `qa/2026-10` — #103 뒤, 깨끗한 `git archive` 내보내기 · 격리 스택)
 | 층 | 도구 | 수 |
 |---|---|---|
@@ -1200,3 +1216,4 @@
 | 보안 게이트 | `make security`(브랜치 이미지) | PASS — gitleaks 1,229 커밋 누출 0 · trivy 자체 4 · 제3자 2 · npm audit 0 · pip-audit 0 |
 | 배포 뒤 확인 | `make up`(main `f96f3f8a`) · `docker logs` · api 지표 · `/healthz` | 2026-10-02 16:03 KST 배포 — 배포 전 새 `:local` 이미지 trivy PASS · 이미지 검사 11 · db 권한 36 · 이미지 교체 11 · 백업·복원 48, 되돌리기용 `:rollback` 태그. api · web · collector · ais 다시 만듦(db · redis 그대로 — PostgreSQL 18.6), migrate 0. 7분 동안 api · ais · web WARN · ERROR 0, collector WARN 1(기상청 목록 읽기 시간 초과 15 s — 한 번 다시 시도, 외부). **QA-100 수정이 운영에서 동작**: 가드가 임대를 쥔 뒤(07:03:28.210Z) 소비자 부트스트랩(07:03:29.572Z), `wakeline_ship_rows_total{result="dropped"}` 0 · 항적 dropped 0(쓴 선박 21,610 · 항적 38,924행). `/healthz` ok |
 | 배포 뒤 확인(화면 성능) | `make up`(main `45fca3de`) · `docker logs` · 지표 · 헤드리스 브라우저(실제 GPU) | 2026-10-02 20:39 KST 배포 — 배포 전 새 `:local` 이미지 trivy PASS · 이미지 검사 11, 되돌리기용 `:rollback`. api · web · collector · ais 다시 만듦(db · redis 그대로). 5분 동안 api · collector · ais · web WARN · ERROR 0, 가드 임대(11:39:50.169Z) 뒤 소비자 부트스트랩(11:39:51.958Z) · 선박 · 항적 dropped 0. 운영 화면 확인: `/` 첫 그리기 416 ms → 지도 캔버스 594 ms · `/replay` 216 → 338 ms · `/stats` · `/about` 첫 그리기 124 · 148 ms, 네 화면 모두 콘솔 오류 · 5xx 0. `/healthz` ok |
+| 배포 뒤 확인(edge 패치) | `docker compose build edge` · `up -d --no-deps edge`(main `c746d7eb`) · `docker logs` · curl | 2026-10-02 21:17 KST — edge 만 다시 만듦(다른 서비스 그대로), 되돌리기용 `wakeline-edge:rollback`(이전 위 이미지). healthy · uid 101 · pcre2-10.49-r0 · nginx-1.30.5-r1. `/healthz` · `/` · `/api/v1/status` 200, `/ws/v1` 101(연결 전환), 보안 헤더(CSP · nosniff · DENY · Referrer · Permissions) 그대로, edge 로그 emerg · crit · error 0 |
