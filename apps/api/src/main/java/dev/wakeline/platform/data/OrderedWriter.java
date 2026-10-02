@@ -16,7 +16,8 @@ import java.util.concurrent.TimeUnit;
  * 이전에는 배치마다 새 스레드를 띄워, 나중 배치의 LEFT/CLEARED UPDATE 가 앞 배치의 INSERT 보다 먼저 실행될 수 있었다.
  * <ul>
  *   <li>제출은 기다리지 않는다(offer). 큐(50,000)가 가득 차면 새 작업을 버리고 wakeline_persist_tasks_total{result="dropped"} 로 센다.</li>
- *   <li>일시 장애(연결 실패·풀 대기 초과·타임아웃·잠금 대기 한도)는 같은 작업을 백오프(1 s → 30 s)로 계속 재시도한다 — 뒤 작업이 앞지르지 않는다.</li>
+ *   <li>일시 장애(연결 실패·풀 대기 초과·타임아웃·잠금 대기 한도)는 같은 작업을 백오프(1 s → 30 s)로 계속 재시도한다 — 뒤 작업이 앞지르지 않는다.
+ *       쉬는 동안 DB 가 다시 답하면(DbRecovery — 답하지 않음 → 답함) 쉼을 끝까지 자지 않고 곧바로 다시 쓴다.</li>
  *   <li>그 밖의 오류(제약 위반 등)는 짧은 경합을 넘기도록 3회까지 재시도한 뒤 버리고 result="failed" 로 센다.</li>
  *   <li>종료: 스트림 소비·WS 가 멈춘 뒤(phase) 남은 작업을 최대 6 s 동안 한 번씩 시도하고, 못 쓴 것은 dropped 로 센다.</li>
  *   <li>영수증(API-CONC-8): 작업이 스트림 메시지의 결과면(SIGMET 세트) 쓰였거나 영구 오류로 버렸을 때 놓는다 → 그 메시지를 ACK.
@@ -65,18 +66,26 @@ public class OrderedWriter implements StreamPrerequisite, WriteBacklog {
     private final MeterRegistry meters;
     private final long backoffStartMs;
     private final long backoffMaxMs;
+    /** 일시 장애로 쉬는 동안 DB 가 다시 답하면 곧바로 깨운다(ADR-032 개정 — 쉼을 끝까지 자지 않는다). */
+    private final DbRecovery recovery;
     private volatile boolean running;
     /** 종료 후 비우기까지 끝났다 — 이후 제출은 처리될 수 없으므로 받지 않고 센다. */
     private volatile boolean stopped;
     private Thread worker;
 
     @org.springframework.beans.factory.annotation.Autowired
-    public OrderedWriter(MeterRegistry meters) {
-        this(meters, BACKOFF_START_MS, BACKOFF_MAX_MS);
+    public OrderedWriter(MeterRegistry meters, DbRecovery recovery) {
+        this(meters, BACKOFF_START_MS, BACKOFF_MAX_MS, recovery);
     }
 
-    /** 테스트용: 재시도 간격을 줄여 쓴다. */
+    /** 테스트용: 재시도 간격을 줄여 쓴다(DB 회복 확인 없이 — 쉼을 끝까지 잔다). */
     public OrderedWriter(MeterRegistry meters, long backoffStartMs, long backoffMaxMs) {
+        this(meters, backoffStartMs, backoffMaxMs, DbRecovery.none());
+    }
+
+    /** 테스트용: DB 회복 확인을 바꿔 쓴다. */
+    public OrderedWriter(MeterRegistry meters, long backoffStartMs, long backoffMaxMs, DbRecovery recovery) {
+        this.recovery = recovery;
         this.meters = meters;
         this.backoffStartMs = backoffStartMs;
         this.backoffMaxMs = backoffMaxMs;
@@ -192,7 +201,8 @@ public class OrderedWriter implements StreamPrerequisite, WriteBacklog {
                 }
                 if (transientError) log.warn("{} persist failed (transient error), retry in {} ms: {}", t.kind(), backoff, e.toString());
                 else log.info("{} persist failed (attempt {}/{}), retry in {} ms: {}", t.kind(), permanentFailures, PERMANENT_ATTEMPTS, backoff, e.toString());
-                sleepWhileRunning(backoff);
+                if (transientError) recovery.pause(backoff, () -> running); // DB 가 다시 답하면 일찍 깬다
+                else sleepWhileRunning(backoff);
                 backoff = Math.min(backoffMaxMs, backoff * 2);
             }
         }
