@@ -93,4 +93,6 @@ python3 -m unittest discover -s infra/tests                                     
 - api DB 시험(Testcontainers)은 `wakeline-db:local` 이미지를 쓴다(`make test-api` 가 `infra/db` 로 빌드). 측정 시험 5종(`@Tag("perf")`)은 `test` · 커버리지에서 빠진다.
 - 루트 `.gitignore` 의 `data/` 규칙이 이름이 `data` 인 Java 패키지를 숨긴 적이 있다 — 새 소스가 `git status` 에 안 보이면 `git check-ignore -v` 로 확인(`GitIgnoreScopeTest`).
 - 수집기 작업 모듈(`jobs/kma_radar.py` 등)의 docstring 은 운영에서 겪은 사고와 규칙의 근거다. 줄이지 말고, 동작을 바꾸면 함께 고친다.
+- asyncpg 는 시간 초과 · 취소된 명령의 취소를 서버의 답까지 상한 없이 기다린다(풀 반납 · ROLLBACK · close) — 얼어붙은 DB 에서 바깥 `wait_for` 로 끊을 수
+  없다. 수집기 운영 풀은 `_GuardedPool`(끊긴 명령의 연결은 `terminate`, 빌림 상한)로 감싼다 — 새 DB 사용처도 그 풀을 쓴다(VERIFICATION #111).
 - 공급자 429 · DNS · 연결 시간 초과는 설계대로 처리된다(호스트 쉼 · 폴백 체인 · 다음 주기에 채움). `/ops` RUNS 의 '해결된 오류 포함'이 켜져 있으면 이미 해결한 오류도 보인다.

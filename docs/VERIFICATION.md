@@ -1295,10 +1295,32 @@
   고리가 된다(변이 시험: 늘 확인하게 바꾸면 1.2 s 동안 57번 시도 — 고친 코드는 3번). 풀이 아직 없으면(첫 연결 실패) 확인할 길이 없어 쉼을 다 잔다.
 - **격리 스택 B(실제 PostgreSQL)**: db 를 45 s 끄고(`docker stop`) 켜자 켠 지 0.7 s 뒤 "answers again — writing 7 queued writes now", 멈춘 동안의 실행 기록 7건이 원래
   시각으로 들어갔다(고치기 전 간격이면 약 16 s 뒤 — 2 · 4 · 8 · 16 s 쉼 뒤 30 s 쉼 중).
-- **함께 본 것(이번에 고치지 않음 — 따로 살펴볼 일)**: db 를 얼리면(`docker pause` 45 s) writer 는 백오프가 아니라 **쓰기 작업 안에 멈춘 내내** 묶였다 — 작업 상한
+- **함께 본 것(→ #111 에서 원인을 찾아 고쳤다)**: db 를 얼리면(`docker pause` 45 s) writer 는 백오프가 아니라 **쓰기 작업 안에 멈춘 내내** 묶였다 — 작업 상한
   (`OP_TIMEOUT_S` 10 s · 풀 `command_timeout`)이 지켜지지 않고 얼린 것을 풀자마자 'transient failure #1 (TimeoutError)'. asyncpg 의 취소가 멈춘 서버의 답을 기다리는 것으로
   보인다(api 의 QA-104 와 같은 부류). 그동안 수집기 heartbeat 의 `db_ok` 는 1 로 남는다. 손실은 없다(큐 상한 500 — 넘치면 가장 오래된 것부터 버리고 센다).
 - 확인: 수집기 1,929 통과(+2) · `db.py` 커버리지 98 % · ruff · format · mypy 통과.
+
+## #111 얼어붙은 DB 에서 수집기 writer 가 작업 상한을 넘어 멈추고 db_ok 가 1 로 남던 것(#110 에서 본 것, 같은 브랜치)
+- **증상(#110 격리 스택)**: db 를 45 s 얼리면(`docker pause` — TCP 는 열린 채 답이 없다: 멈춘 VM · 끊긴 망과 같다) writer 가 작업 상한(`OP_TIMEOUT_S` 10 s ·
+  풀 `command_timeout`)을 넘어 얼린 내내 멈췄고, 수집기 heartbeat 의 `db_ok` 는 1 로 남았다. 풀자마자 'transient failure #1 (TimeoutError)'.
+- **원인(asyncpg 0.31 소스)**: 시간 초과 · 취소된 명령에 asyncpg 는 별도 연결로 취소 요청을 보내고(`connect_utils._cancel` — 서버가 연결을 닫기까지 상한 없이 기다림),
+  그 연결로 하는 다음 일마다 서버가 취소에 답하기(`cancel_waiter` — 서버가 끊긴 명령의 결과를 보내야 풀림)를 기다린다. `pool.execute()` 등은 `pool.acquire()` 를
+  상한 없이 쓰고, 반납(`PoolConnectionHolder.release`)은 `asyncio.shield` 안에서 그 취소를 **budget=None(상한 없음)** 으로 기다린다. 바깥 `asyncio.wait_for` 는 한 번만
+  취소하므로 반납 대기를 끊지 못한다. `async with pool.acquire() as conn, conn.transaction():` 는 끊기면 트랜잭션이 먼저 ROLLBACK 을 보내 같은 기다림에 빠진다.
+  `conn.close(timeout)` 도 취소 대기를 먼저 상한 없이 한다 — 기다리지 않는 것은 `terminate()`(소켓을 바로 닫는다)뿐이다.
+- **재현(고치기 전 — 실제 asyncpg · 실제 PostgreSQL)**: `test_db_pg_integration.py` 의 `FreezeProxy`(실제 DB 앞의 TCP 중계 — 얼리면 오가는 바이트를 붙들고 새 연결도 잇지
+  않는다)로 운영 풀(`_create_pool`)을 얼림 — 작업 상한 1 s 인데 8 s 동안 writer 가 실패를 알리지 못했다(`the writer stayed stuck on the frozen database (db_ok stayed 1)`).
+- **고침**: 운영 풀 감싸개 `_GuardedPool` — 명령이 중간에 끊기면(TimeoutError · CancelledError) 그 연결은 `terminate()` 로 버린다(풀은 떼어 낸 연결을 기다리지 않고
+  받고, 걸린 취소 요청 작업도 정리된다 — 서버는 끊긴 연결의 트랜잭션을 되돌린다). `_GuardedConn.transaction()` 은 끊기면 ROLLBACK 을 보내지 않는다(서버가 답한 오류면
+  전처럼 ROLLBACK). 빌리는 일에 상한 `ACQUIRE_TIMEOUT_S`(5 s — 빈 연결 기다리기 · 새 연결 맺기 · asyncpg 의 반납 정리 상한, 뒷받침). 종료가 마감을 넘기면 풀을
+  terminate. 부르는 곳(`async with pool.acquire() as conn, conn.transaction():` · `pool.execute` 등)은 그대로 — 시험의 가짜 풀은 감싸지 않는다.
+- **시험이 지키는지(변이)**: 실제 PostgreSQL 시험은 빌림 상한을 30 s 로 두고(asyncpg 의 뒷받침이 아니라 감싸개를 보게) 트랜잭션 가운데(BEGIN · INSERT 뒤)에서 얼린다 —
+  고친 코드: 작업 상한 1 s 에 db_ok=0 2.04 s, 풀린 뒤 0.07 s 에 씀. `terminate` 를 지우거나 끊긴 트랜잭션에 ROLLBACK 을 보내게 바꾸면 둘 다 실패(멈춤). 처음 쓴 시험은
+  빌림 상한이 1 s 라 asyncpg 의 반납 상한이 대신 구해 `terminate` 변이를 잡지 못했고, 얼림이 BEGIN 에서 걸려 ROLLBACK 변이도 잡지 못했다 — 위처럼 고쳤다.
+  감싸개 규칙의 단위 시험(`test_db_writer.py` — 끊김 → terminate · ROLLBACK 없음, 서버가 답한 오류 → ROLLBACK, 성공 → COMMIT)은 기본 수집기 시험에서 돈다.
+- **격리 스택 B(운영 상한 — 작업 10 s · 확인 5 s)**: db 를 45 s 얼리자 16.6 s 뒤 "failed (TimeoutError) — db unreachable, keeping 4 queued", heartbeat `db_ok` 0
+  (+30 s 표본), 풀자 2.7 s 뒤 "answers again — writing 7 queued writes now", `db_ok` 1 · 대기 0. 예전: 얼린 내내 멈춤 · `db_ok` 1.
+- 확인: 수집기 1,931 통과(+2) · 24 건너뜀(실제 PostgreSQL 시험 +1 — `collector_pg_test.sh` · CI infra 작업에서 8 통과) · `db.py` 97 % · ruff · format · mypy 통과.
 
 ## 자동 검사 현황(2026-10-02 15:5x KST, QA 2026-10 브랜치 `qa/2026-10` — #103 뒤, 깨끗한 `git archive` 내보내기 · 격리 스택)
 | 층 | 도구 | 수 |
