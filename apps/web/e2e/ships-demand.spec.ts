@@ -1,4 +1,5 @@
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
+import { REPLAY_DEBOUNCE_MS } from "../lib/replay";
 
 /**
  * 계약 v2 E2E — 격리된 fixture 스택(make e2e: collector·ais 모두 fixture 재생, 외부 호출 없음)을 대상으로 한다.
@@ -192,6 +193,8 @@ test("replay slider keeps its geometry while dragging; the label follows at once
   await expect(page.getByTestId("replay-summary")).toContainText(/\d+ aircraft · /, { timeout: 20_000 });
   const slider = page.locator('input[type="range"][aria-label="재생 시각"]');
   const box0 = (await slider.boundingBox())!;
+  // 입력 시각(페이지 시계) — 요청 상한은 실제로 생긴 입력 멈춤 수로 정한다(아래)
+  await slider.evaluate((el) => { const w = window as unknown as { __replayInputs: number[] }; w.__replayInputs = []; el.addEventListener("input", () => w.__replayInputs.push(performance.now())); });
   const before = replayReqs.length;
   const y = box0.y + box0.height / 2;
   await page.mouse.move(box0.x + box0.width * 0.9, y);
@@ -209,8 +212,13 @@ test("replay slider keeps its geometry while dragging; the label follows at once
   for (const b of boxes) expect(b).toEqual({ x: Math.round(box0.x), width: Math.round(box0.width), y: Math.round(box0.y) });
   expect(new Set(labels).size).toBeGreaterThan(4); // 라벨은 입력마다 바로 바뀐다
   await expect(page.getByTestId("replay-frame-at")).toContainText("= 재생 시각", { timeout: 20_000 }); // 마지막 값의 프레임이 그려진다
-  // 끄는 동안 입력(수십 건)마다 요청하지 않는다 — debounce 뒤 마지막 값만(움직임 사이 멈춤마다 최대 1건)
-  expect(replayReqs.length - before).toBeLessThanOrEqual(boxes.length + 1);
+  // 끄는 동안 입력(수십 건)마다 요청하지 않는다 — debounce 뒤 마지막 값만: 입력이 REPLAY_DEBOUNCE_MS 이상 멈출 때마다 최대 1건 + 끝난 뒤 1건
+  // (+1 — 지도가 영역을 늦게 알리는 경우). 멈춤은 움직임 수가 아니라 잰 입력 간격으로 센다: GPU 없는 CI 러너(SwiftShader)에서는 그리기가 느려
+  // 한 움직임(4단계) 안에서도 입력 사이가 150 ms 를 넘는다 — 움직임 수(8)+1 로 잡은 상한을 요청 12건이 넘었다(CI 2026-10-02, 이 Mac 의 SwiftShader 재현 10건).
+  const inputs = await page.evaluate(() => (window as unknown as { __replayInputs: number[] }).__replayInputs);
+  expect(inputs.length).toBeGreaterThan(boxes.length); // 움직임마다 입력이 여럿(4단계)
+  const pauses = inputs.slice(1).filter((t, i) => t - inputs[i] >= REPLAY_DEBOUNCE_MS - 10).length; // 타이머 오차 10 ms 는 멈춤 쪽으로(상한을 느슨하게)
+  expect(replayReqs.length - before).toBeLessThanOrEqual(pauses + 2);
 });
 
 test("no CSP violations or uncaught errors across pages (ships layer on)", async ({ page }) => {
