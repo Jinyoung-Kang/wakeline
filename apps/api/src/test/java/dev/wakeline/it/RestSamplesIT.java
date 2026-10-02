@@ -256,7 +256,9 @@ class RestSamplesIT extends IntegrationTest {
 
         // 선박(계약 v2 §B3): ais 수집기와 같은 ACL 사용자로 발행 → 소비 → 메모리·DB. 공백 1건(끝난 것).
         String mmsi = "440700100";
-        Instant seenShip = Instant.now().minusSeconds(5);
+        // 밀리초로 자른다(실제 AIS · 수집기 시각처럼). Linux 의 Instant.now() 는 나노초까지 있어 PostgreSQL(마이크로초)이 반올림해 저장한 위치 시각이
+        // 실시간 seen_at 보다 수백 ns '뒤'가 되었다 — REST 계약 검사의 'last_position_at ≤ seen_at' 이 CI(ubuntu)에서만 실패했다(2026-10-02)
+        Instant seenShip = Instant.now().minusSeconds(5).truncatedTo(ChronoUnit.MILLIS);
         Streams.xaddAis(Streams.ships(Streams.nextFetchedAt(), List.of(Streams.shipState(mmsi, 35.1, 129.05, seenShip),
                 Streams.shipState("440700101", 35.2, 129.1, seenShip)), List.of(Streams.shipStatic(mmsi, "IT SAMPLE", 70, seenShip.minusSeconds(60)))));
         Instant gapStart = Instant.now().minusSeconds(1800).truncatedTo(ChronoUnit.MILLIS);
