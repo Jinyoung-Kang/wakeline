@@ -1,0 +1,198 @@
+{
+  "state": {
+    "isStdOutTTY": false,
+    "isStdErrTTY": false,
+    "testRunDurationMs": 259993.193454
+  },
+  "metrics": {
+    "ws_messages": {
+      "type": "counter",
+      "contains": "default",
+      "values": {
+        "count": 22061,
+        "rate": 84.85222134826081
+      }
+    },
+    "ws_snapshots": {
+      "type": "counter",
+      "contains": "default",
+      "values": {
+        "count": 1535,
+        "rate": 5.904000714817113
+      }
+    },
+    "ws_session_duration": {
+      "contains": "time",
+      "values": {
+        "p(99)": 240034.767731,
+        "max": 240044.060651,
+        "avg": 240007.05556331572,
+        "med": 240005.498901,
+        "p(95)": 240017.99044239998
+      },
+      "type": "trend"
+    },
+    "ws_errors": {
+      "type": "counter",
+      "contains": "default",
+      "values": {
+        "count": 0,
+        "rate": 0
+      },
+      "thresholds": {
+        "count<1": {
+          "ok": true
+        }
+      }
+    },
+    "ws_msgs_received": {
+      "contains": "default",
+      "values": {
+        "count": 22061,
+        "rate": 84.85222134826081
+      },
+      "type": "counter"
+    },
+    "data_received": {
+      "type": "counter",
+      "contains": "data",
+      "values": {
+        "count": 921440247,
+        "rate": 3544093.7309115683
+      }
+    },
+    "ws_diff_lag_ms": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "avg": 75.44508455677384,
+        "med": 20,
+        "p(95)": 374,
+        "p(99)": 903.9999999999995,
+        "max": 1193
+      },
+      "thresholds": {
+        "p(95)<500": {
+          "ok": true
+        }
+      }
+    },
+    "ws_msgs_sent": {
+      "type": "counter",
+      "contains": "default",
+      "values": {
+        "count": 2265,
+        "rate": 8.711766527075415
+      }
+    },
+    "ws_ship_messages": {
+      "contains": "default",
+      "values": {
+        "count": 4641,
+        "rate": 17.850467307795586
+      },
+      "type": "counter"
+    },
+    "iteration_duration": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "avg": 240007.29954350877,
+        "med": 240005.793526,
+        "p(95)": 240018.3561508,
+        "p(99)": 240035.01805552,
+        "max": 240044.353442
+      }
+    },
+    "vus": {
+      "type": "gauge",
+      "contains": "default",
+      "values": {
+        "min": 2,
+        "max": 200,
+        "value": 2
+      }
+    },
+    "ws_diffs": {
+      "type": "counter",
+      "contains": "default",
+      "values": {
+        "count": 3846,
+        "rate": 14.792694950610175
+      }
+    },
+    "data_sent": {
+      "type": "counter",
+      "contains": "data",
+      "values": {
+        "count": 123204,
+        "rate": 473.8739440184545
+      }
+    },
+    "ws_connecting": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "max": 106.171667,
+        "avg": 3.8427108464912285,
+        "med": 2.8455415,
+        "p(95)": 6.244635749999999,
+        "p(99)": 18.07786106999999
+      }
+    },
+    "ws_sessions": {
+      "type": "counter",
+      "contains": "default",
+      "values": {
+        "count": 228,
+        "rate": 0.8769460345135517
+      }
+    },
+    "vus_max": {
+      "type": "gauge",
+      "contains": "default",
+      "values": {
+        "value": 200,
+        "min": 200,
+        "max": 200
+      }
+    },
+    "iterations": {
+      "type": "counter",
+      "contains": "default",
+      "values": {
+        "count": 57,
+        "rate": 0.21923650862838792
+      }
+    },
+    "ws_ships_lag_ms": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "p(99)": 106.59999999999997,
+        "max": 162,
+        "avg": 17.893557422969188,
+        "med": 8,
+        "p(95)": 65
+      }
+    }
+  },
+  "root_group": {
+    "checks": [],
+    "name": "",
+    "path": "",
+    "id": "d41d8cd98f00b204e9800998ecf8427e",
+    "groups": []
+  },
+  "options": {
+    "summaryTimeUnit": "",
+    "noColor": false,
+    "summaryTrendStats": [
+      "avg",
+      "med",
+      "p(95)",
+      "p(99)",
+      "max"
+    ]
+  }
+}
