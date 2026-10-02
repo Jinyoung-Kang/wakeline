@@ -1,7 +1,7 @@
 # ADR-026 첫 화면 JS 예산: 400 KB 대신 550,000 B(gzip 본문) — 지도 라이브러리와 Next · React 가 바닥이다
 
 **상태** 채택 · 2026-09-30 · NFR-04 의 '첫 화면 JS ≤ 400 KB gzip' 개정(같은 NFR 의 30 fps · LCP 목표는 그대로) · 사용자 위임 — "첫 화면 JS 크기 목표 … 너의
-권장(추천) 방안대로 처리해" · 측정 [PERF §10](../PERF.md)
+권장(추천) 방안대로 처리해" · 측정 [PERF §10](../PERF.md) · **개정 2026-10-02**(지도 화면은 첫 그리기 뒤에 지도를 받는다 — 아래 '개정', QA-402 · [PERF §15](../PERF.md))
 
 ## 맥락
 - NFR-04 목표는 `/` 첫 화면 JS 400 KB(gzip)다. 리뷰 v1 부터 한 번도 맞추지 못했다(Lighthouse 스크립트 transferSize: 613.6 → 497.7 → 526.3 → 520.6 KiB,
@@ -84,3 +84,25 @@
 - Lighthouse 처럼 페이지를 연 뒤 몇 초 동안의 요청을 모두 세는 도구는 미리 받는 조각까지 센다 — 이 결정의 단위(표시 앞)와 다르다.
 - 이 변경 뒤 Playwright E2E 37건을 버리는 격리 스택(127.0.0.1:8795)에서 돌렸다: 첫 실행 1건 실패(fixture 재생 중 새 알림이 첫 행이 되어 시험이 펼친 행을 놓침 —
   시험 쪽 문제, 펼친 근거는 그대로 있었다), 두 번째 실행 37건 통과, 시험을 '펼친 행'으로 고친 뒤 전체 37건 통과 · 그 파일 세 번 반복 통과.
+
+## 개정 2026-10-02 — 지도 화면은 첫 그리기 뒤에 지도를 받는다(QA-402 · QA-403 · 측정 [PERF §15](../PERF.md))
+**맥락**: QA 2026-10 의 화면 측정(소프트웨어 GL — SwiftShader)에서 지도 화면이 Core Web Vitals 를 크게 넘었다(`/` 모바일 LCP 7.4 s · 데스크톱 TBT 1.7 s). 실제 GPU 로 다시 재니
+같은 빌드는 데스크톱 97–98점이었고, 차이는 지도의 WebGL 준비(컨텍스트 · 셰이더 컴파일 — 소프트웨어 GL 에서 2–5 s)였다. 지도 청크와 MapLibre 를 수화하면서 곧바로 받았기 때문에 그 준비가
+**첫 프레임이 화면에 나오기 전에** 시작되어 서버가 그린 화면(상태 바 · 알림 목록 · 출처 줄)의 첫 그리기를 붙잡았다. 이 결정의 3 · 5 가 정한 '무엇을 첫 화면에 받는가'는 그대로 두고
+**순서**만 바꾼다.
+
+**결정**
+1. 상황판(`/`)과 재생(`/replay`)은 지도 컴포넌트 청크와 MapLibre(public 배포본)를 **첫 그리기(Paint Timing 'first-contentful-paint')가 화면에 나온 뒤**에 받기 시작한다 —
+   `lib/after-paint afterFirstPaint()`(이미 그렸으면 곧바로 · Paint Timing 이 없으면 rAF → setTimeout 0 · 숨은 탭은 기다리지 않음 · 기다리는 동안 숨겨지면 곧바로 · 10 s 안전장치).
+   주 스레드의 다음 프레임(rAF)만 기다리는 안은 소프트웨어 GL 에서 GPU 프로세스가 그 프레임을 내보내기 전에 지도 준비가 시작되어 버렸다(측정 — PERF §15.3).
+2. 받는 것 · 바이트는 그대로다: `import()` 는 `/` 의 next/dynamic 안에 남아 `check:first-js` 가 'dynamic' 으로 계속 센다. `tests/first-screen-lazy.test.ts` 가 그 꼴
+   (`dynamic(() => afterFirstPaint().then(() => Promise.all([import("@/components/MapView"), loadMaplibre()])) …`)을, `tests/after-paint.test.ts` 가 신호 규칙과 두 화면의 꼴을 고정한다.
+   **첫 화면의 끝**(MapLibre 'load' 뒤 한가할 때의 표시 `wakeline:after-first-screen`)도 그대로 — `measure:first-js --serve` 는 같은 18개 파일을 첫 화면으로 센다.
+3. 재생 화면도 상황판과 같은 public MapLibre 를 쓴다(R-02 — 전에는 번들해 공용 코드를 286 + 149 KB 두 벌 받았다). 어느 모듈도 `maplibre-gl` 을 실행 코드로 import 하지 않는다(`tests/maplibre-load.test.ts`).
+4. MapLibre 의 CSS 와 지도 컨트롤 · 출처 · 팝업 덮어쓰기는 `components/map/map.css` 에 두고 두 지도 컴포넌트가 import 한다 — 지도 조각(next/dynamic)과 함께 첫 그리기 뒤에 온다.
+   전역 스타일시트(모든 화면의 첫 그리기를 막는다)에 MapLibre 규칙을 두지 않는다(`tests/map-css.test.ts`). 예산은 JS 만 센다(CSS 조각 gzip 10,936 B 는 세지 않는다).
+
+**결과**(PERF §15 — Lighthouse 12.8.2 · 3번 가운데): 소프트웨어 GL `/` 모바일 LCP 7,565 → 2,715 ms · TBT 7,449 → 871 ms, `/replay` 데스크톱 TBT 1,074 → 202 ms. 실제 GPU 는 흔들림 안
+(데스크톱 TBT 0 그대로), 첫 그리기를 막는 CSS 가 gzip 18.4 → 7.8 KB 로 줄어 모바일 FCP 가 약 130 ms 앞당겨졌다. 첫 화면 JS `check:first-js -- --in-image` 546,721 → 547,116 B(여유 2,884 B).
+실제 GPU 에서는 첫 그리기가 이미 빨라 차이가 작다(관찰: MapLibre 요청이 첫 그리기 뒤 약 55 ms — 바꾸기 전에도 약 45 ms 뒤였다) — 화면이 보이는 것은 바뀌지 않는다. 남은 것(모바일 TBT · 시뮬레이션 LCP 의 갈림 · 소프트웨어 GL)과 고를 것은 PERF §15.6.
+
