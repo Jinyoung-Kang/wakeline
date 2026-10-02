@@ -197,7 +197,9 @@ class QueryPlanDbTest {
         var known = repo.lookup(java.util.List.of("440100001", "440100005", "440199999"));
         assertThat(known.keySet()).containsExactlyInAnyOrder("440100001", "440100005");
         assertThat(known.get("440100001").stat().name()).isEqualTo("HANJIN BUSAN");
-        assertThat(known.get("440100001").lastPositionAt()).isEqualTo(Instant.now().truncatedTo(ChronoUnit.MINUTES));
+        // 넣을 때의 분(DB 의 now()) — 시험의 지금 시각으로 견주면 넣은 뒤 분이 바뀐 실행에서 틀렸다(전체 실행 2026-10-03: 15:35 를 기대 · 15:34 가 옳다)
+        Instant lastInserted = admin.sql("SELECT max(ts) FROM ship_position WHERE mmsi = '440100001'").query(java.sql.Timestamp.class).single().toInstant();
+        assertThat(known.get("440100001").lastPositionAt()).isEqualTo(lastInserted);
         assertThat(known.get("440100005").stat()).as("row made from positions only").isNull();
         assertThat(known.get("440100005").lastPositionAt()).isEqualTo(Instant.now().truncatedTo(ChronoUnit.MINUTES).minus(3, ChronoUnit.HOURS));
         String plan = plans.last();
