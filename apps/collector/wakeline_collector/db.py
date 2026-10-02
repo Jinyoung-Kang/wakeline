@@ -38,6 +38,8 @@ QUEUE_MAX = 500
 OP_TIMEOUT_S = 10.0
 PROBE_TIMEOUT_S = 5.0
 RECONNECT_MIN_S, RECONNECT_MAX_S = 2.0, 30.0
+# DB 가 답하지 않아 재연결 쉼에 든 동안의 확인 간격 — 다시 답하면 쉼을 끝까지 자지 않는다(api 의 DbRecovery 와 같은 목적, VERIFICATION #110)
+PROBE_INTERVAL_S = 2.0
 QUALITY_SAMPLES_PER_RULE = 20
 MAX_ATTEMPTS = 5  # DB 가 살아 있는데 일시 오류로 실패한 횟수 상한(독이 든 작업이 큐를 영원히 막지 않게)
 
@@ -313,12 +315,28 @@ class Db:
         except Exception:  # noqa: BLE001
             return False
 
-    async def _pause(self, seconds: float) -> None:
-        """재연결 대기(새 쓰기가 와도 깨지 않는다). 종료 요청이 오면 바로 깬다."""
-        try:
-            await asyncio.wait_for(self._stop.wait(), seconds)
-        except TimeoutError:
-            pass
+    async def _pause(self, seconds: float, probe: bool = False) -> None:
+        """재연결 대기(새 쓰기가 와도 깨지 않는다). 종료 요청이 오면 바로 깬다.
+
+        probe=True(DB 가 답하지 않아 쉬는 중 — _ok 거짓)면 PROBE_INTERVAL_S 마다 SELECT 1 로 확인해 다시 답하면 곧바로 깬다 — 예전에는 DB 가 돌아와도 쉼
+        (2 → 30 s)을 끝까지 잤다(api 저장기의 같은 문제 — VERIFICATION #107). DB 는 답하는데 그 작업만 일시 오류로 쉬는 경우(_ok 참)는 확인하지 않는다:
+        확인이 늘 성공해 곧바로 깨우면 백오프 없는 재시도 고리가 된다. 풀이 아직 없으면(연결 실패) 확인할 길이 없어 쉼을 다 잔다.
+        """
+        loop = asyncio.get_running_loop()
+        end = loop.time() + seconds
+        while True:
+            left = end - loop.time()
+            if left <= 0:
+                return
+            probing = probe and self._pool is not None
+            try:
+                await asyncio.wait_for(self._stop.wait(), min(left, PROBE_INTERVAL_S) if probing else left)
+                return  # 종료 요청
+            except TimeoutError:
+                pass
+            if probing and loop.time() < end and await self._reachable(self._pool):
+                log.info("db: answers again — writing %d queued writes now", len(self._q))
+                return
 
     async def _writer(self) -> None:
         backoff = RECONNECT_MIN_S
@@ -327,7 +345,7 @@ class Db:
                 if await self._step():
                     backoff = RECONNECT_MIN_S
                 elif self._q and not self._closing:
-                    await self._pause(backoff)
+                    await self._pause(backoff, probe=not self._ok)  # DB 가 답하지 않아 쉬면 다시 답할 때 일찍 깬다
                     backoff = min(RECONNECT_MAX_S, backoff * 2)
             except asyncio.CancelledError:
                 raise

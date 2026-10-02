@@ -638,3 +638,60 @@ async def test_an_in_flight_write_pushed_out_by_overflow_does_not_take_the_next_
     await _settle(db)
     assert [a[0] for _t, a in pool.log] == ["a", "b", "c"]  # a 는 끝까지 쓰였고 b 를 잃지 않았다
     await db.close()
+
+
+async def test_a_writer_resting_after_the_db_stopped_answering_writes_soon_after_it_answers_again(monkeypatch):
+    """DB 가 답하지 않아 재연결 쉼(2 → 30 s)에 든 writer 는 DB 가 다시 답하면 쉼을 끝까지 자지 않고 곧바로 쓴다(api 의 DbRecovery · VERIFICATION #107 과
+    같은 목적 — 예전에는 쉼이 끝날 때까지 기다렸다). 쉬는 동안만 짧게(PROBE_INTERVAL_S) SELECT 1 로 확인한다."""
+    monkeypatch.setattr(dbmod, "RECONNECT_MIN_S", 5.0)
+    monkeypatch.setattr(dbmod, "RECONNECT_MAX_S", 5.0)
+    monkeypatch.setattr(dbmod, "PROBE_INTERVAL_S", 0.05, raising=False)
+    pool = FakePool()
+
+    async def factory():
+        return pool
+
+    db = Db(factory)
+    db.start()
+    db.upsert_budget_day("p0", datetime.now(UTC), 1, 10)
+    await _settle(db)  # 풀이 생기고 한 번 썼다
+    pool.up = False
+    db.upsert_budget_day("p1", datetime.now(UTC), 2, 10)
+    await asyncio.sleep(0.2)  # 실패 → DB 가 답하지 않음 → 5 s 쉼
+    assert db.pending == 1 and not db.available
+    pool.up = True
+    t0 = asyncio.get_running_loop().time()
+    await _settle(db, timeout=8)
+    took = asyncio.get_running_loop().time() - t0
+    assert [a[0] for _t, a in pool.log] == ["p0", "p1"]
+    assert took < 1.0, f"waited {took:.2f} s — slept out the reconnect backoff"
+    assert db.available
+    await db.close()
+
+
+async def test_a_write_failing_while_the_db_keeps_answering_keeps_its_backoff(monkeypatch):
+    """DB 는 답하는데 그 작업만 일시 오류(시간 초과 · 교착 · 잠금 대기)면 확인으로 깨우지 않는다 — 확인(SELECT 1)이 늘 성공하므로 깨우면 뜨거운 재시도 고리가 된다."""
+    monkeypatch.setattr(dbmod, "RECONNECT_MIN_S", 0.5)
+    monkeypatch.setattr(dbmod, "RECONNECT_MAX_S", 0.5)
+    monkeypatch.setattr(dbmod, "PROBE_INTERVAL_S", 0.02, raising=False)
+    monkeypatch.setattr(dbmod, "MAX_ATTEMPTS", 100)  # 버림 상한이 재시도 수를 자르지 않게 — 깨우면 확인 간격(0.02 s)마다 다시 시도해 수십 번이 된다
+    pool = FakePool()
+    attempts = 0
+
+    async def flaky(sql, *args):
+        nonlocal attempts
+        attempts += 1
+        raise asyncpg.exceptions.LockNotAvailableError("lock timeout")
+
+    pool.execute = flaky
+
+    async def factory():
+        return pool
+
+    db = Db(factory)
+    db.start()
+    db.upsert_budget_day("p0", datetime.now(UTC), 1, 10)
+    await asyncio.sleep(1.2)
+    assert db.available  # DB 는 답한다
+    assert attempts <= 4, f"{attempts} attempts in 1.2 s — a resting writer was woken while the db kept answering"
+    await db.close(drain_s=0.1)
