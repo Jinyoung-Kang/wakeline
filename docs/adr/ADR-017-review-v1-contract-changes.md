@@ -41,7 +41,7 @@
 |---|---|---|---|
 | R-64 · R-77 | 네트워크 분리: `public`(edge, 게시 포트) · `internal`(`internal: true` — web · api · db · redis) · `egress`(collector · ais 만 인터넷). edge·collector·ais 는 필요한 망에 함께. **한계(3단계 검증)**: `public` 은 일반 bridge 라 edge 는 망 차원에서 인터넷에 나갈 수 있다(Docker Desktop 은 masquerade 끄기도 무시 — 실측) — edge 는 설정(upstream api·web 뿐 · resolver 없음, 정책 시험)으로 막는다. 망 구성이 바뀌는 배포는 `make down` → `make up`(부분 재생성은 고정 IP 를 잃는다) | 모든 컨테이너가 서로의 모든 포트와 인터넷에 닿음 — "외부 호출은 collector/ais 만" 을 망이 강제하지 않음 | compose 네트워크 정의 되돌리기 |
 | R-24 | PostgreSQL: `checkpoint_timeout 15min` · `max_wal_size 2GB` · `wal_compression on` · `shared_buffers 256MB` | WAL 의 86 % 가 전체 페이지 이미지(하루 약 16 GB) | 설정 삭제 |
-| R-25 | api JVM 힙 비율 60 % → 40 %(컨테이너 1 GiB 에서 최대 약 410 MiB), 측정 후 확정 | 프로세스 약 700 MiB 로 NFR-03(≤ 512 MB) 초과, GC 뒤 살아 있는 데이터 약 75 MiB | 값 되돌리기 |
+| R-25 | api JVM 힙 비율 60 % → 40 %(컨테이너 1 GiB 에서 최대 약 410 MiB), 측정 후 확정 | 프로세스 약 700 MiB 로 NFR-03(≤ 512 MB) 초과, GC 뒤 살아 있는 데이터 약 75 MiB | 값 되돌리기 (2026-10-02 [ADR-031](ADR-031-api-memory-target.md): NFR-03 을 잰 값으로 다시 정함 — 컨테이너 메모리 ≤ 768 MiB) |
 | R-29 · R-85 | 실행 이미지에서 npm·corepack·pip 제거, 기반 이미지·uv 를 다이제스트로 고정 | 쓰지 않는 패키지 관리자가 HIGH 취약점을 전부 만듦 | Dockerfile 되돌리기 |
 | R-37 | Tomcat 11.0.25 이상(Spring Boot 패치 또는 버전 속성) | CRITICAL 3건 | 버전 되돌리기 |
 | R-63 | db 이미지 다이제스트 갱신(같은 18.x · 3.6) → 2026-09-30 직접 빌드로 해결(ADR-004 개정) | 고칠 수 있는 CVE CRITICAL 9 · HIGH 76 → 0 | 이전 이미지 · 권한으로(ADR-004 개정) |
@@ -73,7 +73,11 @@
 |---|---|---|---|
 | S13 | `/api/v1/status` 와 WS `status` 의 `active_providers` 는 정해 둔 필드만 싣는다: `{job}` · `{job}_since` · `{job}_reason` · `{job}_none_since` · `{job}_none_reason` · `{job}_none_next` · `{job}_none_retry`(job ∈ region · global) | 수집기 해시 `wakeline:active` 를 통째로 내보내서, 수집기가 나중에 쓰는 필드가 저절로 공개될 수 있었다 | 지금 쓰는 필드는 같다. WS 계약 샘플에서 시험용 `hot` 항목만 빠졌다 |
 | A3 | `GET /api/v1/radar/kr/{tm}.png`: Redis 장애는 **503 + `Retry-After`**, 값이 없으면 404, base64 가 아닌 값은 404 와 함께 `wakeline_radar_kr_parse_errors_total{field="frame_png"}` 를 센다(사용자 결정 6) | 장애가 '그림 없음'(404)으로 보였고, 깨진 값은 500 이 되었다(R-72 위반) | 프레임 목록(`/radar/kr`)은 Redis 오류를 '프레임 없음'으로 보는 동작 그대로 |
-| S4 | WS `subscribe` 의 `zoom` 을 실수로 읽고 0–24 로 자른다 | int 범위 밖 숫자(`1e10` 등) 하나로 익명 클라이언트가 ERROR 스택 로그와 1011 종료를 반복해서 만들 수 있었다 | 범위 안 값의 결과는 같다. **한계**(최종 리뷰): double 범위를 넘는 정수(309자리 이상)는 Jackson 이 실수로도 읽지 못해 그 연결만 1002 로 닫힌다(WARN 분당 1줄) — 자르지 않는다 |
+| QA-207 | (QA 2026-10) 공개 · 운영의 시각 · 날짜 쿼리 파라미터는 1970-01-01T00:00:00Z ~ 9999-12-31T23:59:59.999999999Z(날짜 1970-01-01 ~ 9999-12-31)만 받는다 — 밖이면 400 `BAD_REQUEST`, 저장소에 닿지 않는다(api 요청 바인더 한 곳, 계약 v5 §G32) | 기원전 4713 년 앞의 날짜가 PostgreSQL 에 `-infinity` 로 가서 익명 `/stats/*` 하나가 3 s 동안 DB CPU 를 다 쓰고 임시 파일 0.5–0.8 GB 를 썼다(6개면 공개 조회 격벽이 찬다). PostgreSQL · Instant 범위 밖 값은 500 + ERROR 스택, 재집계는 `day = -infinity` 행을 썼다 | 범위 안 값의 결과는 같다. 1970 앞의 행은 있을 수 없어 잃는 답이 없다. 웹은 범위 밖 값을 보내지 않는다 |
+| QA-206 | (QA 2026-10) `GET /api/v1/aircraft/search` 의 실시간 항목에 실시간 상태의 `registration` · `type_code` 를 싣는다(아는 것만, 계약 v5 §G33) | 등록번호로 찾은 실시간 항목에 등록번호가 없어 웹 검색 목록이 '—' 로 그렸다 | 필드만 더한다. 웹은 이미 읽는다 |
+| QA-204 | (QA 2026-10) WS 클라이언트 메시지 상한 4 KB 를 UTF-8 4,096 바이트로 센다 — 넘으면 1009(계약 v5 §G35) | Tomcat 의 상한이 글자(UTF-16) 수라 여러 바이트 글자로 약 12 KB 까지 받았다 | 4,096 바이트 이하는 같다. ASCII 는 전과 같다 |
+| QA-401 | (QA 2026-10 성능) `GET /api/v1/alerts/history` 의 순서를 `entered_at` 최신순 · 같은 시각 `id` 역순으로 정하고 그 순서로 묻는다. `cursor` · `next_cursor` 는 그대로 앞 쪽 마지막 항목의 id — 그 행의 (`entered_at`, `id`) 뒤부터 잇고, 없는 id 면 빈 쪽(계약 v5 §G36) | `ORDER BY id DESC` 가 창 조건(`entered_at`)과 다른 열이라 플래너가 기본 키 역순 스캔을 골라, 15–29일 전 창은 그보다 새로운 알림 약 100만 행을 읽고 버리며 늘 3 s 에 503 이었다 — 익명 클라이언트 하나(초당 2건, IP 당 한도 안)가 공개 조회 격벽을 차지해 재생 · 통계 · 항적의 26–53 % 가 503 | 운영 자료(id 가 만든 시각 순)의 순서는 거의 같다. 없는 커서는 빈 쪽(예전: 그 수보다 작은 id). 마이그레이션 없음 — `alert_event_entered` · `alert_event_hex` 를 쓰고 `alert_event_hex_id`(§2 R-15)는 더 쓰지 않는다. 웹은 이 경로를 부르지 않는다 |
+| S4 | WS `subscribe` 의 `zoom` 을 실수로 읽고 0–24 로 자른다 | int 범위 밖 숫자(`1e10` 등) 하나로 익명 클라이언트가 ERROR 스택 로그와 1011 종료를 반복해서 만들 수 있었다 | 범위 안 값의 결과는 같다. double 범위를 넘는 정수(309자리 이상)도 ±∞ 로 읽어 `zoom` 은 끝(0 · 24)으로 자르고 `bbox` 원소는 `BAD_BBOX`(연결 유지)다 — 최종 리뷰 때는 Jackson 3 의 `asDouble()` 이 그 수에서 던져 그 연결만 1002 로 닫히는 것을 알려진 한계로 두었고, QA 2026-10(QA-203)이 `bbox` 원소도 같은 길임을 찾아 둘 다 고쳤다. 1,000자리를 넘는 숫자는 JSON 해석 상한(Jackson)에 걸려 `BAD_JSON`(1002) |
 
 ### 6.3 인프라(§4 에 더함)
 | ID | 변경 | 이유 | 되돌리기 |

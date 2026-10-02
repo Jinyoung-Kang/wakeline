@@ -18,6 +18,23 @@ public final class Sql {
      */
     public static final int PUBLIC_READ_TIMEOUT_S = 3;
 
+    /**
+     * 문장 상한의 취소 요청에 쓰는 시간(초, pgjdbc cancelSignalTimeout — 취소 연결의 연결 · 읽기 상한 각각). 취소는 서버에 <b>새 연결로</b> 보내고, pgjdbc 는
+     * 문장을 돌려주기 전에 그 취소가 끝나기를 기다린다 — 기본 10 s 면 서버가 멈췄을 때 공개 조회가 3 + 10 = 13 s 묶였다(QA-104 · ReadPoolDbTest).
+     * 로컬 DB 의 취소는 ms 단위다. 공유 풀(application.yml 의 hikari.data-source-properties)과 선택 조회 읽기 풀(ReadPool)이 이 값을 쓴다.
+     */
+    public static final int CANCEL_SIGNAL_TIMEOUT_S = 1;
+
+    /**
+     * 공개 조회 연결의 소켓 읽기 상한(초, QA-104) — 문장 상한 + 1 s. 문장 상한은 드라이버가 서버에 새 연결로 보내는 취소라 서버가 멈추면(멈춘 VM ·
+     * 끊긴 망) 닿지 않고, 이미 소켓에서 기다리는 읽기는 서버가 돌아올 때까지 묶였다(스택 B: 재생 한 건이 45 s, edge 는 30 s 에 504). 서버가 답하는 느린
+     * 문장은 3 s 에 취소(57014)가 먼저 끝낸다 — 이 상한은 답이 오지 않을 때만 걸린다. 서버가 멈췄을 때 한 문장의 최악은 이 상한과 '문장 상한 + 취소
+     * (연결 + 읽기 = 2 × {@value #CANCEL_SIGNAL_TIMEOUT_S} s)' 중 큰 값 = 5 s(잰 값: docker pause 에서 4.0–4.1 s — Qa104FrozenDbPublicReadIT).
+     * 공개 조회가 빌린 연결에만 걸고({@link PublicReadGate}) 돌려줄 때 풀 기본(상한 없음)으로 되돌린다: 기록기 · 운영 · 정기 작업의 긴 문장(연결 설정
+     * statement_timeout 30 s)은 그대로다.
+     */
+    public static final int PUBLIC_READ_SOCKET_TIMEOUT_S = PUBLIC_READ_TIMEOUT_S + 1;
+
     public static OffsetDateTime ts(Instant i) { return i == null ? null : OffsetDateTime.ofInstant(i, ZoneOffset.UTC); }
 
     /**

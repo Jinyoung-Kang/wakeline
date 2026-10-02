@@ -1,0 +1,230 @@
+{"scenario": "anon", "method": "POST", "path": "/api/v1/ops/session", "status": 401, "code": "BAD_CREDENTIALS", "allowed": [401, 429], "ok": true, "note": ""}
+{"scenario": "anon", "method": "GET", "path": "/api/v1/ops/session", "status": 404, "code": "NOT_FOUND", "allowed": [404], "ok": true, "note": ""}
+{"scenario": "anon", "method": "DELETE", "path": "/api/v1/ops/session", "status": 403, "code": "CSRF_INVALID", "allowed": [403, 404], "ok": true, "note": ""}
+{"scenario": "anon", "method": "GET", "path": "/api/v1/ops/providers", "status": 404, "code": "NOT_FOUND", "allowed": [404], "ok": true, "note": ""}
+{"scenario": "anon", "method": "POST", "path": "/api/v1/ops/providers/nosuch/disable", "status": 403, "code": "CSRF_INVALID", "allowed": [403, 404], "ok": true, "note": ""}
+{"scenario": "anon", "method": "GET", "path": "/api/v1/ops/runs", "status": 404, "code": "NOT_FOUND", "allowed": [404], "ok": true, "note": ""}
+{"scenario": "anon", "method": "GET", "path": "/api/v1/ops/quality", "status": 404, "code": "NOT_FOUND", "allowed": [404], "ok": true, "note": ""}
+{"scenario": "anon", "method": "GET", "path": "/api/v1/ops/dlq", "status": 404, "code": "NOT_FOUND", "allowed": [404], "ok": true, "note": ""}
+{"scenario": "anon", "method": "GET", "path": "/api/v1/ops/pipeline", "status": 404, "code": "NOT_FOUND", "allowed": [404], "ok": true, "note": ""}
+{"scenario": "anon", "method": "GET", "path": "/api/v1/ops/settings", "status": 404, "code": "NOT_FOUND", "allowed": [404], "ok": true, "note": ""}
+{"scenario": "anon", "method": "PUT", "path": "/api/v1/ops/settings/region_poll_s", "status": 403, "code": "CSRF_INVALID", "allowed": [403, 404], "ok": true, "note": ""}
+{"scenario": "anon", "method": "GET", "path": "/api/v1/ops/audit", "status": 404, "code": "NOT_FOUND", "allowed": [404], "ok": true, "note": ""}
+{"scenario": "anon", "method": "POST", "path": "/api/v1/ops/stats/aggregate?day=2026-10-02", "status": 403, "code": "CSRF_INVALID", "allowed": [403, 404], "ok": true, "note": ""}
+{"scenario": "anon", "method": "POST", "path": "/api/v1/ops/resolutions", "status": 403, "code": "CSRF_INVALID", "allowed": [403, 404], "ok": true, "note": ""}
+{"scenario": "anon", "method": "GET", "path": "/api/v1/ops/resolutions", "status": 404, "code": "NOT_FOUND", "allowed": [404], "ok": true, "note": ""}
+{"scenario": "anon", "method": "DELETE", "path": "/api/v1/ops/resolutions/999999999999", "status": 403, "code": "CSRF_INVALID", "allowed": [403, 404], "ok": true, "note": ""}
+{"scenario": "anon", "method": "GET", "path": "/api/v1/ops/logs", "status": 404, "code": "NOT_FOUND", "allowed": [404], "ok": true, "note": ""}
+{"scenario": "anon", "method": "GET", "path": "/api/v1/ops/logs/groups", "status": 404, "code": "NOT_FOUND", "allowed": [404], "ok": true, "note": ""}
+{"scenario": "anon", "method": "GET", "path": "/api/v1/ops/logs/1-0", "status": 404, "code": "NOT_FOUND", "allowed": [404], "ok": true, "note": ""}
+{"scenario": "anon+csrf", "method": "GET", "path": "/api/v1/ops/session", "status": 404, "code": "NOT_FOUND", "allowed": [404], "ok": true, "note": ""}
+{"scenario": "anon+csrf", "method": "DELETE", "path": "/api/v1/ops/session", "status": 404, "code": "NOT_FOUND", "allowed": [404], "ok": true, "note": ""}
+{"scenario": "anon+csrf", "method": "GET", "path": "/api/v1/ops/providers", "status": 404, "code": "NOT_FOUND", "allowed": [404], "ok": true, "note": ""}
+{"scenario": "anon+csrf", "method": "POST", "path": "/api/v1/ops/providers/nosuch/disable", "status": 404, "code": "NOT_FOUND", "allowed": [404], "ok": true, "note": ""}
+{"scenario": "anon+csrf", "method": "GET", "path": "/api/v1/ops/runs", "status": 404, "code": "NOT_FOUND", "allowed": [404], "ok": true, "note": ""}
+{"scenario": "anon+csrf", "method": "GET", "path": "/api/v1/ops/quality", "status": 404, "code": "NOT_FOUND", "allowed": [404], "ok": true, "note": ""}
+{"scenario": "anon+csrf", "method": "GET", "path": "/api/v1/ops/dlq", "status": 404, "code": "NOT_FOUND", "allowed": [404], "ok": true, "note": ""}
+{"scenario": "anon+csrf", "method": "GET", "path": "/api/v1/ops/pipeline", "status": 404, "code": "NOT_FOUND", "allowed": [404], "ok": true, "note": ""}
+{"scenario": "anon+csrf", "method": "GET", "path": "/api/v1/ops/settings", "status": 404, "code": "NOT_FOUND", "allowed": [404], "ok": true, "note": ""}
+{"scenario": "anon+csrf", "method": "PUT", "path": "/api/v1/ops/settings/region_poll_s", "status": 404, "code": "NOT_FOUND", "allowed": [404], "ok": true, "note": ""}
+{"scenario": "anon+csrf", "method": "GET", "path": "/api/v1/ops/audit", "status": 404, "code": "NOT_FOUND", "allowed": [404], "ok": true, "note": ""}
+{"scenario": "anon+csrf", "method": "POST", "path": "/api/v1/ops/stats/aggregate?day=2026-10-02", "status": 404, "code": "NOT_FOUND", "allowed": [404], "ok": true, "note": ""}
+{"scenario": "anon+csrf", "method": "POST", "path": "/api/v1/ops/resolutions", "status": 404, "code": "NOT_FOUND", "allowed": [404], "ok": true, "note": ""}
+{"scenario": "anon+csrf", "method": "GET", "path": "/api/v1/ops/resolutions", "status": 404, "code": "NOT_FOUND", "allowed": [404], "ok": true, "note": ""}
+{"scenario": "anon+csrf", "method": "DELETE", "path": "/api/v1/ops/resolutions/999999999999", "status": 404, "code": "NOT_FOUND", "allowed": [404], "ok": true, "note": ""}
+{"scenario": "anon+csrf", "method": "GET", "path": "/api/v1/ops/logs", "status": 404, "code": "NOT_FOUND", "allowed": [404], "ok": true, "note": ""}
+{"scenario": "anon+csrf", "method": "GET", "path": "/api/v1/ops/logs/groups", "status": 404, "code": "NOT_FOUND", "allowed": [404], "ok": true, "note": ""}
+{"scenario": "anon+csrf", "method": "GET", "path": "/api/v1/ops/logs/1-0", "status": 404, "code": "NOT_FOUND", "allowed": [404], "ok": true, "note": ""}
+{"scenario": "forged:ZWZkZTQxZjQt", "method": "GET", "path": "/api/v1/ops/session", "status": 404, "code": "NOT_FOUND", "allowed": [400, 404], "ok": true, "note": ""}
+{"scenario": "forged:ZWZkZTQxZjQt", "method": "GET", "path": "/api/v1/ops/providers", "status": 404, "code": "NOT_FOUND", "allowed": [400, 404], "ok": true, "note": ""}
+{"scenario": "forged:ZWZkZTQxZjQt", "method": "GET", "path": "/api/v1/ops/runs", "status": 404, "code": "NOT_FOUND", "allowed": [400, 404], "ok": true, "note": ""}
+{"scenario": "forged:ZWZkZTQxZjQt", "method": "GET", "path": "/api/v1/ops/quality", "status": 404, "code": "NOT_FOUND", "allowed": [400, 404], "ok": true, "note": ""}
+{"scenario": "forged:ZWZkZTQxZjQt", "method": "GET", "path": "/api/v1/ops/dlq", "status": 404, "code": "NOT_FOUND", "allowed": [400, 404], "ok": true, "note": ""}
+{"scenario": "forged:ZWZkZTQxZjQt", "method": "GET", "path": "/api/v1/ops/pipeline", "status": 404, "code": "NOT_FOUND", "allowed": [400, 404], "ok": true, "note": ""}
+{"scenario": "forged:ZWZkZTQxZjQt", "method": "GET", "path": "/api/v1/ops/settings", "status": 404, "code": "NOT_FOUND", "allowed": [400, 404], "ok": true, "note": ""}
+{"scenario": "forged:ZWZkZTQxZjQt", "method": "GET", "path": "/api/v1/ops/audit", "status": 404, "code": "NOT_FOUND", "allowed": [400, 404], "ok": true, "note": ""}
+{"scenario": "forged:ZWZkZTQxZjQt", "method": "GET", "path": "/api/v1/ops/resolutions", "status": 404, "code": "NOT_FOUND", "allowed": [400, 404], "ok": true, "note": ""}
+{"scenario": "forged:ZWZkZTQxZjQt", "method": "GET", "path": "/api/v1/ops/logs", "status": 404, "code": "NOT_FOUND", "allowed": [400, 404], "ok": true, "note": ""}
+{"scenario": "forged:ZWZkZTQxZjQt", "method": "GET", "path": "/api/v1/ops/logs/groups", "status": 404, "code": "NOT_FOUND", "allowed": [400, 404], "ok": true, "note": ""}
+{"scenario": "forged:ZWZkZTQxZjQt", "method": "GET", "path": "/api/v1/ops/logs/1-0", "status": 404, "code": "NOT_FOUND", "allowed": [400, 404], "ok": true, "note": ""}
+{"scenario": "forged:not-base64-!", "method": "GET", "path": "/api/v1/ops/session", "status": 404, "code": "NOT_FOUND", "allowed": [400, 404], "ok": true, "note": ""}
+{"scenario": "forged:not-base64-!", "method": "GET", "path": "/api/v1/ops/providers", "status": 404, "code": "NOT_FOUND", "allowed": [400, 404], "ok": true, "note": ""}
+{"scenario": "forged:not-base64-!", "method": "GET", "path": "/api/v1/ops/runs", "status": 404, "code": "NOT_FOUND", "allowed": [400, 404], "ok": true, "note": ""}
+{"scenario": "forged:not-base64-!", "method": "GET", "path": "/api/v1/ops/quality", "status": 404, "code": "NOT_FOUND", "allowed": [400, 404], "ok": true, "note": ""}
+{"scenario": "forged:not-base64-!", "method": "GET", "path": "/api/v1/ops/dlq", "status": 404, "code": "NOT_FOUND", "allowed": [400, 404], "ok": true, "note": ""}
+{"scenario": "forged:not-base64-!", "method": "GET", "path": "/api/v1/ops/pipeline", "status": 404, "code": "NOT_FOUND", "allowed": [400, 404], "ok": true, "note": ""}
+{"scenario": "forged:not-base64-!", "method": "GET", "path": "/api/v1/ops/settings", "status": 404, "code": "NOT_FOUND", "allowed": [400, 404], "ok": true, "note": ""}
+{"scenario": "forged:not-base64-!", "method": "GET", "path": "/api/v1/ops/audit", "status": 404, "code": "NOT_FOUND", "allowed": [400, 404], "ok": true, "note": ""}
+{"scenario": "forged:not-base64-!", "method": "GET", "path": "/api/v1/ops/resolutions", "status": 404, "code": "NOT_FOUND", "allowed": [400, 404], "ok": true, "note": ""}
+{"scenario": "forged:not-base64-!", "method": "GET", "path": "/api/v1/ops/logs", "status": 404, "code": "NOT_FOUND", "allowed": [400, 404], "ok": true, "note": ""}
+{"scenario": "forged:not-base64-!", "method": "GET", "path": "/api/v1/ops/logs/groups", "status": 404, "code": "NOT_FOUND", "allowed": [400, 404], "ok": true, "note": ""}
+{"scenario": "forged:not-base64-!", "method": "GET", "path": "/api/v1/ops/logs/1-0", "status": 404, "code": "NOT_FOUND", "allowed": [400, 404], "ok": true, "note": ""}
+{"scenario": "forged:AAAAAAAAAAAA", "method": "GET", "path": "/api/v1/ops/session", "status": 404, "code": "NOT_FOUND", "allowed": [400, 404], "ok": true, "note": ""}
+{"scenario": "forged:AAAAAAAAAAAA", "method": "GET", "path": "/api/v1/ops/providers", "status": 404, "code": "NOT_FOUND", "allowed": [400, 404], "ok": true, "note": ""}
+{"scenario": "forged:AAAAAAAAAAAA", "method": "GET", "path": "/api/v1/ops/runs", "status": 404, "code": "NOT_FOUND", "allowed": [400, 404], "ok": true, "note": ""}
+{"scenario": "forged:AAAAAAAAAAAA", "method": "GET", "path": "/api/v1/ops/quality", "status": 404, "code": "NOT_FOUND", "allowed": [400, 404], "ok": true, "note": ""}
+{"scenario": "forged:AAAAAAAAAAAA", "method": "GET", "path": "/api/v1/ops/dlq", "status": 404, "code": "NOT_FOUND", "allowed": [400, 404], "ok": true, "note": ""}
+{"scenario": "forged:AAAAAAAAAAAA", "method": "GET", "path": "/api/v1/ops/pipeline", "status": 404, "code": "NOT_FOUND", "allowed": [400, 404], "ok": true, "note": ""}
+{"scenario": "forged:AAAAAAAAAAAA", "method": "GET", "path": "/api/v1/ops/settings", "status": 404, "code": "NOT_FOUND", "allowed": [400, 404], "ok": true, "note": ""}
+{"scenario": "forged:AAAAAAAAAAAA", "method": "GET", "path": "/api/v1/ops/audit", "status": 404, "code": "NOT_FOUND", "allowed": [400, 404], "ok": true, "note": ""}
+{"scenario": "forged:AAAAAAAAAAAA", "method": "GET", "path": "/api/v1/ops/resolutions", "status": 404, "code": "NOT_FOUND", "allowed": [400, 404], "ok": true, "note": ""}
+{"scenario": "forged:AAAAAAAAAAAA", "method": "GET", "path": "/api/v1/ops/logs", "status": 404, "code": "NOT_FOUND", "allowed": [400, 404], "ok": true, "note": ""}
+{"scenario": "forged:AAAAAAAAAAAA", "method": "GET", "path": "/api/v1/ops/logs/groups", "status": 404, "code": "NOT_FOUND", "allowed": [400, 404], "ok": true, "note": ""}
+{"scenario": "forged:AAAAAAAAAAAA", "method": "GET", "path": "/api/v1/ops/logs/1-0", "status": 404, "code": "NOT_FOUND", "allowed": [400, 404], "ok": true, "note": ""}
+{"scenario": "forged:Li4vLi4vZXRj", "method": "GET", "path": "/api/v1/ops/session", "status": 404, "code": "NOT_FOUND", "allowed": [400, 404], "ok": true, "note": ""}
+{"scenario": "forged:Li4vLi4vZXRj", "method": "GET", "path": "/api/v1/ops/providers", "status": 404, "code": "NOT_FOUND", "allowed": [400, 404], "ok": true, "note": ""}
+{"scenario": "forged:Li4vLi4vZXRj", "method": "GET", "path": "/api/v1/ops/runs", "status": 404, "code": "NOT_FOUND", "allowed": [400, 404], "ok": true, "note": ""}
+{"scenario": "forged:Li4vLi4vZXRj", "method": "GET", "path": "/api/v1/ops/quality", "status": 404, "code": "NOT_FOUND", "allowed": [400, 404], "ok": true, "note": ""}
+{"scenario": "forged:Li4vLi4vZXRj", "method": "GET", "path": "/api/v1/ops/dlq", "status": 404, "code": "NOT_FOUND", "allowed": [400, 404], "ok": true, "note": ""}
+{"scenario": "forged:Li4vLi4vZXRj", "method": "GET", "path": "/api/v1/ops/pipeline", "status": 404, "code": "NOT_FOUND", "allowed": [400, 404], "ok": true, "note": ""}
+{"scenario": "forged:Li4vLi4vZXRj", "method": "GET", "path": "/api/v1/ops/settings", "status": 404, "code": "NOT_FOUND", "allowed": [400, 404], "ok": true, "note": ""}
+{"scenario": "forged:Li4vLi4vZXRj", "method": "GET", "path": "/api/v1/ops/audit", "status": 404, "code": "NOT_FOUND", "allowed": [400, 404], "ok": true, "note": ""}
+{"scenario": "forged:Li4vLi4vZXRj", "method": "GET", "path": "/api/v1/ops/resolutions", "status": 404, "code": "NOT_FOUND", "allowed": [400, 404], "ok": true, "note": ""}
+{"scenario": "forged:Li4vLi4vZXRj", "method": "GET", "path": "/api/v1/ops/logs", "status": 404, "code": "NOT_FOUND", "allowed": [400, 404], "ok": true, "note": ""}
+{"scenario": "forged:Li4vLi4vZXRj", "method": "GET", "path": "/api/v1/ops/logs/groups", "status": 404, "code": "NOT_FOUND", "allowed": [400, 404], "ok": true, "note": ""}
+{"scenario": "forged:Li4vLi4vZXRj", "method": "GET", "path": "/api/v1/ops/logs/1-0", "status": 404, "code": "NOT_FOUND", "allowed": [400, 404], "ok": true, "note": ""}
+{"scenario": "qa-a", "method": "GET", "path": "/api/v1/ops/session", "status": 200, "code": null, "allowed": [200], "ok": true, "note": ""}
+{"scenario": "qa-a", "method": "GET", "path": "/api/v1/ops/providers", "status": 200, "code": null, "allowed": [200], "ok": true, "note": ""}
+{"scenario": "qa-a", "method": "GET", "path": "/api/v1/ops/runs", "status": 200, "code": null, "allowed": [200], "ok": true, "note": ""}
+{"scenario": "qa-a", "method": "GET", "path": "/api/v1/ops/quality", "status": 200, "code": null, "allowed": [200], "ok": true, "note": ""}
+{"scenario": "qa-a", "method": "GET", "path": "/api/v1/ops/dlq", "status": 200, "code": null, "allowed": [200], "ok": true, "note": ""}
+{"scenario": "qa-a", "method": "GET", "path": "/api/v1/ops/pipeline", "status": 200, "code": null, "allowed": [200], "ok": true, "note": ""}
+{"scenario": "qa-a", "method": "GET", "path": "/api/v1/ops/settings", "status": 200, "code": null, "allowed": [200], "ok": true, "note": ""}
+{"scenario": "qa-a", "method": "GET", "path": "/api/v1/ops/audit", "status": 200, "code": null, "allowed": [200], "ok": true, "note": ""}
+{"scenario": "qa-a", "method": "GET", "path": "/api/v1/ops/resolutions", "status": 200, "code": null, "allowed": [200], "ok": true, "note": ""}
+{"scenario": "qa-a", "method": "GET", "path": "/api/v1/ops/logs", "status": 200, "code": null, "allowed": [200], "ok": true, "note": ""}
+{"scenario": "qa-a", "method": "GET", "path": "/api/v1/ops/logs/groups", "status": 200, "code": null, "allowed": [200], "ok": true, "note": ""}
+{"scenario": "qa-a", "method": "GET", "path": "/api/v1/ops/logs/1-0", "status": 404, "code": "NOT_FOUND", "allowed": [200, 404], "ok": true, "note": ""}
+{"scenario": "qa-a no-csrf", "method": "PUT", "path": "/api/v1/ops/settings/region_poll_s", "status": 403, "code": "CSRF_INVALID", "allowed": [403], "ok": true, "note": ""}
+{"scenario": "qa-a wrong-csrf", "method": "PUT", "path": "/api/v1/ops/settings/region_poll_s", "status": 403, "code": "CSRF_INVALID", "allowed": [403], "ok": true, "note": ""}
+{"scenario": "qa-a _csrf-query", "method": "PUT", "path": "/api/v1/ops/settings/region_poll_s", "status": 403, "code": "CSRF_INVALID", "allowed": [403], "ok": true, "note": ""}
+{"scenario": "qa-a _csrf-form", "method": "POST", "path": "/api/v1/ops/providers/nosuch/disable", "status": 403, "code": "CSRF_INVALID", "allowed": [403], "ok": true, "note": ""}
+{"scenario": "qa-a X-XSRF-TOKEN", "method": "PUT", "path": "/api/v1/ops/settings/region_poll_s", "status": 403, "code": "CSRF_INVALID", "allowed": [403], "ok": true, "note": ""}
+{"scenario": "qa-a csrf-ok (reach)", "method": "PUT", "path": "/api/v1/ops/settings/region_poll_s", "status": 409, "code": "VERSION_MISMATCH", "allowed": [409], "ok": true, "note": ""}
+{"scenario": "qa-a origin=http://localhost:8799 site=same-site", "method": "PUT", "path": "/api/v1/ops/settings/region_poll_s", "status": 403, "code": "ORIGIN_NOT_ALLOWED", "allowed": [403], "ok": true, "note": ""}
+{"scenario": "qa-a origin=http://localhost:8799 site=None", "method": "PUT", "path": "/api/v1/ops/settings/region_poll_s", "status": 403, "code": "ORIGIN_NOT_ALLOWED", "allowed": [403], "ok": true, "note": ""}
+{"scenario": "qa-a origin=None site=same-site", "method": "PUT", "path": "/api/v1/ops/settings/region_poll_s", "status": 403, "code": "ORIGIN_NOT_ALLOWED", "allowed": [403], "ok": true, "note": ""}
+{"scenario": "qa-a origin=None site=cross-site", "method": "PUT", "path": "/api/v1/ops/settings/region_poll_s", "status": 403, "code": "ORIGIN_NOT_ALLOWED", "allowed": [403], "ok": true, "note": ""}
+{"scenario": "qa-a origin=null site=None", "method": "PUT", "path": "/api/v1/ops/settings/region_poll_s", "status": 403, "code": "ORIGIN_NOT_ALLOWED", "allowed": [403], "ok": true, "note": ""}
+{"scenario": "qa-a origin=http://evil.example site=cross-site", "method": "PUT", "path": "/api/v1/ops/settings/region_poll_s", "status": 403, "code": "ORIGIN_NOT_ALLOWED", "allowed": [403], "ok": true, "note": ""}
+{"scenario": "qa-a origin=http://localhost:8701.evil.example site=None", "method": "PUT", "path": "/api/v1/ops/settings/region_poll_s", "status": 403, "code": "ORIGIN_NOT_ALLOWED", "allowed": [403], "ok": true, "note": ""}
+{"scenario": "qa-a origin=http://LOCALHOST:8701 site=None", "method": "PUT", "path": "/api/v1/ops/settings/region_poll_s", "status": 409, "code": "VERSION_MISMATCH", "allowed": [403, 409], "ok": true, "note": ""}
+{"scenario": "qa-a origin=http://localhost:8701/ site=None", "method": "PUT", "path": "/api/v1/ops/settings/region_poll_s", "status": 409, "code": "VERSION_MISMATCH", "allowed": [403, 409], "ok": true, "note": ""}
+{"scenario": "qa-a origin=http://localhost:8701 site=same-origin", "method": "PUT", "path": "/api/v1/ops/settings/region_poll_s", "status": 409, "code": "VERSION_MISMATCH", "allowed": [409], "ok": true, "note": ""}
+{"scenario": "qa-a origin=http://localhost:8701 site=none", "method": "PUT", "path": "/api/v1/ops/settings/region_poll_s", "status": 403, "code": "ORIGIN_NOT_ALLOWED", "allowed": [403], "ok": true, "note": ""}
+{"scenario": "anon trick", "method": "GET", "path": "/api/v1/%6Fps/providers", "status": 404, "code": "NOT_FOUND", "allowed": [400, 404, 405], "ok": true, "note": ""}
+{"scenario": "anon trick", "method": "GET", "path": "/api/v1/%6fps/providers", "status": 404, "code": "NOT_FOUND", "allowed": [400, 404, 405], "ok": true, "note": ""}
+{"scenario": "anon trick", "method": "GET", "path": "/api/v1/o%70s/settings", "status": 404, "code": "NOT_FOUND", "allowed": [400, 404, 405], "ok": true, "note": ""}
+{"scenario": "anon trick", "method": "GET", "path": "//api/v1/ops/providers", "status": 400, "code": "BAD_REQUEST", "allowed": [400, 404, 405], "ok": true, "note": ""}
+{"scenario": "anon trick", "method": "GET", "path": "/api//v1/ops/providers", "status": 400, "code": "BAD_REQUEST", "allowed": [400, 404, 405], "ok": true, "note": ""}
+{"scenario": "anon trick", "method": "GET", "path": "/api/v1/ops//providers", "status": 400, "code": "BAD_REQUEST", "allowed": [400, 404, 405], "ok": true, "note": ""}
+{"scenario": "anon trick", "method": "GET", "path": "/api/v1/ops/providers;jsessionid=abc", "status": 400, "code": "BAD_REQUEST", "allowed": [400, 404, 405], "ok": true, "note": ""}
+{"scenario": "anon trick", "method": "GET", "path": "/api/v1/ops;x=1/providers", "status": 400, "code": "BAD_REQUEST", "allowed": [400, 404, 405], "ok": true, "note": ""}
+{"scenario": "anon trick", "method": "GET", "path": "/api/v1/ops/providers/", "status": 404, "code": "NOT_FOUND", "allowed": [400, 404, 405], "ok": true, "note": ""}
+{"scenario": "anon trick", "method": "GET", "path": "/api/v1/ops/settings/", "status": 404, "code": "NOT_FOUND", "allowed": [400, 404, 405], "ok": true, "note": ""}
+{"scenario": "anon trick", "method": "GET", "path": "/API/v1/ops/providers", "status": 404, "code": null, "allowed": [400, 404, 405], "ok": true, "note": ""}
+{"scenario": "anon trick", "method": "GET", "path": "/api/v1/OPS/providers", "status": 404, "code": "NOT_FOUND", "allowed": [400, 404, 405], "ok": true, "note": ""}
+{"scenario": "anon trick", "method": "GET", "path": "/api/V1/ops/providers", "status": 404, "code": "NOT_FOUND", "allowed": [400, 404, 405], "ok": true, "note": ""}
+{"scenario": "anon trick", "method": "GET", "path": "/api/v1/ops/./providers", "status": 400, "code": "BAD_REQUEST", "allowed": [400, 404, 405], "ok": true, "note": ""}
+{"scenario": "anon trick", "method": "GET", "path": "/api/v1/x/../ops/providers", "status": 400, "code": "BAD_REQUEST", "allowed": [400, 404, 405], "ok": true, "note": ""}
+{"scenario": "anon trick", "method": "GET", "path": "/api/v1/ops/%2e/providers", "status": 400, "code": "BAD_REQUEST", "allowed": [400, 404, 405], "ok": true, "note": ""}
+{"scenario": "anon trick", "method": "GET", "path": "/api/v1/ops%2fproviders", "status": 400, "code": "BAD_REQUEST", "allowed": [400, 404, 405], "ok": true, "note": ""}
+{"scenario": "anon trick", "method": "GET", "path": "/api/v1/ops/providers%00", "status": 400, "code": null, "allowed": [400, 404, 405], "ok": true, "note": ""}
+{"scenario": "anon trick", "method": "GET", "path": "/api/v1/ops/providers%20", "status": 404, "code": "NOT_FOUND", "allowed": [400, 404, 405], "ok": true, "note": ""}
+{"scenario": "anon trick", "method": "GET", "path": "/api/v1/ops/providers.json", "status": 404, "code": "NOT_FOUND", "allowed": [400, 404, 405], "ok": true, "note": ""}
+{"scenario": "anon trick", "method": "GET", "path": "/api/v1/ops/providers?x=1", "status": 404, "code": "NOT_FOUND", "allowed": [400, 404, 405], "ok": true, "note": ""}
+{"scenario": "anon trick", "method": "GET", "path": "/api/v1/ops/logs/groups/", "status": 404, "code": "NOT_FOUND", "allowed": [400, 404, 405], "ok": true, "note": ""}
+{"scenario": "anon trick", "method": "GET", "path": "/api/v1/ops/logs/%31-0", "status": 404, "code": "NOT_FOUND", "allowed": [400, 404, 405], "ok": true, "note": ""}
+{"scenario": "anon trick", "method": "GET", "path": "/api/v1/ops/%2e%2e/ops/providers", "status": 400, "code": "BAD_REQUEST", "allowed": [400, 404, 405], "ok": true, "note": ""}
+{"scenario": "anon trick", "method": "GET", "path": "/api/v1/ops/providers%2f", "status": 400, "code": "BAD_REQUEST", "allowed": [400, 404, 405], "ok": true, "note": ""}
+{"scenario": "anon trick", "method": "GET", "path": "/api/v1/ops/providers%23", "status": 404, "code": "NOT_FOUND", "allowed": [400, 404, 405], "ok": true, "note": ""}
+{"scenario": "anon trick", "method": "GET", "path": "/api/v1/ops\\providers", "status": 400, "code": "BAD_REQUEST", "allowed": [400, 404, 405], "ok": true, "note": ""}
+{"scenario": "anon trick", "method": "GET", "path": "/api/v1/ops/audit;", "status": 400, "code": "BAD_REQUEST", "allowed": [400, 404, 405], "ok": true, "note": ""}
+{"scenario": "anon trick", "method": "GET", "path": "/api/./v1/ops/audit", "status": 400, "code": "BAD_REQUEST", "allowed": [400, 404, 405], "ok": true, "note": ""}
+{"scenario": "qa-a no-csrf trick", "method": "PUT", "path": "/api/v1/%6Fps/settings/region_poll_s", "status": 403, "code": "CSRF_INVALID", "allowed": [400, 403, 404, 405], "ok": true, "note": ""}
+{"scenario": "qa-a cross-origin trick", "method": "PUT", "path": "/api/v1/%6Fps/settings/region_poll_s", "status": 403, "code": "ORIGIN_NOT_ALLOWED", "allowed": [400, 403, 404, 405], "ok": true, "note": ""}
+{"scenario": "qa-a no-csrf trick", "method": "PUT", "path": "/api/v1/ops/settings/region_poll_s/", "status": 403, "code": "CSRF_INVALID", "allowed": [400, 403, 404, 405], "ok": true, "note": ""}
+{"scenario": "qa-a cross-origin trick", "method": "PUT", "path": "/api/v1/ops/settings/region_poll_s/", "status": 403, "code": "ORIGIN_NOT_ALLOWED", "allowed": [400, 403, 404, 405], "ok": true, "note": ""}
+{"scenario": "qa-a no-csrf trick", "method": "PUT", "path": "/api/v1/OPS/settings/region_poll_s", "status": 404, "code": "NOT_FOUND", "allowed": [400, 403, 404, 405], "ok": true, "note": ""}
+{"scenario": "qa-a cross-origin trick", "method": "PUT", "path": "/api/v1/OPS/settings/region_poll_s", "status": 404, "code": "NOT_FOUND", "allowed": [400, 403, 404, 405], "ok": true, "note": ""}
+{"scenario": "qa-a no-csrf trick", "method": "PUT", "path": "//api/v1/ops/settings/region_poll_s", "status": 400, "code": "BAD_REQUEST", "allowed": [400, 403, 404, 405], "ok": true, "note": ""}
+{"scenario": "qa-a cross-origin trick", "method": "PUT", "path": "//api/v1/ops/settings/region_poll_s", "status": 400, "code": "BAD_REQUEST", "allowed": [400, 403, 404, 405], "ok": true, "note": ""}
+{"scenario": "qa-a no-csrf trick", "method": "PUT", "path": "/api/v1/ops/settings/region_poll_s;x", "status": 400, "code": "BAD_REQUEST", "allowed": [400, 403, 404, 405], "ok": true, "note": ""}
+{"scenario": "qa-a cross-origin trick", "method": "PUT", "path": "/api/v1/ops/settings/region_poll_s;x", "status": 400, "code": "BAD_REQUEST", "allowed": [400, 403, 404, 405], "ok": true, "note": ""}
+{"scenario": "qa-a no-csrf trick", "method": "PUT", "path": "/api/v1/ops/./settings/region_poll_s", "status": 400, "code": "BAD_REQUEST", "allowed": [400, 403, 404, 405], "ok": true, "note": ""}
+{"scenario": "qa-a cross-origin trick", "method": "PUT", "path": "/api/v1/ops/./settings/region_poll_s", "status": 400, "code": "BAD_REQUEST", "allowed": [400, 403, 404, 405], "ok": true, "note": ""}
+{"scenario": "qa-a no-csrf trick", "method": "PUT", "path": "/api/v1/ops/settings/%72egion_poll_s", "status": 403, "code": "CSRF_INVALID", "allowed": [400, 403, 404, 405], "ok": true, "note": ""}
+{"scenario": "qa-a cross-origin trick", "method": "PUT", "path": "/api/v1/ops/settings/%72egion_poll_s", "status": 403, "code": "ORIGIN_NOT_ALLOWED", "allowed": [400, 403, 404, 405], "ok": true, "note": ""}
+{"scenario": "qa-a no-csrf trick", "method": "PUT", "path": "/api/v1/o%70s/settings/region_poll_s", "status": 403, "code": "CSRF_INVALID", "allowed": [400, 403, 404, 405], "ok": true, "note": ""}
+{"scenario": "qa-a cross-origin trick", "method": "PUT", "path": "/api/v1/o%70s/settings/region_poll_s", "status": 403, "code": "ORIGIN_NOT_ALLOWED", "allowed": [400, 403, 404, 405], "ok": true, "note": ""}
+{"scenario": "anon method", "method": "HEAD", "path": "/api/v1/ops/providers", "status": 404, "code": null, "allowed": [400, 401, 403, 404, 405, 501], "ok": true, "note": ""}
+{"scenario": "anon method", "method": "OPTIONS", "path": "/api/v1/ops/providers", "status": 404, "code": "NOT_FOUND", "allowed": [400, 401, 403, 404, 405, 501], "ok": true, "note": ""}
+{"scenario": "anon method", "method": "TRACE", "path": "/api/v1/ops/providers", "status": 405, "code": null, "allowed": [400, 401, 403, 404, 405, 501], "ok": true, "note": ""}
+{"scenario": "anon method", "method": "PATCH", "path": "/api/v1/ops/providers", "status": 403, "code": "ORIGIN_NOT_ALLOWED", "allowed": [400, 401, 403, 404, 405, 501], "ok": true, "note": ""}
+{"scenario": "anon method", "method": "PUT", "path": "/api/v1/ops/providers", "status": 403, "code": "ORIGIN_NOT_ALLOWED", "allowed": [400, 401, 403, 404, 405, 501], "ok": true, "note": ""}
+{"scenario": "anon method", "method": "DELETE", "path": "/api/v1/ops/providers", "status": 403, "code": "ORIGIN_NOT_ALLOWED", "allowed": [400, 401, 403, 404, 405, 501], "ok": true, "note": ""}
+{"scenario": "anon method", "method": "POST", "path": "/api/v1/ops/providers", "status": 403, "code": "ORIGIN_NOT_ALLOWED", "allowed": [400, 401, 403, 404, 405, 501], "ok": true, "note": ""}
+{"scenario": "anon method", "method": "PROPFIND", "path": "/api/v1/ops/providers", "status": 400, "code": "BAD_REQUEST", "allowed": [400, 401, 403, 404, 405, 501], "ok": true, "note": ""}
+{"scenario": "anon method", "method": "FOO", "path": "/api/v1/ops/providers", "status": 400, "code": "BAD_REQUEST", "allowed": [400, 401, 403, 404, 405, 501], "ok": true, "note": ""}
+{"scenario": "anon method", "method": "HEAD", "path": "/api/v1/ops/settings", "status": 404, "code": null, "allowed": [400, 401, 403, 404, 405, 501], "ok": true, "note": ""}
+{"scenario": "anon method", "method": "OPTIONS", "path": "/api/v1/ops/settings", "status": 404, "code": "NOT_FOUND", "allowed": [400, 401, 403, 404, 405, 501], "ok": true, "note": ""}
+{"scenario": "anon method", "method": "TRACE", "path": "/api/v1/ops/settings", "status": 405, "code": null, "allowed": [400, 401, 403, 404, 405, 501], "ok": true, "note": ""}
+{"scenario": "anon method", "method": "PATCH", "path": "/api/v1/ops/settings", "status": 403, "code": "ORIGIN_NOT_ALLOWED", "allowed": [400, 401, 403, 404, 405, 501], "ok": true, "note": ""}
+{"scenario": "anon method", "method": "PUT", "path": "/api/v1/ops/settings", "status": 403, "code": "ORIGIN_NOT_ALLOWED", "allowed": [400, 401, 403, 404, 405, 501], "ok": true, "note": ""}
+{"scenario": "anon method", "method": "DELETE", "path": "/api/v1/ops/settings", "status": 403, "code": "ORIGIN_NOT_ALLOWED", "allowed": [400, 401, 403, 404, 405, 501], "ok": true, "note": ""}
+{"scenario": "anon method", "method": "POST", "path": "/api/v1/ops/settings", "status": 403, "code": "ORIGIN_NOT_ALLOWED", "allowed": [400, 401, 403, 404, 405, 501], "ok": true, "note": ""}
+{"scenario": "anon method", "method": "PROPFIND", "path": "/api/v1/ops/settings", "status": 400, "code": "BAD_REQUEST", "allowed": [400, 401, 403, 404, 405, 501], "ok": true, "note": ""}
+{"scenario": "anon method", "method": "FOO", "path": "/api/v1/ops/settings", "status": 400, "code": "BAD_REQUEST", "allowed": [400, 401, 403, 404, 405, 501], "ok": true, "note": ""}
+{"scenario": "anon method", "method": "HEAD", "path": "/api/v1/ops/audit", "status": 404, "code": null, "allowed": [400, 401, 403, 404, 405, 501], "ok": true, "note": ""}
+{"scenario": "anon method", "method": "OPTIONS", "path": "/api/v1/ops/audit", "status": 404, "code": "NOT_FOUND", "allowed": [400, 401, 403, 404, 405, 501], "ok": true, "note": ""}
+{"scenario": "anon method", "method": "TRACE", "path": "/api/v1/ops/audit", "status": 405, "code": null, "allowed": [400, 401, 403, 404, 405, 501], "ok": true, "note": ""}
+{"scenario": "anon method", "method": "PATCH", "path": "/api/v1/ops/audit", "status": 403, "code": "ORIGIN_NOT_ALLOWED", "allowed": [400, 401, 403, 404, 405, 501], "ok": true, "note": ""}
+{"scenario": "anon method", "method": "PUT", "path": "/api/v1/ops/audit", "status": 403, "code": "ORIGIN_NOT_ALLOWED", "allowed": [400, 401, 403, 404, 405, 501], "ok": true, "note": ""}
+{"scenario": "anon method", "method": "DELETE", "path": "/api/v1/ops/audit", "status": 403, "code": "ORIGIN_NOT_ALLOWED", "allowed": [400, 401, 403, 404, 405, 501], "ok": true, "note": ""}
+{"scenario": "anon method", "method": "POST", "path": "/api/v1/ops/audit", "status": 403, "code": "ORIGIN_NOT_ALLOWED", "allowed": [400, 401, 403, 404, 405, 501], "ok": true, "note": ""}
+{"scenario": "anon method", "method": "PROPFIND", "path": "/api/v1/ops/audit", "status": 400, "code": "BAD_REQUEST", "allowed": [400, 401, 403, 404, 405, 501], "ok": true, "note": ""}
+{"scenario": "anon method", "method": "FOO", "path": "/api/v1/ops/audit", "status": 400, "code": "BAD_REQUEST", "allowed": [400, 401, 403, 404, 405, 501], "ok": true, "note": ""}
+{"scenario": "anon method", "method": "HEAD", "path": "/api/v1/ops/logs", "status": 404, "code": null, "allowed": [400, 401, 403, 404, 405, 501], "ok": true, "note": ""}
+{"scenario": "anon method", "method": "OPTIONS", "path": "/api/v1/ops/logs", "status": 404, "code": "NOT_FOUND", "allowed": [400, 401, 403, 404, 405, 501], "ok": true, "note": ""}
+{"scenario": "anon method", "method": "TRACE", "path": "/api/v1/ops/logs", "status": 405, "code": null, "allowed": [400, 401, 403, 404, 405, 501], "ok": true, "note": ""}
+{"scenario": "anon method", "method": "PATCH", "path": "/api/v1/ops/logs", "status": 403, "code": "ORIGIN_NOT_ALLOWED", "allowed": [400, 401, 403, 404, 405, 501], "ok": true, "note": ""}
+{"scenario": "anon method", "method": "PUT", "path": "/api/v1/ops/logs", "status": 403, "code": "ORIGIN_NOT_ALLOWED", "allowed": [400, 401, 403, 404, 405, 501], "ok": true, "note": ""}
+{"scenario": "anon method", "method": "DELETE", "path": "/api/v1/ops/logs", "status": 403, "code": "ORIGIN_NOT_ALLOWED", "allowed": [400, 401, 403, 404, 405, 501], "ok": true, "note": ""}
+{"scenario": "anon method", "method": "POST", "path": "/api/v1/ops/logs", "status": 403, "code": "ORIGIN_NOT_ALLOWED", "allowed": [400, 401, 403, 404, 405, 501], "ok": true, "note": ""}
+{"scenario": "anon method", "method": "PROPFIND", "path": "/api/v1/ops/logs", "status": 400, "code": "BAD_REQUEST", "allowed": [400, 401, 403, 404, 405, 501], "ok": true, "note": ""}
+{"scenario": "anon method", "method": "FOO", "path": "/api/v1/ops/logs", "status": 400, "code": "BAD_REQUEST", "allowed": [400, 401, 403, 404, 405, 501], "ok": true, "note": ""}
+{"scenario": "anon method", "method": "HEAD", "path": "/api/v1/ops/session", "status": 404, "code": null, "allowed": [400, 401, 403, 404, 405, 501], "ok": true, "note": ""}
+{"scenario": "anon method", "method": "OPTIONS", "path": "/api/v1/ops/session", "status": 404, "code": "NOT_FOUND", "allowed": [400, 401, 403, 404, 405, 501], "ok": true, "note": ""}
+{"scenario": "anon method", "method": "TRACE", "path": "/api/v1/ops/session", "status": 405, "code": null, "allowed": [400, 401, 403, 404, 405, 501], "ok": true, "note": ""}
+{"scenario": "anon method", "method": "PATCH", "path": "/api/v1/ops/session", "status": 403, "code": "ORIGIN_NOT_ALLOWED", "allowed": [400, 401, 403, 404, 405, 501], "ok": true, "note": ""}
+{"scenario": "anon method", "method": "PUT", "path": "/api/v1/ops/session", "status": 403, "code": "ORIGIN_NOT_ALLOWED", "allowed": [400, 401, 403, 404, 405, 501], "ok": true, "note": ""}
+{"scenario": "anon method", "method": "DELETE", "path": "/api/v1/ops/session", "status": 403, "code": "ORIGIN_NOT_ALLOWED", "allowed": [400, 401, 403, 404, 405, 501], "ok": true, "note": ""}
+{"scenario": "anon method", "method": "POST", "path": "/api/v1/ops/session", "status": 403, "code": "ORIGIN_NOT_ALLOWED", "allowed": [400, 401, 403, 404, 405, 501], "ok": true, "note": ""}
+{"scenario": "anon method", "method": "PROPFIND", "path": "/api/v1/ops/session", "status": 400, "code": "BAD_REQUEST", "allowed": [400, 401, 403, 404, 405, 501], "ok": true, "note": ""}
+{"scenario": "anon method", "method": "FOO", "path": "/api/v1/ops/session", "status": 400, "code": "BAD_REQUEST", "allowed": [400, 401, 403, 404, 405, 501], "ok": true, "note": ""}
+{"scenario": "anon method", "method": "HEAD", "path": "/api/v1/ops/resolutions", "status": 404, "code": null, "allowed": [400, 401, 403, 404, 405, 501], "ok": true, "note": ""}
+{"scenario": "anon method", "method": "OPTIONS", "path": "/api/v1/ops/resolutions", "status": 404, "code": "NOT_FOUND", "allowed": [400, 401, 403, 404, 405, 501], "ok": true, "note": ""}
+{"scenario": "anon method", "method": "TRACE", "path": "/api/v1/ops/resolutions", "status": 405, "code": null, "allowed": [400, 401, 403, 404, 405, 501], "ok": true, "note": ""}
+{"scenario": "anon method", "method": "PATCH", "path": "/api/v1/ops/resolutions", "status": 403, "code": "ORIGIN_NOT_ALLOWED", "allowed": [400, 401, 403, 404, 405, 501], "ok": true, "note": ""}
+{"scenario": "anon method", "method": "PUT", "path": "/api/v1/ops/resolutions", "status": 403, "code": "ORIGIN_NOT_ALLOWED", "allowed": [400, 401, 403, 404, 405, 501], "ok": true, "note": ""}
+{"scenario": "anon method", "method": "DELETE", "path": "/api/v1/ops/resolutions", "status": 403, "code": "ORIGIN_NOT_ALLOWED", "allowed": [400, 401, 403, 404, 405, 501], "ok": true, "note": ""}
+{"scenario": "anon method", "method": "POST", "path": "/api/v1/ops/resolutions", "status": 403, "code": "ORIGIN_NOT_ALLOWED", "allowed": [400, 401, 403, 404, 405, 501], "ok": true, "note": ""}
+{"scenario": "anon method", "method": "PROPFIND", "path": "/api/v1/ops/resolutions", "status": 400, "code": "BAD_REQUEST", "allowed": [400, 401, 403, 404, 405, 501], "ok": true, "note": ""}
+{"scenario": "anon method", "method": "FOO", "path": "/api/v1/ops/resolutions", "status": 400, "code": "BAD_REQUEST", "allowed": [400, 401, 403, 404, 405, 501], "ok": true, "note": ""}
+{"scenario": "qa-a method", "method": "HEAD", "path": "/api/v1/ops/settings", "status": 200, "len": 0, "ok": true}
+{"scenario": "qa-a method", "method": "OPTIONS", "path": "/api/v1/ops/settings", "status": 200, "len": 0, "ok": true}
+{"scenario": "before-logout", "method": "GET", "path": "/api/v1/ops/session", "status": 200, "code": null, "allowed": [200], "ok": true, "note": ""}
+{"scenario": "logout", "method": "DELETE", "path": "/api/v1/ops/session", "status": 204, "code": null, "allowed": [204], "ok": true, "note": ""}
+{"scenario": "after-logout replay", "method": "GET", "path": "/api/v1/ops/session", "status": 404, "code": "NOT_FOUND", "allowed": [404], "ok": true, "note": ""}
+{"scenario": "after-logout replay", "method": "GET", "path": "/api/v1/ops/providers", "status": 404, "code": "NOT_FOUND", "allowed": [404], "ok": true, "note": ""}
+{"scenario": "after-logout replay", "method": "GET", "path": "/api/v1/ops/runs", "status": 404, "code": "NOT_FOUND", "allowed": [404], "ok": true, "note": ""}
+{"scenario": "after-logout replay", "method": "GET", "path": "/api/v1/ops/quality", "status": 404, "code": "NOT_FOUND", "allowed": [404], "ok": true, "note": ""}
+{"scenario": "after-logout replay", "method": "GET", "path": "/api/v1/ops/dlq", "status": 404, "code": "NOT_FOUND", "allowed": [404], "ok": true, "note": ""}
+{"scenario": "after-logout replay", "method": "GET", "path": "/api/v1/ops/pipeline", "status": 404, "code": "NOT_FOUND", "allowed": [404], "ok": true, "note": ""}
+{"scenario": "after-logout replay", "method": "GET", "path": "/api/v1/ops/settings", "status": 404, "code": "NOT_FOUND", "allowed": [404], "ok": true, "note": ""}
+{"scenario": "after-logout replay", "method": "GET", "path": "/api/v1/ops/audit", "status": 404, "code": "NOT_FOUND", "allowed": [404], "ok": true, "note": ""}
+{"scenario": "after-logout replay", "method": "GET", "path": "/api/v1/ops/resolutions", "status": 404, "code": "NOT_FOUND", "allowed": [404], "ok": true, "note": ""}
+{"scenario": "after-logout replay", "method": "GET", "path": "/api/v1/ops/logs", "status": 404, "code": "NOT_FOUND", "allowed": [404], "ok": true, "note": ""}
+{"scenario": "after-logout replay", "method": "GET", "path": "/api/v1/ops/logs/groups", "status": 404, "code": "NOT_FOUND", "allowed": [404], "ok": true, "note": ""}
+{"scenario": "after-logout replay", "method": "GET", "path": "/api/v1/ops/logs/1-0", "status": 404, "code": "NOT_FOUND", "allowed": [404], "ok": true, "note": ""}
+{"scenario": "after-logout write replay", "method": "PUT", "path": "/api/v1/ops/settings/region_poll_s", "status": 404, "code": "NOT_FOUND", "allowed": [403, 404], "ok": true, "note": ""}

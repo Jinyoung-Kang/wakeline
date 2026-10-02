@@ -1,0 +1,23 @@
+# GET /api/v1/ops/logs/groups?level=ERROR&service=api (qa-b, 스택 A) — 퍼저의 익명 요청이 만든 ERROR 묶음
+status 200 groups 21
+{"fp": "01112f6f359504b3", "count": 8, "logger": "dev.wakeline.platform.web.ProblemAdvice", "exception_type": "org.springframework.dao.DataIntegrityViolationException", "last_ts": null}
+{"fp": "cfc4a954844516a1", "count": 1, "logger": "dev.wakeline.platform.web.ProblemAdvice", "exception_type": "java.time.DateTimeException", "last_ts": null}
+{"fp": "3a2f7c9cb32a934a", "count": 4, "logger": "dev.wakeline.platform.web.ProblemAdvice", "exception_type": "org.springframework.dao.DataIntegrityViolationException", "last_ts": null}
+{"fp": "bf4bcd8c7bf01ff5", "count": 4, "logger": "dev.wakeline.platform.web.ProblemAdvice", "exception_type": "org.springframework.dao.DataIntegrityViolationException", "last_ts": null}
+{"fp": "5ce909703d91a87b", "count": 5, "logger": "dev.wakeline.platform.web.ProblemAdvice", "exception_type": "org.springframework.dao.DataIntegrityViolationException", "last_ts": null}
+{"fp": "e166cc2a7bacca3f", "count": 7, "logger": "dev.wakeline.platform.web.ProblemAdvice", "exception_type": "org.springframework.dao.DataIntegrityViolationException", "last_ts": null}
+{"fp": "1d49f8113af2d782", "count": 7, "logger": "dev.wakeline.platform.web.ProblemAdvice", "exception_type": "org.springframework.dao.DataIntegrityViolationException", "last_ts": null}
+{"fp": "df07c54e9f152804", "count": 4, "logger": "dev.wakeline.platform.web.ProblemAdvice", "exception_type": "java.time.DateTimeException", "last_ts": null}
+{"fp": "d43e92b9e1bb1203", "count": 2, "logger": "dev.wakeline.platform.web.ProblemAdvice", "exception_type": "java.lang.ArithmeticException", "last_ts": null}
+{"fp": "7e639aa2ca478deb", "count": 5, "logger": "dev.wakeline.platform.web.ProblemAdvice", "exception_type": "java.time.DateTimeException", "last_ts": null}
+{"fp": "a3eae950ea3425d8", "count": 2, "logger": "dev.wakeline.platform.web.ProblemAdvice", "exception_type": "java.lang.ArithmeticException", "last_ts": null}
+{"fp": "6ba554eb952bff62", "count": 6, "logger": "dev.wakeline.platform.web.ProblemAdvice", "exception_type": "java.lang.ArithmeticException", "last_ts": null}
+{"fp": "41d34936f2f84923", "count": 4, "logger": "dev.wakeline.platform.web.ProblemAdvice", "exception_type": "java.time.DateTimeException", "last_ts": null}
+{"fp": "1e61a58e78da036b", "count": 2, "logger": "dev.wakeline.platform.web.ProblemAdvice", "exception_type": "java.time.DateTimeException", "last_ts": null}
+{"fp": "301987824221765e", "count": 1, "logger": "dev.wakeline.platform.web.ProblemAdvice", "exception_type": "java.time.DateTimeException", "last_ts": null}
+{"fp": "000fc479861aeedb", "count": 2, "logger": "dev.wakeline.platform.web.ProblemAdvice", "exception_type": "java.time.DateTimeException", "last_ts": null}
+{"fp": "82c94d29faa7f245", "count": 3, "logger": "dev.wakeline.platform.web.ProblemAdvice", "exception_type": "org.springframework.dao.DataIntegrityViolationException", "last_ts": null}
+{"fp": "c9e0f738fa1c8858", "count": 2, "logger": "dev.wakeline.platform.web.ProblemAdvice", "exception_type": "java.time.DateTimeException", "last_ts": null}
+{"fp": "de38d97e45b1e37a", "count": 2, "logger": "dev.wakeline.platform.web.ProblemAdvice", "exception_type": "org.springframework.dao.DataIntegrityViolationException", "last_ts": null}
+{"fp": "79338ec451fade8a", "count": 1, "logger": "dev.wakeline.platform.web.ProblemAdvice", "exception_type": "java.time.DateTimeException", "last_ts": null}
+{"fp": "084058486e674d82", "count": 1, "logger": "dev.wakeline.platform.web.ProblemAdvice", "exception_type": "org.springframework.dao.DataIntegrityViolationException", "last_ts": null}

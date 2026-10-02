@@ -1,0 +1,10 @@
+/healthz
+      0.2s ..   120.4s  n= 31  max_ms=   334  status=200 health=ok
+/api/v1/aircraft?bbox=124,33,132,39
+      0.2s ..   120.4s  n= 31  max_ms=   326  status=200
+/api/v1/ships?bbox=120,30,135,40
+      0.2s ..   120.4s  n= 31  max_ms=   274  status=200
+/api/v1/alerts/history
+      0.2s ..    12.2s  n=  4  max_ms=   312  status=200
+     16.2s ..    68.3s  n= 14  max_ms=  5326  status=503 retry-after=10 code=UNAVAILABLE
+     72.3s ..   120.4s  n= 13  max_ms=  3314  status=200

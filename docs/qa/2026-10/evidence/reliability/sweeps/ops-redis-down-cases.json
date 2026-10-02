@@ -1,0 +1,44 @@
+[
+ {
+  "case": "public+cookie",
+  "status": 500,
+  "retry_after": null,
+  "code": "INTERNAL_SERVER_ERROR"
+ },
+ {
+  "case": "public status+cookie",
+  "status": 500,
+  "retry_after": null,
+  "code": "INTERNAL_SERVER_ERROR"
+ },
+ {
+  "case": "ops GET",
+  "status": 500,
+  "retry_after": null,
+  "code": "INTERNAL_SERVER_ERROR"
+ },
+ {
+  "case": "ops PUT",
+  "status": 500,
+  "retry_after": null,
+  "code": "INTERNAL_SERVER_ERROR"
+ },
+ {
+  "case": "logout",
+  "status": 500,
+  "retry_after": null,
+  "code": "INTERNAL_SERVER_ERROR"
+ },
+ {
+  "case": "anon ops",
+  "status": 404,
+  "retry_after": null,
+  "code": "NOT_FOUND"
+ },
+ {
+  "case": "anon login",
+  "status": 503,
+  "retry_after": "10",
+  "code": "UNAVAILABLE"
+ }
+]

@@ -25,10 +25,12 @@ import java.util.Map;
  *   <li>{@link Mode#GENERIC}: 같은 문장을 pgjdbc 가 보내는 파라미터 형({@code $n::varchar} 등)으로 PREPARE 하고
  *       {@code plan_cache_mode = force_generic_plan} 으로 {@code EXPLAIN EXECUTE} — 같은 문장을 여러 번 실행한 연결이 결국 쓰는 일반 계획
  *       (plan cache)과 같다. 값에 따라 달라지는 최적화가 없다.</li>
+ *   <li>{@link Mode#GENERIC_ANALYZE}: {@link Mode#GENERIC} 과 같은 일반 계획을 실제 파라미터 값으로 {@code EXPLAIN (FORMAT JSON, ANALYZE, BUFFERS) EXECUTE} —
+ *       일반 계획이 실제로 읽는 행 수 · 버퍼(읽기 문장만). 값은 SQL 글자(문자열 · 시각은 따옴표, 수는 그대로)로 넘긴다.</li>
  * </ul>
  */
 public final class PlanCapture {
-    public enum Mode { CUSTOM, ANALYZE, GENERIC }
+    public enum Mode { CUSTOM, ANALYZE, GENERIC, GENERIC_ANALYZE }
 
     private final DataSource target;
     private final String marker;
@@ -66,7 +68,7 @@ public final class PlanCapture {
             if (n.startsWith("set") && a != null && a.length >= 2 && a[0] instanceof Integer) params.add(new Call(m, a.clone()));
             if (n.equals("clearParameters")) params.clear();
             if (n.equals("executeQuery") || n.equals("executeUpdate") || n.equals("execute") || n.equals("executeLargeUpdate")) {
-                if (mode == Mode.GENERIC) explainGeneric(conn, sql, params);
+                if (mode == Mode.GENERIC || mode == Mode.GENERIC_ANALYZE) explainGeneric(conn, sql, params);
                 else explain(conn, sql, params);
             }
             return invoke(real, m, a);
@@ -128,13 +130,22 @@ public final class PlanCapture {
                 q.append(ch);
             }
         }
-        // 서버의 plan cache 와 같은 경로: 이름 있는 준비 문장 + plan_cache_mode = force_generic_plan → EXPLAIN EXECUTE(값은 계획에 쓰이지 않는다)
-        String args = String.join(", ", java.util.Collections.nCopies(n, "NULL"));
+        // 서버의 plan cache 와 같은 경로: 이름 있는 준비 문장 + plan_cache_mode = force_generic_plan → EXPLAIN EXECUTE(값은 계획에 쓰이지 않는다 —
+        // GENERIC_ANALYZE 는 그 계획을 실제 값으로 실행한다)
+        boolean analyze = mode == Mode.GENERIC_ANALYZE;
+        String[] values = new String[n];
+        java.util.Arrays.fill(values, "NULL");
+        if (analyze) for (Call c : params) {
+            int i = (Integer) c.args()[0];
+            if (i <= n) values[i - 1] = c.method().getName().equals("setNull") ? "NULL" : literal(c.args()[1]);
+        }
+        String args = String.join(", ", values);
         try (Statement st = conn.createStatement()) {
             st.execute("PREPARE wakeline_plan_capture AS " + q);
             try {
                 st.execute("SET plan_cache_mode = force_generic_plan");
-                try (ResultSet rs = st.executeQuery("EXPLAIN (FORMAT JSON) EXECUTE wakeline_plan_capture" + (n > 0 ? "(" + args + ")" : ""))) {
+                try (ResultSet rs = st.executeQuery("EXPLAIN (FORMAT JSON" + (analyze ? ", ANALYZE, BUFFERS" : "") + ") EXECUTE wakeline_plan_capture"
+                        + (n > 0 ? "(" + args + ")" : ""))) {
                     StringBuilder sb = new StringBuilder();
                     while (rs.next()) sb.append(rs.getString(1));
                     plans.add(sb.toString());
@@ -144,6 +155,13 @@ public final class PlanCapture {
                 st.execute("DEALLOCATE wakeline_plan_capture");
             }
         }
+    }
+
+    /** 파라미터 값 → SQL 글자(GENERIC_ANALYZE). 수 · 참거짓은 그대로, 그 밖(문자열 · 시각)은 작은따옴표로 — 형은 준비 문장의 형 · 문맥이 정한다. */
+    static String literal(Object v) {
+        if (v == null) return "NULL";
+        if (v instanceof Number || v instanceof Boolean) return v.toString();
+        return "'" + v.toString().replace("'", "''") + "'";
     }
 
     private static Object invoke(Object target, Method m, Object[] a) throws Throwable {

@@ -38,7 +38,8 @@ import java.util.regex.Pattern;
  *       (그 동안만 캐시 나이가 {@value #TTL_S} s 를 넘을 수 있다). 지난 값이 없거나(첫 읽기) 쓰기로 버려졌으면(읽기-쓰기 일관) 진행 중인 읽기가 끝나기를
  *       기다렸다가 새로 읽는다.</li>
  *   <li>DB 를 읽지 못하면(장애 · 느림) 마지막으로 읽은 값을 STALE 로, 한 번도 읽지 못했으면 UNAVAILABLE(아무것도 가리지 않는다)로 돌려주고
- *       {@value #RETRY_S} s 뒤에 다시 읽는다 — 로그 조회(Redis)는 DB 장애 중에도 된다. 다시 읽는 요청 하나의 상한은 풀 연결 대기(hikari
+ *       {@value #RETRY_S} s 뒤에 다시 읽는다 — 로그 조회(Redis)는 해결 기록을 읽지 못해도 답한다(운영 요청의 세션 자격 확인이 DB 를 읽으므로 DB 전체 장애
+ *       중에는 그 확인에서 503 + Retry-After 다 — OpsSessionLifetimeFilter, ADR-024). 다시 읽는 요청 하나의 상한은 풀 연결 대기(hikari
  *       connection-timeout 5 s) + 문장 {@value ResolutionRepository#READ_TIMEOUT_S} s 이고, 장애 중에는 {@value #RETRY_S} s 에 한 요청만 그만큼 기다린다.
  *       응답은 resolution_state 로 이를 알리고, 실패는 WARN(처음 · 그 뒤 {@value #WARN_EVERY_S} s 마다)으로 시스템 로그에 남는다.</li>
  * </ul>

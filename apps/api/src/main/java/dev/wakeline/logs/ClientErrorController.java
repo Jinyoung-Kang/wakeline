@@ -64,7 +64,11 @@ public class ClientErrorController {
     /** 예외 종류를 모른다(스키마: 빈 글 허용). 출처 이름("web-client")을 종류 자리에 넣지 않는다 — 운영 화면이 '예외 종류' 로 보인다. */
     static final String UNKNOWN_TYPE = "";
     private static final JsonMapper JSON = JsonMapper.builder().build();
-    private static final DateTimeFormatter TS = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'").withZone(ZoneOffset.UTC);
+    /**
+     * context.client_ts 형식(ms 까지). 연도는 'u'(역년 — 0 · 음수 그대로, 네 자리를 넘으면 + 부호 — ISO 8601 확장 연도). 'y'(기원 안 연도)는 기원을 찍지
+     * 않아 연도 0 · 기원전이 다른 기원후 연도로 바뀌었다(QA-209: -999999999 → +1000000000, 0000 → 0001 — 받은 시각과 다른 값을 저장했다).
+     */
+    private static final DateTimeFormatter TS = DateTimeFormatter.ofPattern("uuuu-MM-dd'T'HH:mm:ss.SSS'Z'").withZone(ZoneOffset.UTC);
 
     /** 공개 문서(OpenAPI)용 본문 모양 — 실제 검증은 {@link #report} 가 한다. */
     @Schema(name = "ClientErrorReport", description = "브라우저 오류 한 건(계약 v5 §C6). 본문 전체 8 KiB 이하.")

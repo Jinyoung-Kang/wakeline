@@ -514,6 +514,91 @@ statement_timeout 30 s · lock_timeout 5 s)에 운영 클래스 그대로의 기
 TrackWriter 의 바뀌지 않은 행(api-review §4 P6)은 재지 않았다 — 판단에 필요한 것은 운영의 충돌 비율(`wakeline_track_rows_total{result="written"}` 대
 `pg_stat_user_tables.n_tup_ins`)이고 저장소 안에서는 만들 수 없다.
 
+## 14. QA 2026-10 고친 뒤 재측정 — QA-401(공개 알림 이력) · QA-400(api 메모리 · JVM 설정)(2026-10-02 00:30–06:31 UTC, 격리 스택 A)
+
+이 기계(M1 · 16 GB · Docker Desktop — Docker VM 4 CPU · 8 GB, 운영 스택 · 스택 B 는 떠 있었고 건드리지 않았다). 스택 A(`wakeline-e2e` · 8701 · fixture 모드) 의 api 만
+고친 이미지 `wakeline-api:qa-fix` `86341ba39379`(커밋 `b05d1f3b` — QA-401 고침 포함)로 다시 만들었다(`tools/qa/perf_api_up.sh` — 빌드 없음 · `--no-deps`).
+데이터는 성능 단계의 합성 운영 규모 그대로(DB 9.06 GB · alert_event 약 120만 행 09-02 → 측정 시각), 실시간 상태는 `tools/qa/perf_feed.py`(전세계 10,000대 ·
+선박 15,375척 · 관심 지역 127대 · SIGMET 132). 부하는 k6 2.3.0 컨테이너(스택 A 망 — api 와 같은 VM), 자원은 `tools/qa/perf_sample.py`(5 s). 수치는 3번의
+가운데 [최소–최대]. 증거: `docs/qa/2026-10/evidence/performance/after-fix/`(k6 요약 JSON · 자원 CSV · 단계 경계 · EXPLAIN). 고치기 전 수치는
+[findings/performance.md](qa/2026-10/findings/performance.md)(같은 스택 · 같은 데이터 · 2026-10-01).
+
+### 14.1 QA-401 — 공개 `/alerts/history` 의 오래된 창(고친 뒤 · 계약 v5 §G36)
+고친 것: 쪽 순서를 창 조건과 같은 열(`entered_at` 최신순 · 같은 시각 `id` 역순)로 — 인덱스 `alert_event_entered` · `alert_event_hex` 를 창의 끝부터 읽다가 한 쪽에서 멈춘다
+(커밋 `6d35f209`). 측정은 성능 단계와 같은 스크립트 · 같은 부하(3번씩), 같은 합성 데이터 위에서 했다. 고치기 전 수치는 [findings/performance.md](qa/2026-10/findings/performance.md)
+QA-401 과 그 증거 JSON 을 같은 도구(`perf_summarize.py rest`)로 다시 낸 것이다.
+
+| 측정(3번 — 가운데 [최소–최대]) | 고치기 전(2026-10-01, 이미지 `40390885d7c8`) | 고친 뒤(2026-10-02, 이미지 `86341ba39379`) |
+|---|---|---|
+| `EXPLAIN (ANALYZE, BUFFERS)` 25일 전 1 h 첫 쪽 | **8,128 · 8,773 · 9,506 ms** — 기본 키 역순 스캔, 버린 행 1,009,071, 버퍼 hit 9,815 · read 106,229 | **2.24 · 0.25 · 0.26 ms** — `alert_event_entered`, 읽은 행 52, 버퍼 hit 57 · read 12 |
+| 같은 문장의 일반 계획(force_generic_plan) · 30일 창 | (스택 A 에서는 재지 않음 — 저장소 DbTest 의 30만 행 시드에서 30일 창 304,320행 · 597 ms) | 0.87–0.96 ms · 203행(같은 시각 묶음 — 아래) |
+| api 직접 · 오래된 창 2 r/s(공격) | 실패 **100 %**, p50 3,473 [3,436–3,673] · p95 3,856 ms | 실패 **0 %**, p50 9.8 [9.5–11.6] · p95 **17.8 [15.5–21.5] ms** |
+| 같은 동안 다른 공개 DB 조회 10 r/s(재생 · 통계 · 항적 · 알림) | 실패 **28.5 [25.8–52.7] %**, p50 1,020 · p95 2,266 [2,161–2,563] ms | 실패 **0 %**, p50 7.7 · p95 **52.9 [50.5–54.6] ms** |
+| 그 기준선(공격 없음) | 실패 0 %, p95 57.3 [53.0–68.7] ms | 실패 0 %, p95 48.8 [47.5–52.4] ms |
+| db CPU 가운데(공격 중) | **131 · 133 · 139 %** | 13 · 8 · 9 %(기준선 7 · 8 · 8 %) |
+| 오래된 창 **20 r/s**(10배 — 고친 뒤만) | — | 실패 0 %, 오래된 창 p95 14.9 [14.7–19.0] ms, 다른 조회 p95 50.0 [46.5–62.8] ms · 실패 0 % |
+| edge 경유 · 기본 제한: 공격 IP(오래된 창 2 r/s) | 실패 **97.5 [97.5–100] %**, p50 3,216 ms | 실패 **0 %**, p95 26.3 [16.6–28.3] ms |
+| edge 경유 · 같은 동안 다른 IP 의 조회 1 r/s | 실패 0 %, p50 **885 [625–1,154]** · p95 **1,700 [1,247–2,238] ms** | 실패 0 %, p50 12.7 · p95 **70.0 [64.8–81.3] ms** |
+| 그 기준선(edge, 공격 없음) | p95 51.5 [44.0–80.6] ms | p95 81.9 [56.6–147.8] ms(첫 실행이 다시 만든 api 직후) |
+
+- k6 임계값(오래된 창 · 피해 요청 p95 < 300 ms · 실패 < 1 %)은 고친 뒤 k6 실행 18번(직접 9 · edge 9) 모두 넘지 않았다. 고치기 전은 공격 실행마다 넘었다(종료 코드 99).
+- 같은 시각 묶음: 이 스택의 엔진이 실제로 만든 최근 알림은 판정 틱 하나의 같은 `entered_at` 에 최대 698건이다(합성 SIGMET 132 × 전세계 1만 대). 첫 쪽은 그 묶음 끝까지
+  읽어야 id 순서를 맞춘다 — 24 h · 30일 창의 203행이 그것이고 1.3–1.6 ms(일반 계획 0.9 ms)다. 같은 묶음 안의 커서 쪽도 묶음 크기(≤ 수백 행)만큼 읽는다.
+- 증거: `evidence/performance/after-fix/explain-qa401-r{1,2,3}.txt` · `explain-qa401-summary.md` · `k6-qa401-{base,attack,attack20}-r{1,2,3}.json` ·
+  `k6-qa401-edge-{base,attacker,victim}-r{1,2,3}.json` · `qa401-edge-runs.txt` · `qa401-summary.md` · `qa401-resources.md` · `stats-qa401-*.csv`.
+
+### 14.2 QA-400 — api 메모리(NFR-03 ≤ 512 MB)와 JVM 설정
+**한 번의 측정**(`tools/qa/perf_jvm_run.sh <설정> <n> "<JVM 옵션>"` — 설정마다 새 JVM, 3번씩, 설정을 돌아가며 잼): api 를 고친 이미지 · 제한 상향 · 측정 전용 JVM 옵션
+(`tools/qa/compose.qa-jvm.yml` — 이미지의 `-XX:+UseG1GC -XX:MaxRAMPercentage=40 -XX:+ExitOnOutOfMemoryError` 뒤에 덧붙임, `MALLOC_ARENA_MAX=2` 그대로)으로 다시 만들고
+운영 규모 실시간 상태(perf_feed — 전세계 10,000 · 선박 15,375 · 관심 지역 127 · SIGMET 132, 기동 때 곧바로 되찾는다)에서 차례로:
+W 데움 180 s(마지막 60 s = 기동 뒤 쉼) → **R REST 100 rps × 3분**(성능 단계와 같은 경로 16개 섞음 — NFR-02) → **S WS 200 연결 · 선박 레이어**(1분 램프 + 3분 — NFR-03 의 WS 부분) →
+B 몰림(300 → 400 rps 각 60 s) → I 쉼 300 s(마지막 60 s = 몰림 뒤 평탄). 자원 5 s 표본(perf_sample.py — 컨테이너 = docker stats, RSS = java VmRSS, 힙 · GC = 액추에이터).
+요약 `python3 tools/qa/perf_jvm_summary.py p40 p40pgc p35 p30 p30pgcf p22`. 512 MB 는 MiB 로 읽었다(성능 단계와 같다).
+
+| 이름 | 덧붙인 옵션 | 왜 |
+|---|---|---|
+| p40 | (없음 — 지금 설정, 힙 상한 410 MiB) | 기준 |
+| p40pgc | `-XX:G1PeriodicGCInterval=15000` | (b) 쉴 때 커밋 반환 — 15 s 는 몰림 뒤 쉼의 젊은 GC 간격(가운데 약 23 s)보다 짧게 |
+| p35 · p30 | `-XX:MaxRAMPercentage=35` · `30`(상한 360 · 308 MiB) | (c) |
+| p30pgcf | `-XX:MaxRAMPercentage=30 -XX:G1PeriodicGCInterval=15000 -XX:MinHeapFreeRatio=10 -XX:MaxHeapFreeRatio=30` | (d) 조합 — p40pgc 첫 실행에서 주기 GC 가 돌아도(15번) 커밋이 줄지 않았다: G1 은 remark 때 빈 몫이 `MaxHeapFreeRatio`(기본 70 %)를 넘을 때만 줄인다. 그래서 그 비율을 함께 낮췄다 |
+| p22 | `-XX:MaxRAMPercentage=22`(상한 226 MiB) | 탐색 — 힙 밖 RSS(약 280–300 MiB)를 빼면 512 에 맞는 힙이 이 정도라 '512 를 맞추는 값'을 보려고 더했다 |
+
+| 3번씩 — 가운데 [최소–최대] | p40(지금) | p40pgc | p35 | p30 | p30pgcf | p22 |
+|---|---|---|---|---|---|---|
+| 힙 상한 MiB | 410 | 410 | 360 | 308 | 308 | 226 |
+| 기동 뒤 쉼: 컨테이너 · RSS MiB | 462 · 483 | 500 · 483 | 458 · 476 | 472 · 457 | **366 · 375** | 440 · 448 |
+| **REST 100 rps: 컨테이너 최대 MiB** | 524 [512–527] | 539 [510–544] | 524 [508–527] | 526 [484–532] | **434 [413–469]** | 495 [468–512] |
+| **REST 100 rps: RSS 최대 MiB** | 531 [512–537] | 529 [526–556] | 544 [515–544] | 516 [502–531] | **475 [441–477]** | 515 [488–518] |
+| REST 100 rps: 힙 커밋 최대 · 힙 밖 RSS(RSS − 힙 커밋) 최대 MiB | 250 · 281 | 237 · 292 | 247 · 293 | 226 · 290 | 188 · 284 | 225 · 289 |
+| REST 100 rps: GC 일시정지 합 s · 횟수(3분) | 1.15 [0.86–1.49] · 149 | 1.11 [1.11–1.31] · 144 | 1.08 [1.06–1.08] · 144 | 1.00 [0.84–1.05] · 156 | **2.75 [2.47–2.96] · 625** | 1.08 [1.08–1.54] · 165 |
+| REST 100 rps: 전체 p95 · 가장 느린 경로 p95 ms | 37.5 · 116.5 [90.5–252.3] | 43.2 · 126.2 | 35.5 · 109.0 | 34.4 · 112.6 | 39.3 · 101.7 [84.5–**333.0**] | 32.4 · 100.1 [91.9–**586.2**] |
+| REST 100 rps: k6 임계값(경로마다 p95 < 300 ms · 실패 < 1 %)을 넘은 실행 | 0 / 3 | 0 / 3 | 0 / 3 | 0 / 3 | **2 / 3**(ship_track 실패 1.1 % · replay_72h p95 333) | **1 / 3**(DB 경로 여럿 p95 > 300) |
+| WS 200: 컨테이너 · RSS 최대 MiB | 551 · 562 | 570 · 572 | 550 · 567 | 550 · 534 | 518 · 531 | 499 · 518 |
+| WS 200: 항공기 diff 지연 p95 ms(임계값 500 을 넘은 실행) | 324 [235–389](0) | 335 [176–1,123](1) | 252 [117–815](1) | 276 [185–328](0) | 147 [115–374](0) | 252 [247–328](0) |
+| 몰림(300 → 400 rps): GC 합 s · 400 rps 실패 % · p95 ms | 2.86 · 0.28 [0–1.41] · 886 | 3.46 · 1.72 · 1,557 | 2.45 · 0.00 · 555 | 3.07 · 0.00 [0–0.45] · 815 | **9.21 · 3.25 [0.25–7.59]** · 1,699 | **11.04 · 6.10 [0–6.45]** · 1,819 |
+| **몰림 뒤 쉼 5분(마지막 60 s): 컨테이너 · RSS · 힙 커밋 MiB** | 679 · 664 · 377 | 665 · 677 · 370 | 621 · 627 · 328 | 601 · 602 · 308 | **443 · 459 · 158** | 515 · 529 · 226 |
+| 힙 여유: 상한 − GC 뒤 old 영역 최대 · 몰림 중 상한 − 힙 사용 최대 MiB | 250 · 118 | 215 · 83 | 228 · 86 | 152 · 43 | 104 · 68 | 52 · **16** |
+| 다시 시작 · OOM(ExitOnOutOfMemoryError) | 0 | 0 | 0 | 0 | 0 | 0 |
+
+- VM 의 다른 CPU(VM 전체 − 스택 A 컨테이너, 400 % 만점 — k6 · 다른 두 스택)는 REST 단계 가운데 60–71 %, WS 단계 49–57 % 로 설정마다 비슷했다. 실행마다 원문:
+  `python3 tools/qa/perf_jvm_summary.py --runs p40 p40pgc p35 p30 p30pgcf p22`(`after-fix/qa400-summary.md`).
+- **힙 밖 RSS 가 바닥이다**: RSS − 힙 커밋은 모든 설정 · 모든 실행에서 281–298 MiB(JVM 이 세는 힙 밖 풀 — 메타스페이스 · 코드 캐시 · 클래스 공간 — 이 125–128 MiB,
+  나머지 약 155–170 MiB 는 GC 구조 · 스레드 · malloc · 매핑한 libjvm/CDS). 그래서 512 MiB 안에 들려면 부하 중 힙 커밋이 약 220–230 MiB 이하여야 하는데, 운영 규모 상태 ·
+  100 rps 에서 G1 은 기본 비율로 226–264 MiB 를 커밋한다. 상한을 35 · 30 % 로 낮춰도 부하 중 커밋(247 · 226)은 그대로라 512 를 넘고, 몰림 뒤 평탄만 상한만큼 내려간다.
+- **주기 GC(p40pgc)는 돌지만 커밋을 돌려주지 않는다**: 첫 실행에서 'G1 Periodic Collection' 15번이 돌았으나 평탄 665 MiB(지금 679) — G1 은 remark 때 빈 몫이
+  `MaxHeapFreeRatio`(기본 70 %)를 넘을 때만 줄인다. 그 비율을 함께 낮춘 p30pgcf 는 쉼 · 평탄을 크게 내렸다(기동 뒤 366 · 몰림 뒤 443 MiB) — 대신 GC 를 4배 자주 하고
+  (일시정지 합 2.4배), 몰림의 실패가 늘었다(400 rps 3.25 %, 공개 조회 격벽의 503).
+- **결정(QA-400): 제품 설정(`apps/api/Dockerfile` 의 JVM 옵션)을 바꾸지 않는다.** 기준 — 100 rps · 운영 규모 상태에서 ≤ 512 MiB 이면서 REST p95 · WS 지연 · GC 일시정지
+  합이 나빠지지 않고 OOM 위험이 없을 것 — 을 모두 맞춘 설정이 없다. REST 단계에서 3번 모두 512 아래인 것은 p30pgcf 뿐인데 GC 일시정지 합이 2.4배(1.15 → 2.75 s)이고
+  REST 임계값을 3번 중 2번 넘었으며, WS 200 단계는 여전히 518 · 531 MiB 다. p22 는 RSS 가 3번 중 2번 512 를 넘고(515 · 518) 몰림에서 실패 6 % · 힙 여유 16 MiB 다.
+  주인이 고를 것: ① NFR-03 을 잰 값으로 다시 정한다(지금 설정 — 부하 중 512–564 MiB, 몰림 뒤 평탄 약 680 MiB, 컨테이너 한도 1 GiB 안) ② p30pgcf 꼴을 받아들인다(평탄 −236 MiB ·
+  쉼 −96 MiB 대신 GC 시간 2.4배 · 몰림 오류 증가 — WS 단계는 그래도 512 위) ③ 힙 밖 약 290 MiB(스레드 · GC 구조 · 코드 캐시 · malloc)를 줄이는 일을 따로 잰다(이번 범위 밖).
+- **주인의 결정(2026-10-02): ①** — NFR-03 을 잰 값으로 다시 정했다: api 컨테이너 메모리 ≤ 768 MiB(컨테이너 한도 1 GiB 의 75 %, 잰 최대 750.5 MiB) — [ADR-031](adr/ADR-031-api-memory-target.md).
+- 성능 단계의 '100 rps 에서 모든 표본 576–589 MiB'보다 이번 p40 이 낮은(512–527) 까닭: 이번 실행은 매번 새 JVM 으로 3분 데운 뒤 잰다 — 성능 단계의 api 는 앞선 부하를
+  겪은 뒤였다(힙 커밋 262–266 MiB). 몰림 한 번 뒤에는 이번에도 RSS 617–678 MiB(성능 단계 693)로 같은 꼴이다.
+- WS 지연 p95 는 같은 설정 안에서도 크게 흔들린다(117–1,123 ms — 지연 표본에 스냅샷의 `ts` 가 섞인다, perf/ws.js). 임계값 500 ms 를 넘은 2번(p40pgc · p35)은 GC 일시정지
+  (그 단계 최대 0.04–0.05 s)로 설명되지 않아 설정 탓으로 보지 않았다 — 지금 설정 3번은 모두 500 아래(235–389).
+
 ## 재현
 ```bash
 make bench SHIPS=1               # k6 REST + WS(선박 포함), api 층 직접
@@ -534,4 +619,13 @@ bash tools/chaos.sh              # 장애 주입(개발 스택을 실제로 죽�
 (cd apps/api && ./gradlew --offline perfTest --tests 'dev.wakeline.weather.data.SigmetReplayPlanPerfTest')   # §13 P4 SIGMET 재생 조건(합성 200,000건 · Docker)
 (cd apps/api && ./gradlew --offline perfTest --tests 'dev.wakeline.logs.LogReaderScanPerfTest')          # §13 P3 운영 로그 다시 훑기(메모리 · Redis — Docker)
 (cd apps/api && ./gradlew --offline perfTest --tests 'dev.wakeline.ws.AircraftJsonCachePerfTest')         # §13 조각 캐시 적중 카운터의 몫
+# §14 QA 2026-10 고친 뒤 재측정 — 격리 스택 A(wakeline-e2e · 8701)만. 스택을 만든 체크아웃(.env 가 있는 곳)이 다르면 WAKELINE_STACK_DIR=<그 경로>
+docker build -t wakeline-api:qa-fix apps/api                                                # 고친 api 이미지 — QA 태그만(:local 을 덮지 않는다)
+tools/qa/perf_api_up.sh lifted                                                              # 스택 A 의 api 만 다시 만든다(제한 상향 · 빌드 없음). 끝나면 tools/qa/perf_api_up.sh default
+python3 tools/qa/perf_feed.py 36000 &                                                       # 운영 규모 실시간 상태(전세계 1만 · 선박 1.5만) — 끝나면 그 PID 를 kill
+docker exec -i wakeline-e2e-db-1 psql -U postgres -d wakeline < tools/qa/perf_explain_qa401.sql      # §14.1 고친 문장의 계획(맞춤 · 일반)
+PERF_EV=$PWD/docs/qa/2026-10/evidence/performance/after-fix tools/qa/perf_k6.sh qa401-attack-r1 qa/qa-401-alerts-history-old-window.js 62 -e ATTACK_RPS=2 -e VICTIM_RPS=10   # §14.1 api 직접(기준선 ATTACK_RPS=0)
+PERF_EV=$PWD/docs/qa/2026-10/evidence/performance/after-fix tools/qa/perf_qa401_edge.sh r1         # §14.1 edge 경유 — api 기본 제한에서(기준선: … r1 base)
+tools/qa/perf_jvm_run.sh p30 1 "-XX:MaxRAMPercentage=30"                                    # §14.2 한 설정 한 번(새 JVM · 약 18분 — 측정 전용 옵션 tools/qa/compose.qa-jvm.yml)
+python3 tools/qa/perf_jvm_summary.py --runs p40 p40pgc p35 p30 p30pgcf p22                  # §14.2 표(가운데 [최소–최대]) · 실행마다
 ```

@@ -4,6 +4,7 @@ import dev.wakeline.platform.data.DbErrors;
 import dev.wakeline.platform.data.OrderedWriter;
 import dev.wakeline.platform.data.ReceiptBatchQueue;
 import dev.wakeline.platform.support.Receipt;
+import dev.wakeline.platform.support.StreamPrerequisite;
 import dev.wakeline.ships.core.ShipEvents;
 import dev.wakeline.ships.core.ShipState;
 import dev.wakeline.ships.core.ShipStatic;
@@ -13,7 +14,6 @@ import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationEventPublisher;
-import org.springframework.context.SmartLifecycle;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 
@@ -48,7 +48,7 @@ import java.util.function.Consumer;
  */
 @org.springframework.context.annotation.Profile("!cli & !migrate")
 @Component
-public class ShipWriter implements SmartLifecycle {
+public class ShipWriter implements StreamPrerequisite {
     private static final Logger log = LoggerFactory.getLogger(ShipWriter.class);
     static final int QUEUE_MAX = 100_000;
     static final int BATCH = 2_000;
@@ -222,7 +222,10 @@ public class ShipWriter implements SmartLifecycle {
         return out;
     }
 
-    /** 큐에 넣는다(기다리지 않는다). 종료 뒤에 온 행은 쓸 스레드가 없다 — dropped 로 센다(영수증은 잡지 않는다). */
+    /**
+     * 큐에 넣는다(기다리지 않는다). 시작 전 · 종료 뒤에 온 행은 쓸 스레드가 없다 — dropped 로 센다(영수증은 잡지 않는다). 소비자는 이 저장기에
+     * 의존해(StreamPrerequisite) 이것이 시작한 뒤에야 읽고 이것보다 먼저 멈추므로 실제로는 오지 않는다(QA-100 전에는 기동 때 와서 행을 잃었다).
+     */
     void enqueue(List<Item> items, Receipt receipt) {
         if (items.isEmpty()) return;
         if (!running) {

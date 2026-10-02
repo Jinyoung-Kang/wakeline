@@ -1,0 +1,414 @@
+[
+ {
+  "check": "page /: x-content-type-options=nosniff",
+  "ok": true,
+  "got": "nosniff"
+ },
+ {
+  "check": "page /: x-frame-options=DENY",
+  "ok": true,
+  "got": "DENY"
+ },
+ {
+  "check": "page /: referrer-policy=strict-origin-when-cross-origin",
+  "ok": true,
+  "got": "strict-origin-when-cross-origin"
+ },
+ {
+  "check": "page /: cross-origin-opener-policy=same-origin",
+  "ok": true,
+  "got": "same-origin"
+ },
+ {
+  "check": "page /: CSP present",
+  "ok": true,
+  "csp": "default-src 'self'; script-src 'self' 'nonce-o2N18EGJs3gsAUTZRneX9g==' 'strict-d"
+ },
+ {
+  "check": "page /: script-src has nonce+strict-dynamic, no unsafe-inline",
+  "ok": true,
+  "script_src": "'self' 'nonce-o2N18EGJs3gsAUTZRneX9g==' 'strict-dynamic'"
+ },
+ {
+  "check": "page /: object-src none · base-uri self · frame-ancestors none · form-action self",
+  "ok": true
+ },
+ {
+  "check": "page /: html not publicly cacheable",
+  "ok": true,
+  "cc": "private, no-cache, no-store, max-age=0, must-revalidate"
+ },
+ {
+  "check": "page /logs: x-content-type-options=nosniff",
+  "ok": true,
+  "got": "nosniff"
+ },
+ {
+  "check": "page /logs: x-frame-options=DENY",
+  "ok": true,
+  "got": "DENY"
+ },
+ {
+  "check": "page /logs: referrer-policy=strict-origin-when-cross-origin",
+  "ok": true,
+  "got": "strict-origin-when-cross-origin"
+ },
+ {
+  "check": "page /logs: cross-origin-opener-policy=same-origin",
+  "ok": true,
+  "got": "same-origin"
+ },
+ {
+  "check": "page /logs: CSP present",
+  "ok": true,
+  "csp": "default-src 'self'; script-src 'self' 'nonce-48sCcsvpxN3lW0bBaDqLYw==' 'strict-d"
+ },
+ {
+  "check": "page /logs: script-src has nonce+strict-dynamic, no unsafe-inline",
+  "ok": true,
+  "script_src": "'self' 'nonce-48sCcsvpxN3lW0bBaDqLYw==' 'strict-dynamic'"
+ },
+ {
+  "check": "page /logs: object-src none · base-uri self · frame-ancestors none · form-action self",
+  "ok": true
+ },
+ {
+  "check": "page /logs: html not publicly cacheable",
+  "ok": true,
+  "cc": "private, no-cache, no-store, max-age=0, must-revalidate"
+ },
+ {
+  "check": "page /ops: x-content-type-options=nosniff",
+  "ok": true,
+  "got": "nosniff"
+ },
+ {
+  "check": "page /ops: x-frame-options=DENY",
+  "ok": true,
+  "got": "DENY"
+ },
+ {
+  "check": "page /ops: referrer-policy=strict-origin-when-cross-origin",
+  "ok": true,
+  "got": "strict-origin-when-cross-origin"
+ },
+ {
+  "check": "page /ops: cross-origin-opener-policy=same-origin",
+  "ok": true,
+  "got": "same-origin"
+ },
+ {
+  "check": "page /ops: CSP present",
+  "ok": true,
+  "csp": "default-src 'self'; script-src 'self' 'nonce-ULvO7VHTXXcT5r8uRFMjQw==' 'strict-d"
+ },
+ {
+  "check": "page /ops: script-src has nonce+strict-dynamic, no unsafe-inline",
+  "ok": true,
+  "script_src": "'self' 'nonce-ULvO7VHTXXcT5r8uRFMjQw==' 'strict-dynamic'"
+ },
+ {
+  "check": "page /ops: object-src none · base-uri self · frame-ancestors none · form-action self",
+  "ok": true
+ },
+ {
+  "check": "page /ops: html not publicly cacheable",
+  "ok": true,
+  "cc": "private, no-cache, no-store, max-age=0, must-revalidate"
+ },
+ {
+  "check": "page /replay: x-content-type-options=nosniff",
+  "ok": true,
+  "got": "nosniff"
+ },
+ {
+  "check": "page /replay: x-frame-options=DENY",
+  "ok": true,
+  "got": "DENY"
+ },
+ {
+  "check": "page /replay: referrer-policy=strict-origin-when-cross-origin",
+  "ok": true,
+  "got": "strict-origin-when-cross-origin"
+ },
+ {
+  "check": "page /replay: cross-origin-opener-policy=same-origin",
+  "ok": true,
+  "got": "same-origin"
+ },
+ {
+  "check": "page /replay: CSP present",
+  "ok": true,
+  "csp": "default-src 'self'; script-src 'self' 'nonce-2pcMbZf3xXlMHshXomoSJw==' 'strict-d"
+ },
+ {
+  "check": "page /replay: script-src has nonce+strict-dynamic, no unsafe-inline",
+  "ok": true,
+  "script_src": "'self' 'nonce-2pcMbZf3xXlMHshXomoSJw==' 'strict-dynamic'"
+ },
+ {
+  "check": "page /replay: object-src none · base-uri self · frame-ancestors none · form-action self",
+  "ok": true
+ },
+ {
+  "check": "page /replay: html not publicly cacheable",
+  "ok": true,
+  "cc": "private, no-cache, no-store, max-age=0, must-revalidate"
+ },
+ {
+  "check": "page /stats: x-content-type-options=nosniff",
+  "ok": true,
+  "got": "nosniff"
+ },
+ {
+  "check": "page /stats: x-frame-options=DENY",
+  "ok": true,
+  "got": "DENY"
+ },
+ {
+  "check": "page /stats: referrer-policy=strict-origin-when-cross-origin",
+  "ok": true,
+  "got": "strict-origin-when-cross-origin"
+ },
+ {
+  "check": "page /stats: cross-origin-opener-policy=same-origin",
+  "ok": true,
+  "got": "same-origin"
+ },
+ {
+  "check": "page /stats: CSP present",
+  "ok": true,
+  "csp": "default-src 'self'; script-src 'self' 'nonce-QRdaiwEKhaeUPkQ7TuGLsQ==' 'strict-d"
+ },
+ {
+  "check": "page /stats: script-src has nonce+strict-dynamic, no unsafe-inline",
+  "ok": true,
+  "script_src": "'self' 'nonce-QRdaiwEKhaeUPkQ7TuGLsQ==' 'strict-dynamic'"
+ },
+ {
+  "check": "page /stats: object-src none · base-uri self · frame-ancestors none · form-action self",
+  "ok": true
+ },
+ {
+  "check": "page /stats: html not publicly cacheable",
+  "ok": true,
+  "cc": "private, no-cache, no-store, max-age=0, must-revalidate"
+ },
+ {
+  "check": "page /about: x-content-type-options=nosniff",
+  "ok": true,
+  "got": "nosniff"
+ },
+ {
+  "check": "page /about: x-frame-options=DENY",
+  "ok": true,
+  "got": "DENY"
+ },
+ {
+  "check": "page /about: referrer-policy=strict-origin-when-cross-origin",
+  "ok": true,
+  "got": "strict-origin-when-cross-origin"
+ },
+ {
+  "check": "page /about: cross-origin-opener-policy=same-origin",
+  "ok": true,
+  "got": "same-origin"
+ },
+ {
+  "check": "page /about: CSP present",
+  "ok": true,
+  "csp": "default-src 'self'; script-src 'self' 'nonce-KFP9pn+m7wP4dReDAFDeuQ==' 'strict-d"
+ },
+ {
+  "check": "page /about: script-src has nonce+strict-dynamic, no unsafe-inline",
+  "ok": true,
+  "script_src": "'self' 'nonce-KFP9pn+m7wP4dReDAFDeuQ==' 'strict-dynamic'"
+ },
+ {
+  "check": "page /about: object-src none · base-uri self · frame-ancestors none · form-action self",
+  "ok": true
+ },
+ {
+  "check": "page /about: html not publicly cacheable",
+  "ok": true,
+  "cc": "private, no-cache, no-store, max-age=0, must-revalidate"
+ },
+ {
+  "check": "page /guide: x-content-type-options=nosniff",
+  "ok": true,
+  "got": "nosniff"
+ },
+ {
+  "check": "page /guide: x-frame-options=DENY",
+  "ok": true,
+  "got": "DENY"
+ },
+ {
+  "check": "page /guide: referrer-policy=strict-origin-when-cross-origin",
+  "ok": true,
+  "got": "strict-origin-when-cross-origin"
+ },
+ {
+  "check": "page /guide: cross-origin-opener-policy=same-origin",
+  "ok": true,
+  "got": "same-origin"
+ },
+ {
+  "check": "page /guide: CSP present",
+  "ok": true,
+  "csp": "default-src 'self'; script-src 'self' 'nonce-Strzq6a2kD3L8/w0eFuFWw==' 'strict-d"
+ },
+ {
+  "check": "page /guide: script-src has nonce+strict-dynamic, no unsafe-inline",
+  "ok": true,
+  "script_src": "'self' 'nonce-Strzq6a2kD3L8/w0eFuFWw==' 'strict-dynamic'"
+ },
+ {
+  "check": "page /guide: object-src none · base-uri self · frame-ancestors none · form-action self",
+  "ok": true
+ },
+ {
+  "check": "page /guide: html not publicly cacheable",
+  "ok": true,
+  "cc": "private, no-cache, no-store, max-age=0, must-revalidate"
+ },
+ {
+  "check": "page /airports/RKSI: x-content-type-options=nosniff",
+  "ok": true,
+  "got": "nosniff"
+ },
+ {
+  "check": "page /airports/RKSI: x-frame-options=DENY",
+  "ok": true,
+  "got": "DENY"
+ },
+ {
+  "check": "page /airports/RKSI: referrer-policy=strict-origin-when-cross-origin",
+  "ok": true,
+  "got": "strict-origin-when-cross-origin"
+ },
+ {
+  "check": "page /airports/RKSI: cross-origin-opener-policy=same-origin",
+  "ok": true,
+  "got": "same-origin"
+ },
+ {
+  "check": "page /airports/RKSI: CSP present",
+  "ok": true,
+  "csp": "default-src 'self'; script-src 'self' 'nonce-rdK05QWlqj/Q91GMZ+GXqA==' 'strict-d"
+ },
+ {
+  "check": "page /airports/RKSI: script-src has nonce+strict-dynamic, no unsafe-inline",
+  "ok": true,
+  "script_src": "'self' 'nonce-rdK05QWlqj/Q91GMZ+GXqA==' 'strict-dynamic'"
+ },
+ {
+  "check": "page /airports/RKSI: object-src none · base-uri self · frame-ancestors none · form-action self",
+  "ok": true
+ },
+ {
+  "check": "page /airports/RKSI: html not publicly cacheable",
+  "ok": true,
+  "cc": "private, no-cache, no-store, max-age=0, must-revalidate"
+ },
+ {
+  "check": "api /status: x-content-type-options=nosniff",
+  "ok": true,
+  "got": "nosniff"
+ },
+ {
+  "check": "api /status: x-frame-options=DENY",
+  "ok": true,
+  "got": "DENY"
+ },
+ {
+  "check": "api /status: referrer-policy=strict-origin-when-cross-origin",
+  "ok": true,
+  "got": "strict-origin-when-cross-origin"
+ },
+ {
+  "check": "api /status: cross-origin-opener-policy=same-origin",
+  "ok": true,
+  "got": "same-origin"
+ },
+ {
+  "check": "api /status: CSP default-src none",
+  "ok": true,
+  "csp": "default-src 'none'; frame-ancestors 'none'"
+ },
+ {
+  "check": "api /status: CSRF cookie SameSite=Strict",
+  "ok": true,
+  "set_cookie": "WAKELINE_CSRF=408ef228-5172-40db-9756-7d22c64323db; Path=/; SameSite=Strict"
+ },
+ {
+  "check": "api /status: rate-limit headers present",
+  "ok": true
+ },
+ {
+  "check": "static: 1y immutable cache",
+  "ok": true,
+  "cc": "public, max-age=31536000, immutable"
+ },
+ {
+  "check": "static: x-content-type-options=nosniff",
+  "ok": true,
+  "got": "nosniff"
+ },
+ {
+  "check": "static: x-frame-options=DENY",
+  "ok": true,
+  "got": "DENY"
+ },
+ {
+  "check": "static: referrer-policy=strict-origin-when-cross-origin",
+  "ok": true,
+  "got": "strict-origin-when-cross-origin"
+ },
+ {
+  "check": "static: cross-origin-opener-policy=same-origin",
+  "ok": true,
+  "got": "same-origin"
+ },
+ {
+  "check": "ops response is no-store (not publicly cached)",
+  "ok": true,
+  "status": 200,
+  "cache_control": "no-cache, no-store, max-age=0, must-revalidate"
+ },
+ {
+  "check": "Host=localhost → 200",
+  "ok": true,
+  "got": 200
+ },
+ {
+  "check": "Host=127.0.0.1 → 200",
+  "ok": true,
+  "got": 200
+ },
+ {
+  "check": "Host=evil.example → 421",
+  "ok": true,
+  "got": 421
+ },
+ {
+  "check": "Host=wakeline.dev → 421",
+  "ok": true,
+  "got": 421
+ },
+ {
+  "check": "Host=localhost.evil.com → 421",
+  "ok": true,
+  "got": 421
+ },
+ {
+  "check": "X-Request-Id spoof overwritten by edge",
+  "ok": true,
+  "response_rid": "899571c2ee000eb91689b95a03cd9aa0"
+ },
+ {
+  "check": "X-Request-Id not reflected into problem body",
+  "ok": true,
+  "body_rid": "0e8ea6048c319f1b6ae886a9a08efde2"
+ }
+]

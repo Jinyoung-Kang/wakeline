@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { opsSession, opsTab, type OpsTab } from "@/lib/endpoints/ops";
 import { classifyOpsError, isAuthMiss, RequestOrder, SESSION_EXPIRED_NOTE } from "@/lib/ops";
+import type { AuditPage } from "@/lib/ops-audit";
 import type { SwitchState } from "@/lib/provider-switch";
 import type { ResolvedMode } from "@/lib/resolutions";
 import { useVisibleInterval } from "@/lib/use-visible-interval";
@@ -44,7 +45,8 @@ export function useOpsTabs({ onLeave, onRuns }: { onLeave: (note: string | null)
   const [runs, setRuns] = useState<Runs | null>(null);
   const [quality, setQuality] = useState<Quality | null>(null);
   const [settings, setSettings] = useState<Settings | null>(null);
-  const [audit, setAudit] = useState<{ items: Any[] } | null>(null);
+  /** 감사 첫 쪽(next_cursor 포함 — 다음 쪽은 ./useAuditPages 의 '더 보기') */
+  const [audit, setAudit] = useState<AuditPage | null>(null);
   const [dlq, setDlq] = useState<Dlq | null>(null);
   const [pipeline, setPipeline] = useState<unknown>(null);
   /** 마지막 오류(문구 + ApiError 면 요청 id — 계약 v5 §C8) */
@@ -89,7 +91,7 @@ export function useOpsTabs({ onLeave, onRuns }: { onLeave: (note: string | null)
     load<Omit<Runs, "mode">>("runs", (v, mode) => { setRuns({ ...v, mode }); onRuns(v, mode); });
     load<Quality>("quality", setQuality);
     load<Settings>("settings", setSettings);
-    load<{ items: Any[] }>("audit", setAudit);
+    load<AuditPage>("audit", setAudit);
     load<Dlq>("dlq", setDlq);
     load<unknown>("pipeline", setPipeline);
   }, [onLeave, onRuns]);

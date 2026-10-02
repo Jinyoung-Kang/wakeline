@@ -15,6 +15,7 @@ import { ResolveConfirm, useResolveSlot, type ResolveResult, type ResolveTarget 
 import { OpsLogin } from "@/components/OpsLogin";
 import { useOpsSession } from "@/components/ops/useOpsSession";
 import { OPS_TABS, useOpsTabs, type Runs, type Settings } from "@/components/ops/useOpsTabs";
+import { useAuditPages } from "@/components/ops/useAuditPages";
 import { OpsSessionError } from "@/components/ops/OpsSessionError";
 import { OpsPipeline } from "@/components/OpsPipeline";
 import { ErrorNote, RequestIdOf } from "@/components/logs/ErrorNote";
@@ -24,6 +25,9 @@ import { KstTime } from "@/components/KstTime";
 import { TrafficGridFill } from "@/components/TrafficGridFill";
 import { OpsRunsDrill } from "@/components/OpsRunsDrill";
 import { drillGoneText, runKeyId, runKeyOf, summaryHasKey, summaryLastError, summarySince, type RunKey } from "@/lib/ops-runs";
+import { AUDIT_PAGE_LIMIT } from "@/lib/ops-audit";
+import { useFocusRescue } from "@/lib/use-focus-rescue";
+import { useScrollFocusable } from "@/lib/use-scroll-focusable";
 
 type Any = Record<string, unknown>;
 /** 연 요약 행: 열쇠와 연 때의 summary_since(목록의 창) */
@@ -52,6 +56,11 @@ const BUDGET_DAY_TITLE = "공급자 하루 예산의 한 창 — 수집기의 �
 const BUDGET_USED_TITLE = "사용량 = 마지막으로 성공한 수집 때 센 호출 수(그때의 예산 창 — 매일 09:00 KST 초기화) · 실패한 호출 뒤로는 갱신되지 않아 지금 창의 값이 아닐 수 있다 · 창별 값은 아래 Daily budget snapshot";
 /** 원본 칸(격리 detail · DLQ payload head · 실행 오류 글자): api 가 준 글자 그대로(data-raw) — 안의 시각은 수집기가 쓴 형식이고 화면의 KST 로 바꾸지 않는다 */
 const RAW_RECORD_TITLE = "원본 그대로(바꾸지 않음) — 안의 시각은 수집기가 쓴 형식 그대로(‘…Z’ 는 KST 보다 9시간 이르다), 옆 칸의 시각은 KST";
+/**
+ * 감사의 before · after 칸(QA-311): api 가 기록한 변경 전 · 후 값(JSON 글자) 그대로 — 안의 시각은 서버 형식 UTC('…Z')라 다른 원본 칸처럼 data-raw ·
+ * 머리글 "(raw)" · 이 툴팁으로 KST 규칙의 예외임을 밝힌다(계약 v5 §G20). 글자는 바꾸지 않는다
+ */
+const AUDIT_RAW_TITLE = "api 가 기록한 변경 전 · 후 값(JSON) 그대로(바꾸지 않음) — 안의 시각은 서버 형식(‘…Z’ 는 KST 보다 9시간 이르다), 옆 칸의 시각은 KST";
 /** 요약의 마지막 오류 칸(errors F1 — api last_error_text · last_http_status) */
 const SUMMARY_LAST_ERROR_TITLE = "이 행의 가장 최근 실행(last (KST) 의 실행 — 해결 처리로 요약에서 뺀 실행은 고르지 않는다)의 http 와 오류 글자. "
   + "글자는 수집기가 가려 저장한 원본 그대로(안의 ‘…Z’ 는 KST 보다 9시간 이르다). ok 행은 비운다. 앞선 실행의 글자는 행을 열어(runs) 본다";
@@ -118,7 +127,7 @@ function ProviderErrorCell({ p, onOpen, opener }: { p: Any; onOpen: (t: ResolveT
  * 세션이 만료되면(ops 호출 401/404 + 세션 확인도 401/404) 대시보드를 지우고 로그인으로 돌아간다. 로그아웃은 실패해도 로그인으로(R-12).
  * 시각은 KST 만(계약 v5 §G20, lib/time) 날짜 포함 — 감사·실행 이력은 날짜가 바뀌어도 모호하지 않아야 한다.
  * 표 칸은 KST "MM-DD HH:MM:SS"(머리글 "(KST)"), 그 밖의 자리는 "… KST", title 에 연도 · ms 까지의 KST. 일 단위 집계의 날짜는 아래 표마다 그 기준을 적는다.
- * 원본 칸(격리 detail · DLQ payload head · 실행 오류 글자)은 api 가 준 글자 그대로(data-raw) — 안의 시각을 바꾸지 않고 머리글이 "(raw)" 를 말한다.
+ * 원본 칸(격리 detail · DLQ payload head · 실행 오류 글자 · 감사 before · after)은 api 가 준 글자 그대로(data-raw) — 안의 시각을 바꾸지 않고 머리글이 "(raw)" 를 말한다.
  * 모르는 값은 "—"(0 으로 채우지 않는다 — 지연도 "— ms" 가 아니라 "—").
  */
 export default function OpsPage() {
@@ -151,6 +160,19 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
     if (k === "expired") onLeave(SESSION_EXPIRED_NOTE);
     return k;
   }, [onLeave]);
+  /** 감사 탭: 첫 쪽(15 s 주기) + '더 보기'로 쌓은 앞 기록(QA-307) */
+  const auditPages = useAuditPages(audit, (e) => { void authMiss(e); });
+  /**
+   * 누른 단추가 사라지는 조작(감사 '더 보기' — 끝 쪽을 받으면 사라짐, 실행 목록 '닫기') 뒤 초점(WCAG 2.4.3 — QA-304): 초점이 body 로 떨어졌으면
+   * 탭 본문으로, 실행 목록을 닫으면 그 행의 '실행' 단추로(lib/use-focus-rescue — 잃었을 때만). '더 보기'는 받는 동안 disabled 가 아니라 aria-disabled
+   * (초점을 지닌 채 쉰다 — 두 번 누름은 useAuditPages 가 막는다)
+   */
+  const tabBody = useRef<HTMLDivElement>(null);
+  const auditMore = useRef<HTMLButtonElement>(null);
+  const drillOpener = useRef<HTMLElement | null>(null);
+  const rescue = useFocusRescue(10_000);
+  const tabScroll = useScrollFocusable<HTMLDivElement>();
+  const tabBodyRef = useCallback((el: HTMLDivElement | null) => { tabBody.current = el; return tabScroll(el); }, [tabScroll]);
   /** 공급자 오류 해결 확인 패널(한 번에 하나 — 그 공급자 행 아래) · 마지막 해결 쓰기 결과(상태 줄) */
   const { open: resolveOpen, show: showResolve, close: closeResolve, closeIf: closeResolveIf, panelId: resolvePanelId, openerProps: resolveOpener } = useResolveSlot();
   const [resolveNote, setResolveNote] = useState<string | null>(null);
@@ -205,8 +227,9 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
     <div className="flex h-full flex-col" data-testid="ops-dashboard">
       <div className="flex min-h-9 shrink-0 flex-wrap items-center gap-2 border-b border-line bg-bg-1 px-3 py-1">
         <span className="label mr-2">Operations</span>
-        <div className="flex gap-1" role="group" aria-label="운영 탭">{TABS.map((t) => (
-          <button key={t} className="btn" aria-pressed={tab === t} onClick={() => setTab(t)} data-testid={`ops-tab-${t}`}>
+        {/* 좁은 화면(375 · 320 px)에서는 탭 줄이 줄바꿈한다 — 전에는 한 줄로 화면 밖에 넘쳐 audit · dlq · pipeline 을 누를 수 없었다(QA-302, WCAG 1.4.10) */}
+        <div className="flex min-w-0 flex-wrap gap-1" role="group" aria-label="운영 탭">{TABS.map((t) => (
+          <button key={t} className="btn" aria-pressed={tab === t} onClick={() => setTab(t)} data-testid={`ops-tab-${t}`} data-session-focus={tab === t || undefined}>
             {t}{t === "pipeline" && losses ? <span className="ml-1 text-bad" title="0 이 아닌 손실 지표 수">● {losses}</span> : null}
             {tabErr[t] ? <span className="ml-1 text-warn" title={`마지막 요청 실패 — 표시 값은 ${fmtKstClock(lastOk[t])} 기준`} data-testid="ops-tab-stale">갱신 실패</span> : null}
           </button>
@@ -219,9 +242,10 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
             {err ? <>{TABS.some((t) => tabErr[t]) ? " · " : ""}<ErrorNote error={err} /></> : null}
           </span>
         ) : null}
-        <span className="ml-auto text-[11px] text-fg-3">{me.username}</span><button className="btn" onClick={logout}>sign out</button>
+        <span className="ml-auto text-[11px] text-fg-3">{me.username}</span><button className="btn" onClick={logout} lang="en">sign out</button>
       </div>
-      <div className="min-h-0 flex-1 overflow-auto p-3 text-[12px]">
+      {/* 탭 본문: 넘칠 때만 Tab 정지점(QA-305 — quality · audit · pipeline 은 글자뿐이라 키보드로 스크롤할 길이 없었다), 아니면 -1(초점 되살리기 자리) */}
+      <div ref={tabBodyRef} className="min-h-0 flex-1 overflow-auto p-3 text-[12px]" role="region" aria-label={`${tab} 탭`} data-testid="ops-tab-body">
         {tab === "providers" && prov ? <>
           <div className="mb-2 flex flex-wrap gap-3 text-[11px]">
             {/* 작업별 공급자 — 공급자 없음(수집기 {job}_none_*, 운영 로그 2026-09-30)이면 빨간 배지와 까닭. 전에는 마지막으로 쓴 공급자를 초록으로 보였다 */}
@@ -304,10 +328,10 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
                       </div>}</td>
                   <td><button className={SMALL_BTN} disabled={!key} aria-expanded={open} aria-controls={open ? RUNS_DRILL_ID : undefined} data-testid="runs-drill-open"
                     aria-label={`${open ? "실행 목록 닫기" : "실행 목록 열기"}: ${label}`} title={SUMMARY_OPEN_TITLE}
-                    onClick={() => key && setDrill(open ? null : { k: key, since: summarySince(runs) })}>{open ? "접기" : "실행"}</button></td>
+                    onClick={() => { drillOpener.current = document.activeElement as HTMLElement | null; if (key) setDrill(open ? null : { k: key, since: summarySince(runs) }); }}>{open ? "접기" : "실행"}</button></td>
                 </tr>
                 {open && drill ? <tr><td colSpan={8}>
-                  <OpsRunsDrill id={RUNS_DRILL_ID} k={drill.k} since={drill.since} onClose={() => setDrill(null)} onAuthMiss={(e) => { void authMiss(e); }} />
+                  <OpsRunsDrill id={RUNS_DRILL_ID} k={drill.k} since={drill.since} onClose={() => { setDrill(null); rescue(() => [drillOpener.current, tabBody.current]); }} onAuthMiss={(e) => { void authMiss(e); }} />
                 </td></tr> : null}
               </Fragment>;
             })}</tbody></table>
@@ -324,8 +348,25 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
         </> : null}
         {tab === "pipeline" && pipeline ? <OpsPipeline data={pipeline} /> : null}
         {tab === "settings" && settings ? <SettingsForm items={settings.items} msg={settingsMsg} setMsg={setSettingsMsg} onSaved={refresh} onAuthMiss={fail} /> : null}
-        {tab === "audit" && audit ? <table><thead><tr><th>at (KST)</th><th>user</th><th>action</th><th>target</th><th>before</th><th>after</th><th>ip</th><th>request</th></tr></thead>
-          <tbody>{audit.items.map((a) => <tr key={String(a.id)}><TimeCell v={a.at} /><td>{String(a.username ?? "")}</td><td>{String(a.action)}</td><td className="mono">{String(a.target ?? "")}</td><td className="mono text-fg-3">{String(a.before ?? "")}</td><td className="mono">{String(a.after ?? "")}</td><td className="mono">{String(a.ip ?? "")}</td><td className="mono text-fg-3">{String(a.request_id ?? "")}</td></tr>)}</tbody></table> : null}
+        {tab === "audit" && audit ? <>
+          {/* 몇 건을 보이는지 · 앞선 기록이 더 있는지(QA-307 — 전에는 첫 50건에서 말없이 잘렸다) */}
+          <div className="mb-1 text-[11px] text-fg-2" data-testid="audit-count">
+            최신순 <span className="mono">{auditPages.rows.length.toLocaleString("en-US")}</span>건 — {auditPages.next != null ? "앞선 기록이 남음(아래 단추로 이어 받음)" : "처음 기록까지 모두"}
+          </div>
+          {auditPages.reset ? <div className="mb-1 text-[11px] text-warn" role="status" data-testid="audit-reset">
+            앞서 이어 받은 기록은 접었다 — 그 사이 새 기록이 한 쪽({AUDIT_PAGE_LIMIT}건) 넘게 쌓여 사이를 이어 붙일 수 없음. 최신 {AUDIT_PAGE_LIMIT}건부터 다시 보인다
+          </div> : null}
+          <table><thead><tr><th>at (KST)</th><th>user</th><th>action</th><th>target</th><th title={AUDIT_RAW_TITLE}>before (raw)</th><th title={AUDIT_RAW_TITLE}>after (raw)</th><th>ip</th><th>request</th></tr></thead>
+            <tbody>{auditPages.rows.map((a) => <tr key={String(a.id)}><TimeCell v={a.at} /><td>{String(a.username ?? "")}</td><td>{String(a.action)}</td><td className="mono">{String(a.target ?? "")}</td>
+              <td className="mono text-fg-3" data-raw="record" title={a.before == null ? undefined : AUDIT_RAW_TITLE}>{String(a.before ?? "")}</td><td className="mono" data-raw="record" title={a.after == null ? undefined : AUDIT_RAW_TITLE}>{String(a.after ?? "")}</td>
+              <td className="mono">{String(a.ip ?? "")}</td><td className="mono text-fg-3">{String(a.request_id ?? "")}</td></tr>)}</tbody></table>
+          {auditPages.err ? <div className="mt-1 text-[11px] text-bad" role="alert" data-testid="audit-more-failed"><ErrorNote prefix="앞선 감사 기록을 불러오지 못함(보인 행은 그대로) — " error={auditPages.err} /></div> : null}
+          {auditPages.next != null ? (
+            <button ref={auditMore} className="btn mt-1 normal-case!" onClick={() => { rescue(() => [auditMore.current, tabBody.current]); void auditPages.more(); }}
+              aria-disabled={auditPages.busy || undefined} aria-busy={auditPages.busy || undefined}
+              title={`cursor ${auditPages.next} — 이 id 보다 앞선 기록 ${AUDIT_PAGE_LIMIT}건`} data-testid="audit-more">더 보기(이전 {AUDIT_PAGE_LIMIT}건)</button>
+          ) : null}
+        </> : null}
         {tab === "dlq" && dlq ? (() => {
           // 읽지 못한 목록을 '없음' 과 가른다 — api 가 빈 items 와 함께 error 를 싣는다(providers 탭의 자동 전환 기록과 같은 줄)
           const w = dlqReadError(dlq);
@@ -357,10 +398,17 @@ function SettingsForm({ items, msg, setMsg, onSaved, onAuthMiss }: {
    */
   const saving = useRef(new Set<string>());
   const [busy, setBusy] = useState<ReadonlySet<string>>(() => new Set());
+  /**
+   * 키마다 값 입력 — save 를 누르면 단추가 비활성이 되어(보내는 동안 · 저장 뒤 바뀐 값 없음) 초점이 body 로 떨어졌다(QA-304). 그때 그 키의 입력으로 옮긴다
+   * (결과는 위 role=status · alert 문구가 읽힌다)
+   */
+  const inputs = useRef(new Map<string, HTMLElement>());
+  const rescue = useFocusRescue();
   const drop = (k: string) => setEdit((e) => { const c = { ...e }; delete c[k]; return c; });
   const save = async (k: string) => {
     const ed = edit[k];
     if (ed === undefined || saving.current.has(k)) return;
+    rescue(() => [inputs.current.get(k)]);
     // 서버 검증 규칙(SettingsService.validate)을 보내기 전에 — 규칙을 모르는 키는 서버가 검사
     const parsed = parseSetting(k, ed.value);
     if (!parsed.ok) { setFieldErr((f) => ({ ...f, [k]: parsed.error })); setMsg({ ok: false, text: `${k}: 저장하지 않음 — ${parsed.error}` }); return; }
@@ -395,7 +443,8 @@ function SettingsForm({ items, msg, setMsg, onSaved, onAuthMiss }: {
           const conflict = settingConflict(ed, s);
           return <tr key={s.key} data-testid="setting-row" data-conflict={conflict ? "true" : undefined}><td className="mono">{s.key}</td>
             <td>
-              <SettingInput k={s.key} value={ed?.value ?? String(s.value)} error={fieldErr[s.key] ?? null} onChange={(v) => setEdit({ ...edit, [s.key]: editSetting(ed, s, v) })} />
+              <SettingInput k={s.key} value={ed?.value ?? String(s.value)} error={fieldErr[s.key] ?? null} onChange={(v) => setEdit({ ...edit, [s.key]: editSetting(ed, s, v) })}
+                inputRef={(el) => { if (el) inputs.current.set(s.key, el); else inputs.current.delete(s.key); }} />
               {conflict && ed ? (
                 <div className="mt-1 text-[11px] text-warn" role="alert" data-testid="setting-conflict">
                   편집하는 동안 서버 값이 바뀜(v{ed.version} → v{s.version}: <span className="mono">{String(s.value)}</span>)
@@ -406,17 +455,17 @@ function SettingsForm({ items, msg, setMsg, onSaved, onAuthMiss }: {
             </td>
             <td className="mono">{s.version}</td><td className="text-fg-3"><span className="mono">{s.updated_by ?? "—"}</span> <KstTime v={s.updated_at} variant="cell" /></td>
             <td><button className="btn" onClick={() => save(s.key)} disabled={ed === undefined || conflict || busy.has(s.key)} aria-busy={busy.has(s.key) || undefined}
-              title={conflict ? "서버 값이 바뀜 — 새 값 보기 또는 덮어쓰기를 먼저 고르세요" : undefined}>save</button></td></tr>;
+              title={conflict ? "서버 값이 바뀜 — 새 값 보기 또는 덮어쓰기를 먼저 고르세요" : undefined}><span lang="en">save</span></button></td></tr>;
         })}</tbody></table>
     </div>
   );
 }
 
 /** 키별 입력(R-56): 정수 → number(min/max), 켜기/끄기 → checkbox, 형식이 정해진 문자열 → text + 형식 안내. 값은 문자열로 편집한다(R-35 편집 상태). */
-function SettingInput({ k, value, error, onChange }: { k: string; value: string; error: string | null; onChange: (v: string) => void }) {
+function SettingInput({ k, value, error, onChange, inputRef }: { k: string; value: string; error: string | null; onChange: (v: string) => void; inputRef?: (el: HTMLInputElement | null) => void }) {
   const spec = settingSpec(k);
   const describedBy = error ? `setting-err-${k}` : spec && spec.kind !== "bool" ? `setting-hint-${k}` : undefined;
-  const common = { "aria-label": `${k} 값`, "aria-invalid": error ? true : undefined, "aria-describedby": describedBy };
+  const common = { "aria-label": `${k} 값`, "aria-invalid": error ? true : undefined, "aria-describedby": describedBy, ref: inputRef };
   return (
     <div>
       {spec?.kind === "bool" ? (

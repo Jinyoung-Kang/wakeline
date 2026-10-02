@@ -1,6 +1,7 @@
 "use client";
 import { KR_REF_MIN_SUPPORT, KR_REF_WINDOW_MIN, krMissing } from "@/lib/kr-radar";
 import { useServerNow } from "@/lib/clock";
+import { useScrollFocusable } from "@/lib/use-scroll-focusable";
 import { TRAFFIC_BINS, TRAFFIC_FILL_OPACITY, TRAFFIC_LEGEND_NOTE, TRAFFIC_ZERO_COLOR } from "@/lib/traffic-grid";
 import { RECEPTION_BINS, RECEPTION_COLOR, RECEPTION_LEGEND_NOTE, receptionLegendSpan } from "@/lib/reception-meta";
 import { fmtKstMinute } from "@/lib/time";
@@ -121,20 +122,22 @@ export function MapLegendView({ id, layers, radarSource, shipCats = SHIP_CATEGOR
   // 관측 수신 범위: 창을 다 셌는가 · 센 구간 · 메모리 상한 · 조회 실패(레이어 조각이 채운다 — 없으면 아직 모름) — 범례가 '최근 24 h'인 척하지 않게
   const observed = useServerData((d) => d.receptionInView);
   const rx = receptionLegendSpan(observed, observed ? fmtKstMinute(observed.since, { date: true }) : null);
+  // 넘칠 때만 Tab 으로 들어가 스크롤(QA-305 — 범례는 글자뿐이라 초점 받을 것이 없었다)
+  const scrollRef = useScrollFocusable<HTMLDivElement>();
   const grad = `linear-gradient(90deg, ${ALT_RAMP.map(([ft, c]) => `${c} ${(ft / ALT_MAX) * 100}%`).join(", ")})`;
   return (
-    <div id={id} className="panel max-h-full w-[264px] max-w-full overflow-y-auto text-[11px] text-fg-2" data-testid="map-legend" role="region" aria-label="지도 범례">
+    <div id={id} ref={scrollRef} className="panel max-h-full w-[264px] max-w-full overflow-y-auto text-[11px] text-fg-2" data-testid="map-legend" role="region" aria-label="지도 범례">
       {layers.aircraft ? (
         <Section title="항공기 · 고도(아이콘 색)">
           <li className="pb-1">
             <div className="h-2 w-full" style={{ background: grad }} role="img"
               aria-label={`고도 색 램프: 0 ft(0 m) 녹색, 10,000 ft(${altM(10000)}) 파랑, FL250(${altM(25000)}) 하늘색, FL400(${altM(40000)}) 이상 흰색`} />
-            {/* 눈금 두 줄: ft(FL) 아래 m — 한 줄로 쓰면 이웃 눈금과 겹친다 */}
+            {/* 눈금 두 줄: ft(FL) 아래 m — 한 줄로 쓰면 이웃 눈금과 겹친다. 위계는 밝기로(ft = fg-2, m = fg-3 5.87:1) — m 을 fg-3 의 80 % 로 흐리게 하면 4.19:1 로 AA 미달이었다(QA-306) */}
             <div className="relative mt-0.5 h-6 text-[9px] text-fg-3 mono" data-testid="legend-alt-ticks">
               {ALT_TICKS.map((t, i) => (
                 <span key={t.ft} title={`${t.ft} · ${t.m}`} className={`absolute flex flex-col leading-tight ${i === 0 ? "items-start" : i === ALT_TICKS.length - 1 ? "items-end" : "items-center"}`}
                   style={i === 0 ? { left: 0 } : i === ALT_TICKS.length - 1 ? { right: 0 } : { left: `${(t.at / ALT_MAX) * 100}%`, transform: "translateX(-50%)" }}>
-                  <span>{t.ft}</span><span className="text-fg-3/80">{t.m}</span>
+                  <span className="text-fg-2">{t.ft}</span><span>{t.m}</span>
                 </span>
               ))}
             </div>

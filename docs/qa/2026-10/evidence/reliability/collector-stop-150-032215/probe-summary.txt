@@ -1,0 +1,10 @@
+/healthz
+      0.2s ..   132.3s  n= 34  max_ms=    30  status=200 health=ok
+    136.3s ..   164.3s  n=  8  max_ms=    61  status=200 health=degraded reasons=['region_feed_lag']
+    168.3s ..   204.3s  n= 10  max_ms=    30  status=200 health=ok
+/api/v1/aircraft?bbox=124,33,132,39
+      0.2s ..   204.3s  n= 52  max_ms=    61  status=200
+/api/v1/ships?bbox=120,30,135,40
+      0.2s ..   204.3s  n= 52  max_ms=    58  status=200
+/api/v1/alerts/history
+      0.2s ..   204.3s  n= 52  max_ms=    67  status=200

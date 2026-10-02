@@ -124,7 +124,7 @@ export function LogDetail({ entry, period, resolvedMode, onClose, onOpen, onFilt
       {Object.keys(entry.context).length ? (
         <table className="mb-3" data-raw="log"><tbody>{Object.entries(entry.context).map(([k, v]) => <tr key={k}><th scope="row" className="w-40 normal-case! mono">{k}</th><td className="mono break-all">{v === null ? "null" : String(v)}</td></tr>)}</tbody></table>
       ) : <div className="mb-3 text-fg-3">없음</div>}
-      <div className="label mb-1">같은 지문 묶음(최근 {LOG_PERIOD_LABEL[period]} · {entry.service} · {entry.level} · 해결된 항목 {resolvedMode === "show" ? "포함" : "제외"})</div>
+      <div className="label mb-1">같은 지문 묶음(최근 <span className="normal-case">{LOG_PERIOD_LABEL[period]}</span> · {entry.service} · {entry.level} · 해결된 항목 {resolvedMode === "show" ? "포함" : "제외"})</div>
       <div className="mb-3" data-testid="log-fp-stats">
         {!entry.fp ? <span className="text-fg-3">지문 없음</span>
           : fpErr ? <span className="text-bad"><ErrorNote error={fpErr} onFilterRid={onFilterRid} /></span>
@@ -135,7 +135,7 @@ export function LogDetail({ entry, period, resolvedMode, onClose, onOpen, onFilt
               {fpStats.scanTruncated ? <span className="ml-1 text-warn">(스캔 상한에서 잘림 — 일부만 셈)</span> : null}
             </span>}
       </div>
-      <div className="label mb-1">같은 요청 id 의 다른 항목(최근 {LOG_PERIOD_LABEL[RELATED_PERIOD]} · 해결된 항목 포함)</div>
+      <div className="label mb-1">같은 요청 id 의 다른 항목(최근 <span className="normal-case">{LOG_PERIOD_LABEL[RELATED_PERIOD]}</span> · 해결된 항목 포함)</div>
       {!entry.request_id ? <div className="text-fg-3">요청 id 없음</div>
         : relatedErr ? <div className="text-bad"><ErrorNote error={relatedErr} onFilterRid={onFilterRid} /></div>
         : !related ? <div className="text-fg-3">불러오는 중…</div>

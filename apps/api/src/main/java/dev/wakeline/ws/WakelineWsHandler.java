@@ -36,6 +36,11 @@ public class WakelineWsHandler extends TextWebSocketHandler {
     public static final String ATTR_IP = "wakeline.ip";
     /** Tomcat 세션별 블로킹 전송 시간 제한(ms, Long) — 기본 20 s 를 설계 5.1 의 5 s 로. */
     static final String TOMCAT_BLOCKING_SEND_TIMEOUT = "org.apache.tomcat.websocket.BLOCKING_SEND_TIMEOUT";
+    /**
+     * 클라이언트 메시지 상한 4 KB = UTF-8 4,096 바이트(계약 v5 §G35). Tomcat 의 setTextMessageSizeLimit 은 디코딩한 글자(UTF-16) 수라 3바이트 글자로
+     * 채우면 약 12 KB 까지 받았다(QA-204) — 그 상한은 첫 거름으로 두고(UTF-8 바이트 ≥ UTF-16 글자라 4,096 바이트 이하 메시지를 막지 않는다),
+     * 받은 메시지의 UTF-8 길이를 다시 재어 넘으면 같은 1009(너무 큼)로 닫는다.
+     */
     static final int MAX_MESSAGE_BYTES = 4096;
     static final int MAX_ZOOM = 24;
     private static final Pattern HEX = Pattern.compile("^[0-9a-f]{6}$");
@@ -92,6 +97,7 @@ public class WakelineWsHandler extends TextWebSocketHandler {
     protected void handleTextMessage(WebSocketSession raw, TextMessage message) {
         WsSession s = byId.get(raw.getId());
         if (s == null || s.isClosing() || s.inboundBlocked) return;
+        if (utf8Length(message.getPayload()) > MAX_MESSAGE_BYTES) { hub.tooBig(s); return; } // Tomcat 의 글자 상한을 지나온 큰 메시지
         if (!s.inbound.tryAcquire(System.nanoTime())) { hub.rateLimited(s); return; }
         JsonNode m;
         try {
@@ -119,6 +125,21 @@ public class WakelineWsHandler extends TextWebSocketHandler {
         } catch (RuntimeException e) {
             badMessage(s, type, e);
         }
+    }
+
+    /** UTF-8 로 보낸 바이트 수(서로게이트 쌍 = 4바이트) — 받은 글자를 다시 인코딩하지 않고 센다. */
+    static int utf8Length(CharSequence s) {
+        int n = 0;
+        for (int i = 0, len = s.length(); i < len; i++) {
+            char c = s.charAt(i);
+            if (c < 0x80) n += 1;
+            else if (c < 0x800) n += 2;
+            else if (Character.isHighSurrogate(c) && i + 1 < len && Character.isLowSurrogate(s.charAt(i + 1))) {
+                n += 4;
+                i++;
+            } else n += 3;
+        }
+        return n;
     }
 
     /** 클라이언트 메시지 처리 중 예외의 WARN 간격 — 그사이의 것은 세어 다음 WARN 에 싣는다(DEBUG 한 줄씩). */
@@ -179,8 +200,8 @@ public class WakelineWsHandler extends TextWebSocketHandler {
         if (bbox == null) { hub.error(s, "BAD_BBOX", "bbox must be [lomin,lamin,lomax,lamax] within range"); return; }
         JsonNode z = m.path("zoom");
         // 범위 안전하게 읽는다(리뷰 cto-2026-10 S4): Jackson 3 의 asInt() 는 int 밖의 수(1e10 · 2^31 · 큰 정수)면 던진다 — 익명 클라이언트가 ERROR 스택과
-        // 1011 종료를 만들었다. double 로 읽어 0–24 로 자르면 범위 안의 값은 예전과 같고(소수는 버림) 밖의 값은 끝으로 간다.
-        int zoom = z.isNumber() ? (int) Math.max(0, Math.min(MAX_ZOOM, z.asDouble())) : 7;
+        // 1011 종료를 만들었다. double 로 읽어 0–24 로 자르면 범위 안의 값은 예전과 같고(소수는 버림) 밖의 값은 끝으로 간다(double 밖의 정수도 — number()).
+        int zoom = z.isNumber() ? (int) Math.max(0, Math.min(MAX_ZOOM, number(z))) : 7;
         if (bbox.area() > props.maxBboxAreaSqdeg() && zoom > 5) {
             hub.error(s, "BBOX_TOO_LARGE", "bbox area exceeds limit; zoom out to ≤ 5 for world view");
             return;
@@ -198,10 +219,17 @@ public class WakelineWsHandler extends TextWebSocketHandler {
         for (int i = 0; i < 4; i++) {
             JsonNode n = b.get(i);
             if (n == null || !n.isNumber()) return null;
-            v[i] = n.asDouble();
+            v[i] = number(n);
         }
         return Bbox.checked(v[0], v[1], v[2], v[3]); // REST 와 같은 규칙(유한 · 범위 · 최소 < 최대, R-16)
     }
+
+    /**
+     * JSON 숫자 → double(유한하지 않을 수 있다 — 그 뒤 규칙이 판단한다: bbox 는 유한 · 범위 검사로 BAD_BBOX, zoom 은 0–24 로 자름). Jackson 3 의
+     * asDouble() 은 double 로 나타낼 수 없는 정수(309자리 이상 — BigIntegerNode)에서 던져, 그 메시지가 처리기의 마지막 그물(BAD_MESSAGE · 1002)로 갔다
+     * (QA-203 — bbox 원소, zoom 은 ADR-017 §6.2 S4 의 알려진 한계였다). Number.doubleValue() 는 범위 밖을 ±Infinity 로 준다.
+     */
+    static double number(JsonNode n) { return n.numberValue().doubleValue(); }
 
     /**
      * 선택(계약 §1) — 선택은 집중 추적 수요가 된다(계약 v2 §A1). 같은 hex 를 다시 선택해도 선택 시각을 새로 잡는다

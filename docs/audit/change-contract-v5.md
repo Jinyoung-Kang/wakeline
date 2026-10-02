@@ -478,8 +478,8 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
   - 형식(lib/time 이 만드는 글자): inline `09-29 14:02:54 KST` · 날짜가 자명한 자리 `14:02:54 KST` · 좁은 자리(상태 바 — AIS 공백 칩 포함 · 지도 툴팁 · 선 라벨)
     `14:02 KST` · hh:mm 구간 `08:40–08:45 KST` · 구간 `09-29 10:00:00 – 09-29 14:00:00 KST`(시간대는 끝에 한 번, 줄은 ` – ` 에서만 바뀐다) · 표 칸 `09-29 14:02:54`
     (머리글 `(KST)`, 화면 읽기에는 " KST" 까지) · title `2026-09-29 14:02:54.000 KST` · 재생 시각은 연도까지 · 모르면 `—` 만(시간대 글자 없이).
-  - 원문: METAR · TAF · SIGMET 발표문 · 서버 로그 메시지 본문(예외 · 스택 · context 포함) · 수집기가 쓴 원본 레코드(격리 detail · DLQ payload head · 실행 오류 글자)는
-    글자 그대로 — 요소에 `data-raw`. 발표문 이름표는 `(원문 · 발표 그대로)`(lib/time `RAW_BULLETIN_LABEL`)이고 툴팁이 "안의 ‘…Z’ 시각은 발표 형식(KST = …Z + 9시간)" 이라 적는다.
+  - 원문: METAR · TAF · SIGMET 발표문 · 서버 로그 메시지 본문(예외 · 스택 · context 포함) · 수집기가 쓴 원본 레코드(격리 detail · DLQ payload head · 실행 오류 글자) ·
+    운영 감사의 before · after(api 가 기록한 변경 전 · 후 JSON — 머리글 `(raw)`, QA-311 2026-10-02)는 글자 그대로 — 요소에 `data-raw`. 발표문 이름표는 `(원문 · 발표 그대로)`(lib/time `RAW_BULLETIN_LABEL`)이고 툴팁이 "안의 ‘…Z’ 시각은 발표 형식(KST = …Z + 9시간)" 이라 적는다.
   - 기상청 레이더 tm 은 기상청이 준 KST 그대로(`HH:MM KST`). 선박 ETA(계약 v2 §B4 — 선원 입력 월 · 일 · 시 · 분, 입력 형식은 UTC 벽시계, 연도 없음)는 KST 로 바꿔
     `09-30 15:05 KST · 선원 입력 · 연도 없음`(2월 28일 입력 15:00 뒤는 `02-29 또는 03-01 … KST(연도 없어 윤년 모름)`, 달력에 없는 날은 시각을 지어내지 않고
     `— (선원 입력 날짜 04-31 이 달력에 없음 — KST 로 바꿀 수 없음, 연도 없음)`).
@@ -1097,3 +1097,54 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
     까닭이 글자가 아니면 `이유 모름`(지어내지 않는다), `error` 가 없거나 null · 빈 글자면 줄이 없다. 줄이 있는 동안 빈 목록을 '스키마 검증에 실패한 메시지가 없습니다.'
     로 적지 않는다(전에는 그렇게 적어 읽지 못함이 없음과 같아 보였다 — 리뷰 cto-2026-10 최종 검토). 항목이 있으면 표는 그대로.
   - 회귀 막기: 웹 `tests/ops-page.test.ts` · `tests/guide-page.test.ts`. api 는 `OpsDbTest.dlqSaysWhenItCouldNotBeRead`(Redis 가 죽으면 빈 목록 + `error`, 살아 있으면 `error` 키 없음).
+
+## G. 22차 개정(2026-10-02 · QA 2026-10 고치기 · 레인 api — 재현 시험으로 찾은 입력 · 응답 결함을 고치며 바뀐 계약)
+- G32(QA-207 · QA-001 · QA-201 · QA-202 · QA-208 · 계약 §2 · ADR-017 §6.2 QA-207) **시각 · 날짜 파라미터의 범위 — 밖이면 400**
+  - 공개 · 운영의 모든 시각(ISO 순간 `Instant`) · 날짜(`YYYY-MM-DD`) 쿼리 파라미터는 **1970-01-01T00:00:00Z ~ 9999-12-31T23:59:59.999999999Z**
+    (날짜는 1970-01-01 ~ 9999-12-31) 안이어야 한다. 밖이면 **400 `BAD_REQUEST`** problem+json(detail `invalid parameter: <이름> — out of the supported
+    range …`) — 저장소에 닿지 않는다. 경로: `/aircraft/{hex}/track?from,to` · `/ships/{mmsi}/track?from,to` · `/ais/gaps?from,to` · `/alerts/history?from,to` ·
+    `/replay?at` · `/stats/sigmet?from,to` · `/stats/alerts?from,to` · `/stats/traffic?day` · `/ops/runs?since` · `/ops/logs?since,until` · `/ops/logs/groups?since` ·
+    `POST /ops/stats/aggregate?day` — 규칙은 api 의 요청 바인더 한 곳(`platform.web.TimeParams`)이라 앞으로 생기는 시각 · 날짜 파라미터도 같다.
+  - 예전: Java 가 받는 범위(연도 ±999,999,999)를 그대로 받아 기원전 4713 년 앞의 날짜는 PostgreSQL 에 `-infinity` 로 가서 `/stats/*` 가 3 s 동안 DB CPU 를
+    다 쓰고(임시 파일 0.5–0.8 GB) 503 '재시도' 로 답했고, 재집계는 `day = -infinity` 행을 썼다. PostgreSQL 범위 밖이나 Instant 끝값은 500 + ERROR 스택이었다.
+  - 범위의 근거: 하한 — 저장하는 시각은 모두 수집 시스템이 받은 관측 · 실행의 유닉스 시각이라 1970 앞의 행은 있을 수 없다. 상한 — ISO 8601 네 자리 연도의 끝
+    (브라우저 `toISOString()` 의 형식). 미래를 묻는 정상 요청(창의 끝 · 오늘까지의 통계)은 그대로 받는다. 경로마다의 창 규칙(항적 24 h · AIS 공백 31일 · 알림
+    이력 30일 · 통계 92일 · 재생 31일과 미래 60 s · 재집계는 오늘 KST 이전 — `BAD_RANGE` · `BAD_AT` · `BAD_DAY`)은 그대로 뒤에서 본다. 해석(받는 글자 형식)과
+    같은 이름이 여럿일 때 첫 값을 쓰는 동작은 바꾸지 않았다.
+  - 웹은 이 범위 밖의 값을 보내지 않는다(서버 시계 · 달력 입력) — 화면 변화 없음.
+  - 회귀 막기: api `TimeParamsTest` · `Qa207StatsBcDateRunsAwayTest` · `Qa201TimeParamOutOfRangeTest` · `Qa201OpsTimeParamOutOfRangeTest` · `Qa202StatsDateOutOfRangeTest` ·
+    `Qa208AggregateBcDayWritesInfinityTest`, 격리 스택 점검 `tools/qa/qa_001_outofrange_time.py`.
+- G33(계약 §2 의 항공기 검색 · QA-206 · ADR-017 §6.2 QA-206) **`GET /api/v1/aircraft/search` 의 실시간 항목에 `registration` · `type_code`**
+  - 실시간 항목(`live: true`)은 지금까지의 lite 필드에 실시간 상태의 `registration`(등록번호) · `type_code`(기종 코드)를 더한다 — 상태가 아는 것만, 모르면 키가
+    없다(다른 lite 필드와 같은 규칙, 지어내지 않는다). DB 항목(`live: false`)은 그대로(`hex` · `registration` · `type_code` · `last_seen`).
+  - 예전: 검색은 등록번호 앞부분으로도 찾지만 실시간 항목은 lite(등록번호 · 기종 없음)라, "B-99" 로 찾은 줄에 맞은 근거가 없고 웹 검색 목록의 등록번호 칸은
+    서버가 아는 값을 '—' 로 그렸다. 웹은 이미 두 종류 모두에서 `registration` · `type_code` 를 읽는다(`lib/search.ts` `parseSearchResponse`) — 웹 변경 없음.
+  - 회귀 막기: api `Qa206AircraftSearchHidesRegistrationTest`, REST 계약 표본 `aircraft_search`(`tools/rest_contract_check.py` 의 실시간 항목 스키마).
+- G34(§G14 의 실행 목록 · QA-205 · QA-002) **`GET /api/v1/ops/runs` 의 `job` · `provider` · `status` 에 제어 문자가 있으면 400 `BAD_FILTER`**
+  - 세 자유 글자 필터는 SQL 매개변수로 간다. 제어 문자(유니코드 Cc — NUL · 줄바꿈 · 탭 포함)가 있으면 저장소에 닿기 전에 400 `BAD_FILTER` problem+json(detail
+    `<이름> must not contain control characters`). 예전: NUL 은 PostgreSQL 이 거절해 500 + ERROR 스택이었다(공개 검색은 같은 입력을 400 `BAD_QUERY` 로 막는다).
+    그 밖의 값 · 의미(같은 값의 실행만, 없으면 조건 없음)는 그대로. 웹(/ops RUNS)은 고른 값만 보낸다 — 화면 변화 없음.
+  - 회귀 막기: api `Qa205OpsRunsFilterNulTest` · `ParamsTest`.
+- G35(계약 §1 의 '클라이언트 메시지 ≤ 4 KB' · `schemas/ws/client.v1.json` · ADR-008 · QA-204 · ADR-017 §6.2 QA-204) **WS 클라이언트 메시지 상한 4 KB = UTF-8 4,096 바이트**
+  - `/ws/v1` 의 텍스트 메시지 하나가 UTF-8 로 4,096 바이트를 넘으면 서버가 **1009**(reason `message too big`)로 닫는다 — 글자 수와 상관없다(한글 · 이모지 등
+    여러 바이트 글자도 바이트로 센다). 예전: Tomcat 의 상한(setTextMessageSizeLimit)이 디코딩한 글자(UTF-16) 수라 3바이트 글자로 채운 메시지는 4,096 글자
+    = 약 12 KB 까지 받았다(ASCII 는 그때도 4,097 바이트에서 1009). 4,096 바이트 이하는 그대로 받는다. 웹이 보내는 메시지는 수백 바이트다 — 화면 변화 없음.
+  - 회귀 막기: api `Qa204WsMessageLimitIsCharsNotBytesTest`(실제 Tomcat) · `RateAndLimitTest.handler_messageOver4096Utf8Bytes_closes1009EvenWithFewCharacters`.
+
+## G. 23차 개정(2026-10-02 · QA 2026-10 성능 고치기 · 레인 perf — 공개 조회 격벽을 차지하던 알림 이력 문장을 고치며 순서를 계약에 적는다)
+- G36(계약 §2 의 알림 이력 · R-15 · R-74 · QA-401 · ADR-017 §6.2 QA-401) **`GET /api/v1/alerts/history` 의 순서는 `entered_at` 최신순 · 같은 시각은 `id` 역순 — `cursor` · `next_cursor` 는 그대로 id**
+  - 쪽의 항목은 `entered_at` 이 늦은 것부터, 같은 `entered_at` 이면 `id` 가 큰 것부터. `next_cursor` 는 전과 같이 그 쪽 마지막 항목의 `id`(다음이 없으면 null — R-74)이고,
+    `cursor` 를 주면 그 id 의 행의 (`entered_at`, `id`) 바로 뒤부터 잇는다 — 같은 시각 묶음이 쪽 경계를 넘어도 빠짐 · 겹침이 없다. **없는 id 의 `cursor`**(보존 삭제로
+    지워진 행 · 지어낸 값)는 이을 자리를 모르므로 **빈 쪽**(`items: []`, `next_cursor: null`) — 예전에는 그 수보다 작은 id 를 이어 냈다. 창(`from` · `to`, 30일 이하 —
+    넘으면 400 `BAD_RANGE`) · `hex` · `limit`(1–200, 기본 50, 밖이면 잘라 씀) · 항목 필드(`close_reason` · `eta_at` · `estimated` …) · 캐시는 그대로.
+  - 예전: `ORDER BY id DESC`(문서에는 순서가 없었고 코드만 있었다). 알림 id 는 만들 때의 시각에서 나오고(`AlertIds` — epoch ms × 1000 + 순번) `entered_at` 도 그
+    판정 시각이라 운영 자료의 순서는 거의 같다 — 달라지는 것은 id 가 시각 순이 아닌 행(이전 형식 id · 손으로 넣은 행)과 같은 시각 묶음 안뿐이다. 그러나 정렬 열이 창 조건
+    (`entered_at`)과 달라 플래너가 기본 키를 역순으로 훑으며 창 조건을 필터로 거는 계획을 골랐고, 15–29일 전 창은 그보다 새로운 알림(스택 A 약 100만 행)을 읽고 버리느라
+    공개 조회 상한 3 s 에 늘 끊겨 503 이었다(EXPLAIN 8.1–9.5 s · Rows Removed by Filter 1,009,071 — 익명 클라이언트 하나가 초당 2건으로 공개 조회 격벽을 차지, QA-401).
+    이제 인덱스 `alert_event_entered (entered_at DESC)` · `alert_event_hex (hex, entered_at DESC)` 를 창의 끝부터 읽다가 한 쪽(limit + 1행)을 채우면 멈춘다(같은 시각 묶음의
+    id 순서는 Incremental Sort). 커서 쪽은 커서 행을 기본 키로 같은 문장 안에서 찾고 그 `entered_at` 이 인덱스 조건이 된다. hex · 커서 조건은 있을 때만 문장에 둔다(R-15 —
+    일반 계획도 같은 인덱스 조건). 마이그레이션 없음 — `alert_event_hex_id (hex, id DESC)`(R-15)는 이 문장이 더 쓰지 않지만 지우지 않았다(다음 마이그레이션에서 지울 후보).
+  - 웹은 이 경로를 부르지 않는다 — 화면 변화 없음.
+  - 회귀 막기: api `Qa401AlertHistoryOldWindowScansNewerRowsDbTest`(오래된 · 최근 · 30일 창 × hex 유무 × 첫 쪽 · 커서 쪽을 맞춤 계획과 일반 계획으로
+    `EXPLAIN (ANALYZE, BUFFERS)` — alert_event 에서 읽은 행이 한 쪽 남짓: 잰 값 52 · 54, 상한 56) · `AlertHistoryPageDbTest`(순서 · 같은 시각 묶음을 넘는 쪽 넘김 ·
+    없는 커서) · `QueryPlanDbTest` · `CursorPagesIT`, 격리 스택 점검 `tools/qa/value_checks.py`(순서 검사를 (`entered_at`, `id`) 역순으로).

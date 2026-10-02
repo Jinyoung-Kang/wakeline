@@ -1,0 +1,697 @@
+{
+  "steps": [
+    {
+      "name": "replay: open",
+      "ok": true,
+      "note": "map attrib control (load fired)=0 basemap notice=0",
+      "focus": {
+        "tag": "body",
+        "name": "",
+        "visible": false,
+        "outline": "",
+        "testid": "",
+        "inViewport": false
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [
+        "346 GET /api/v1/replay?at=2026-10-01T21%3A01%3A18.812Z&bbox=124%2C33%2C132%2C39",
+        "1097 GET /api/v1/replay?at=2026-10-01T21%3A01%3A18.812Z&bbox=119.890%2C33.234%2C135.710%2C39.634"
+      ],
+      "axe": []
+    },
+    {
+      "name": "replay: 재생 (10×) 6 s",
+      "ok": true,
+      "focus": {
+        "tag": "button",
+        "name": "정지",
+        "visible": false,
+        "outline": "none 3px rgb(207, 224, 255)",
+        "testid": "",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [
+        "9556 GET /api/v1/replay?at=2026-10-01T21%3A01%3A28.812Z&bbox=119.890%2C33.234%2C135.710%2C39.634",
+        "10552 GET /api/v1/replay?at=2026-10-01T21%3A01%3A38.812Z&bbox=119.890%2C33.234%2C135.710%2C39.634",
+        "11553 GET /api/v1/replay?at=2026-10-01T21%3A01%3A48.812Z&bbox=119.890%2C33.234%2C135.710%2C39.634",
+        "12553 GET /api/v1/replay?at=2026-10-01T21%3A01%3A58.812Z&bbox=119.890%2C33.234%2C135.710%2C39.634",
+        "13555 GET /api/v1/replay?at=2026-10-01T21%3A02%3A08.812Z&bbox=119.890%2C33.234%2C135.710%2C39.634"
+      ]
+    },
+    {
+      "name": "replay: 정지",
+      "ok": true,
+      "focus": {
+        "tag": "button",
+        "name": "재생",
+        "visible": false,
+        "outline": "none 3px rgb(230, 232, 235)",
+        "testid": "",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [
+        "14552 GET /api/v1/replay?at=2026-10-01T21%3A02%3A18.812Z&bbox=119.890%2C33.234%2C135.710%2C39.634"
+      ]
+    },
+    {
+      "name": "replay: speed 1×",
+      "ok": true,
+      "note": "pressed=true",
+      "focus": {
+        "tag": "button",
+        "name": "1×",
+        "visible": false,
+        "outline": "none 3px rgb(207, 224, 255)",
+        "testid": "",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": []
+    },
+    {
+      "name": "replay: speed 5×",
+      "ok": true,
+      "note": "pressed=true",
+      "focus": {
+        "tag": "button",
+        "name": "5×",
+        "visible": false,
+        "outline": "none 3px rgb(207, 224, 255)",
+        "testid": "",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": []
+    },
+    {
+      "name": "replay: speed 30×",
+      "ok": true,
+      "note": "pressed=true",
+      "focus": {
+        "tag": "button",
+        "name": "30×",
+        "visible": false,
+        "outline": "none 3px rgb(207, 224, 255)",
+        "testid": "",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": []
+    },
+    {
+      "name": "replay: speed 60×",
+      "ok": true,
+      "note": "pressed=true",
+      "focus": {
+        "tag": "button",
+        "name": "60×",
+        "visible": false,
+        "outline": "none 3px rgb(207, 224, 255)",
+        "testid": "",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": []
+    },
+    {
+      "name": "replay: speed 10×",
+      "ok": true,
+      "note": "pressed=true",
+      "focus": {
+        "tag": "button",
+        "name": "10×",
+        "visible": false,
+        "outline": "none 3px rgb(207, 224, 255)",
+        "testid": "",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": []
+    },
+    {
+      "name": "replay: step −1h",
+      "ok": true,
+      "note": "input=2026-10-02T05:02",
+      "focus": {
+        "tag": "button",
+        "name": "−1h",
+        "visible": false,
+        "outline": "none 3px rgb(230, 232, 235)",
+        "testid": "",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [
+        "17982 GET /api/v1/replay?at=2026-10-01T20%3A02%3A18.812Z&bbox=119.890%2C33.234%2C135.710%2C39.634"
+      ]
+    },
+    {
+      "name": "replay: step −10m",
+      "ok": true,
+      "note": "input=2026-10-02T04:52",
+      "focus": {
+        "tag": "button",
+        "name": "−10m",
+        "visible": false,
+        "outline": "none 3px rgb(230, 232, 235)",
+        "testid": "",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [
+        "19514 GET /api/v1/replay?at=2026-10-01T19%3A52%3A18.812Z&bbox=119.890%2C33.234%2C135.710%2C39.634"
+      ]
+    },
+    {
+      "name": "replay: step −1m",
+      "ok": true,
+      "note": "input=2026-10-02T04:51",
+      "focus": {
+        "tag": "button",
+        "name": "−1m",
+        "visible": false,
+        "outline": "none 3px rgb(230, 232, 235)",
+        "testid": "",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [
+        "21047 GET /api/v1/replay?at=2026-10-01T19%3A51%3A18.812Z&bbox=119.890%2C33.234%2C135.710%2C39.634"
+      ]
+    },
+    {
+      "name": "replay: step +1m",
+      "ok": true,
+      "note": "input=2026-10-02T04:52",
+      "focus": {
+        "tag": "button",
+        "name": "+1m",
+        "visible": false,
+        "outline": "none 3px rgb(230, 232, 235)",
+        "testid": "",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [
+        "22582 GET /api/v1/replay?at=2026-10-01T19%3A52%3A18.812Z&bbox=119.890%2C33.234%2C135.710%2C39.634"
+      ]
+    },
+    {
+      "name": "replay: step +10m",
+      "ok": true,
+      "note": "input=2026-10-02T05:02",
+      "focus": {
+        "tag": "button",
+        "name": "+10m",
+        "visible": false,
+        "outline": "none 3px rgb(230, 232, 235)",
+        "testid": "",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [
+        "24115 GET /api/v1/replay?at=2026-10-01T20%3A02%3A18.812Z&bbox=119.890%2C33.234%2C135.710%2C39.634"
+      ]
+    },
+    {
+      "name": "replay: step +1h",
+      "ok": true,
+      "note": "input=2026-10-02T06:02",
+      "focus": {
+        "tag": "button",
+        "name": "+1h",
+        "visible": false,
+        "outline": "none 3px rgb(230, 232, 235)",
+        "testid": "",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [
+        "25645 GET /api/v1/replay?at=2026-10-01T21%3A02%3A18.812Z&bbox=119.890%2C33.234%2C135.710%2C39.634"
+      ]
+    },
+    {
+      "name": "replay: type datetime (KST) 1 h ago",
+      "ok": true,
+      "note": "2026-10-02T06:02 → 2026-10-02T05:02 · status=",
+      "focus": {
+        "tag": "input",
+        "name": "재생 시각(KST)",
+        "visible": true,
+        "outline": "solid 2px rgb(76, 144, 240)",
+        "testid": "replay-at-input",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [
+        "27161 GET /api/v1/replay?at=2026-10-01T20%3A02%3A00.000Z&bbox=119.890%2C33.234%2C135.710%2C39.634"
+      ]
+    },
+    {
+      "name": "replay: slider keyboard ← ← →",
+      "ok": true,
+      "note": "valuetext=2026-10-02 05:01:48 KST · 원해상도",
+      "focus": {
+        "tag": "input",
+        "name": "재생 시각",
+        "visible": true,
+        "outline": "solid 2px rgb(76, 144, 240)",
+        "testid": "",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [
+        "29679 GET /api/v1/replay?at=2026-10-01T20%3A01%3A48.812Z&bbox=119.890%2C33.234%2C135.710%2C39.634"
+      ]
+    },
+    {
+      "name": "replay: radar toggle",
+      "ok": true,
+      "note": "pressed false → true",
+      "focus": {
+        "tag": "button",
+        "name": "레이더",
+        "visible": false,
+        "outline": "none 3px rgb(207, 224, 255)",
+        "testid": "",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": []
+    },
+    {
+      "name": "replay: list open",
+      "ok": true,
+      "note": "items=120",
+      "focus": {
+        "tag": "button",
+        "name": "목록",
+        "visible": false,
+        "outline": "none 3px rgb(230, 232, 235)",
+        "testid": "replay-list-toggle",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [],
+      "axe": []
+    },
+    {
+      "name": "replay: list → first item (keyboard)",
+      "ok": true,
+      "note": "inspector=true",
+      "focus": {
+        "tag": "button",
+        "name": "TS FRQRJJJ",
+        "visible": true,
+        "outline": "solid 2px rgb(76, 144, 240)",
+        "testid": "replay-list-sigmet",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [],
+      "axe": []
+    },
+    {
+      "name": "replay: inspector 닫기 (keyboard)",
+      "ok": true,
+      "focus": {
+        "tag": "button",
+        "name": "TS FRQRJJJ",
+        "visible": true,
+        "outline": "solid 2px rgb(76, 144, 240)",
+        "testid": "replay-list-sigmet",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": []
+    },
+    {
+      "name": "replay: list close",
+      "ok": true,
+      "focus": {
+        "tag": "button",
+        "name": "목록",
+        "visible": false,
+        "outline": "none 3px rgb(230, 232, 235)",
+        "testid": "replay-list-toggle",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": []
+    },
+    {
+      "name": "stats: open",
+      "ok": true,
+      "focus": {
+        "tag": "body",
+        "name": "",
+        "visible": false,
+        "outline": "",
+        "testid": "",
+        "inViewport": false
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [
+        "39382 GET /api/v1/stats/sigmet?group=fir",
+        "39383 GET /api/v1/stats/sigmet?group=hazard",
+        "39383 GET /api/v1/stats/alerts",
+        "39384 GET /api/v1/stats/traffic?day=2026-10-01"
+      ],
+      "axe": []
+    },
+    {
+      "name": "stats: date − 1 day (keyboard ArrowDown on day field)",
+      "ok": true,
+      "note": "2026-10-01 → 2026-09-01 · traffic panel=DISTINCT AIRCRAFT BY HOUR (KST) 집계되지 않은 날짜입니다 — 따라잡기 범위(최근 7일) 밖이라 채워지지 않습니다(서비스 기록 전 · 집계가 빠진 날 · KST 날짜 집계로 바꾸기 전 날짜).",
+      "focus": {
+        "tag": "input",
+        "name": "집계 날짜(KST)",
+        "visible": true,
+        "outline": "solid 2px rgb(76, 144, 240)",
+        "testid": "",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [
+        "42497 GET /api/v1/stats/traffic?day=2026-09-01"
+      ]
+    },
+    {
+      "name": "stats: date + 2 days (beyond max?)",
+      "ok": true,
+      "note": "now=2026-10-01 max=2026-10-01 · traffic panel=DISTINCT AIRCRAFT BY HOUR (KST) 아직 오지 않았거나 끝나지 않은 날짜는 고를 수 없습니다 — 가장 최근 집계 날짜(어제 · KST)로 맞춤 이 날짜에 자료가 없습니다(집계됨 · 해당 기록 없음).",
+      "focus": {
+        "tag": "input",
+        "name": "집계 날짜(KST)",
+        "visible": true,
+        "outline": "solid 2px rgb(76, 144, 240)",
+        "testid": "",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [
+        "45326 GET /api/v1/stats/traffic?day=2026-10-01"
+      ]
+    },
+    {
+      "name": "stats: panel texts",
+      "ok": true,
+      "note": "fir[empty]: SIGMET BY FIR (7D, TOP 24) 최근 7일 자료가 없습니다(집계됨 · 해당 기록 없음). || hazard[empty]: SIGMET BY HAZARD (7D) 최근 7일 자료가 없습니다(집계됨 · 해당 기록 없음). || traffic[empty]: DISTINCT AIRCRAFT BY HOUR (KST) 아직 오지 않았거나 끝나지 않은 날짜는 고를 수 없습니다 — 가장 최근 집계 날짜(어제 · KST)로 맞춤 이 날짜에 자료가 없습니다(집계됨 · 해당 기록 없음). || alerts[empty]: ALERTS BY KIND (7D) · AVG DWELL 최근 7일 자료가 없습니다(집계됨 · 해당 기록 없음).",
+      "focus": {
+        "tag": "input",
+        "name": "집계 날짜(KST)",
+        "visible": true,
+        "outline": "solid 2px rgb(76, 144, 240)",
+        "testid": "",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": []
+    },
+    {
+      "name": "airport RKSI: open",
+      "ok": true,
+      "note": "AIRPORT WEATHER · RKSI Seoul/Incheon Intl, 28, KR (37.469, 126.451) · elev 23 ft METAR · 10-02 06:00:00 KST · 12m 08s 전 · FIXTURE METAR (원문 · 발표 그대로) METAR RKSI 270730Z 28010KT 9999 FEW030 SCT200 25/19 Q1006 NOSIG VFR 카테고리: AWC 제공 · 실링 실링 없음 TAF (원문 · 발표 그대로) TAF RKSI 270500Z 2706/2812 30007KT CAVOK TN19/2720Z TX24/2805Z BECMG 2713/2715 07006KT 9999 FEW015 BKN030 OVC080 TEMPO 2716/2719 33008KT 600",
+      "focus": {
+        "tag": "body",
+        "name": "",
+        "visible": false,
+        "outline": "",
+        "testid": "",
+        "inViewport": false
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [
+        "49511 GET /api/v1/airports/RKSI/wx"
+      ],
+      "axe": []
+    },
+    {
+      "name": "airport lower-case rksi",
+      "ok": true,
+      "note": "h1=AIRPORT WEATHER · RKSI · AIRPORT WEATHER · RKSI Seoul/Incheon Intl, 28, KR (37.469, 126.451) · elev 23 ft METAR · 10-02 06:00:00 KST · 12m 13s 전 · FIXTURE METAR (원문 · 발표 그대로) METAR RKSI 270730Z 28010KT 9999 FEW030 SCT200 25/1",
+      "focus": {
+        "tag": "body",
+        "name": "",
+        "visible": false,
+        "outline": "",
+        "testid": "",
+        "inViewport": false
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [
+        "54028 GET /api/v1/airports/RKSI/wx"
+      ]
+    },
+    {
+      "name": "airport unknown ZZZZ: 로그 보기 link target",
+      "ok": true,
+      "note": "href=/logs#rid=94e6fba7a2559462263b0b8dc1740ec2",
+      "focus": {
+        "tag": "body",
+        "name": "",
+        "visible": false,
+        "outline": "",
+        "testid": "",
+        "inViewport": false
+      },
+      "consoleErrors": [
+        "Failed to load resource: the server responded with a status of 404 ()"
+      ],
+      "pageErrors": [],
+      "bad": [
+        "404 GET /api/v1/airports/ZZZZ/wx"
+      ],
+      "failed": [],
+      "dup": [],
+      "api": [
+        "58353 GET /api/v1/airports/ZZZZ/wx"
+      ],
+      "axe": []
+    },
+    {
+      "name": "airport unknown: copy request id button",
+      "ok": true,
+      "note": "after click: AIRPORT WEATHER · ZZZZ 감시 공항 목록에 없는 코드입니다: ZZZZ — 감시 공항만 기상 이력을 보관합니다. 요청 id 94e6fba7a2559462263b0b8dc1740ec2 복사 로그 보기",
+      "focus": {
+        "tag": "button",
+        "name": "요청 id 94e6fba7a2559462263b0b8dc1740ec2 복사",
+        "visible": false,
+        "outline": "none 3px rgb(230, 232, 235)",
+        "testid": "",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": []
+    },
+    {
+      "name": "guide: open",
+      "ok": true,
+      "focus": {
+        "tag": "body",
+        "name": "",
+        "visible": false,
+        "outline": "",
+        "testid": "",
+        "inViewport": false
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": []
+    },
+    {
+      "name": "guide: TOC link 2.8 (keyboard)",
+      "ok": true,
+      "note": "hash=#dashboard-radar focus=body scrollTarget visible=true",
+      "focus": {
+        "tag": "body",
+        "name": "",
+        "visible": false,
+        "outline": "",
+        "testid": "",
+        "inViewport": false
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": []
+    },
+    {
+      "name": "guide: figure link opens a png",
+      "ok": true,
+      "note": "href=/guide/dashboard.983c6efd68.webp target=_blank",
+      "focus": {
+        "tag": "body",
+        "name": "",
+        "visible": false,
+        "outline": "",
+        "testid": "",
+        "inViewport": false
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": []
+    },
+    {
+      "name": "guide mobile 375: TOC select",
+      "ok": true,
+      "note": "select visible=true hash=#dashboard-layers",
+      "focus": {
+        "tag": "h3#dashboard-layers-h",
+        "name": "2.3레이어 · 선종 필터",
+        "visible": true,
+        "outline": "solid 2px rgb(76, 144, 240)",
+        "testid": "",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [],
+      "axe": []
+    },
+    {
+      "name": "about: keyboard scroll (skip link → main → PageDown/Space/End)",
+      "ok": true,
+      "note": "scrollable by 486px · scrollTop after keys=0 · focus can enter scroller=true",
+      "focus": {
+        "tag": "div",
+        "name": "출처·한계 본문",
+        "visible": true,
+        "outline": "solid 2px rgb(76, 144, 240)",
+        "testid": "",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": []
+    }
+  ]
+}

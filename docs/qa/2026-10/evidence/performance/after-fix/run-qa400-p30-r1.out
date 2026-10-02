@@ -1,0 +1,22 @@
+setting=p30 run=1 extra='-XX:MaxRAMPercentage=30' start=2026-10-02T02:01:02Z
+sha256:86341ba393797a76f061584f0f4879a9ba83c9a579b9063059454c0ac29bf835
+JAVA_TOOL_OPTIONS=-XX:+UseG1GC -XX:MaxRAMPercentage=40 -XX:+ExitOnOutOfMemoryError -XX:MaxRAMPercentage=30
+WAKELINE_WS_MAX_CONN=1000
+WAKELINE_PUBLIC_RATE_LIMIT_PER_MIN=1000000
+WAKELINE_WS_MAX_CONN_PER_IP=1000
+MALLOC_ARENA_MAX=2
+container_started=2026-10-02T02:01:06.609403635Z
+W 2026-10-02T02:01:17Z 2026-10-02T02:04:19Z
+state global=10000 ships=15375
+R 2026-10-02T02:04:19Z 2026-10-02T02:07:20Z
+S 2026-10-02T02:07:30Z 2026-10-02T02:11:50Z
+B 2026-10-02T02:12:00Z 2026-10-02T02:14:01Z
+I 2026-10-02T02:14:01Z 2026-10-02T02:19:01Z
+inspect restarts=0 oom_killed=false started=2026-10-02T02:01:06.609403635Z status=running
+oom_lines 0
+jvm_line Picked up JAVA_TOOL_OPTIONS: -XX:+UseG1GC -XX:MaxRAMPercentage=40 -XX:+ExitOnOutOfMemoryError -XX:MaxRAMPercentage=30
+gc jvm_gc_pause_seconds_count{action="end of minor GC",cause="G1 Evacuation Pause",gc="G1 Young Generation"} 586
+gc jvm_gc_pause_seconds_sum{action="end of minor GC",cause="G1 Evacuation Pause",gc="G1 Young Generation"} 6.253
+gc jvm_gc_pause_seconds_count{action="end of minor GC",cause="G1 Humongous Allocation",gc="G1 Young Generation"} 7
+gc jvm_gc_pause_seconds_sum{action="end of minor GC",cause="G1 Humongous Allocation",gc="G1 Young Generation"} 0.073
+end=2026-10-02T02:19:01Z

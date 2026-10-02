@@ -6,6 +6,7 @@ import dev.wakeline.aircraft.core.Snapshot;
 import dev.wakeline.aircraft.core.SnapshotStore;
 import dev.wakeline.demand.HotCell;
 import dev.wakeline.platform.support.Receipt;
+import dev.wakeline.platform.support.StreamPrerequisite;
 import dev.wakeline.ships.core.AisGap;
 import dev.wakeline.ships.core.ShipEvents;
 import dev.wakeline.ships.core.ShipState;
@@ -86,6 +87,10 @@ import java.util.zip.GZIPInputStream;
  *       스냅샷·SIGMET·레이더는 '최신만 의미' — fetched_at 이 현재보다 새 것만 실시간 상태에 반영한다(백로그 재생이 화면·엔진을 과거로 되돌리지 않게).
  *       SIGMET 이력은 반대로 스트림 순서대로 모든 세트를 저장한다(SigmetSetReceived, API-CONC-1) — 부트스트랩이 적용한 최신 세트는 소비로
  *       다시 전달될 예정이면 그때(순서대로) 저장한다.</li>
+ *   <li>기동 · 종료 순서(QA-100 · QA-105): 저장기(항적 · 선박 · 순서 큐)와 인스턴스 가드({@link StreamPrerequisite})를 생성자로 받는다 — Spring 은
+ *       의존을 phase 보다 앞세우므로 이것들이 소비자보다 먼저 시작하고, 종료 때는 소비자가 먼저 멈춘다(누가 소비자에 의존해 일찍 시작시켜도).
+ *       읽기마다 모두 준비됐는지(저장기가 돌고 가드가 임대를 쥠) 확인하고, 아니면 읽지 않고 기다린다 — 저장기가 멈춘 동안 처리한 메시지는 행 없이
+ *       ACK 되어 영구히 잃고(at-least-once 위반), 임대 없이 읽으면 두 번째 인스턴스가 같은 PEL 을 나눠 읽는다(R-79).</li>
  * </ul>
  */
 @org.springframework.context.annotation.Profile("!cli & !migrate")  // CLI(ops-user)·마이그레이션 실행에서는 웹·소비자·잡을 띄우지 않는다
@@ -122,6 +127,8 @@ public class StreamConsumer implements SmartLifecycle {
     static final int PENDING_MAX_PAGES = 100;
     /** ACK 한 번에 모으는 최대 수. */
     static final int ACK_BATCH = 1_000;
+    /** 선행 구성 요소(저장기 · 인스턴스 임대)가 준비되지 않았을 때 다시 확인하는 간격. */
+    static final long PREREQUISITE_WAIT_MS = 1_000;
 
     private final StringRedisTemplate redis;
     private final SchemaValidator validator;
@@ -133,6 +140,10 @@ public class StreamConsumer implements SmartLifecycle {
     private final StringRedisTemplate bootstrapRedis;
     private final ApplicationEventPublisher events;
     private final ObjectMapper mapper;
+    /** 읽기 전에 준비돼 있어야 하는 구성 요소(저장기 · 인스턴스 가드) — 생성자 의존이라 Spring 이 이것들을 먼저 시작하고 소비자를 먼저 멈춘다. */
+    private final List<StreamPrerequisite> prerequisites;
+    /** 마지막으로 알린 '기다리는 선행 구성 요소' — 바뀔 때만 로그를 남긴다(소비 스레드 전용). */
+    private List<String> waitingLogged = List.of();
     private final Counter processed;
     private final Counter rejected;
     private final Counter staleSkipped;
@@ -178,10 +189,18 @@ public class StreamConsumer implements SmartLifecycle {
         this(redis, validator, snapshots, sigmets, radar, new ShipStore(), null, events, mapper, meters);
     }
 
+    /** 선행 구성 요소 없이(테스트): 소비자를 직접 만들어 돌리는 시험은 저장기 · 가드를 따로 다룬다. */
+    public StreamConsumer(StringRedisTemplate redis, SchemaValidator validator, SnapshotStore snapshots,
+                          SigmetStore sigmets, RadarStore radar, ShipStore ships, StringRedisTemplate bootstrapRedis,
+                          ApplicationEventPublisher events, ObjectMapper mapper, MeterRegistry meters) {
+        this(redis, validator, snapshots, sigmets, radar, ships, bootstrapRedis, events, mapper, meters, List.of());
+    }
+
     @Autowired
     public StreamConsumer(@Qualifier("streamRedisTemplate") StringRedisTemplate redis, SchemaValidator validator, SnapshotStore snapshots,
                           SigmetStore sigmets, RadarStore radar, ShipStore ships, StringRedisTemplate bootstrapRedis,
-                          ApplicationEventPublisher events, ObjectMapper mapper, MeterRegistry meters) {
+                          ApplicationEventPublisher events, ObjectMapper mapper, MeterRegistry meters, List<StreamPrerequisite> prerequisites) {
+        this.prerequisites = List.copyOf(prerequisites);
         this.redis = redis;
         this.validator = validator;
         this.snapshots = snapshots;
@@ -252,6 +271,10 @@ public class StreamConsumer implements SmartLifecycle {
     private void loop() {
         while (running) {
             try {
+                if (!prerequisitesReady()) {
+                    sleep(PREREQUISITE_WAIT_MS);
+                    continue;
+                }
                 Set<String> existing = ensureGroups();
                 detectUnreadTrim(existing); // 첫 읽기 전에 — 읽고 나면 그룹 위치가 잘린 구간을 지나 손실이 보이지 않는다
                 if (!bootstrapped) {
@@ -532,13 +555,28 @@ public class StreamConsumer implements SmartLifecycle {
         StreamOffset<String>[] offsets = STREAMS.stream().map(s -> StreamOffset.create(s, ReadOffset.lastConsumed())).toArray(StreamOffset[]::new);
         StreamReadOptions opts = StreamReadOptions.empty().block(Duration.ofSeconds(2)).count(10);
         Consumer consumer = Consumer.from(GROUP, CONSUMER);
-        while (running) {
+        while (running && prerequisitesReady()) {
             flushAcks();
             List<MapRecord<String, String, String>> recs = ops().read(consumer, opts, offsets);
             lastReadAtMs = System.currentTimeMillis();
             if (recs == null) continue;
             for (MapRecord<String, String, String> r : recs) handle(r);
         }
+    }
+
+    /**
+     * 선행 구성 요소가 모두 준비됐는가(QA-100 · R-79). 아니면 기다리는 것을 바뀔 때마다 한 번 남긴다 — 임대를 다른 인스턴스가 쥐고 있으면 가드가 따로
+     * ERROR 를 남기고, Redis 장애로 임대를 확인하지 못했으면 가드의 갱신(5 s)이 잡을 때까지다.
+     */
+    boolean prerequisitesReady() {
+        List<String> waiting = new java.util.ArrayList<>();
+        for (StreamPrerequisite p : prerequisites) if (!p.readyForStream()) waiting.add(p.getClass().getSimpleName());
+        if (!waiting.equals(waitingLogged)) {
+            if (waiting.isEmpty()) log.info("stream consumer: prerequisites ready — reading streams");
+            else log.warn("stream consumer waits before reading: {} not ready (writers must run and the instance lease must be held)", waiting);
+            waitingLogged = waiting;
+        }
+        return waiting.isEmpty();
     }
 
     /**

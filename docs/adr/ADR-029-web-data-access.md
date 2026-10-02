@@ -42,7 +42,7 @@
 5. **주기 요청의 규칙**: 숨은 탭에서는 보내지 않고 다시 보이면 곧바로(사용자 결정 §5-2 — WS · 워커 · 조회기와 같다), 요청이 떠 있으면 그 주기는 건너뛴다(쌓지 않는다),
    실패하면 마지막 값을 두고 실패를 따로 보인다(지우지 않는다). 조건부 GET 은 `EtagPoller`(세대 번호 + 멈추면 끊음 — B6), 그 밖은 `useVisibleInterval` · `useApiResource`.
 6. **React 없는 모듈은 `lib/*`**: 규칙 · 변환 · 파서 · 경로(엔드포인트 포함) · 전송 · 조회기 · WS 클라이언트는 React 를 import 하지 않는다 — 단위 시험이 DOM 없이 본다.
-   `lib` 의 Hook 은 화면과 상관없는 일반 Hook(`use-api-resource` · `use-visible-interval` · `clock` · `store` 의 구독 · `map-ready`)뿐이고, 한 화면의 Hook 은 그 화면 곁
+   `lib` 의 Hook 은 화면과 상관없는 일반 Hook(`use-api-resource` · `use-visible-interval` · `clock` · `store` 의 구독 · `map-ready` · 포커스를 잃지 않게 하는 `use-focus-rescue` · 넘칠 때만 키보드로 닿는 스크롤 영역 `use-scroll-focusable` — QA 2026-10 QA-304 · QA-305)뿐이고, 한 화면의 Hook 은 그 화면 곁
    (`components/ops` · `components/logs` · `components/map`)에 둔다. 컴포넌트 안의 순수 규칙은 `lib` 로 옮겨 시험한다(지도 포인터 규칙 `lib/map-pointer` 등).
 7. **첫 화면 규칙(ADR-026 과 함께)**: 나중에 받는 조각(카드 · 목록)에서만 쓰는 함수 · 엔드포인트는 **조각 전용 모듈**(`lib/ship-card` · `lib/aircraft-card` ·
    `lib/airport-list` · `lib/airport-wx` · `lib/endpoints/ship-detail` · `lib/endpoints/weather`)에 두고 `tests/first-screen-lazy.test.ts` 의 `CARRIED_BY_PARTS` 에

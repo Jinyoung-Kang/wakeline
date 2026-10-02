@@ -1,0 +1,299 @@
+{
+  "viewport": {
+    "width": 375,
+    "height": 812
+  },
+  "blockedExternalHosts": {
+    "tiles.openfreemap.org": 2,
+    "tilecache.rainviewer.com": 27
+  },
+  "results": [
+    {
+      "route": "/",
+      "title": "Wakeline — 실시간 항공기 · 선박 · 위험기상 상황판",
+      "lang": "ko",
+      "consoleErrors": [],
+      "consoleWarnings": [],
+      "blockedNoiseErrors": 42,
+      "pageErrors": [],
+      "badResponses": [],
+      "failedRequests": [],
+      "duplicates": [],
+      "apiRequests": [
+        "327 GET /api/v1/radar/kr",
+        "328 GET /api/v1/airports?watched=true"
+      ],
+      "longTasks": {
+        "count": 3,
+        "maxMs": 373,
+        "totalMs": 582
+      },
+      "overflow": {
+        "innerWidth": 375,
+        "scrollWidth": 375,
+        "overflow": false,
+        "offenders": []
+      },
+      "axe": []
+    },
+    {
+      "route": "/replay",
+      "title": "이력 재생 — Wakeline",
+      "lang": "ko",
+      "consoleErrors": [],
+      "consoleWarnings": [],
+      "blockedNoiseErrors": 16,
+      "pageErrors": [],
+      "badResponses": [],
+      "failedRequests": [],
+      "duplicates": [],
+      "apiRequests": [
+        "10650 GET /api/v1/replay?at=2026-10-01T21%3A05%3A38.029Z&bbox=124%2C33%2C132%2C39",
+        "11086 GET /api/v1/replay?at=2026-10-01T21%3A05%3A38.029Z&bbox=125.741%2C34.601%2C129.859%2C38.353"
+      ],
+      "longTasks": {
+        "count": 3,
+        "maxMs": 192,
+        "totalMs": 474
+      },
+      "overflow": {
+        "innerWidth": 375,
+        "scrollWidth": 375,
+        "overflow": false,
+        "offenders": []
+      },
+      "axe": []
+    },
+    {
+      "route": "/stats",
+      "title": "통계 — Wakeline",
+      "lang": "ko",
+      "consoleErrors": [],
+      "consoleWarnings": [],
+      "blockedNoiseErrors": 0,
+      "pageErrors": [],
+      "badResponses": [],
+      "failedRequests": [],
+      "duplicates": [],
+      "apiRequests": [
+        "20735 GET /api/v1/stats/sigmet?group=fir",
+        "20736 GET /api/v1/stats/sigmet?group=hazard",
+        "20736 GET /api/v1/stats/alerts",
+        "20736 GET /api/v1/stats/traffic?day=2026-10-01"
+      ],
+      "longTasks": {
+        "count": 0,
+        "maxMs": 0,
+        "totalMs": 0
+      },
+      "overflow": {
+        "innerWidth": 375,
+        "scrollWidth": 375,
+        "overflow": false,
+        "offenders": []
+      },
+      "axe": []
+    },
+    {
+      "route": "/airports/RKSI",
+      "title": "공항 기상 이력 — Wakeline",
+      "lang": "ko",
+      "consoleErrors": [],
+      "consoleWarnings": [],
+      "blockedNoiseErrors": 0,
+      "pageErrors": [],
+      "badResponses": [],
+      "failedRequests": [],
+      "duplicates": [],
+      "apiRequests": [
+        "26975 GET /api/v1/airports/RKSI/wx"
+      ],
+      "longTasks": {
+        "count": 0,
+        "maxMs": 0,
+        "totalMs": 0
+      },
+      "overflow": {
+        "innerWidth": 375,
+        "scrollWidth": 375,
+        "overflow": false,
+        "offenders": []
+      },
+      "axe": []
+    },
+    {
+      "route": "/airports/ZZZZ",
+      "title": "공항 기상 이력 — Wakeline",
+      "lang": "ko",
+      "consoleErrors": [
+        "Failed to load resource: the server responded with a status of 404 ()"
+      ],
+      "consoleWarnings": [],
+      "blockedNoiseErrors": 0,
+      "pageErrors": [],
+      "badResponses": [
+        "404 GET http://localhost:8701/api/v1/airports/ZZZZ/wx"
+      ],
+      "failedRequests": [],
+      "duplicates": [],
+      "apiRequests": [
+        "33195 GET /api/v1/airports/ZZZZ/wx"
+      ],
+      "longTasks": {
+        "count": 0,
+        "maxMs": 0,
+        "totalMs": 0
+      },
+      "overflow": {
+        "innerWidth": 375,
+        "scrollWidth": 375,
+        "overflow": false,
+        "offenders": []
+      },
+      "axe": []
+    },
+    {
+      "route": "/airports/abc",
+      "title": "공항 기상 이력 — Wakeline",
+      "lang": "ko",
+      "consoleErrors": [
+        "Failed to load resource: the server responded with a status of 400 ()"
+      ],
+      "consoleWarnings": [],
+      "blockedNoiseErrors": 0,
+      "pageErrors": [],
+      "badResponses": [
+        "400 GET http://localhost:8701/api/v1/airports/ABC/wx"
+      ],
+      "failedRequests": [],
+      "duplicates": [],
+      "apiRequests": [
+        "39333 GET /api/v1/airports/ABC/wx"
+      ],
+      "longTasks": {
+        "count": 0,
+        "maxMs": 0,
+        "totalMs": 0
+      },
+      "overflow": {
+        "innerWidth": 375,
+        "scrollWidth": 375,
+        "overflow": false,
+        "offenders": []
+      },
+      "axe": []
+    },
+    {
+      "route": "/ops",
+      "title": "운영 — Wakeline",
+      "lang": "ko",
+      "consoleErrors": [
+        "Failed to load resource: the server responded with a status of 404 ()"
+      ],
+      "consoleWarnings": [],
+      "blockedNoiseErrors": 0,
+      "pageErrors": [],
+      "badResponses": [
+        "404 GET http://localhost:8701/api/v1/ops/session"
+      ],
+      "failedRequests": [],
+      "duplicates": [],
+      "apiRequests": [
+        "45487 GET /api/v1/ops/session"
+      ],
+      "longTasks": {
+        "count": 0,
+        "maxMs": 0,
+        "totalMs": 0
+      },
+      "overflow": {
+        "innerWidth": 375,
+        "scrollWidth": 375,
+        "overflow": false,
+        "offenders": []
+      },
+      "axe": []
+    },
+    {
+      "route": "/logs",
+      "title": "시스템 로그 — Wakeline",
+      "lang": "ko",
+      "consoleErrors": [
+        "Failed to load resource: the server responded with a status of 404 ()"
+      ],
+      "consoleWarnings": [],
+      "blockedNoiseErrors": 0,
+      "pageErrors": [],
+      "badResponses": [
+        "404 GET http://localhost:8701/api/v1/ops/session"
+      ],
+      "failedRequests": [],
+      "duplicates": [],
+      "apiRequests": [
+        "51682 GET /api/v1/ops/session"
+      ],
+      "longTasks": {
+        "count": 0,
+        "maxMs": 0,
+        "totalMs": 0
+      },
+      "overflow": {
+        "innerWidth": 375,
+        "scrollWidth": 375,
+        "overflow": false,
+        "offenders": []
+      },
+      "axe": []
+    },
+    {
+      "route": "/about",
+      "title": "출처·한계 — Wakeline",
+      "lang": "ko",
+      "consoleErrors": [],
+      "consoleWarnings": [],
+      "blockedNoiseErrors": 0,
+      "pageErrors": [],
+      "badResponses": [],
+      "failedRequests": [],
+      "duplicates": [],
+      "apiRequests": [],
+      "longTasks": {
+        "count": 0,
+        "maxMs": 0,
+        "totalMs": 0
+      },
+      "overflow": {
+        "innerWidth": 375,
+        "scrollWidth": 375,
+        "overflow": false,
+        "offenders": []
+      },
+      "axe": []
+    },
+    {
+      "route": "/guide",
+      "title": "설명서 — Wakeline",
+      "lang": "ko",
+      "consoleErrors": [],
+      "consoleWarnings": [],
+      "blockedNoiseErrors": 0,
+      "pageErrors": [],
+      "badResponses": [],
+      "failedRequests": [],
+      "duplicates": [],
+      "apiRequests": [],
+      "longTasks": {
+        "count": 0,
+        "maxMs": 0,
+        "totalMs": 0
+      },
+      "overflow": {
+        "innerWidth": 375,
+        "scrollWidth": 375,
+        "overflow": false,
+        "offenders": []
+      },
+      "axe": []
+    }
+  ]
+}

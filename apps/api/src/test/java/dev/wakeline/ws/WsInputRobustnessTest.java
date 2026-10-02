@@ -35,6 +35,8 @@ class WsInputRobustnessTest {
     static Row fatal(String name, String message, String code) { return new Row(name, false, message, code, true); }
 
     static final String BOX = "[124,33,132,39]";
+    /** double 로 나타낼 수 없는 정수(400자리 — double 은 약 1.8e308 까지). */
+    static final String HUGE = "1" + "0".repeat(399);
 
     static Stream<Row> rows() {
         return Stream.of(
@@ -44,12 +46,19 @@ class WsInputRobustnessTest {
                 ok("zoom 2^31 (long)", "{\"type\":\"subscribe\",\"bbox\":" + BOX + ",\"zoom\":2147483648}"),
                 ok("zoom big integer", "{\"type\":\"subscribe\",\"bbox\":" + BOX + ",\"zoom\":123456789012345678901234567890}"),
                 ok("zoom 1e400 (overflows double)", "{\"type\":\"subscribe\",\"bbox\":" + BOX + ",\"zoom\":1e400}"),
+                // QA-203: double 로 나타낼 수 없는 정수(309자리 이상)도 끝으로 자른다 — 예전에는 BAD_MESSAGE · 1002(ADR-017 §6.2 S4 의 한계)
+                ok("zoom 400-digit integer", "{\"type\":\"subscribe\",\"bbox\":" + BOX + ",\"zoom\":" + HUGE + "}"),
+                ok("zoom -400-digit integer", "{\"type\":\"subscribe\",\"bbox\":" + BOX + ",\"zoom\":-" + HUGE + "}"),
                 ok("zoom 6.9", "{\"type\":\"subscribe\",\"bbox\":" + BOX + ",\"zoom\":6.9}"),
                 ok("zoom string", "{\"type\":\"subscribe\",\"bbox\":" + BOX + ",\"zoom\":\"7\"}"),
                 ok("zoom null", "{\"type\":\"subscribe\",\"bbox\":" + BOX + ",\"zoom\":null}"),
                 ok("detail number", "{\"type\":\"subscribe\",\"bbox\":" + BOX + ",\"zoom\":7,\"detail\":1e10}"),
                 error("bbox member 1e400", "{\"type\":\"subscribe\",\"bbox\":[1e400,33,132,39],\"zoom\":7}", "BAD_BBOX"),
                 error("bbox member big integer", "{\"type\":\"subscribe\",\"bbox\":[123456789012345678901234567890,33,132,39],\"zoom\":7}", "BAD_BBOX"),
+                error("bbox member 400-digit integer", "{\"type\":\"subscribe\",\"bbox\":[124,33," + HUGE + ",39],\"zoom\":7}", "BAD_BBOX"),
+                error("bbox member -400-digit integer", "{\"type\":\"subscribe\",\"bbox\":[-" + HUGE + ",33,132,39],\"zoom\":7}", "BAD_BBOX"),
+                // Jackson 의 숫자 길이 상한(1,000자리 — StreamReadConstraints)을 넘으면 JSON 해석 오류다(BAD_JSON · 1002)
+                fatal("number over 1000 digits", "{\"type\":\"subscribe\",\"bbox\":" + BOX + ",\"zoom\":1" + "0".repeat(1000) + "}", "BAD_JSON"),
                 error("bbox member string", "{\"type\":\"subscribe\",\"bbox\":[\"124\",33,132,39],\"zoom\":7}", "BAD_BBOX"),
                 error("bbox three members", "{\"type\":\"subscribe\",\"bbox\":[124,33,132],\"zoom\":7}", "BAD_BBOX"),
                 error("bbox string", "{\"type\":\"subscribe\",\"bbox\":\"124,33,132,39\",\"zoom\":7}", "BAD_BBOX"),

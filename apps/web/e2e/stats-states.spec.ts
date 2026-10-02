@@ -7,6 +7,13 @@ import { expect, test } from "@playwright/test";
  */
 const Z = { day_zone: "Asia/Seoul" };
 const RID = "e2e0stats0000503";
+/**
+ * 최근 7일 응답(/stats/sigmet · /stats/alerts)의 날짜별 집계 — api 와 같은 모양(StatsRepository.days: [오늘−7, 오늘] KST 날짜, 오늘은 false).
+ * 7일 응답에는 최상위 aggregated 가 없다(REST 계약 stats_sigmet · stats_alerts) — 전에는 이 대역이 그 필드를 지어 넣어 화면이 날짜별 집계를 읽지 않는
+ * 결함(QA-308)을 덮었다.
+ */
+const kstDay = (offset: number) => new Date(Date.now() + 9 * 3600_000 + offset * 86_400_000).toISOString().slice(0, 10);
+const week = (past: boolean) => [-7, -6, -5, -4, -3, -2, -1].map((o) => ({ day: kstDay(o), aggregated: past })).concat([{ day: kstDay(0), aggregated: false }]);
 
 test("stats: a slow panel says 불러오는 중 (not 자료 없음); a failed panel says 조회 실패 with its request id and retries on its own", async ({ page }) => {
   let releaseFir: () => void = () => {};
@@ -15,9 +22,9 @@ test("stats: a slow panel says 불러오는 중 (not 자료 없음); a failed pa
   const alertCalls: string[] = [];
   await page.route(/\/api\/v1\/stats\/sigmet\?group=fir$/, async (route) => {
     await firGate;
-    await route.fulfill({ json: { items: [{ day: "2026-09-28", dim: "RKRR", value: 4 }], days: [], aggregated: true, ...Z } });
+    await route.fulfill({ json: { group: "fir", items: [{ day: kstDay(-2), dim: "RKRR", value: 4 }], days: week(true), ...Z } });
   });
-  await page.route(/\/api\/v1\/stats\/sigmet\?group=hazard$/, (route) => route.fulfill({ json: { items: [], days: [], aggregated: true, ...Z } }));
+  await page.route(/\/api\/v1\/stats\/sigmet\?group=hazard$/, (route) => route.fulfill({ json: { group: "hazard", items: [], days: week(true), ...Z } }));
   await page.route(/\/api\/v1\/stats\/traffic\?day=/, (route) => {
     const day = new URL(route.request().url()).searchParams.get("day");
     return route.fulfill({ json: { day, items: [{ day, dim: "07", value: 12 }], aggregated: true, scope: null, region: null, ...Z } });
@@ -26,7 +33,7 @@ test("stats: a slow panel says 불러오는 중 (not 자료 없음); a failed pa
     alertCalls.push(route.request().url());
     return alertsFail
       ? route.fulfill({ status: 503, contentType: "application/problem+json", body: JSON.stringify({ detail: "stats unavailable", code: "STORE_UNAVAILABLE", request_id: RID }) })
-      : route.fulfill({ json: { items: [], days: [], aggregated: false, ...Z } });
+      : route.fulfill({ json: { items: [], days: week(false), ...Z } });
   });
   await page.goto("/stats");
 

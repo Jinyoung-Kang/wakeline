@@ -1,0 +1,10 @@
+/healthz
+      0.1s ..    44.2s  n= 12  max_ms=    30  status=200 health=ok
+     48.2s ..    88.2s  n= 11  max_ms=    27  status=200 health=degraded reasons=['consumer_stalled']
+     92.2s ..   140.3s  n= 13  max_ms=   324  status=200 health=ok
+/api/v1/ships?bbox=120,30,135,40
+      0.1s ..   140.3s  n= 36  max_ms=  3078  status=200
+/api/v1/aircraft?bbox=124,33,132,39
+      0.1s ..   140.3s  n= 36  max_ms=  3076  status=200
+/api/v1/alerts/history
+      0.1s ..   140.3s  n= 36  max_ms=  3104  status=200

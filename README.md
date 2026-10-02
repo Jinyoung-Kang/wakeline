@@ -17,9 +17,9 @@
 | **스택** | nginx · Next.js 16 / React 19 / MapLibre GL 6 · Spring Boot 4.1(Java 25, 가상 스레드, JTS) · Python 3.13(asyncio, httpx, websockets, shapely) · PostgreSQL 18 + PostGIS 3.6 · Redis 8 Streams · Docker Compose |
 | **구성** | 상시 컨테이너 7개(edge · web · api · collector · ais · redis · db) + 일회성 migrate(Flyway V1–V17) |
 | **데이터** | 항공기 adsb.lol · adsb.fi · OpenSky · 노선 adsbdb(선택 시만, 저장 안 함) / 선박 aisstream.io · 항구 UN/LOCODE · 한국 항만 입출항 해양수산부 PORT-MIS(공공데이터포털, 수집기가 항만청 10곳을 날짜별로 색인) · 연안 교통량 한국해양교통안전공단 실시간 해양교통정보 + 해양수산부 해양격자 4단계(공공데이터포털) / 기상 AviationWeather.gov · RainViewer · 기상청 API허브 레이더(HSR) / 지도 OpenFreeMap |
-| **검증** | 자동 시험 5,327건(pytest 1,919 · collector 실 Redis 16 · 실 PostgreSQL 7 · JUnit 1,071 · Vitest 1,658 · Playwright E2E 43 · 인프라 정책 157 · 버리는 컨테이너 시험 456 — 2026-10-02 CTO 리뷰 2026-10 브랜치에서 모두 실행) · **CTO 리뷰 2026-10**(보안 · 데이터 손실 · 구조 · 측정한 성능 — [PLAN](docs/review/cto-2026-10/PLAN.md) · ADR-028–030 · 독립 리뷰 2회) · 적대적 리뷰 2회(97건 · 19건 수정) · **리뷰 v1**(기준선 측정 → 진단 98건(고유 97 + 3단계 추가 R-98) → 승인 85 · 보류 13 → 수정(R-63 은 2026-09-30 직접 빌드한 db 이미지로 해결(ADR-004 개정), 일부는 부분 처리 — review §5.2) · 2차 검토 35건 · 문서 사실 확인 2회 → 재측정, [review](docs/review/VERIFICATION.md)) · 장애 주입 6종 · 실측 문제 기록 102건([VERIFICATION](docs/VERIFICATION.md)) |
+| **검증** | 자동 시험 5,435건(pytest 1,923 · collector 실 Redis 16 · 실 PostgreSQL 7 · JUnit 1,135 · Vitest 1,698 · Playwright E2E 43 · 인프라 정책 157 · 버리는 컨테이너 시험 456 — 2026-10-02 QA 2026-10 브랜치에서 모두 실행) · **QA 2026-10**(출시 기준 검증 — 결함 32건 중 29건 수정, [보고](docs/qa/2026-10/REPORT.md)) · **CTO 리뷰 2026-10**(보안 · 데이터 손실 · 구조 · 측정한 성능 — [PLAN](docs/review/cto-2026-10/PLAN.md) · ADR-028–030 · 독립 리뷰 2회) · 적대적 리뷰 2회(97건 · 19건 수정) · **리뷰 v1**(기준선 측정 → 진단 98건(고유 97 + 3단계 추가 R-98) → 승인 85 · 보류 13 → 수정(R-63 은 2026-09-30 직접 빌드한 db 이미지로 해결(ADR-004 개정), 일부는 부분 처리 — review §5.2) · 2차 검토 35건 · 문서 사실 확인 2회 → 재측정, [review](docs/review/VERIFICATION.md)) · 장애 주입 6종 · 실측 문제 기록 103건([VERIFICATION](docs/VERIFICATION.md)) |
 | **성능(실측)** | REST 100 rps p95 5.1–17.9 ms(경합 기록이 없는 오전 실행 6회) · WS 200 연결 p95 123–287 ms(목표 500) · api 메모리 경합 기록이 없는 오전 k6 실행 약 500 MiB(목표 512 — 같은 기계에 부하가 겹치면 577–611 MiB, 최종 측정 527 MiB: 미충족·다음 후보) · 첫 화면 JS 543,507 B(gzip 본문 · 워커 포함 · 웹 이미지의 Node 로 압축 — 클릭 뒤에만 보이는 카드·목록과 그 선박 표시 함수를 첫 화면 뒤로 옮겨 556,719 → 539,966 B, 세 레인 통합 뒤 540,774 B, 통합 마무리 뒤 540,955 B(배포 스택에서도 같은 값), 두 레인(collector · coverage) 통합 뒤 542,767 B · 그 리뷰의 수정 뒤 543,138 B, 2026-10-01 기상청 '목록에도 … 없음' 글 뒤 543,497 B, 네 레인 통합 뒤 543,507 B(빌드 결과). 예산 550,000 B, ADR-026: 400 KB 는 MapLibre 약 305 KB + Next·React 약 130 KB 인 바닥 때문에 지도를 빼야만 닿는다 · CI 가 빌드 결과를 웹 이미지의 Node 로, 첫 화면 파일 목록을 브라우저로 검사) · 집중 추적 관측 간격 중앙값 5.05 s · api 크래시 복귀 6.2 s([PERF](docs/PERF.md)) |
-| **설계 기록** | ADR 30건([docs/adr](docs/adr)) · 변경 계약 v1–v5([docs/audit](docs/audit)) |
+| **설계 기록** | ADR 31건([docs/adr](docs/adr)) · 변경 계약 v1–v5([docs/audit](docs/audit)) |
 
 ## 1. 무엇을 하나
 
@@ -147,7 +147,7 @@ make backup full=1     # 72 h 원해상도 항적·선박 위치 행까지 담�
 ```
 - 스택을 멈추지 않아도 됩니다(pg_dump 는 한 스냅샷으로 읽고, db 컨테이너 안 로컬 소켓으로 접속해 비밀번호를 쓰지 않습니다).
 - 보관: 새 백업을 확인한 뒤 같은 대상의 최신 10개만 남기고 오래된 것부터 지웁니다(`make backup keep=30` 으로 개수 변경, `keep=0` 이면 지우지 않음). 이 도구의 이름 형식(`<프로젝트>-<UTC>.dump`)이 아닌 파일은 건드리지 않습니다. 운영자 비밀번호 해시와 감사 로그가 들어 있으니 다른 곳에 둘 때도 소유자만 읽게 두세요.
-- Redis 는 파생·일시 상태(스트림·캐시·세션·일일 예산 카운터)라 백업하지 않습니다. 운영 세션은 복원 뒤 다시 로그인하고, 운영 화면의 공급자 켜기/끄기는 Redis 에만 있어 다시 설정해야 합니다.
+- Redis 는 파생·일시 상태(스트림·캐시·세션·일일 예산 카운터)라 백업하지 않습니다. 운영 세션은 복원 뒤 다시 로그인합니다. 운영 화면의 공급자 켜기/끄기는 DB(`provider_switch`, V11)가 원본이라 백업에 들어 있고, 복원 뒤 api 가 기동하며 Redis 로 다시 옮깁니다 — 다시 설정하지 않아도 됩니다.
 
 복원은 **새(빈) 볼륨에만** 합니다 — 기존 데이터를 덮어쓰지 않습니다.
 ```bash

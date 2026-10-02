@@ -1,0 +1,198 @@
+{
+  "root_group": {
+    "groups": [],
+    "checks": [],
+    "name": "",
+    "path": "",
+    "id": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "options": {
+    "noColor": false,
+    "summaryTrendStats": [
+      "avg",
+      "med",
+      "p(95)",
+      "p(99)",
+      "max"
+    ],
+    "summaryTimeUnit": ""
+  },
+  "state": {
+    "isStdOutTTY": false,
+    "isStdErrTTY": false,
+    "testRunDurationMs": 259994.490786
+  },
+  "metrics": {
+    "iteration_duration": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "p(95)": 240025.5912264,
+        "p(99)": 240102.287278,
+        "max": 240110.389568,
+        "avg": 240009.99640075435,
+        "med": 240005.476652
+      }
+    },
+    "ws_snapshots": {
+      "values": {
+        "count": 1548,
+        "rate": 5.953972314260113
+      },
+      "type": "counter",
+      "contains": "default"
+    },
+    "ws_errors": {
+      "type": "counter",
+      "contains": "default",
+      "values": {
+        "count": 0,
+        "rate": 0
+      },
+      "thresholds": {
+        "count<1": {
+          "ok": true
+        }
+      }
+    },
+    "iterations": {
+      "contains": "default",
+      "values": {
+        "rate": 0.2192354146723685,
+        "count": 57
+      },
+      "type": "counter"
+    },
+    "ws_diff_lag_ms": {
+      "values": {
+        "med": 27,
+        "p(95)": 328.2999999999995,
+        "p(99)": 786.3899999999999,
+        "max": 1205,
+        "avg": 67.7084261321455
+      },
+      "thresholds": {
+        "p(95)<500": {
+          "ok": true
+        }
+      },
+      "type": "trend",
+      "contains": "time"
+    },
+    "ws_msgs_received": {
+      "type": "counter",
+      "contains": "default",
+      "values": {
+        "count": 21724,
+        "rate": 83.55561663758832
+      }
+    },
+    "data_sent": {
+      "type": "counter",
+      "contains": "data",
+      "values": {
+        "count": 123330,
+        "rate": 474.35620511479317
+      }
+    },
+    "data_received": {
+      "type": "counter",
+      "contains": "data",
+      "values": {
+        "count": 677386285,
+        "rate": 2605387.0716728107
+      }
+    },
+    "ws_sessions": {
+      "type": "counter",
+      "contains": "default",
+      "values": {
+        "count": 228,
+        "rate": 0.876941658689474
+      }
+    },
+    "ws_messages": {
+      "type": "counter",
+      "contains": "default",
+      "values": {
+        "count": 21724,
+        "rate": 83.55561663758832
+      }
+    },
+    "ws_ship_messages": {
+      "values": {
+        "count": 4675,
+        "rate": 17.981150238479348
+      },
+      "type": "counter",
+      "contains": "default"
+    },
+    "ws_session_duration": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "avg": 240009.69807622806,
+        "med": 240005.228109,
+        "p(95)": 240025.4216432,
+        "p(99)": 240100.59197452,
+        "max": 240109.484401
+      }
+    },
+    "vus": {
+      "contains": "default",
+      "values": {
+        "value": 3,
+        "min": 2,
+        "max": 200
+      },
+      "type": "gauge"
+    },
+    "ws_diffs": {
+      "type": "counter",
+      "contains": "default",
+      "values": {
+        "count": 3840,
+        "rate": 14.769543725296405
+      }
+    },
+    "ws_connecting": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "avg": 3.6141750657894747,
+        "med": 2.7935,
+        "p(95)": 5.793997599999996,
+        "p(99)": 17.264822589999994,
+        "max": 88.733834
+      }
+    },
+    "ws_ships_lag_ms": {
+      "values": {
+        "max": 137,
+        "avg": 21.871657754010695,
+        "med": 14,
+        "p(95)": 67,
+        "p(99)": 93
+      },
+      "type": "trend",
+      "contains": "time"
+    },
+    "ws_msgs_sent": {
+      "values": {
+        "count": 2271,
+        "rate": 8.734800468788578
+      },
+      "type": "counter",
+      "contains": "default"
+    },
+    "vus_max": {
+      "type": "gauge",
+      "contains": "default",
+      "values": {
+        "value": 200,
+        "min": 200,
+        "max": 200
+      }
+    }
+  }
+}

@@ -11,6 +11,8 @@
 #  - apps/collector/tests/test_db_writer.py:176 (커밋 cd127c0)  이 시험에서 지은 가짜 authKey 값 — 품질 사례 detail 가림(보안 검토 L-2) 시험 입력
 #    (2026-10-01: 시험에 손으로 적은 합성 글자 — 어떤 설정 · 비밀값에서도 오지 않았다. 앞으로의 가짜 값은 키 모양이 아닌 글자로 쓴다)
 # 새 항목은 값이 가짜임을 확인한 뒤 gitleaks 보고서의 Fingerprint 를 한 줄씩 더한다.
+#  - tools/qa/write_probe.py:270 · :271 (커밋 469b66f)  비밀값이 아니라 로그 묶음 지문 형식 시험값 `0123456789ABCDEF` · `0123456789abcde` — 해결 API 의 key 필드(위 resolutions.test.ts 와 같은 까닭)
+#  - tools/qa/perf_jvm_run.sh:68 (커밋 60c961f)  비밀값이 아니라 셸 grep 줄(Prometheus 지표 이름 `jvm_gc_pause_seconds_(count|sum)`) — QA 2026-10 측정 도구
 5251859bac52838e622a55edd431727500aebb18:apps/collector/tests/test_ais_server.py:generic-api-key:35
 94ae84e2f28cfdc00835410d58b0780bccd791bd:apps/collector/tests/test_masking.py:jwt:12
 1a5fe755abccc67a952bc972584caa2b27be245b:schemas/vectors/masking-cases.v1.json:jwt:15
@@ -23,3 +25,6 @@ ae22d59146f8a4b597762bf48027bf058a5f6abb:apps/collector/tests/test_masking.py:ge
 1e17faab307616aba658013e1b8ef568f0044089:apps/web/tests/resolutions.test.ts:generic-api-key:71
 9598eef659f5135ad689ae0c26be36ec0e1a4ed1:apps/collector/tests/test_ais_keepalive.py:generic-api-key:33
 cd127c0e41eee7309a11cd8a5e5a0727ecf5e854:apps/collector/tests/test_db_writer.py:generic-api-key:176
+469b66f2b60585b9008a0654a8723d2e895d99a5:tools/qa/write_probe.py:generic-api-key:270
+469b66f2b60585b9008a0654a8723d2e895d99a5:tools/qa/write_probe.py:generic-api-key:271
+60c961f0bdec7659a56dd100d34c4dad2e809981:tools/qa/perf_jvm_run.sh:generic-api-key:68

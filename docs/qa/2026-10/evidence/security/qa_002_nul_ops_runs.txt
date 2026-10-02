@@ -1,0 +1,5 @@
+FAIL ops/runs job=a\x00b -> 500 INTERNAL
+FAIL ops/runs provider=a\x00b -> 500 INTERNAL
+FAIL ops/runs status=a\x00b -> 500 INTERNAL
+
+3 ops/runs filter(s) return non-400 on a NUL byte (expected 400)

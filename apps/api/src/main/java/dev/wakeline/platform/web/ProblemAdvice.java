@@ -25,7 +25,9 @@ import org.springframework.web.ErrorResponse;
 import org.springframework.web.HttpMediaTypeNotAcceptableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
+import org.springframework.web.bind.WebDataBinder;
 import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.bind.annotation.InitBinder;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
 import org.springframework.web.util.DisconnectedClientHelper;
@@ -52,6 +54,8 @@ import java.util.regex.Pattern;
  *       4xx 는 INFO 한 줄 — 익명 요청으로 ERROR 스택을 쏟아내게 할 수 없다(SEC-10).</li>
  *   <li>그 밖의 예외만 500 + ERROR(스택).</li>
  * </ul>
+ * 모든 컨트롤러가 이 advice 를 받으므로 요청 파라미터의 공통 입력 규칙도 여기서 바인더에 단다: 시각 · 날짜 파라미터의 범위({@link TimeParams} —
+ * 밖이면 400, 계약 v5 §G32).
  */
 @org.springframework.context.annotation.Profile("!cli & !migrate")
 @RestControllerAdvice
@@ -64,6 +68,10 @@ public class ProblemAdvice {
     /** 로그에 싣는 쿼리 문자열의 상한(코드 포인트). */
     static final int QUERY_LOG_MAX = 512;
 
+    /** 시각 · 날짜 요청 파라미터의 범위(QA-207 · QA-201 · QA-202 · QA-208) — 모든 컨트롤러의 @RequestParam · @PathVariable 바인더에. */
+    @InitBinder
+    void timeParams(WebDataBinder binder) { TimeParams.register(binder); }
+
     @ExceptionHandler(Problem.class)
     ResponseEntity<ProblemDetail> problem(Problem e, HttpServletRequest req) {
         return withRetryAfter(build(e.status(), e.code(), e.title(), e.getMessage(), req), e.retryAfterS());
@@ -73,9 +81,16 @@ public class ProblemAdvice {
             HttpMessageNotReadableException.class, MethodArgumentNotValidException.class, HandlerMethodValidationException.class})
     ResponseEntity<ProblemDetail> badRequest(Exception e, HttpServletRequest req) {
         String detail = e instanceof MissingServletRequestParameterException m ? "missing parameter: " + m.getParameterName()
-                : e instanceof MethodArgumentTypeMismatchException t ? "invalid parameter: " + t.getName()
+                : e instanceof MethodArgumentTypeMismatchException t ? "invalid parameter: " + t.getName() + outOfRange(t)
                 : "invalid request";
         return build(HttpStatus.BAD_REQUEST, "BAD_REQUEST", "bad request", detail, req);
+    }
+
+    /** 형 변환 실패가 범위 밖 시각 · 날짜({@link TimeParams.OutOfRange})면 받는 범위를 덧붙인다(그 밖은 빈 글자 — 예전 detail 그대로). */
+    static String outOfRange(Throwable e) {
+        for (Throwable c = e.getCause(); c != null; c = c.getCause() == c ? null : c.getCause())
+            if (c instanceof TimeParams.OutOfRange r) return " — " + r.getMessage();
+        return "";
     }
 
     @ExceptionHandler(NoResourceFoundException.class)

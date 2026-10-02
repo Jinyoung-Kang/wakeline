@@ -40,6 +40,15 @@ def _str(v: Any, maxlen: int) -> str | None:
     return s[:maxlen] if s else None
 
 
+def _callsign(v: Any) -> str | None:
+    """ADS-B 호출부호: 6-bit 문자 0 '@' 는 값 없음 채움이다 — 뒤쪽 '@' · 공백을 걷어 내고 비면 None(화면은 '—'). AIS 의 clean_text 와 같은 규칙.
+    QA-312(QA 2026-10): 전에는 공백만 걷어 '@@@@@@@@' 가 호출부호로 api · 검색 · 카드 · 알림까지 갔다(실제 응답 fixtures/adsb_fi_region.json)."""
+    s = _str(v, 64)
+    if s is None:
+        return None
+    return _str(s.rstrip("@ "), 8)
+
+
 def _num(v: Any) -> float | None:
     if v is None or isinstance(v, bool):
         return None
@@ -181,7 +190,7 @@ def _normalize_readsb(
     try:
         return AircraftState(
             hex=hex_,
-            callsign=_str(ac.get("flight"), 8),
+            callsign=_callsign(ac.get("flight")),
             registration=_str(ac.get("r"), 16),
             type_code=_str(ac.get("t"), 8),
             category=_str(ac.get("category"), 4),
@@ -256,7 +265,7 @@ def _normalize_opensky(vec: list[Any], fetched_at: datetime) -> AircraftState | 
     try:
         return AircraftState(
             hex=hex_,
-            callsign=_str(vec[_OS_CALLSIGN], 8),
+            callsign=_callsign(vec[_OS_CALLSIGN]),
             lat=lat,
             lon=lon,
             alt_ft=alt_ft,

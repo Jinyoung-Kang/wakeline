@@ -320,6 +320,12 @@ public class WsHub implements SmartLifecycle {
         }
     }
 
+    /** 클라이언트 메시지가 4 KB(UTF-8 바이트)를 넘었다 — Tomcat 이 글자 상한으로 닫을 때와 같은 1009(QA-204). 이후 수신은 무시. */
+    void tooBig(WsSession s) {
+        s.inboundBlocked = true;
+        closeAsync(s, CloseStatus.TOO_BIG_TO_PROCESS.withReason("message too big"));
+    }
+
     void rateLimited(WsSession s) {
         rateLimited.increment();
         closeAsync(s, CloseStatus.POLICY_VIOLATION.withReason("rate limit"));
