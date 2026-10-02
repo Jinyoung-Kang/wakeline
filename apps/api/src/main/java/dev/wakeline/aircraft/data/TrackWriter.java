@@ -4,6 +4,7 @@ import dev.wakeline.aircraft.core.AircraftEvents;
 import dev.wakeline.aircraft.core.AircraftState;
 import dev.wakeline.platform.data.DbErrors;
 import dev.wakeline.platform.data.OrderedWriter;
+import dev.wakeline.platform.data.WriteBacklog;
 import dev.wakeline.platform.support.Receipt;
 import dev.wakeline.platform.support.StreamPrerequisite;
 import io.micrometer.core.instrument.Counter;
@@ -47,7 +48,7 @@ import java.util.concurrent.locks.ReentrantLock;
  */
 @org.springframework.context.annotation.Profile("!cli & !migrate")  // CLI(ops-user)·마이그레이션 실행에서는 웹·소비자·잡을 띄우지 않는다
 @Component
-public class TrackWriter implements StreamPrerequisite {
+public class TrackWriter implements StreamPrerequisite, WriteBacklog {
     private static final Logger log = LoggerFactory.getLogger(TrackWriter.class);
     static final int QUEUE_MAX = 50_000;
     static final int BATCH = 2_000;
@@ -81,8 +82,8 @@ public class TrackWriter implements StreamPrerequisite {
             INSERT INTO track_point (hex, ts, geom, alt_ft, gs_kt, track_deg, vrate_fpm, on_ground, squawk, provider, fetched_at, quality)
             VALUES (?, ?, ST_SetSRID(ST_MakePoint(?, ?), 4326), ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (hex, ts) DO NOTHING""";
 
-    /** 큐의 한 행: 들어온 순서 번호(1부터)와 상태. */
-    record Row(long seq, AircraftState state) {}
+    /** 큐의 한 행: 들어온 순서 번호(1부터) · 들어온 시각(epoch ms — 가장 오래된 미기록 행의 나이, WriteBacklog) · 상태. */
+    record Row(long seq, long atMs, AircraftState state) {}
 
     /** 메시지 표식: 그 메시지의 마지막 행 번호까지 끝나면 영수증을 놓는다. */
     private record Mark(long seq, Receipt receipt) {}
@@ -102,6 +103,8 @@ public class TrackWriter implements StreamPrerequisite {
     private long left;
     /** 진행 중 배치의 첫 행 번호, 없으면 0. 그 앞까지는 끝났다. */
     private long outstandingFrom;
+    /** 진행 중 배치의 첫 행이 들어온 시각(진행 중 배치가 없으면 의미 없음). */
+    private long outstandingAtMs;
     // ----
     private final LinkedBlockingDeque<Collection<AircraftState>> staticInbox = new LinkedBlockingDeque<>();
     private final Counter droppedRows;
@@ -133,6 +136,7 @@ public class TrackWriter implements StreamPrerequisite {
         this.jdbc = jdbc;
         this.aircraft = aircraft;
         meters.gauge("wakeline_track_queue", this, TrackWriter::queued);
+        WriteBacklog.gauge(this, meters);
         droppedRows = Counter.builder("wakeline_track_rows_total").tag("result", "dropped").register(meters);
         failedRows = Counter.builder("wakeline_track_rows_total").tag("result", "failed").register(meters);
         writtenRows = Counter.builder("wakeline_track_rows_total").tag("result", "written").register(meters);
@@ -167,6 +171,7 @@ public class TrackWriter implements StreamPrerequisite {
         if (states.isEmpty()) return;
         List<Receipt> done;
         int dropped = 0, forced = 0;
+        long now = System.currentTimeMillis();
         lock.lock();
         try {
             for (AircraftState s : states) {
@@ -175,7 +180,7 @@ public class TrackWriter implements StreamPrerequisite {
                     left = Math.max(left, old.seq());
                     dropped++;
                 }
-                queue.addLast(new Row(nextSeq++, s));
+                queue.addLast(new Row(nextSeq++, now, s));
             }
             if (receipt.tracked()) {
                 receipt.hold();
@@ -216,6 +221,7 @@ public class TrackWriter implements StreamPrerequisite {
             if (queue.isEmpty()) return null;
             List<AircraftState> rows = new ArrayList<>(Math.min(BATCH, queue.size()));
             long first = queue.peekFirst().seq(), last = first;
+            outstandingAtMs = queue.peekFirst().atMs();
             while (rows.size() < BATCH && !queue.isEmpty()) {
                 Row r = queue.pollFirst();
                 rows.add(r.state());
@@ -452,6 +458,20 @@ public class TrackWriter implements StreamPrerequisite {
             ps.setInt(13, s.quality());
         });
         writtenRows.increment(batch.size());
+    }
+
+    @Override public String writerName() { return "track"; }
+
+    /** 아직 쓰지 못한 행 중 가장 오래된 것이 들어온 시각(진행 중 · 재시도 중 배치의 첫 행, 없으면 큐의 맨 앞), 없으면 -1. */
+    @Override
+    public long oldestPendingAtMs() {
+        lock.lock();
+        try {
+            if (outstandingFrom > 0) return outstandingAtMs;
+            return queue.isEmpty() ? -1 : queue.peekFirst().atMs();
+        } finally {
+            lock.unlock();
+        }
     }
 
     int queued() {

@@ -2,16 +2,20 @@ package dev.wakeline.ingest;
 
 import dev.wakeline.aircraft.core.Snapshot;
 import dev.wakeline.aircraft.core.SnapshotStore;
+import dev.wakeline.platform.data.RedisBreaker;
+import dev.wakeline.platform.data.WriteBacklog;
 import dev.wakeline.weather.core.RadarStore;
 import dev.wakeline.weather.core.SigmetStore;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.health.contributor.Status;
+import org.springframework.dao.QueryTimeoutException;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -30,7 +34,14 @@ class IngestHealthTest {
     final StreamMetrics metrics = new StreamMetrics(null, new SimpleMeterRegistry()) {
         @Override public Sample sample(String stream) { return aircraftSample; }
     };
-    final IngestHealthIndicator health = new IngestHealthIndicator(snapshots, consumer, metrics, clock::get);
+    long trackOldestAtMs = -1;
+    final WriteBacklog track = new WriteBacklog() {
+        @Override public String writerName() { return "track"; }
+        @Override public long oldestPendingAtMs() { return trackOldestAtMs; }
+    };
+    /** 확인을 돌리지 않는 차단기 — 열면 열린 채로 남는다. */
+    final RedisBreaker redis = new RedisBreaker(() -> { }, clock::get, r -> { }, new SimpleMeterRegistry());
+    final IngestHealthIndicator health = new IngestHealthIndicator(snapshots, consumer, metrics, List.of(track), redis, clock::get);
 
     void regionFetchedSecondsAgo(long s) {
         Instant f = Instant.ofEpochMilli(clock.get()).minusSeconds(s);
@@ -108,5 +119,21 @@ class IngestHealthTest {
         assertThat(up.getStatus()).isEqualTo(Status.UP);
         assertThat(http.getStatusCode(up.getStatus())).isEqualTo(200);
         assertThat(up.getDetails()).containsOnlyKeys("region_lag_s").containsEntry("region_lag_s", 10L);
+    }
+
+    /** ADR-032: 저장기가 60 s 넘게 쓰지 못함(writer_backlog) · 요청 경로가 Redis 무응답을 본 동안(redis_unavailable) — 둘 다 DOWN 사유. */
+    @Test
+    void writerBacklogAndRedisNoAnswerAreReasons() {
+        clock.addAndGet(IngestHealthIndicator.STARTUP_GRACE_MS + 1);
+        regionFetchedSecondsAgo(5);
+        trackOldestAtMs = clock.get() - IngestHealthIndicator.MAX_WRITE_BACKLOG_MS;
+        assertThat(health.verdict().status()).as("60 s 까지는 정상").isEqualTo(Status.UP);
+        trackOldestAtMs = clock.get() - IngestHealthIndicator.MAX_WRITE_BACKLOG_MS - 1;
+        assertThat(health.verdict().reasons()).containsExactly("writer_backlog");
+        trackOldestAtMs = -1;
+        assertThat(health.verdict().status()).isEqualTo(Status.UP);
+        redis.failed(new QueryTimeoutException("Redis command timed out"));
+        assertThat(health.verdict().reasons()).containsExactly("redis_unavailable");
+        assertThat(health.health().getStatus()).isEqualTo(Status.DOWN);
     }
 }

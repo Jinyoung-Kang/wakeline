@@ -27,7 +27,8 @@ public final class ReceiptBatchQueue<T> {
     /** add 한 번의 결과: 넘쳐 버린 행 수 · 상한으로 먼저 놓은 영수증 수. */
     public record Added(int dropped, int forced) {}
 
-    private record Row<T>(long seq, T item) {}
+    /** 큐의 한 행: 들어온 순서 번호 · 들어온 시각(epoch ms — 가장 오래된 미기록 행의 나이, WriteBacklog) · 값. */
+    private record Row<T>(long seq, long atMs, T item) {}
 
     private record Mark(long seq, Receipt receipt) {}
 
@@ -43,6 +44,8 @@ public final class ReceiptBatchQueue<T> {
     private long left;
     /** 진행 중 배치의 첫 번호(없으면 0). */
     private long outstandingFrom;
+    /** 진행 중 배치의 첫 행이 들어온 시각(진행 중 배치가 없으면 의미 없음). */
+    private long outstandingAtMs;
 
     public ReceiptBatchQueue(int max, int maxMarks, int batch) {
         this.max = max;
@@ -55,6 +58,7 @@ public final class ReceiptBatchQueue<T> {
         if (items.isEmpty()) return new Added(0, 0);
         List<Receipt> done = null;
         int dropped = 0, forced = 0;
+        long now = System.currentTimeMillis();
         lock.lock();
         try {
             for (T it : items) {
@@ -62,7 +66,7 @@ public final class ReceiptBatchQueue<T> {
                     left = Math.max(left, queue.pollFirst().seq());
                     dropped++;
                 }
-                queue.addLast(new Row<>(nextSeq++, it));
+                queue.addLast(new Row<>(nextSeq++, now, it));
             }
             if (receipt.tracked()) {
                 receipt.hold();
@@ -115,8 +119,12 @@ public final class ReceiptBatchQueue<T> {
         lock.lock();
         try {
             if (queue.isEmpty() && waitMs > 0) notEmpty.await(waitMs, TimeUnit.MILLISECONDS);
+            long at = queue.isEmpty() ? -1 : queue.peekFirst().atMs();
             Batch<T> b = take(true);
-            if (b != null) outstandingFrom = b.firstSeq();
+            if (b != null) {
+                outstandingFrom = b.firstSeq();
+                outstandingAtMs = at;
+            }
             return b;
         } finally {
             lock.unlock();
@@ -179,6 +187,17 @@ public final class ReceiptBatchQueue<T> {
             lock.unlock();
         }
         done.forEach(Receipt::release);
+    }
+
+    /** 아직 쓰지 못한 행 중 가장 오래된 것이 들어온 시각(진행 중 배치의 첫 행, 없으면 큐의 맨 앞), 없으면 -1 — WriteBacklog. */
+    public long oldestPendingAtMs() {
+        lock.lock();
+        try {
+            if (outstandingFrom > 0) return outstandingAtMs;
+            return queue.isEmpty() ? -1 : queue.peekFirst().atMs();
+        } finally {
+            lock.unlock();
+        }
     }
 
     public int size() {

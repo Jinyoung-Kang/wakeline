@@ -45,7 +45,7 @@ class OpsSessionControllerTest {
     boolean registryDown;
 
     MockMvc mvc(Supplier<long[]> limiterResult, OpsUserService.AuthResult auth) {
-        RateLimiter limiter = new RateLimiter(new StringRedisTemplate(), meters) {
+        RateLimiter limiter = new RateLimiter(new StringRedisTemplate(), new dev.wakeline.platform.data.RedisBreaker(() -> { }, System::currentTimeMillis, Runnable::run, meters), meters) {
             @Override public long[] hitStrict(String bucket, String ip, int windowS) { return limiterResult.get(); }
         };
         OpsUserService users = new OpsUserService(null, null) {

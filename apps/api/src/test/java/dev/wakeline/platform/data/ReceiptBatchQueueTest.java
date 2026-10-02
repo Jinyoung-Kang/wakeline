@@ -115,4 +115,24 @@ class ReceiptBatchQueueTest {
         assertThat(b.n.get()).isEqualTo(1);
         assertThat(q.settledUpTo()).isEqualTo(4);
     }
+
+    /** ADR-032 writer_backlog: 아직 쓰지 못한 행 중 가장 오래된 것 — 진행 중(재시도 중) 배치의 첫 행, 없으면 큐의 맨 앞. */
+    @Test void oldestPendingIsTheInFlightBatchsFirstRowThenTheQueueHead() throws Exception {
+        ReceiptBatchQueue<Integer> q = new ReceiptBatchQueue<>(100, 10, 2);
+        assertThat(q.oldestPendingAtMs()).isEqualTo(-1);
+        long before = System.currentTimeMillis();
+        q.add(List.of(1, 2), Receipt.NONE);
+        long t1 = q.oldestPendingAtMs();
+        assertThat(t1).isBetween(before, System.currentTimeMillis());
+        Thread.sleep(5);
+        q.add(List.of(3), Receipt.NONE);
+        assertThat(q.next(0).items()).containsExactly(1, 2);
+        assertThat(q.oldestPendingAtMs()).as("진행 중 배치(DB 가 답하지 않으면 재시도로 머문다)의 첫 행").isEqualTo(t1);
+        q.resolved();
+        long t2 = q.oldestPendingAtMs();
+        assertThat(t2).as("남은 행(3)이 들어온 시각").isGreaterThan(t1);
+        q.next(0);
+        q.resolved();
+        assertThat(q.oldestPendingAtMs()).isEqualTo(-1);
+    }
 }

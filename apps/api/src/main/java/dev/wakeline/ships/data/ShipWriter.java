@@ -3,6 +3,7 @@ package dev.wakeline.ships.data;
 import dev.wakeline.platform.data.DbErrors;
 import dev.wakeline.platform.data.OrderedWriter;
 import dev.wakeline.platform.data.ReceiptBatchQueue;
+import dev.wakeline.platform.data.WriteBacklog;
 import dev.wakeline.platform.support.Receipt;
 import dev.wakeline.platform.support.StreamPrerequisite;
 import dev.wakeline.ships.core.ShipEvents;
@@ -48,7 +49,7 @@ import java.util.function.Consumer;
  */
 @org.springframework.context.annotation.Profile("!cli & !migrate")
 @Component
-public class ShipWriter implements StreamPrerequisite {
+public class ShipWriter implements StreamPrerequisite, WriteBacklog {
     private static final Logger log = LoggerFactory.getLogger(ShipWriter.class);
     static final int QUEUE_MAX = 100_000;
     static final int BATCH = 2_000;
@@ -143,6 +144,7 @@ public class ShipWriter implements StreamPrerequisite {
         this.backoffStartMs = backoffStartMs;
         this.backoffMaxMs = backoffMaxMs;
         meters.gauge("wakeline_ship_queue", queue, ReceiptBatchQueue::size);
+        WriteBacklog.gauge(this, meters);
         written = Counter.builder("wakeline_ship_rows_total").tag("result", "written").description("쓴 위치 행(60 s 창 가드로 DB 가 건너뛴 것 포함)").register(meters);
         staticWritten = Counter.builder("wakeline_ship_static_rows_total").description("쓴 정적 정보 행").register(meters);
         staticUnknownFields = Counter.builder("wakeline_ship_static_unknown_fields_total")
@@ -416,4 +418,9 @@ public class ShipWriter implements StreamPrerequisite {
             catch (InterruptedException e) { Thread.currentThread().interrupt(); return; }
         }
     }
+
+    @Override public String writerName() { return "ship"; }
+
+    /** 아직 쓰지 못한 행 중 가장 오래된 것이 들어온 시각(진행 중 · 재시도 중 배치의 첫 행, 없으면 큐의 맨 앞), 없으면 -1. */
+    @Override public long oldestPendingAtMs() { return queue.oldestPendingAtMs(); }
 }

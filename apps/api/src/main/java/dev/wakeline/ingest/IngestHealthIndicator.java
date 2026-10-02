@@ -1,6 +1,8 @@
 package dev.wakeline.ingest;
 
 import dev.wakeline.aircraft.core.SnapshotStore;
+import dev.wakeline.platform.data.RedisBreaker;
+import dev.wakeline.platform.data.WriteBacklog;
 import org.springframework.boot.health.contributor.Health;
 import org.springframework.boot.health.contributor.HealthIndicator;
 import org.springframework.boot.health.contributor.Status;
@@ -18,7 +20,9 @@ import java.util.function.LongSupplier;
  * <ul>
  *   <li>DOWN: 관심 지역 스냅샷 지연 &gt; 120 s(region_feed_lag), 기동 뒤 120 s 가 지나도록 스냅샷 없음(no_region_snapshot),
  *       소비 루프가 30 s 넘게 XREADGROUP 에서 돌아오지 않음(consumer_stalled — BLOCK 은 2 s),
- *       그룹에 아직 전달되지 않은 항공기 엔트리 &gt; 100(consumer_behind), 그룹이 읽기 전에 지워진 엔트리 있음(unread_trimmed).</li>
+ *       그룹에 아직 전달되지 않은 항공기 엔트리 &gt; 100(consumer_behind), 그룹이 읽기 전에 지워진 엔트리 있음(unread_trimmed),
+ *       저장기(항적 · 선박 · 순서 쓰기)가 아직 쓰지 못한 것 중 가장 오래된 것이 60 s 넘음(writer_backlog — DB 멈춤 · 끊김 · 느림, ADR-032),
+ *       요청 경로가 Redis 무응답을 보고 차단기를 연 동안(redis_unavailable — ADR-032).</li>
  *   <li>UNKNOWN: 기동 직후(120 s 이내) 아직 스냅샷이 없음.</li>
  * </ul>
  */
@@ -29,22 +33,29 @@ public class IngestHealthIndicator implements HealthIndicator {
     static final long STARTUP_GRACE_MS = 120_000;
     static final long MAX_READ_AGE_MS = 30_000;
     static final double MAX_STREAM_LAG = 100;
+    /** 저장기의 가장 오래된 미기록 것의 나이 상한. 평소는 1 s 안팎(스냅샷마다 배치) — DB 백오프 상한(30 s)의 두 배. */
+    static final long MAX_WRITE_BACKLOG_MS = 60_000;
 
     private final SnapshotStore snapshots;
     private final StreamConsumer consumer;
     private final StreamMetrics streams;
+    private final List<WriteBacklog> writers;
+    private final RedisBreaker redis;
     private final LongSupplier clockMs;
     private final long startedAtMs;
 
     @org.springframework.beans.factory.annotation.Autowired
-    public IngestHealthIndicator(SnapshotStore snapshots, StreamConsumer consumer, StreamMetrics streams) {
-        this(snapshots, consumer, streams, System::currentTimeMillis);
+    public IngestHealthIndicator(SnapshotStore snapshots, StreamConsumer consumer, StreamMetrics streams, List<WriteBacklog> writers, RedisBreaker redis) {
+        this(snapshots, consumer, streams, writers, redis, System::currentTimeMillis);
     }
 
-    IngestHealthIndicator(SnapshotStore snapshots, StreamConsumer consumer, StreamMetrics streams, LongSupplier clockMs) {
+    IngestHealthIndicator(SnapshotStore snapshots, StreamConsumer consumer, StreamMetrics streams, List<WriteBacklog> writers, RedisBreaker redis,
+                          LongSupplier clockMs) {
         this.snapshots = snapshots;
         this.consumer = consumer;
         this.streams = streams;
+        this.writers = List.copyOf(writers);
+        this.redis = redis;
         this.clockMs = clockMs;
         this.startedAtMs = clockMs.getAsLong();
     }
@@ -67,6 +78,10 @@ public class IngestHealthIndicator implements HealthIndicator {
         StreamMetrics.Sample s = streams.sample(StreamConsumer.S_AIRCRAFT);
         if (s.lag() > MAX_STREAM_LAG) reasons.add("consumer_behind");
         if (s.unreadTrimmed() > 0) reasons.add("unread_trimmed");
+        for (WriteBacklog w : writers)
+            if (WriteBacklog.oldestPendingAgeMs(w, now) > MAX_WRITE_BACKLOG_MS) { reasons.add("writer_backlog"); break; }
+        // available(): 열린 지 OPEN_MS 가 지났으면 뒤 확인(PING)을 시작한다 — edge 헬스체크가 /healthz 를 주기적으로 불러 요청이 없어도 차단기가 닫힌다
+        if (!redis.available()) reasons.add("redis_unavailable");
         Status st = !reasons.isEmpty() ? Status.DOWN : (lag < 0 && starting) ? Status.UNKNOWN : Status.UP;
         return new Verdict(st, List.copyOf(reasons), lag);
     }

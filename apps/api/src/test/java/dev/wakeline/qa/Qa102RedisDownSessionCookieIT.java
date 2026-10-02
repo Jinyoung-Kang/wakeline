@@ -94,6 +94,15 @@ class Qa102RedisDownSessionCookieIT extends IntegrationTest {
         } finally {
             docker.unpauseContainerCmd(id).exec();
         }
+        // ADR-032: 멈춘 동안 본 무응답으로 Redis 차단기가 열렸다 — 다음 시험이 열린 차단기를 물려받지 않게 /healthz(차단기 확인을 부른다)로 닫힘을 기다린다
+        long until = System.nanoTime() + Duration.ofSeconds(20).toNanos();
+        boolean closed = false;
+        while (!closed && System.nanoTime() < until) {
+            closed = !CLIENT.send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/healthz")).timeout(Duration.ofSeconds(10)).GET().build(),
+                    HttpResponse.BodyHandlers.ofString()).body().contains("redis_unavailable");
+            if (!closed) Thread.sleep(200);
+        }
+        assertThat(closed).as("redis breaker closed within 20 s after unpause").isTrue();
         assertThat(seen.get("/api/v1/ops/settings")).as("Redis 가 멈춘 동안 세션 쿠키를 실은 운영 요청 — 503 + Retry-After 여야 한다(500 아님)")
                 .startsWith("503 retry-after=").doesNotEndWith("=-");
         assertThat(seen.get("/api/v1/status")).as("Redis 가 멈춘 동안 세션 쿠키를 실은 공개 요청 — 쿠키 없는 요청(%d)과 같아야 한다(세션 저장소에 기대지 않는다)",

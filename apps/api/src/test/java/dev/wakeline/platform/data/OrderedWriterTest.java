@@ -94,4 +94,30 @@ class OrderedWriterTest {
         assertThat(count("alert", "failed")).isZero();
         assertThat(count("alert", "ok")).isEqualTo(2.0);
     }
+
+    /** ADR-032 writer_backlog: DB 가 답하지 않는 동안 재시도 중인 맨 앞 작업이 들어온 시각이 그대로 남는다(뒤 작업의 시각이 아니다) — 쓰면 -1. */
+    @Test
+    void oldestPendingIsTheTaskBeingRetriedWhileTheDbIsDown() throws Exception {
+        OrderedWriter w = new OrderedWriter(meters, 5, 20);
+        assertThat(w.oldestPendingAtMs()).isEqualTo(-1);
+        java.util.concurrent.atomic.AtomicBoolean dbDown = new java.util.concurrent.atomic.AtomicBoolean(true);
+        AtomicInteger attempts = new AtomicInteger();
+        long before = System.currentTimeMillis();
+        w.submit(OrderedWriter.task("alert", () -> {
+            attempts.incrementAndGet();
+            if (dbDown.get()) throw new CannotGetJdbcConnectionException("pool timeout", new SQLTransientConnectionException("x"));
+        }));
+        long at = w.oldestPendingAtMs();
+        assertThat(at).isBetween(before, System.currentTimeMillis());
+        Thread.sleep(5);
+        w.submit(OrderedWriter.task("alert", () -> { }));
+        w.start();
+        await(() -> attempts.get() >= 3);
+        assertThat(w.oldestPendingAtMs()).as("재시도 중인 맨 앞 작업").isEqualTo(at);
+        assertThat(meters.get("wakeline_writer_oldest_pending_seconds").tag("writer", "ordered").gauge().value()).isGreaterThanOrEqualTo(0.0);
+        dbDown.set(false);
+        await(() -> w.oldestPendingAtMs() == -1);
+        w.stop();
+        assertThat(count("alert", "ok")).isEqualTo(2.0);
+    }
 }

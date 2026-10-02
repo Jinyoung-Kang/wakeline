@@ -25,7 +25,7 @@ import java.util.concurrent.TimeUnit;
  */
 @org.springframework.context.annotation.Profile("!cli & !migrate")  // CLI(ops-user)·마이그레이션 실행에서는 쓰기 작업을 하지 않는다
 @Component
-public class OrderedWriter implements StreamPrerequisite {
+public class OrderedWriter implements StreamPrerequisite, WriteBacklog {
     private static final Logger log = LoggerFactory.getLogger(OrderedWriter.class);
     /** 종료 순서: 스트림 소비(MAX-10) → WS going_away(MAX-100) → 이 큐·항적 flush(MAX-200) → Tomcat(MAX-1024). */
     public static final int PHASE = Integer.MAX_VALUE - 200;
@@ -56,7 +56,12 @@ public class OrderedWriter implements StreamPrerequisite {
         };
     }
 
-    private final BlockingQueue<Task> queue = new LinkedBlockingQueue<>(QUEUE_MAX);
+    /** 큐의 한 작업과 들어온 시각(epoch ms — 가장 오래된 미기록 작업의 나이, WriteBacklog). */
+    private record Queued(Task task, long atMs) {}
+
+    private final BlockingQueue<Queued> queue = new LinkedBlockingQueue<>(QUEUE_MAX);
+    /** 워커가 쓰는 중(재시도 중 포함)인 작업이 들어온 시각, 없으면 -1. */
+    private volatile long inflightAtMs = -1;
     private final MeterRegistry meters;
     private final long backoffStartMs;
     private final long backoffMaxMs;
@@ -76,6 +81,7 @@ public class OrderedWriter implements StreamPrerequisite {
         this.backoffStartMs = backoffStartMs;
         this.backoffMaxMs = backoffMaxMs;
         meters.gauge("wakeline_persist_queue", queue, BlockingQueue::size);
+        WriteBacklog.gauge(this, meters);
     }
 
     /** 순서대로 쓰도록 넣는다. 가득 찼거나 이미 종료했으면 false(버린 것으로 센다). */
@@ -84,7 +90,7 @@ public class OrderedWriter implements StreamPrerequisite {
             count(t.kind(), "dropped"); // 영수증은 놓지 않는다 — 다음 기동에서 다시 처리된다
             return false;
         }
-        if (queue.offer(t)) return true;
+        if (queue.offer(new Queued(t, System.currentTimeMillis()))) return true;
         count(t.kind(), "dropped");
         log.warn("persist queue full ({}), dropped {} task", QUEUE_MAX, t.kind());
         t.receipt().release(); // 넘침: 되살릴 방법이 없다 — 센 뒤 ACK(PEL 이 끝없이 자라지 않게)
@@ -93,11 +99,22 @@ public class OrderedWriter implements StreamPrerequisite {
 
     public int pending() { return queue.size(); }
 
+    @Override public String writerName() { return "ordered"; }
+
+    /** 아직 쓰지 못한 작업 중 가장 오래된 것이 들어온 시각(쓰는 중 · 재시도 중인 작업, 없으면 큐의 맨 앞), 없으면 -1. */
+    @Override
+    public long oldestPendingAtMs() {
+        long in = inflightAtMs;
+        if (in >= 0) return in;
+        Queued head = queue.peek();
+        return head == null ? -1 : head.atMs();
+    }
+
     /** 테스트용: 워커 없이 호출 스레드에서 큐를 순서대로 비운다(시작 전 상태에서 — 일시 장애는 재시도하지 않고 버린다). */
     public int drainNow() {
         int n = 0;
-        Task t;
-        while ((t = queue.poll()) != null) if (runWithRetry(t)) n++;
+        Queued q;
+        while ((q = queue.poll()) != null) if (runWithRetry(q.task())) n++;
         return n;
     }
 
@@ -129,14 +146,20 @@ public class OrderedWriter implements StreamPrerequisite {
 
     private void loop() {
         while (running) {
-            Task t;
+            Queued q;
             try {
-                t = queue.poll(500, TimeUnit.MILLISECONDS);
+                q = queue.poll(500, TimeUnit.MILLISECONDS);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 break;
             }
-            if (t != null) runWithRetry(t);
+            if (q == null) continue;
+            inflightAtMs = q.atMs();
+            try {
+                runWithRetry(q.task());
+            } finally {
+                inflightAtMs = -1;
+            }
         }
         drain();
         stopped = true;
@@ -179,8 +202,9 @@ public class OrderedWriter implements StreamPrerequisite {
     private void drain() {
         long deadline = System.currentTimeMillis() + DRAIN_DEADLINE_MS;
         int written = 0, dropped = 0;
-        Task t;
-        while ((t = queue.poll()) != null) {
+        Queued q;
+        while ((q = queue.poll()) != null) {
+            Task t = q.task();
             if (System.currentTimeMillis() > deadline) {
                 count(t.kind(), "dropped");
                 dropped++;
