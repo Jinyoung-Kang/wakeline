@@ -475,6 +475,30 @@ async def test_each_run_gets_its_own_run_key():
     await db.close()
 
 
+class _SizedConn:
+    """_SizedPool 에서 빌린 연결 — 일은 풀의 상태(slow · executed · probes)로 한다(다시 빌리지 않는다)."""
+
+    def __init__(self, pool: _SizedPool) -> None:
+        self.pool = pool
+
+    async def fetch(self, sql, *args):
+        await self.pool.slow.wait()
+        return []
+
+    async def fetchval(self, sql, *args):  # writer 의 생존 확인(SELECT 1)
+        self.pool.probes += 1
+        return 1
+
+    async def execute(self, sql, *args):
+        self.pool.executed += 1
+        if self.pool.executed == 1:
+            await asyncio.sleep(0.1)
+            raise asyncpg.QueryCanceledError("canceling statement due to statement timeout")
+
+    def terminate(self) -> None:
+        pass
+
+
 class _SizedPool:
     """asyncpg 풀처럼 연결이 max_size 개 — 다 쓰이면 acquire 가 차례(FIFO)로 기다린다. 직접 읽기(fetch)는 slow 가 풀릴 때까지 연결을 쥐고(느린 DB),
     첫 쓰기(execute)는 연결을 잠시 쥔 뒤 일시 오류로 끝난다(문장 시간 초과 — QueryCanceled)."""
@@ -486,26 +510,9 @@ class _SizedPool:
         self.probes = 0
 
     @asynccontextmanager
-    async def acquire(self):
+    async def acquire(self, *, timeout=None):  # 운영 감싸개(_GuardedPool)가 빌림 상한을 넘긴다
         async with self._free:
-            yield self
-
-    async def fetch(self, sql, *args):
-        async with self.acquire():
-            await self.slow.wait()
-            return []
-
-    async def fetchval(self, sql, *args):  # writer 의 생존 확인(SELECT 1)
-        async with self.acquire():
-            self.probes += 1
-            return 1
-
-    async def execute(self, sql, *args):
-        async with self.acquire():
-            self.executed += 1
-            if self.executed == 1:
-                await asyncio.sleep(0.1)
-                raise asyncpg.QueryCanceledError("canceling statement due to statement timeout")
+            yield _SizedConn(self)
 
     async def close(self) -> None:
         pass
@@ -517,14 +524,18 @@ async def test_direct_reads_on_a_slow_db_do_not_starve_the_writers_liveness_prob
     이어지는 생존 확인(SELECT 1)이 연결을 얻지 못해 DB 가 응답하는데도 '닿지 않음'(db_ok=0)으로 적고 그 시도를 세지 않은 채 물러났다.
     풀 크기는 _create_pool 이 asyncpg 에 넘기는 값 그대로다."""
 
+    created: list[_SizedPool] = []
+
     async def create_pool(**kw):
-        return _SizedPool(kw["max_size"])
+        created.append(_SizedPool(kw["max_size"]))
+        return created[-1]
 
     monkeypatch.setattr(dbmod.asyncpg, "create_pool", create_pool)
     monkeypatch.setattr(dbmod, "OP_TIMEOUT_S", 0.6)
     monkeypatch.setattr(dbmod, "PROBE_TIMEOUT_S", 0.2)
-    db = Db()  # 운영과 같은 풀 공장(_create_pool)
-    pool = await db._ensure_pool()
+    db = Db()  # 운영과 같은 풀 공장(_create_pool — 감싸개 _GuardedPool 까지)
+    await db._ensure_pool()
+    pool = created[0]  # 감싸기 전 풀(연결 수 · 일의 횟수를 센다)
     db.start()
     db.upsert_budget_day("adsb_fi", datetime.now(UTC), 1, 10)  # writer 가 연결 하나를 쥔다(0.1 s 뒤 일시 오류)
     await asyncio.sleep(0.02)
@@ -638,3 +649,147 @@ async def test_an_in_flight_write_pushed_out_by_overflow_does_not_take_the_next_
     await _settle(db)
     assert [a[0] for _t, a in pool.log] == ["a", "b", "c"]  # a 는 끝까지 쓰였고 b 를 잃지 않았다
     await db.close()
+
+
+async def test_a_writer_resting_after_the_db_stopped_answering_writes_soon_after_it_answers_again(monkeypatch):
+    """DB 가 답하지 않아 재연결 쉼(2 → 30 s)에 든 writer 는 DB 가 다시 답하면 쉼을 끝까지 자지 않고 곧바로 쓴다(api 의 DbRecovery · VERIFICATION #107 과
+    같은 목적 — 예전에는 쉼이 끝날 때까지 기다렸다). 쉬는 동안만 짧게(PROBE_INTERVAL_S) SELECT 1 로 확인한다."""
+    monkeypatch.setattr(dbmod, "RECONNECT_MIN_S", 5.0)
+    monkeypatch.setattr(dbmod, "RECONNECT_MAX_S", 5.0)
+    monkeypatch.setattr(dbmod, "PROBE_INTERVAL_S", 0.05, raising=False)
+    pool = FakePool()
+
+    async def factory():
+        return pool
+
+    db = Db(factory)
+    db.start()
+    db.upsert_budget_day("p0", datetime.now(UTC), 1, 10)
+    await _settle(db)  # 풀이 생기고 한 번 썼다
+    pool.up = False
+    db.upsert_budget_day("p1", datetime.now(UTC), 2, 10)
+    await asyncio.sleep(0.2)  # 실패 → DB 가 답하지 않음 → 5 s 쉼
+    assert db.pending == 1 and not db.available
+    pool.up = True
+    t0 = asyncio.get_running_loop().time()
+    await _settle(db, timeout=8)
+    took = asyncio.get_running_loop().time() - t0
+    assert [a[0] for _t, a in pool.log] == ["p0", "p1"]
+    assert took < 1.0, f"waited {took:.2f} s — slept out the reconnect backoff"
+    assert db.available
+    await db.close()
+
+
+async def test_a_write_failing_while_the_db_keeps_answering_keeps_its_backoff(monkeypatch):
+    """DB 는 답하는데 그 작업만 일시 오류(시간 초과 · 교착 · 잠금 대기)면 확인으로 깨우지 않는다 — 확인(SELECT 1)이 늘 성공하므로 깨우면 뜨거운 재시도 고리가 된다."""
+    monkeypatch.setattr(dbmod, "RECONNECT_MIN_S", 0.5)
+    monkeypatch.setattr(dbmod, "RECONNECT_MAX_S", 0.5)
+    monkeypatch.setattr(dbmod, "PROBE_INTERVAL_S", 0.02, raising=False)
+    monkeypatch.setattr(
+        dbmod, "MAX_ATTEMPTS", 100
+    )  # 버림 상한이 재시도 수를 자르지 않게 — 깨우면 확인 간격(0.02 s)마다 다시 시도해 수십 번이 된다
+    pool = FakePool()
+    attempts = 0
+
+    async def flaky(sql, *args):
+        nonlocal attempts
+        attempts += 1
+        raise asyncpg.exceptions.LockNotAvailableError("lock timeout")
+
+    pool.execute = flaky
+
+    async def factory():
+        return pool
+
+    db = Db(factory)
+    db.start()
+    db.upsert_budget_day("p0", datetime.now(UTC), 1, 10)
+    await asyncio.sleep(1.2)
+    assert db.available  # DB 는 답한다
+    assert attempts <= 4, f"{attempts} attempts in 1.2 s — a resting writer was woken while the db kept answering"
+    await db.close(drain_s=0.1)
+
+
+# ---- 운영 풀 감싸개(_GuardedPool · _GuardedConn — VERIFICATION #111): 얼어붙은 DB 에서 끊긴 명령의 연결은 기다리지 않고 버린다 ----
+# 실제 asyncpg · PostgreSQL 로 얼림을 재현하는 시험은 test_db_pg_integration.py(FreezeProxy). 여기는 감싸개의 규칙만(asyncpg 를 흉내 낸 가짜).
+
+
+class _Tx:
+    def __init__(self):
+        self.calls: list[str] = []
+
+    async def start(self):
+        self.calls.append("begin")
+
+    async def commit(self):
+        self.calls.append("commit")
+
+    async def rollback(self):
+        self.calls.append("rollback")
+
+
+class _Proxy:
+    """asyncpg 의 PoolConnectionProxy 흉내: execute 의 결과를 정하고, terminate 를 센다."""
+
+    def __init__(self, outcome):
+        self.outcome = outcome
+        self.tx = _Tx()
+        self.terminated = False
+
+    def transaction(self):
+        return self.tx
+
+    def terminate(self):
+        self.terminated = True
+
+    async def execute(self, sql, *args):
+        if isinstance(self.outcome, BaseException):
+            raise self.outcome
+        return self.outcome
+
+
+class _AsyncpgPool:
+    def __init__(self, proxy):
+        self.proxy = proxy
+        self.acquire_timeouts: list[float | None] = []
+
+    @asynccontextmanager
+    async def acquire(self, *, timeout=None):
+        self.acquire_timeouts.append(timeout)
+        yield self.proxy
+
+
+async def test_guarded_pool_discards_the_connection_of_an_interrupted_command():
+    for interrupt in (TimeoutError(), asyncio.CancelledError()):
+        raw = _AsyncpgPool(_Proxy(interrupt))
+        with pytest.raises(type(interrupt)):
+            await dbmod._GuardedPool(raw).execute("UPDATE x SET y = 1")
+        assert raw.proxy.terminated, (
+            f"{type(interrupt).__name__}: the connection must be terminated, not returned to wait for the cancel reply"
+        )
+        assert raw.acquire_timeouts == [dbmod.ACQUIRE_TIMEOUT_S]
+    ok = _AsyncpgPool(_Proxy("UPDATE 1"))
+    assert await dbmod._GuardedPool(ok).execute("UPDATE x SET y = 1") == "UPDATE 1"
+    assert not ok.proxy.terminated  # 정상 · 서버가 답한 오류는 연결을 그대로 돌려준다
+
+
+async def test_guarded_transaction_does_not_roll_back_after_an_interrupt_but_does_after_an_error():
+    async def run(body_error):
+        raw = _AsyncpgPool(_Proxy("OK"))
+        try:
+            async with dbmod._GuardedPool(raw).acquire() as conn, conn.transaction():
+                await conn.execute("INSERT …")
+                if body_error is not None:
+                    raise body_error
+        except BaseException as e:  # noqa: BLE001 — 시험이 결과를 본다
+            assert type(e) is type(body_error)
+        return raw.proxy.tx.calls, raw.proxy.terminated
+
+    assert await run(None) == (["begin", "commit"], False)
+    assert await run(ValueError("bad row")) == (["begin", "rollback"], False)  # 서버가 답하는 오류 — 되돌리고 연결은 돌려준다
+    for interrupt in (TimeoutError(), asyncio.CancelledError()):
+        calls, terminated = await run(interrupt)
+        assert calls == ["begin"], (
+            "no ROLLBACK on an interrupted transaction — asyncpg would wait for the frozen server's cancel reply"
+        )
+        assert terminated  # 서버는 끊긴 연결의 트랜잭션을 스스로 되돌린다
