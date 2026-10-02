@@ -1,0 +1,29 @@
+setting=p30pgcf run=2 extra='-XX:MaxRAMPercentage=30 -XX:G1PeriodicGCInterval=15000 -XX:MinHeapFreeRatio=10 -XX:MaxHeapFreeRatio=30' start=2026-10-02T04:06:49Z
+sha256:86341ba393797a76f061584f0f4879a9ba83c9a579b9063059454c0ac29bf835
+JAVA_TOOL_OPTIONS=-XX:+UseG1GC -XX:MaxRAMPercentage=40 -XX:+ExitOnOutOfMemoryError -XX:MaxRAMPercentage=30 -XX:G1PeriodicGCInterval=15000 -XX:MinHeapFreeRatio=10 -XX:MaxHeapFreeRatio=30
+WAKELINE_WS_MAX_CONN_PER_IP=1000
+WAKELINE_PUBLIC_RATE_LIMIT_PER_MIN=1000000
+WAKELINE_WS_MAX_CONN=1000
+MALLOC_ARENA_MAX=2
+container_started=2026-10-02T04:06:51.628847294Z
+W 2026-10-02T04:07:02Z 2026-10-02T04:10:04Z
+state global=10000 ships=15375
+R 2026-10-02T04:10:04Z 2026-10-02T04:13:04Z
+S 2026-10-02T04:13:14Z 2026-10-02T04:17:35Z
+B 2026-10-02T04:17:45Z 2026-10-02T04:19:46Z
+I 2026-10-02T04:19:46Z 2026-10-02T04:24:46Z
+inspect restarts=0 oom_killed=false started=2026-10-02T04:06:51.628847294Z status=running
+oom_lines 0
+jvm_line Picked up JAVA_TOOL_OPTIONS: -XX:+UseG1GC -XX:MaxRAMPercentage=40 -XX:+ExitOnOutOfMemoryError -XX:MaxRAMPercentage=30 -XX:G1PeriodicGCInterval=15000 -XX:MinHeapFreeRatio=10 -XX:MaxHeapFreeRatio=30
+gc jvm_gc_pause_seconds_count{action="end of minor GC",cause="G1 Evacuation Pause",gc="G1 Young Generation"} 1797
+gc jvm_gc_pause_seconds_sum{action="end of minor GC",cause="G1 Evacuation Pause",gc="G1 Young Generation"} 12.87
+gc jvm_gc_pause_seconds_count{action="end of minor GC",cause="G1 Humongous Allocation",gc="G1 Young Generation"} 2
+gc jvm_gc_pause_seconds_sum{action="end of minor GC",cause="G1 Humongous Allocation",gc="G1 Young Generation"} 0.011
+warn  149 WARN d.wakeline.platform.web.ProblemAdvice    : could not get a DB connection path=/api/vN/stats
+warn   98 WARN d.wakeline.platform.web.ProblemAdvice    : could not get a DB connection path=/api/vN/replay
+warn   73 WARN d.wakeline.platform.web.ProblemAdvice    : could not get a DB connection path=/api/vN/ships
+warn   46 WARN d.wakeline.platform.web.ProblemAdvice    : could not get a DB connection path=/api/vN/airports
+warn   32 WARN d.wakeline.platform.web.ProblemAdvice    : could not get a DB connection path=/api/vN/aircraft
+warn   25 WARN d.wakeline.platform.web.ProblemAdvice    : could not get a DB connection path=/api/vN/alerts
+warn    1 WARN dev.wakeline.coverage.ShipCoverage       : ship coverage: memory cap reached (cells N / N, ship-cells N / N) — new cells or ships are not count
+end=2026-10-02T04:24:47Z

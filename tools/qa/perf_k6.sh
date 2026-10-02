@@ -8,7 +8,8 @@
 set -euo pipefail
 label=$1; script=$2; secs=$3; shift 3
 root=$(cd "$(dirname "$0")/../.." && pwd)
-ev="$root/docs/qa/2026-10/evidence/performance"
+# PERF_EV: 증거 폴더(기본 docs/qa/2026-10/evidence/performance — 고친 뒤 재측정은 …/performance/after-fix)
+ev="${PERF_EV:-$root/docs/qa/2026-10/evidence/performance}"
 mkdir -p "$ev" "$root/perf/results"
 K6_IMAGE="grafana/k6:2.3.0@sha256:9c2dee7f8ed74d317e4027c06a10f169b625638189de8d4555d0b3486a5aeb34"
 python3 "$root/tools/qa/perf_sample.py" "$ev/stats-$label.csv" 5 "$((secs + 15))" &

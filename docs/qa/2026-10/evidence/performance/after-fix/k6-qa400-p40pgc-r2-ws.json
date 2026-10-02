@@ -1,0 +1,198 @@
+{
+  "options": {
+    "summaryTrendStats": [
+      "avg",
+      "med",
+      "p(95)",
+      "p(99)",
+      "max"
+    ],
+    "summaryTimeUnit": "",
+    "noColor": false
+  },
+  "state": {
+    "isStdErrTTY": false,
+    "testRunDurationMs": 260001.41676,
+    "isStdOutTTY": false
+  },
+  "metrics": {
+    "ws_diff_lag_ms": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "avg": 68.23348837209302,
+        "med": 28,
+        "p(95)": 335.2999999999998,
+        "p(99)": 734.2999999999997,
+        "max": 991
+      },
+      "thresholds": {
+        "p(95)<500": {
+          "ok": true
+        }
+      }
+    },
+    "vus": {
+      "type": "gauge",
+      "contains": "default",
+      "values": {
+        "value": 2,
+        "min": 2,
+        "max": 200
+      }
+    },
+    "ws_messages": {
+      "type": "counter",
+      "contains": "default",
+      "values": {
+        "count": 22088,
+        "rate": 84.95338323632603
+      }
+    },
+    "ws_snapshots": {
+      "type": "counter",
+      "contains": "default",
+      "values": {
+        "count": 1533,
+        "rate": 5.896121717733059
+      }
+    },
+    "ws_ships_lag_ms": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "avg": 45.402328589909445,
+        "med": 16,
+        "p(95)": 190.29999999999959,
+        "p(99)": 581.1899999999995,
+        "max": 838
+      }
+    },
+    "ws_connecting": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "avg": 3.661199171052633,
+        "med": 2.8289795,
+        "p(95)": 5.6913936499999975,
+        "p(99)": 24.843878089999983,
+        "max": 64.906958
+      }
+    },
+    "ws_msgs_sent": {
+      "type": "counter",
+      "contains": "default",
+      "values": {
+        "count": 2269,
+        "rate": 8.726875523507053
+      }
+    },
+    "data_sent": {
+      "type": "counter",
+      "contains": "data",
+      "values": {
+        "count": 123288,
+        "rate": 474.1820315302501
+      }
+    },
+    "iteration_duration": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "avg": 240007.3490406842,
+        "med": 240005.630401,
+        "p(95)": 240013.351409,
+        "p(99)": 240044.72345352,
+        "max": 240070.70365
+      }
+    },
+    "ws_diffs": {
+      "type": "counter",
+      "contains": "default",
+      "values": {
+        "count": 3842,
+        "rate": 14.776842556771307
+      }
+    },
+    "data_received": {
+      "type": "counter",
+      "contains": "data",
+      "values": {
+        "count": 887725874,
+        "rate": 3414311.6797684026
+      }
+    },
+    "ws_errors": {
+      "contains": "default",
+      "values": {
+        "count": 0,
+        "rate": 0
+      },
+      "thresholds": {
+        "count<1": {
+          "ok": true
+        }
+      },
+      "type": "counter"
+    },
+    "ws_ship_messages": {
+      "values": {
+        "count": 4638,
+        "rate": 17.83836433584209
+      },
+      "type": "counter",
+      "contains": "default"
+    },
+    "vus_max": {
+      "values": {
+        "value": 200,
+        "min": 200,
+        "max": 200
+      },
+      "type": "gauge",
+      "contains": "default"
+    },
+    "ws_session_duration": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "avg": 240007.0559250001,
+        "med": 240005.255692,
+        "p(95)": 240012.72417519998,
+        "p(99)": 240044.407427,
+        "max": 240070.290067
+      }
+    },
+    "ws_sessions": {
+      "type": "counter",
+      "contains": "default",
+      "values": {
+        "count": 228,
+        "rate": 0.876918298527813
+      }
+    },
+    "ws_msgs_received": {
+      "type": "counter",
+      "contains": "default",
+      "values": {
+        "count": 22088,
+        "rate": 84.95338323632603
+      }
+    },
+    "iterations": {
+      "type": "counter",
+      "contains": "default",
+      "values": {
+        "count": 57,
+        "rate": 0.21922957463195325
+      }
+    }
+  },
+  "root_group": {
+    "name": "",
+    "path": "",
+    "id": "d41d8cd98f00b204e9800998ecf8427e",
+    "groups": [],
+    "checks": []
+  }
+}

@@ -1,0 +1,36 @@
+setting=p40pgc run=2 extra='-XX:G1PeriodicGCInterval=15000' start=2026-10-02T03:12:55Z
+sha256:86341ba393797a76f061584f0f4879a9ba83c9a579b9063059454c0ac29bf835
+JAVA_TOOL_OPTIONS=-XX:+UseG1GC -XX:MaxRAMPercentage=40 -XX:+ExitOnOutOfMemoryError -XX:G1PeriodicGCInterval=15000
+WAKELINE_WS_MAX_CONN=1000
+WAKELINE_WS_MAX_CONN_PER_IP=1000
+WAKELINE_PUBLIC_RATE_LIMIT_PER_MIN=1000000
+MALLOC_ARENA_MAX=2
+container_started=2026-10-02T03:12:57.641427089Z
+W 2026-10-02T03:13:08Z 2026-10-02T03:16:10Z
+state global=10000 ships=15375
+R 2026-10-02T03:16:10Z 2026-10-02T03:19:11Z
+S 2026-10-02T03:19:21Z 2026-10-02T03:23:42Z
+B 2026-10-02T03:23:52Z 2026-10-02T03:25:52Z
+I 2026-10-02T03:25:52Z 2026-10-02T03:30:52Z
+inspect restarts=0 oom_killed=false started=2026-10-02T03:12:57.641427089Z status=running
+oom_lines 0
+jvm_line Picked up JAVA_TOOL_OPTIONS: -XX:+UseG1GC -XX:MaxRAMPercentage=40 -XX:+ExitOnOutOfMemoryError -XX:G1PeriodicGCInterval=15000
+gc jvm_gc_pause_seconds_count{action="end of minor GC",cause="G1 Evacuation Pause",gc="G1 Young Generation"} 416
+gc jvm_gc_pause_seconds_sum{action="end of minor GC",cause="G1 Evacuation Pause",gc="G1 Young Generation"} 5.367
+gc jvm_gc_pause_seconds_count{action="end of minor GC",cause="G1 Humongous Allocation",gc="G1 Young Generation"} 3
+gc jvm_gc_pause_seconds_sum{action="end of minor GC",cause="G1 Humongous Allocation",gc="G1 Young Generation"} 0.038
+gc jvm_gc_pause_seconds_count{action="end of minor GC",cause="G1 Periodic Collection",gc="G1 Young Generation"} 22
+gc jvm_gc_pause_seconds_sum{action="end of minor GC",cause="G1 Periodic Collection",gc="G1 Young Generation"} 0.413
+warn    1 WARN dev.wakeline.coverage.ShipCoverage       : ship coverage: memory cap reached (cells N / N, ship-cells N / N) — new cells or ships are not counted this hour; see wa
+warn    1 WARN [rid:NaNfaaNffNfNdNaN] d.wakeline.platform.web.ProblemAdvice    : could not get a DB connection request_id=NaNfaaNffNfNdNaN path=/api/vN/stats/traffic query="day=N-N
+warn    1 WARN [rid:NaNfaaNfdbNdcNeNaN] d.wakeline.platform.web.ProblemAdvice    : could not get a DB connection request_id=NaNfaaNfdbNdcNeNaN path=/api/vN/replay query="at=N-N-NTN
+warn    1 WARN [rid:NaNfaaNfcNdNcN] d.wakeline.platform.web.ProblemAdvice    : could not get a DB connection request_id=NaNfaaNfcNdNcN path=/api/vN/replay query="at=N-N-NTN:N:N.NZ&
+warn    1 WARN [rid:NaNfaaNfbNdaccaNeNbN] d.wakeline.platform.web.ProblemAdvice    : could not get a DB connection request_id=NaNfaaNfbNdaccaNeNbN path=/api/vN/replay query="at=N-N
+warn    1 WARN [rid:NaNfaaNfaNaeNddNaN] d.wakeline.platform.web.ProblemAdvice    : could not get a DB connection request_id=NaNfaaNfaNaeNddNaN path=/api/vN/ships/N/track elapsed_ms
+warn    1 WARN [rid:NaNfaaNfNeNfN] d.wakeline.platform.web.ProblemAdvice    : could not get a DB connection request_id=NaNfaaNfNeNfN path=/api/vN/ships/N/track elapsed_ms=N → N: 
+warn    1 WARN [rid:NaNfaaNfNeNeNeNca] d.wakeline.platform.web.ProblemAdvice    : could not get a DB connection request_id=NaNfaaNfNeNeNeNca path=/api/vN/stats/traffic query="day=N
+warn    1 WARN [rid:NaNfaaNfNeNeNdeNbNbd] d.wakeline.platform.web.ProblemAdvice    : could not get a DB connection request_id=NaNfaaNfNeNeNdeNbNbd path=/api/vN/airports/RKSS/wx ela
+warn    1 WARN [rid:NaNfaaNfNdNaNffNaN] d.wakeline.platform.web.ProblemAdvice    : could not get a DB connection request_id=NaNfaaNfNdNaNffNaN path=/api/vN/stats/sigmet query="grou
+warn    1 WARN [rid:NaNfaaNfNcdNdNcNeNbfe] d.wakeline.platform.web.ProblemAdvice    : could not get a DB connection request_id=NaNfaaNfNcdNdNcNeNbfe path=/api/vN/airports/RKSI/wx e
+warn    1 WARN [rid:NaNfaaNfNcaNbNaNbNf] d.wakeline.platform.web.ProblemAdvice    : could not get a DB connection request_id=NaNfaaNfNcaNbNaNbNf path=/api/vN/ships/N/track elapsed_
+end=2026-10-02T03:30:53Z

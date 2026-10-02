@@ -1,0 +1,198 @@
+{
+  "root_group": {
+    "name": "",
+    "path": "",
+    "id": "d41d8cd98f00b204e9800998ecf8427e",
+    "groups": [],
+    "checks": []
+  },
+  "options": {
+    "summaryTrendStats": [
+      "avg",
+      "med",
+      "p(95)",
+      "p(99)",
+      "max"
+    ],
+    "summaryTimeUnit": "",
+    "noColor": false
+  },
+  "state": {
+    "isStdOutTTY": false,
+    "isStdErrTTY": false,
+    "testRunDurationMs": 259992.21712
+  },
+  "metrics": {
+    "ws_msgs_sent": {
+      "type": "counter",
+      "contains": "default",
+      "values": {
+        "count": 2273,
+        "rate": 8.742569393724935
+      }
+    },
+    "data_received": {
+      "type": "counter",
+      "contains": "data",
+      "values": {
+        "count": 744656107,
+        "rate": 2864147.685837466
+      }
+    },
+    "vus": {
+      "type": "gauge",
+      "contains": "default",
+      "values": {
+        "value": 2,
+        "min": 2,
+        "max": 200
+      }
+    },
+    "ws_session_duration": {
+      "contains": "time",
+      "values": {
+        "med": 240005.542693,
+        "p(95)": 241429.7735934,
+        "p(99)": 242660.36382596,
+        "max": 242998.135153,
+        "avg": 240230.88303414034
+      },
+      "type": "trend"
+    },
+    "iterations": {
+      "type": "counter",
+      "contains": "default",
+      "values": {
+        "count": 57,
+        "rate": 0.21923733191479158
+      }
+    },
+    "ws_diff_lag_ms": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "avg": 56.05301474705992,
+        "med": 24,
+        "p(95)": 247,
+        "p(99)": 399,
+        "max": 503
+      },
+      "thresholds": {
+        "p(95)<500": {
+          "ok": true
+        }
+      }
+    },
+    "ws_ship_messages": {
+      "type": "counter",
+      "contains": "default",
+      "values": {
+        "count": 4685,
+        "rate": 18.019770175803483
+      }
+    },
+    "vus_max": {
+      "type": "gauge",
+      "contains": "default",
+      "values": {
+        "value": 200,
+        "min": 200,
+        "max": 200
+      }
+    },
+    "ws_errors": {
+      "contains": "default",
+      "values": {
+        "count": 0,
+        "rate": 0
+      },
+      "thresholds": {
+        "count<1": {
+          "ok": true
+        }
+      },
+      "type": "counter"
+    },
+    "ws_sessions": {
+      "values": {
+        "count": 228,
+        "rate": 0.8769493276591663
+      },
+      "type": "counter",
+      "contains": "default"
+    },
+    "ws_ships_lag_ms": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "avg": 26.381643543223053,
+        "med": 10,
+        "p(95)": 108.7999999999998,
+        "p(99)": 172.15999999999997,
+        "max": 311
+      }
+    },
+    "ws_connecting": {
+      "contains": "time",
+      "values": {
+        "med": 2.774083,
+        "p(95)": 6.1022726999999986,
+        "p(99)": 21.238215679999982,
+        "max": 63.1795,
+        "avg": 3.577683254385968
+      },
+      "type": "trend"
+    },
+    "ws_msgs_received": {
+      "values": {
+        "rate": 84.10251753769882,
+        "count": 21866
+      },
+      "type": "counter",
+      "contains": "default"
+    },
+    "data_sent": {
+      "type": "counter",
+      "contains": "data",
+      "values": {
+        "count": 123004,
+        "rate": 473.1064697341583
+      }
+    },
+    "ws_diffs": {
+      "type": "counter",
+      "contains": "default",
+      "values": {
+        "count": 3825,
+        "rate": 14.711978852176802
+      }
+    },
+    "ws_messages": {
+      "type": "counter",
+      "contains": "default",
+      "values": {
+        "count": 21866,
+        "rate": 84.10251753769882
+      }
+    },
+    "ws_snapshots": {
+      "type": "counter",
+      "contains": "default",
+      "values": {
+        "count": 1532,
+        "rate": 5.892484078832644
+      }
+    },
+    "iteration_duration": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "max": 242998.423861,
+        "avg": 240240.54272643867,
+        "med": 240005.94786,
+        "p(95)": 241505.8174014,
+        "p(99)": 242660.57555692
+      }
+    }
+  }
+}

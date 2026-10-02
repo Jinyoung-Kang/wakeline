@@ -1,0 +1,198 @@
+{
+  "root_group": {
+    "checks": [],
+    "name": "",
+    "path": "",
+    "id": "d41d8cd98f00b204e9800998ecf8427e",
+    "groups": []
+  },
+  "options": {
+    "summaryTrendStats": [
+      "avg",
+      "med",
+      "p(95)",
+      "p(99)",
+      "max"
+    ],
+    "summaryTimeUnit": "",
+    "noColor": false
+  },
+  "state": {
+    "isStdOutTTY": false,
+    "isStdErrTTY": false,
+    "testRunDurationMs": 259997.482509
+  },
+  "metrics": {
+    "vus": {
+      "type": "gauge",
+      "contains": "default",
+      "values": {
+        "value": 2,
+        "min": 2,
+        "max": 200
+      }
+    },
+    "data_received": {
+      "values": {
+        "count": 844360467,
+        "rate": 3247571.7028174372
+      },
+      "type": "counter",
+      "contains": "data"
+    },
+    "ws_msgs_sent": {
+      "type": "counter",
+      "contains": "default",
+      "values": {
+        "count": 2268,
+        "rate": 8.723161386462623
+      }
+    },
+    "ws_errors": {
+      "values": {
+        "count": 0,
+        "rate": 0
+      },
+      "thresholds": {
+        "count<1": {
+          "ok": true
+        }
+      },
+      "type": "counter",
+      "contains": "default"
+    },
+    "ws_snapshots": {
+      "type": "counter",
+      "contains": "default",
+      "values": {
+        "count": 1541,
+        "rate": 5.926980465846077
+      }
+    },
+    "ws_ships_lag_ms": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "avg": 28.695774647887323,
+        "med": 13,
+        "p(95)": 77,
+        "p(99)": 435.87999999999965,
+        "max": 622
+      }
+    },
+    "ws_diffs": {
+      "type": "counter",
+      "contains": "default",
+      "values": {
+        "count": 3793,
+        "rate": 14.58860279490861
+      }
+    },
+    "iterations": {
+      "type": "counter",
+      "contains": "default",
+      "values": {
+        "count": 57,
+        "rate": 0.21923289198781723
+      }
+    },
+    "ws_session_duration": {
+      "values": {
+        "avg": 240006.96596099998,
+        "med": 240004.638776,
+        "p(95)": 240016.7987512,
+        "p(99)": 240055.44976247998,
+        "max": 240093.973026
+      },
+      "type": "trend",
+      "contains": "time"
+    },
+    "ws_messages": {
+      "contains": "default",
+      "values": {
+        "count": 22055,
+        "rate": 84.82774443493525
+      },
+      "type": "counter"
+    },
+    "iteration_duration": {
+      "values": {
+        "avg": 240007.21443528065,
+        "med": 240004.824484,
+        "p(95)": 240017.018351,
+        "p(99)": 240056.03620296,
+        "max": 240094.16686
+      },
+      "type": "trend",
+      "contains": "time"
+    },
+    "data_sent": {
+      "values": {
+        "count": 123267,
+        "rate": 474.10843678354854
+      },
+      "type": "counter",
+      "contains": "data"
+    },
+    "ws_sessions": {
+      "type": "counter",
+      "contains": "default",
+      "values": {
+        "count": 228,
+        "rate": 0.8769315679512689
+      }
+    },
+    "ws_ship_messages": {
+      "type": "counter",
+      "contains": "default",
+      "values": {
+        "rate": 17.750171868838184,
+        "count": 4615
+      }
+    },
+    "vus_max": {
+      "type": "gauge",
+      "contains": "default",
+      "values": {
+        "value": 200,
+        "min": 200,
+        "max": 200
+      }
+    },
+    "ws_msgs_received": {
+      "type": "counter",
+      "contains": "default",
+      "values": {
+        "count": 22055,
+        "rate": 84.82774443493525
+      }
+    },
+    "ws_diff_lag_ms": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "avg": 66.217472815898,
+        "med": 18,
+        "p(95)": 388.69999999999953,
+        "p(99)": 762,
+        "max": 1079
+      },
+      "thresholds": {
+        "p(95)<500": {
+          "ok": true
+        }
+      }
+    },
+    "ws_connecting": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "avg": 3.4858802894736836,
+        "med": 2.733854,
+        "p(95)": 5.021724999999996,
+        "p(99)": 13.64686183999999,
+        "max": 91.686292
+      }
+    }
+  }
+}

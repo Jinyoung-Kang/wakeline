@@ -3,7 +3,8 @@
     python3 tools/qa/perf_sample.py <출력.csv> [간격 s=5] [길이 s=600]
 
 열: 시각(UTC) · VM CPU %(4코어 합 = 400 %, /proc/stat — 컨테이너 안에서도 VM 전체 값) · 컨테이너마다 CPU % · 메모리 MiB(docker stats — cgroup 사용량 −
-inactive_file) · api cgroup memory.current MiB · api java VmRSS · RssAnon MiB · 힙 사용 · 커밋 MiB · GC 일시정지 횟수 · 합 s(누적) · Hikari 활성 · 대기.
+inactive_file) · api cgroup memory.current MiB · api java VmRSS · RssAnon MiB · 힙 사용 · 커밋 MiB · GC 일시정지 횟수 · 합 s(누적) · Hikari 활성 · 대기 ·
+(뒤에 더한 열 — QA-400 재측정) 힙 상한(G1 Old Gen max) · GC 뒤 old 영역(jvm_gc_live_data_size — 살아 있는 데이터의 상한) · 힙 밖 커밋(메타스페이스 · 코드 캐시 …) MiB · 살아 있는 스레드.
 docker stats 는 wakeline-e2e-* 이름만 묻는다(다른 스택은 읽지 않는다).
 """
 
@@ -62,7 +63,8 @@ def api_mem() -> dict[str, float]:
 
 def prom() -> dict[str, float]:
     out = sh("docker", "exec", f"{P}-api-1", "curl", "-s", "localhost:9000/actuator/prometheus")
-    r = {"heap_used": 0.0, "heap_committed": 0.0, "gc_count": 0.0, "gc_sum": 0.0, "gc_max": 0.0, "hk_active": 0.0, "hk_pending": 0.0}
+    r = {"heap_used": 0.0, "heap_committed": 0.0, "gc_count": 0.0, "gc_sum": 0.0, "gc_max": 0.0, "hk_active": 0.0, "hk_pending": 0.0,
+         "heap_max": -1.0, "gc_live": -1.0, "nonheap_committed": 0.0, "threads": -1.0}
     for line in out.splitlines():
         if line.startswith("#"):
             continue
@@ -85,6 +87,14 @@ def prom() -> dict[str, float]:
             r["hk_active"] = v
         elif name.startswith("hikaricp_connections_pending{") and "HikariPool-1" in name:
             r["hk_pending"] = v
+        elif name.startswith("jvm_memory_max_bytes{") and 'area="heap"' in name and v > 0:
+            r["heap_max"] = max(r["heap_max"], v / 1048576)
+        elif name.startswith("jvm_gc_live_data_size_bytes"):
+            r["gc_live"] = v / 1048576
+        elif name.startswith("jvm_memory_committed_bytes{") and 'area="nonheap"' in name:
+            r["nonheap_committed"] += v / 1048576
+        elif name.startswith("jvm_threads_live_threads"):
+            r["threads"] = v
     return r
 
 
@@ -93,7 +103,8 @@ def main() -> int:
     every = float(sys.argv[2]) if len(sys.argv) > 2 else 5.0
     dur = float(sys.argv[3]) if len(sys.argv) > 3 else 600.0
     cols = ["ts", "vm_cpu_pct"] + [f"{s}_{k}" for s in SVCS for k in ("cpu", "mem")] + \
-           ["api_cg_mib", "api_rss_mib", "api_rss_anon_mib", "heap_used_mib", "heap_committed_mib", "gc_count", "gc_sum_s", "gc_max_s", "hikari_active", "hikari_pending"]
+           ["api_cg_mib", "api_rss_mib", "api_rss_anon_mib", "heap_used_mib", "heap_committed_mib", "gc_count", "gc_sum_s", "gc_max_s", "hikari_active", "hikari_pending",
+            "heap_max_mib", "gc_live_mib", "nonheap_committed_mib", "threads"]
     end = time.monotonic() + dur
     prev = vm_cpu()
     with open(out, "w") as f:
@@ -117,7 +128,8 @@ def main() -> int:
                 c, m = s.get(sv, (-1, -1))
                 row += [f"{c:.1f}", f"{m:.1f}"]
             row += [f"{a.get('cg_current', -1):.1f}", f"{a.get('VmRSS', -1):.1f}", f"{a.get('RssAnon', -1):.1f}", f"{p['heap_used']:.1f}",
-                    f"{p['heap_committed']:.1f}", f"{p['gc_count']:.0f}", f"{p['gc_sum']:.3f}", f"{p['gc_max']:.3f}", f"{p['hk_active']:.0f}", f"{p['hk_pending']:.0f}"]
+                    f"{p['heap_committed']:.1f}", f"{p['gc_count']:.0f}", f"{p['gc_sum']:.3f}", f"{p['gc_max']:.3f}", f"{p['hk_active']:.0f}", f"{p['hk_pending']:.0f}",
+                    f"{p['heap_max']:.1f}", f"{p['gc_live']:.1f}", f"{p['nonheap_committed']:.1f}", f"{p['threads']:.0f}"]
             f.write(",".join(row) + "\n")
             f.flush()
             time.sleep(max(0.0, every - (time.monotonic() - t0)))

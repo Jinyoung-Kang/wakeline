@@ -1,0 +1,15 @@
+run=r1 mode=base start=2026-10-02T00:50:13Z end=2026-10-02T00:51:14Z
+base      victim               n=60 p50=20 p95=148 p99=205 max=252 ms failed=0.0%
+run=r1 mode=attack start=2026-10-02T00:51:44Z end=2026-10-02T00:52:44Z
+attacker  alerts_history_old   n=120 p50=16 p95=26 p99=34 max=40 ms failed=0.0%
+victim    victim               n=60 p50=14 p95=70 p99=114 max=122 ms failed=0.0%
+run=r2 mode=base start=2026-10-02T00:53:14Z end=2026-10-02T00:54:14Z
+base      victim               n=60 p50=15 p95=82 p99=151 max=199 ms failed=0.0%
+run=r2 mode=attack start=2026-10-02T00:54:44Z end=2026-10-02T00:55:45Z
+attacker  alerts_history_old   n=121 p50=13 p95=28 p99=37 max=61 ms failed=0.0%
+victim    victim               n=60 p50=13 p95=65 p99=116 max=139 ms failed=0.0%
+run=r3 mode=base start=2026-10-02T00:56:14Z end=2026-10-02T00:57:15Z
+base      victim               n=61 p50=11 p95=57 p99=94 max=102 ms failed=0.0%
+run=r3 mode=attack start=2026-10-02T00:57:45Z end=2026-10-02T00:58:45Z
+attacker  alerts_history_old   n=120 p50=11 p95=17 p99=24 max=26 ms failed=0.0%
+victim    victim               n=61 p50=8 p95=81 p99=98 max=104 ms failed=0.0%

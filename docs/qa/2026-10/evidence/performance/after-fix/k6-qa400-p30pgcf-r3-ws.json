@@ -1,0 +1,198 @@
+{
+  "root_group": {
+    "id": "d41d8cd98f00b204e9800998ecf8427e",
+    "groups": [],
+    "checks": [],
+    "name": "",
+    "path": ""
+  },
+  "options": {
+    "summaryTrendStats": [
+      "avg",
+      "med",
+      "p(95)",
+      "p(99)",
+      "max"
+    ],
+    "summaryTimeUnit": "",
+    "noColor": false
+  },
+  "state": {
+    "isStdOutTTY": false,
+    "isStdErrTTY": false,
+    "testRunDurationMs": 259971.781037
+  },
+  "metrics": {
+    "data_sent": {
+      "values": {
+        "count": 123330,
+        "rate": 474.3976423442946
+      },
+      "type": "counter",
+      "contains": "data"
+    },
+    "ws_diffs": {
+      "type": "counter",
+      "contains": "default",
+      "values": {
+        "rate": 14.066911360196913,
+        "count": 3657
+      }
+    },
+    "ws_msgs_received": {
+      "type": "counter",
+      "contains": "default",
+      "values": {
+        "count": 21657,
+        "rate": 83.30519533163373
+      }
+    },
+    "data_received": {
+      "values": {
+        "count": 676370658,
+        "rate": 2601707.9826973095
+      },
+      "type": "counter",
+      "contains": "data"
+    },
+    "ws_errors": {
+      "contains": "default",
+      "values": {
+        "count": 0,
+        "rate": 0
+      },
+      "thresholds": {
+        "count<1": {
+          "ok": true
+        }
+      },
+      "type": "counter"
+    },
+    "ws_diff_lag_ms": {
+      "thresholds": {
+        "p(95)<500": {
+          "ok": true
+        }
+      },
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "avg": 36.070975187536064,
+        "med": 17,
+        "p(95)": 115,
+        "p(99)": 332.02,
+        "max": 611
+      }
+    },
+    "ws_msgs_sent": {
+      "type": "counter",
+      "contains": "default",
+      "values": {
+        "count": 2271,
+        "rate": 8.735563494396278
+      }
+    },
+    "iterations": {
+      "type": "counter",
+      "contains": "default",
+      "values": {
+        "rate": 0.21925456590954992,
+        "count": 57
+      }
+    },
+    "ws_ships_lag_ms": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "max": 1013,
+        "avg": 42.9931550802139,
+        "med": 13,
+        "p(95)": 100.2999999999998,
+        "p(99)": 799.7799999999999
+      }
+    },
+    "vus_max": {
+      "type": "gauge",
+      "contains": "default",
+      "values": {
+        "value": 200,
+        "min": 200,
+        "max": 200
+      }
+    },
+    "ws_connecting": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "max": 54.533917,
+        "avg": 3.359137776315788,
+        "med": 2.757771,
+        "p(95)": 5.962241999999999,
+        "p(99)": 15.340876839999993
+      }
+    },
+    "vus": {
+      "type": "gauge",
+      "contains": "default",
+      "values": {
+        "value": 2,
+        "min": 2,
+        "max": 200
+      }
+    },
+    "ws_ship_messages": {
+      "type": "counter",
+      "contains": "default",
+      "values": {
+        "count": 4675,
+        "rate": 17.982720975914837
+      }
+    },
+    "iteration_duration": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "avg": 240006.49732557897,
+        "med": 240004.916401,
+        "p(95)": 240010.7262352,
+        "p(99)": 240036.03926296,
+        "max": 240064.06311
+      }
+    },
+    "ws_messages": {
+      "type": "counter",
+      "contains": "default",
+      "values": {
+        "count": 21657,
+        "rate": 83.30519533163373
+      }
+    },
+    "ws_snapshots": {
+      "type": "counter",
+      "contains": "default",
+      "values": {
+        "count": 1542,
+        "rate": 5.931412993553087
+      }
+    },
+    "ws_session_duration": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "avg": 240006.22998933328,
+        "med": 240004.747693,
+        "p(95)": 240010.5145684,
+        "p(99)": 240035.78505352,
+        "max": 240063.70061
+      }
+    },
+    "ws_sessions": {
+      "type": "counter",
+      "contains": "default",
+      "values": {
+        "count": 228,
+        "rate": 0.8770182636381997
+      }
+    }
+  }
+}
