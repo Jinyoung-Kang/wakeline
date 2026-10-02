@@ -26,6 +26,8 @@ test("replay list stays inside its panel and the map area on a short window", as
   if (!(await list.isVisible())) await page.getByTestId("replay-list-toggle").click();
   await expect(list).toBeVisible();
   await expect(page.getByTestId("replay-list-aircraft").first()).toBeVisible({ timeout: 20_000 });
+  // 재생 지도는 첫 그리기 뒤에 받기 시작한다(lib/after-paint — PERF §15): 그 시각의 목록(REST)이 지도 요소보다 먼저 올 수 있다 — 지도 요소를 기다린 뒤 잰다
+  await expect(page.getByTestId("replay-map")).toBeAttached({ timeout: 20_000 });
   const m = await page.evaluate(() => {
     const panel = document.querySelector('[data-testid="replay-list"]')!.getBoundingClientRect();
     const map = document.querySelector('[data-testid="replay-map"]')!.getBoundingClientRect();
