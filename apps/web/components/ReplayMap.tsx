@@ -4,6 +4,8 @@ import { memo, useEffect, useRef } from "react";
 import { subscriptionBbox } from "@/lib/viewport";
 import { addBaseLayers, radarTileUrl, STYLE_URL } from "@/lib/maplayers";
 import { maplibre } from "@/lib/maplibre";
+// 지도 전용 CSS(MapLibre 기본 + 덮어쓰기) — 상황판과 같은 파일, 이 컴포넌트 조각과 함께 받는다(PERF §15)
+import "./map/map.css";
 import { watchBasemapStyle } from "@/lib/basemap-fallback";
 import { mapAttributionHtml, styleHasBasemapCredit } from "@/lib/attribution";
 import { mapAttributionControl } from "@/lib/map-attribution";

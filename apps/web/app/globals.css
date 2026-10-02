@@ -1,5 +1,5 @@
 @import "tailwindcss";
-@import "maplibre-gl/dist/maplibre-gl.css";
+/* MapLibre 기본 스타일과 지도 컨트롤 · 팝업 덮어쓰기는 components/map/map.css — 지도 컴포넌트와 함께 받는다(첫 그리기를 막는 전역 CSS 에서 뺐다, PERF §15) */
 
 /* Palantir 계열 톤: 거의 검은 배경 · 1px 경계 · 낮은 채도 · 모노스페이스 수치 · 대문자 소형 라벨. 모서리 없음. */
 @theme {
@@ -65,7 +65,6 @@ input, select { background: var(--color-bg); border: 1px solid var(--color-line-
 input:focus, select:focus { outline: 1px solid var(--color-accent); }
 /* 키보드 초점은 항상 보이게(2px, 1px 띄움). 마우스 클릭에는 표시하지 않는다(:focus-visible). */
 :focus-visible { outline: 2px solid var(--color-accent) !important; outline-offset: 1px; }
-.maplibregl-canvas:focus-visible { outline-offset: -2px; }
 /* 건너뛰기 링크: 평소에는 보이지 않고 키보드 초점을 받으면 나타난다(R-30) */
 .skip-link { position: absolute; left: -10000px; top: 0; }
 .skip-link:focus { position: static; left: auto; display: inline-block; padding: 6px 10px; background: var(--color-bg-2); color: var(--color-fg); border: 1px solid var(--color-accent); font-size: 12px; }
@@ -78,24 +77,8 @@ table { border-collapse: collapse; width: 100%; font-size: 12px; }
 th { text-align: left; font-weight: 600; font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--color-fg-3); padding: 6px 8px; border-bottom: 1px solid var(--color-line-2); }
 td { padding: 5px 8px; border-bottom: 1px solid var(--color-line); vertical-align: top; }
 .grid-bg { background-image: linear-gradient(var(--color-line) 1px, transparent 1px), linear-gradient(90deg, var(--color-line) 1px, transparent 1px); background-size: 24px 24px; }
-/*
-  지도 위 출처(FR-20): compact(ⓘ) — 좁은 지도에서는 접힌 채로 시작한다(lib/map-attribution). 전체 출처는 화면 아래 SOURCES 줄에 늘 보인다.
-  펼친 상자는 줄바꿈 허용·잘리지 않음. 폭은 지도의 절반 · 560 px 까지(전에는 70vw · 760 px — 노트북 지도에서 4줄 상자가 오른쪽 아래를 가렸다).
-*/
-.maplibregl-ctrl-attrib { background: rgba(11,13,16,0.88) !important; color: var(--color-fg-3) !important; font-size: 10px !important; font-family: var(--font-mono); max-width: min(50vw, 560px); line-height: 1.45; }
-.maplibregl-ctrl-attrib-inner { white-space: normal; }
-.maplibregl-ctrl-attrib a { color: var(--color-fg-2) !important; }
-/* 접힌 상태: ⓘ 단추만(24 px). 어두운 지도 위에서 보이게 밝은 아이콘 · 1px 경계 — MapLibre 기본(흰 반투명 원 · 검은 i)을 대신한다 */
-.maplibregl-ctrl-attrib.maplibregl-compact { min-height: 24px; border: 1px solid var(--color-line-2); }
-.maplibregl-ctrl-attrib-button { background-color: var(--color-bg-1) !important; background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' fill='%23a3aab4' fill-rule='evenodd' viewBox='0 0 20 20'%3E%3Cpath d='M4 10a6 6 0 1 0 12 0 6 6 0 1 0-12 0m5-3a1 1 0 1 0 2 0 1 1 0 1 0-2 0m0 3a1 1 0 1 1 2 0v3a1 1 0 1 1-2 0'/%3E%3C/svg%3E") !important; }
-.maplibregl-ctrl-attrib.maplibregl-compact-show .maplibregl-ctrl-attrib-button { background-color: #1c2a3f !important; }
-.maplibregl-ctrl-group { background: var(--color-bg-1) !important; border: 1px solid var(--color-line-2) !important; box-shadow: none !important; }
-.maplibregl-ctrl-group button { background: transparent !important; filter: invert(0.85); }
-.maplibregl-popup-content { background: var(--color-bg-1) !important; color: var(--color-fg) !important; border: 1px solid var(--color-line-2); padding: 8px 10px !important; font-size: 12px; box-shadow: none !important; }
-.maplibregl-popup-tip { border-top-color: var(--color-line-2) !important; border-bottom-color: var(--color-line-2) !important; }
 /* 호버 툴팁 — 포인터 이벤트를 받지 않아 지도 조작을 막지 않는다 */
 .wakeline-tip { pointer-events: none; z-index: 30; } /* 범례(z-10) 위에 */
-.wakeline-tip .maplibregl-popup-content { padding: 6px 8px !important; min-width: 180px; }
 .tip-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 3px; }
 .tip-title { font-weight: 600; font-size: 12px; }
 .tip-sub { font-size: 10px; color: var(--color-fg-3); }

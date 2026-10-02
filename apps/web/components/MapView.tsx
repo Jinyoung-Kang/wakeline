@@ -6,6 +6,8 @@ import { useWeatherLayers } from "./map/useWeatherLayers";
 import { useMapPointer } from "./map/useMapPointer";
 import { useShipLayers } from "./map/useShipLayers";
 import { useSelectionTracks } from "./map/useSelectionTracks";
+// 지도 전용 CSS(MapLibre 기본 + 덮어쓰기) — 이 컴포넌트 조각과 함께 받는다(PERF §15 — 전역 CSS 에서 뺐다)
+import "./map/map.css";
 
 /**
  * 상황판 지도(클라이언트 컴포넌트) — Hook 여섯 묶음(components/map, web-review §3.2)을 잇는다. 묶음마다 자기 effect · 기록을 갖고, 지도는

@@ -150,7 +150,7 @@ describe("both maps use it; attribution stays visible in the footer", () => {
     expect(attributionText().length).toBeGreaterThan(100);
   });
   it("the expanded box is narrower than before (max 760 px → a smaller cap) and the ⓘ button is visible on the dark map", () => {
-    const css = src("app/globals.css");
+    const css = src("components/map/map.css"); // 지도 전용 CSS(PERF §15 — 전역 CSS 에서 옮겼다)
     expect(css).not.toMatch(/max-width: min\(70vw, 760px\)/);
     expect(css).toMatch(/\.maplibregl-ctrl-attrib-button\s*\{[^}]*background-image/);
   });
