@@ -16,6 +16,7 @@ import uuid
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import unquote, urlparse
 
 import asyncpg
 import pytest
@@ -395,3 +396,129 @@ async def test_hole_days_and_a_refused_day_on_the_v15_schema():
     finally:
         await pool.execute("DELETE FROM port_call WHERE prt_ag_cd = $1", pa)
         await db.close(drain_s=2)
+
+
+class FreezeProxy:
+    """TCP 중계 — 얼리면(freeze) 오가는 바이트를 붙들어 두고 새 연결도 잇지 않는다. 얼어붙은 DB 서버(멈춘 VM · 끊긴 망 · docker pause)처럼 TCP 는 열린 채
+    답이 없다(커널은 받지만 프로세스가 답하지 않는다). 풀면(thaw) 붙들어 둔 것부터 그대로 잇는다."""
+
+    def __init__(self, host: str, port: int) -> None:
+        self.host, self.port = host, port
+        self.flowing = asyncio.Event()
+        self.flowing.set()
+        self.server: asyncio.base_events.Server | None = None
+        self.listen_port = 0
+        self._writers: list[asyncio.StreamWriter] = []
+
+    async def start(self) -> None:
+        self.server = await asyncio.start_server(self._client, "127.0.0.1", 0)
+        self.listen_port = self.server.sockets[0].getsockname()[1]
+
+    async def _client(self, cr: asyncio.StreamReader, cw: asyncio.StreamWriter) -> None:
+        self._writers.append(cw)
+        await self.flowing.wait()  # 얼린 동안 새 연결은 받기만 하고 잇지 않는다
+        try:
+            ur, uw = await asyncio.open_connection(self.host, self.port)
+        except OSError:
+            cw.close()
+            return
+        self._writers.append(uw)
+        await asyncio.gather(self._pump(cr, uw), self._pump(ur, cw), return_exceptions=True)
+
+    async def _pump(self, r: asyncio.StreamReader, w: asyncio.StreamWriter) -> None:
+        try:
+            while data := await r.read(65536):
+                await self.flowing.wait()  # 얼린 동안 전하지 않는다
+                w.write(data)
+                await w.drain()
+        finally:
+            w.close()
+
+    def freeze(self) -> None:
+        self.flowing.clear()
+
+    def thaw(self) -> None:
+        self.flowing.set()
+
+    def close(self) -> None:
+        self.thaw()
+        for w in self._writers:
+            w.close()
+        if self.server is not None:
+            self.server.close()
+
+
+async def test_a_frozen_database_does_not_hold_the_writer_past_its_time_limits(monkeypatch, pg):
+    """얼어붙은 DB(TCP 는 열린 채 답이 없음): writer 는 작업 상한(OP_TIMEOUT_S) 근처에서 실패로 끝내고 db_ok 를 0 으로 알린다 — 풀면 쌓인 쓰기를 쓴다.
+    예전: 시간 초과 · 취소된 명령의 취소를 asyncpg 가 서버의 답까지 상한 없이 기다려(풀 반납 · 트랜잭션 ROLLBACK) writer 가 얼린 내내 멈췄고 db_ok 는 1 로
+    남았다(격리 스택 docker pause 45 s — VERIFICATION #110). 운영 풀(_create_pool) 그대로 — 중계(FreezeProxy)를 거쳐 실제 PostgreSQL 로."""
+    u = urlparse(URL)
+    proxy = FreezeProxy(u.hostname or "127.0.0.1", u.port or 5432)
+    await proxy.start()
+    monkeypatch.setattr(dbmod.settings, "db_host", "127.0.0.1")
+    monkeypatch.setattr(dbmod.settings, "db_port", proxy.listen_port)
+    monkeypatch.setattr(dbmod.settings, "db_name", u.path.lstrip("/"))
+    monkeypatch.setattr(dbmod.settings, "db_collector_password", unquote(u.password or ""))
+    monkeypatch.setattr(dbmod, "OP_TIMEOUT_S", 1.0)
+    monkeypatch.setattr(dbmod, "PROBE_TIMEOUT_S", 1.0)
+    monkeypatch.setattr(dbmod, "PROBE_INTERVAL_S", 0.2, raising=False)
+    # 빌림 상한은 길게 — asyncpg 는 반납 정리에도 이 상한을 쓰고 넘기면 스스로 연결을 버린다. 이 시험은 그 뒷받침이 아니라 감싸개가 끊긴 명령의 연결을
+    # 곧바로 버리는지(풀 반납 · 트랜잭션 ROLLBACK 이 취소 답을 기다리지 않는지)를 본다 — 고치기 전에는 얼린 내내 멈췄다
+    monkeypatch.setattr(dbmod, "ACQUIRE_TIMEOUT_S", 30.0, raising=False)
+    tag = uuid.uuid4().hex[:10]
+    providers = [f"pgfreeze_{tag}_{i}" for i in range(3)]
+    job = f"pgfreeze_{tag}"
+    loop = asyncio.get_running_loop()
+    db = Db()
+    db.start()
+    try:
+        db.upsert_budget_day(providers[0], datetime.now(UTC), 1, 10)
+        await _settle(db)
+        assert db.available
+        froze = False
+
+        async def mid_transaction(pool: Any) -> None:
+            """트랜잭션 가운데(BEGIN · INSERT 뒤)에서 서버가 얼어붙는다 — 끊긴 트랜잭션에 ROLLBACK 을 보내면 asyncpg 는 취소 답을 기다린다."""
+            nonlocal froze
+            async with pool.acquire() as conn, conn.transaction():
+                await conn.execute(
+                    "INSERT INTO provider_budget_day (provider, day, calls, limit_value) VALUES ($1, $2, 3, 10)",
+                    providers[2],
+                    datetime.now(UTC).date(),
+                )
+                if not froze:
+                    froze = True
+                    proxy.freeze()
+                await conn.execute("SELECT 1")
+
+        t0 = loop.time()
+        db._submit("mid_transaction", mid_transaction)  # 진행 중에 얼어붙는 작업
+        db.record_run(job, "adsb_lol", datetime.now(UTC), status="ok")  # 뒤에 쌓이는 트랜잭션(실행 기록)
+        db.upsert_budget_day(providers[1], datetime.now(UTC), 2, 10)
+        reported = None
+        try:
+            while loop.time() - t0 < 8:  # 작업 1 s · 확인 1 s · 빌림 1 s 의 몇 배
+                if not db.available:
+                    reported = loop.time() - t0
+                    break
+                await asyncio.sleep(0.05)
+        finally:
+            proxy.thaw()
+        assert reported is not None, (
+            "the writer stayed stuck on the frozen database (db_ok stayed 1) — it did not end the write at its time limit"
+        )
+        assert reported < 5.0
+        thawed = loop.time()
+        await _settle(db, timeout=15)  # 풀면 쌓인 쓰기를 쓴다
+        print(
+            f"frozen db: db_ok=0 after {reported:.2f} s (op limit {dbmod.OP_TIMEOUT_S} s); queued write in {loop.time() - thawed:.2f} s after thaw"
+        )
+        assert db.available
+        n = await pg.fetchval("SELECT count(*) FROM provider_budget_day WHERE provider = ANY($1::text[])", providers)
+        assert n == 3  # 끊긴 트랜잭션은 서버가 되돌렸고, 풀린 뒤 다시 실행해 한 번
+        assert (
+            await pg.fetchval("SELECT count(*) FROM ingest_run WHERE job = $1", job) == 1
+        )  # 끊긴 트랜잭션은 서버가 되돌렸고 다시 실행해 하나
+    finally:
+        await db.close(drain_s=2)
+        proxy.close()

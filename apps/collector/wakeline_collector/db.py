@@ -19,7 +19,8 @@ import logging
 import time
 import uuid
 from collections import deque
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from typing import Any
@@ -37,6 +38,8 @@ log = logging.getLogger("db")
 QUEUE_MAX = 500
 OP_TIMEOUT_S = 10.0
 PROBE_TIMEOUT_S = 5.0
+# 연결을 빌리는 일의 상한 — 빈 연결 기다리기 · 새 연결 맺기, 그리고 asyncpg 가 반납 정리(앞 명령의 취소 답 기다리기 · 상태 초기화)에 쓰는 상한(_GuardedPool)
+ACQUIRE_TIMEOUT_S = 5.0
 RECONNECT_MIN_S, RECONNECT_MAX_S = 2.0, 30.0
 # DB 가 답하지 않아 재연결 쉼에 든 동안의 확인 간격 — 다시 답하면 쉼을 끝까지 자지 않는다(api 의 DbRecovery 와 같은 목적, VERIFICATION #110)
 PROBE_INTERVAL_S = 2.0
@@ -172,21 +175,98 @@ class _Op:
     attempts: int = 0  # DB 가 응답하는 상태에서 일시 오류로 실패한 횟수
 
 
-async def _create_pool() -> asyncpg.Pool:
-    return await asyncpg.create_pool(
-        host=settings.db_host,
-        port=settings.db_port,
-        database=settings.db_name,
-        user="wakeline_collector",
-        password=settings.db_collector_password,
-        min_size=1,
-        # 동시에 연결을 쓰는 곳: writer 1(쓰기와 그 뒤 생존 확인 SELECT 1 은 차례로 — 한 번에 하나) + 직접 읽기 · 트랜잭션 2 — 입출항 색인 작업(범위 읽기 ·
-        # 하루 트랜잭션, 차례로)과 격자 기하 읽기(marine_grid4). 전에는 2(writer 1 + 생존 확인 1)라, 느린 DB 에서 두 직접 사용자가 연결 둘을 쥐면 쓰기 실패
-        # 뒤 생존 확인이 연결을 얻지 못해 응답하는 DB 를 '닿지 않음'(db_ok=0)으로 적었다(F10 — test_db_writer 확인 시험). 직접 사용자를 더하면 늘린다
-        max_size=3,
-        timeout=5,  # 연결 수립 상한(기본 60 s)
-        command_timeout=OP_TIMEOUT_S,
-        server_settings={"application_name": "wakeline-collector", "timezone": "UTC"},
+class _GuardedConn:
+    """asyncpg 연결 감싸개: transaction() 이 중간에 끊기면(시간 초과 · 취소) ROLLBACK 을 보내지 않는다 — 바깥 _GuardedPool.acquire 가 연결을 버리고(terminate),
+    서버는 끊긴 연결의 트랜잭션을 스스로 되돌린다. 얼어붙은 서버에 ROLLBACK 을 보내면 asyncpg 는 앞 명령의 취소 답부터 상한 없이 기다렸다."""
+
+    __slots__ = ("_con",)
+
+    def __init__(self, con: Any) -> None:
+        self._con = con
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._con, name)
+
+    @asynccontextmanager
+    async def transaction(self) -> AsyncIterator[None]:
+        tr = self._con.transaction()
+        await tr.start()
+        try:
+            yield
+        except (TimeoutError, asyncio.CancelledError):
+            raise  # 되돌리기를 기다리지 않는다 — 연결을 버린다(바깥 acquire)
+        except Exception:
+            await tr.rollback()
+            raise
+        await tr.commit()
+
+
+class _GuardedPool:
+    """운영 asyncpg 풀 감싸개(VERIFICATION #111) — 얼어붙은 DB(TCP 는 열린 채 답이 없음: 멈춘 VM · 끊긴 망 · docker pause)에서도 쓰기 · 읽기가 상한 안에 끝난다.
+
+    - 명령이 중간에 끊기면(풀의 command_timeout · 바깥 wait_for 의 취소) 그 연결은 서버의 답을 기다리지 않고 버린다(terminate — 소켓을 바로 닫는다). asyncpg 는
+      끊긴 명령에 취소 요청을 보내고, 그 연결로 하는 다음 일(풀 반납의 정리 · 트랜잭션 ROLLBACK · close)마다 서버가 그 취소에 답하기를 상한 없이 기다린다 —
+      풀 반납은 shield 안이라 바깥 wait_for 의 취소(한 번뿐)도 끊지 못해, writer 가 얼린 내내 멈추고 db_ok 는 1 로 남았다(격리 스택 docker pause 45 s — #110).
+    - 빌리는 일에 상한(ACQUIRE_TIMEOUT_S): 빈 연결 기다리기 · 새 연결 맺기, 그리고 asyncpg 가 반납 정리에 쓰는 상한(그래도 남는 기다림의 뒷받침).
+    버린 연결은 풀이 다음에 새로 맺는다(서버는 끊긴 연결의 트랜잭션을 되돌린다). 쓰는 메서드만 둔다: acquire · execute · executemany · fetch · fetchval · close ·
+    terminate. 시험의 가짜 풀은 감싸지 않는다 — _create_pool 이 만든 운영 풀만.
+    """
+
+    def __init__(self, pool: asyncpg.Pool) -> None:
+        self._pool = pool
+
+    @asynccontextmanager
+    async def acquire(self) -> AsyncIterator[_GuardedConn]:
+        async with self._pool.acquire(timeout=ACQUIRE_TIMEOUT_S) as con:
+            try:
+                yield _GuardedConn(con)
+            except (TimeoutError, asyncio.CancelledError):
+                try:
+                    con.terminate()  # 반납이 취소 답을 기다리지 않게 — 풀은 떼어 낸 연결을 기다리지 않고 받는다
+                except Exception as e:  # noqa: BLE001 — 이미 떨어져 나간 연결(끊김 정리)
+                    log.debug("db: terminate after interrupted command: %s", type(e).__name__)
+                raise
+
+    async def execute(self, query: str, *args: Any) -> Any:
+        async with self.acquire() as con:
+            return await con.execute(query, *args)
+
+    async def executemany(self, query: str, args: Any) -> None:
+        async with self.acquire() as con:
+            await con.executemany(query, args)
+
+    async def fetch(self, query: str, *args: Any) -> Any:
+        async with self.acquire() as con:
+            return await con.fetch(query, *args)
+
+    async def fetchval(self, query: str, *args: Any) -> Any:
+        async with self.acquire() as con:
+            return await con.fetchval(query, *args)
+
+    async def close(self) -> None:
+        await self._pool.close()
+
+    def terminate(self) -> None:
+        self._pool.terminate()
+
+
+async def _create_pool() -> _GuardedPool:
+    return _GuardedPool(
+        await asyncpg.create_pool(
+            host=settings.db_host,
+            port=settings.db_port,
+            database=settings.db_name,
+            user="wakeline_collector",
+            password=settings.db_collector_password,
+            min_size=1,
+            # 동시에 연결을 쓰는 곳: writer 1(쓰기와 그 뒤 생존 확인 SELECT 1 은 차례로 — 한 번에 하나) + 직접 읽기 · 트랜잭션 2 — 입출항 색인 작업(범위 읽기 ·
+            # 하루 트랜잭션, 차례로)과 격자 기하 읽기(marine_grid4). 전에는 2(writer 1 + 생존 확인 1)라, 느린 DB 에서 두 직접 사용자가 연결 둘을 쥐면 쓰기 실패
+            # 뒤 생존 확인이 연결을 얻지 못해 응답하는 DB 를 '닿지 않음'(db_ok=0)으로 적었다(F10 — test_db_writer 확인 시험). 직접 사용자를 더하면 늘린다
+            max_size=3,
+            timeout=5,  # 연결 수립 상한(기본 60 s)
+            command_timeout=OP_TIMEOUT_S,
+            server_settings={"application_name": "wakeline-collector", "timezone": "UTC"},
+        )
     )
 
 
@@ -257,6 +337,9 @@ class Db:
                 await asyncio.wait_for(self._pool.close(), drain_s)
             except Exception as e:  # noqa: BLE001
                 log.info("db: pool close: %s", type(e).__name__)
+                terminate = getattr(self._pool, "terminate", None)
+                if terminate is not None:
+                    terminate()  # 마감 안에 닫지 못함(얼어붙은 서버 등) — 기다리지 않고 소켓을 닫는다
 
     # ---- 지표 ---------------------------------------------------------------------------------------------------
     @property
