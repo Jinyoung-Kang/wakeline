@@ -4,7 +4,7 @@
     python3 tools/qa/perf_summarize.py step <이름표 접두>         # 단계마다
     python3 tools/qa/perf_summarize.py ws <이름표 접두>
     python3 tools/qa/perf_summarize.py res <이름표 접두> …        # 자원(api · db · collector · redis CPU % · 메모리, api RSS · 힙, GC, VM 의 다른 CPU)
-증거 폴더: docs/qa/2026-10/evidence/performance/
+증거 폴더: docs/qa/2026-10/evidence/performance/(환경 변수 PERF_EV 로 바꾼다)
 """
 
 from __future__ import annotations
@@ -16,7 +16,8 @@ import os
 import statistics
 import sys
 
-EV = os.path.join(os.path.dirname(__file__), "..", "..", "docs", "qa", "2026-10", "evidence", "performance")
+# PERF_EV: 다른 증거 폴더(고친 뒤 재측정 — …/performance/after-fix)
+EV = os.environ.get("PERF_EV") or os.path.join(os.path.dirname(__file__), "..", "..", "docs", "qa", "2026-10", "evidence", "performance")
 
 
 def runs(prefix: str, ext: str) -> list[str]:
