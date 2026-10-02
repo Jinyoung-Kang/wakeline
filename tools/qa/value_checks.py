@@ -5,7 +5,7 @@
 - 선박: fixtures/ais_east_asia_90s.jsonl 의 '값 없음' 표기(선수방위 511 · 침로 360 · ETA 월 0 · 일 0 · 시 24 · 분 60)가 API 에서 빠지는가,
   SOG(kt) · 크기(m) · 흘수(m)가 보고값 그대로인가.
 - 시각: 공개 응답의 ISO 시각 글자가 UTC('Z')인가(이름이 *_kst 인 필드 · 기상청 tm 은 예외 — 계약 v5 §G20).
-- /alerts/history 쪽 넘김(limit 7 로 끝까지): 겹침 · 빠짐 없음, id 내림차순, 한 번에 받은 목록과 같은가.
+- /alerts/history 쪽 넘김(limit 7 로 끝까지): 겹침 · 빠짐 없음, entered_at 최신순 · 같은 시각은 id 역순(계약 v5 §G36), 한 번에 받은 목록과 같은가.
 - /aircraft/search · /ships/search: 상한 · 접두 일치 · 정렬(계약 v5 §B1 — 정확 일치 → 최근 보고 → MMSI) · count.
 - /replay: 보존 경계(31일) 앞뒤 · source · radar(2시간 안만).
 - /stats/*: day_zone · days 가 [from, to] 의 KST 날짜를 빠짐없이 · 오늘은 aggregated=false.
@@ -230,10 +230,16 @@ def alert_paging(c):
         check("alerts.history", "쪽 넘김 끝까지", False, f"{eb} {es}")
         return
     ids_big, items = big
-    ids_small, _ = small
+    ids_small, items_small = small
     dups = [i for i, n in collections.Counter(ids_small).items() if n > 1]
     check("alerts.history", f"limit 25 로 쪽 {ps}개 · 항목 {len(ids_small)} — 겹침 없음", not dups, str(dups[:5]))
-    check("alerts.history", "id 내림차순", ids_small == sorted(ids_small, reverse=True) and ids_big == sorted(ids_big, reverse=True))
+
+    def order_key(x):  # 계약 v5 §G36: entered_at 최신순, 같은 시각은 id 역순 — 시각은 글자가 아니라 값으로 견준다(소수 자릿수가 다를 수 있다)
+        return dt.datetime.fromisoformat(x["entered_at"].replace("Z", "+00:00")), x["id"]
+
+    keys_small, keys_big = [order_key(x) for x in items_small], [order_key(x) for x in items]
+    check("alerts.history", "entered_at 최신순 · 같은 시각은 id 역순(§G36)",
+          keys_small == sorted(keys_small, reverse=True) and keys_big == sorted(keys_big, reverse=True))
     missing = sorted(set(ids_big) - set(ids_small))[:5]
     extra = sorted(set(ids_small) - set(ids_big))[:5]
     check("alerts.history", f"limit 200(쪽 {pb}개 · {len(ids_big)}건)과 같은 집합 — 빠짐 · 더함 없음(to 고정)", not missing and not extra, f"빠짐 {missing} 더함 {extra}")

@@ -66,7 +66,7 @@ class QueryPlanDbTest {
         assertThat(page.items()).allSatisfy(r -> assertThat(String.valueOf(r.get("hex")).trim()).isEqualTo("0003e8"));
         assertThat(page.items()).hasSize(10);
 
-        // 커서: 같은 hex 의 다음 페이지(id 역순) — 중복·누락 없이 끝난다
+        // 커서: 같은 hex 의 다음 페이지(entered_at 최신순 · 같은 시각은 id 역순 — 계약 v5 §G36) — 중복·누락 없이 끝난다
         var first = repo.history(now.minus(30, ChronoUnit.DAYS), now, "0003e8", null, 4);
         var second = repo.history(now.minus(30, ChronoUnit.DAYS), now, "0003e8", first.nextCursor(), 4);
         var third = repo.history(now.minus(30, ChronoUnit.DAYS), now, "0003e8", second.nextCursor(), 4);
@@ -75,7 +75,7 @@ class QueryPlanDbTest {
         for (var p : java.util.List.of(first, second, third)) for (var r : p.items()) ids.add(r.get("id"));
         assertThat(ids).hasSize(10).doesNotHaveDuplicates();
 
-        // hex 없음: 같은 결과 모양(범위 안 전체, id 역순)
+        // hex 없음: 같은 결과 모양(범위 안 전체, 같은 순서)
         var all = repo.history(now.minus(1, ChronoUnit.DAYS), now, null, null, 50);
         assertThat(all.items()).hasSize(50);
         assertThat(all.nextCursor()).isNotNull();
