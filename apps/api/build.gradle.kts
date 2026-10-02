@@ -46,7 +46,7 @@ dependencies {
     implementation("org.flywaydb:flyway-database-postgresql")
     implementation("org.springdoc:springdoc-openapi-starter-webmvc-ui:3.1.1")
     implementation("org.locationtech.jts:jts-core:1.20.0")
-    implementation("com.networknt:json-schema-validator:1.5.8")
+    implementation("com.networknt:json-schema-validator:3.0.7")
     runtimeOnly("org.postgresql:postgresql")
 
     testImplementation("org.springframework.boot:spring-boot-starter-test")
