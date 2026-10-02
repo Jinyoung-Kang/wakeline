@@ -1,0 +1,33 @@
+route                         st      raw B    wire B  enc  ms p50     ms min–max  flags
+aircraft wide full           200    616,047    89,251 gzip      38     27–42      
+aircraft wide lite           200    521,600    85,676 gzip      13     10–19      
+aircraft world (422)         422        244       244    -      12      6–27      
+aircraft search              200      4,815     1,102 gzip       7      5–8       
+aircraft detail              200        402       278 gzip      12      4–32      
+aircraft track 24h           200  1,065,365   213,321 gzip      77     48–970     BIG
+aircraft track 24h step60    200    278,851    59,883 gzip      39     39–387     
+airports all                 200      6,247     1,122 gzip      11      8–27      
+airport wx                   200      5,631       770 gzip      11      6–21      
+ais gaps 31d                 200     77,930     6,271 gzip      14     11–28      
+alerts active                200    516,275    53,423 gzip      18      7–23      
+alerts history 30d x200      200    158,749    18,663 gzip      19     13–22      
+radar frames                 200      1,080       511 gzip      10      5–11      
+radar kr                     200        364       344 gzip      11      7–19      
+replay wide recent           200    392,833    65,184 gzip      62     49–460     
+replay wide 1m (10d)         200     44,868    10,223 gzip      25     21–45      
+ships wide                   200  1,617,430   251,477 gzip      49     29–69      BIG
+ships atlantic               200    238,085    38,759 gzip      15      7–51      
+ships coverage               200    724,651   181,757 gzip      30     24–102     
+ships search x20             200      5,716     1,204 gzip      14     13–46      
+ship detail                  200      1,042       556 gzip      13      4–50      
+ship track 24h               200    286,000    55,090 gzip      34     29–183     
+sigmets all                  200    122,682    29,501 gzip      15     13–17      
+sigmets active               200    122,682    29,503 gzip      13      6–15      
+stats sigmet fir 92d         200    488,660    50,103 gzip      43     39–59      
+stats sigmet hazard 92d      200     32,862     4,408 gzip      15     10–16      
+stats alerts 92d             200     11,294     1,292 gzip      13      8–16      
+stats traffic                200      1,472       447 gzip      10      5–15      
+status                       200      1,634       726 gzip       8      4–13      
+traffic grid                 200        565       452 gzip       8      6–39      
+healthz                      200         55        71 gzip       4      3–7       
+flagged: ['aircraft track 24h', 'ships wide']

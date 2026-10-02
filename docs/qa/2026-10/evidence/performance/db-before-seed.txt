@@ -1,0 +1,28 @@
+        relname         | n_live_tup |  total  
+------------------------+------------+---------
+ track_point_20261001   |     193551 | 31 MB
+ ship_position_20261001 |      68679 | 11 MB
+ spatial_ref_sys        |       8500 | 7144 kB
+ sigmet                 |       6996 | 5656 kB
+ alert_event            |       1912 | 2328 kB
+ track_point_1m         |      10196 | 1480 kB
+ ingest_run             |       2174 | 752 kB
+ ship                   |        405 | 192 kB
+ metar_obs              |         65 | 112 kB
+ aircraft               |        128 | 112 kB
+ quality_event          |        180 | 88 kB
+ audit_log              |        153 | 80 kB
+ ops_user               |          3 | 80 kB
+ quality_rule_count     |          1 | 64 kB
+ ingest_gap             |          1 | 48 kB
+ flyway_schema_history  |         17 | 48 kB
+ ops_resolution         |          4 | 48 kB
+ airport                |         13 | 40 kB
+ provider_switch        |         11 | 32 kB
+ radar_frame            |         39 | 32 kB
+ app_setting            |         10 | 32 kB
+ stats_daily            |         17 | 32 kB
+ provider_budget_day    |         11 | 32 kB
+ kst_day_cutover        |          1 | 32 kB
+(24 rows)
+
