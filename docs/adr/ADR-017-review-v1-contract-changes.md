@@ -41,7 +41,7 @@
 |---|---|---|---|
 | R-64 · R-77 | 네트워크 분리: `public`(edge, 게시 포트) · `internal`(`internal: true` — web · api · db · redis) · `egress`(collector · ais 만 인터넷). edge·collector·ais 는 필요한 망에 함께. **한계(3단계 검증)**: `public` 은 일반 bridge 라 edge 는 망 차원에서 인터넷에 나갈 수 있다(Docker Desktop 은 masquerade 끄기도 무시 — 실측) — edge 는 설정(upstream api·web 뿐 · resolver 없음, 정책 시험)으로 막는다. 망 구성이 바뀌는 배포는 `make down` → `make up`(부분 재생성은 고정 IP 를 잃는다) | 모든 컨테이너가 서로의 모든 포트와 인터넷에 닿음 — "외부 호출은 collector/ais 만" 을 망이 강제하지 않음 | compose 네트워크 정의 되돌리기 |
 | R-24 | PostgreSQL: `checkpoint_timeout 15min` · `max_wal_size 2GB` · `wal_compression on` · `shared_buffers 256MB` | WAL 의 86 % 가 전체 페이지 이미지(하루 약 16 GB) | 설정 삭제 |
-| R-25 | api JVM 힙 비율 60 % → 40 %(컨테이너 1 GiB 에서 최대 약 410 MiB), 측정 후 확정 | 프로세스 약 700 MiB 로 NFR-03(≤ 512 MB) 초과, GC 뒤 살아 있는 데이터 약 75 MiB | 값 되돌리기 |
+| R-25 | api JVM 힙 비율 60 % → 40 %(컨테이너 1 GiB 에서 최대 약 410 MiB), 측정 후 확정 | 프로세스 약 700 MiB 로 NFR-03(≤ 512 MB) 초과, GC 뒤 살아 있는 데이터 약 75 MiB | 값 되돌리기 (2026-10-02 [ADR-031](ADR-031-api-memory-target.md): NFR-03 을 잰 값으로 다시 정함 — 컨테이너 메모리 ≤ 768 MiB) |
 | R-29 · R-85 | 실행 이미지에서 npm·corepack·pip 제거, 기반 이미지·uv 를 다이제스트로 고정 | 쓰지 않는 패키지 관리자가 HIGH 취약점을 전부 만듦 | Dockerfile 되돌리기 |
 | R-37 | Tomcat 11.0.25 이상(Spring Boot 패치 또는 버전 속성) | CRITICAL 3건 | 버전 되돌리기 |
 | R-63 | db 이미지 다이제스트 갱신(같은 18.x · 3.6) → 2026-09-30 직접 빌드로 해결(ADR-004 개정) | 고칠 수 있는 CVE CRITICAL 9 · HIGH 76 → 0 | 이전 이미지 · 권한으로(ADR-004 개정) |

@@ -15,7 +15,7 @@ import sys
 
 def main() -> int:
     args = sys.argv[1:]
-    limit = 512.0
+    limit = 768.0  # NFR-03(ADR-031): 잰 최대 741 MiB(몰림 뒤) — 컨테이너 한도 1 GiB 의 75 %
     if args and args[0] == "--limit-mib":
         limit = float(args[1])
         args = args[2:]
