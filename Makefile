@@ -75,7 +75,7 @@ test-infra: ## 인프라 정책 시험(.env 생성 · compose 해석(개발·격
 	python3 -m unittest discover -s infra/tests -v
 
 infra-docker-test: init ## 버리는 컨테이너로 edge(Host 허용 목록·비root) · redis(ACL: api·collector·ais) · db(권한 축소·슈퍼유저 로컬 소켓 전용 · 백업·복원 · 비밀번호 교체 · 이전 이미지 → 새 이미지 교체) · 수집기 SQL(실제 PostgreSQL) 동작 시험 — 개발 스택은 건드리지 않는다
-	$(COMPOSE) build db   # R-63: db 이미지는 infra/db 에서 직접 빌드한다(레지스트리에 없다) — db 시험이 이 태그를 쓴다
+	$(COMPOSE) build db edge   # R-63: db 이미지는 infra/db 에서 직접 빌드한다(레지스트리에 없다) — db 시험이 이 태그를 쓴다. edge 도 자체 빌드(infra/edge — edge 시험이 쓴다)
 	bash infra/tests/edge_test.sh
 	bash infra/tests/redis_acl_test.sh
 	bash infra/tests/db_hardening_test.sh

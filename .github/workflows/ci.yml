@@ -153,7 +153,7 @@ jobs:
       - id: build
         name: build own images (compose 가 붙이는 실제 태그 wakeline-*:local — ais 는 collector 와 같은 이미지 · db 는 infra/db — R-63)
         if: ${{ !cancelled() }}
-        run: python3 tools/init_env.py && docker compose -f infra/compose.yml --env-file .env build api collector web db
+        run: python3 tools/init_env.py && docker compose -f infra/compose.yml --env-file .env build api collector web db edge
       # 빌드한 실행 이미지 안: 패키지 관리자 없음(web·collector) · api 힙 상한 40 % · 비root (R-25 · R-29)
       - name: image checks (throwaway containers, --network none)
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
@@ -177,9 +177,14 @@ jobs:
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with: { image-ref: "wakeline-db:local", severity: "HIGH,CRITICAL", exit-code: "1", ignore-unfixed: true }
+      # edge 도 상류 nginx-unprivileged(다이제스트 고정) + 빌드 때 Alpine 보안 갱신의 자체 이미지(infra/edge/Dockerfile, 2026-10-02) — 차단 스캔
+      - name: trivy wakeline-edge:local
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with: { image-ref: "wakeline-edge:local", severity: "HIGH,CRITICAL", exit-code: "1", ignore-unfixed: true }
 
   # 우리가 쓰는 제3자 이미지(compose 에 다이제스트로 고정된 값 그대로 + make bench 의 k6). 목록이 compose 와 어긋나면 infra 정책 시험이 실패한다.
-  # 상류가 관리 중인 런타임 이미지(edge·redis)는 차단, 배포되지 않는 도구(k6)는 보고만 한다 — 결과는 job 요약에 남는다(db 는 2026-09-30 부터 자체 빌드 — 위 security job).
+  # 상류가 관리 중인 런타임 이미지(redis)는 차단(edge 는 2026-10-02 부터 자체 빌드 — security job), 배포되지 않는 도구(k6)는 보고만 한다 — 결과는 job 요약에 남는다(db 는 2026-09-30 부터 자체 빌드 — 위 security job).
   third-party-images:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -187,7 +192,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { target: edge, blocking: "1" }
           - { target: redis, blocking: "1" }
           - { target: k6, blocking: "0" }    # 부하 시험 도구(make bench), 스택에 배포되지 않는다
     name: trivy third-party (${{ matrix.target }})

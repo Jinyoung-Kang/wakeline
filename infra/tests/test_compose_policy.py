@@ -137,7 +137,9 @@ class ComposePolicyTest(unittest.TestCase):
 
     def test_edge_and_redis_run_as_non_root(self):
         self.assertEqual(self.svc("edge").get("user"), "101:101")
-        self.assertIn("nginx-unprivileged", self.svc("edge")["image"])
+        # edge 는 상류 nginx-unprivileged(다이제스트 고정) 위에 빌드 때 Alpine 보안 갱신을 얹은 자체 이미지(2026-10-02 — CI trivy: pcre2 HIGH, 상류 재빌드 전)
+        self.assertEqual(self.svc("edge")["image"], "wakeline-edge:local")
+        self.assertEqual(self.svc("edge")["build"]["context"].rstrip("/").split("/")[-1], "edge")
         self.assertEqual(self.svc("redis").get("user"), "999:1000")
 
     def test_resource_limits(self):
