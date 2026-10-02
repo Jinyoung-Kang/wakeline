@@ -145,6 +145,7 @@ describe("first screen of '/' carries no interaction-only UI", () => {
     expect(users).toEqual(["app/page.tsx"]);
     const page = readFileSync(resolve(ROOT, "app/page.tsx"), "utf8");
     expect(page.match(/\bdynamic\(/g)?.length).toBe(1);
-    expect(page).toMatch(/dynamic\(\(\) => Promise\.all\(\[import\("@\/components\/MapView"\)/);
+    // 지도 청크 · MapLibre 는 첫 그리기 뒤에 받기 시작한다(lib/after-paint — ADR-026 개정 2026-10-02). import() 는 그대로 이 next/dynamic 안 — 검사가 'dynamic' 으로 센다
+    expect(page).toMatch(/dynamic\(\(\) => afterFirstPaint\(\)\.then\(\(\) => Promise\.all\(\[import\("@\/components\/MapView"\)/);
   });
 });

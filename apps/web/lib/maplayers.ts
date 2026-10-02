@@ -52,11 +52,20 @@ export const PLANE_PATH = "M24 2 L27 12 L27 22 L44 32 L44 36 L27 30 L26 40 L32 4
 /** 방위 모름 아이콘(48×48 마름모) — 어느 쪽도 가리키지 않는다(DH-11) */
 export const NODIR_PATH = "M24 10 L38 24 L24 38 L10 24 Z";
 
-/** 48×48 경로를 채운 SDF 마스크(검정·불투명) — icon-color 로 칠한다. 선박 아이콘(ship-layers.ts)도 쓴다. */
-export function sdfImage(path: string, size = 48): ImageData {
+/**
+ * 지도 아이콘을 그릴 2D 캔버스(size×size). 그린 뒤 getImageData 로 한 번 읽어 addImage 에 넘기므로 `willReadFrequently` — 브라우저가 이 캔버스를 GPU 가 아니라
+ * CPU 메모리에 둔다. GPU 캔버스면 읽을 때마다 GPU → CPU 로 동기 읽기를 해 주 스레드가 기다린다: 소프트웨어 GL(SwiftShader)에서 아이콘 다섯 개에 약 560 ms 를
+ * 지도 'load' 의 한 작업 안에서 썼다(PERF §15 — 프로파일의 sdfImage). 아이콘은 지도에 올린 뒤 다시 그리지 않으므로 GPU 캔버스의 이득이 없다.
+ */
+export function iconCanvas(size: number): CanvasRenderingContext2D {
   const c = document.createElement("canvas");
   c.width = c.height = size;
-  const ctx = c.getContext("2d")!;
+  return c.getContext("2d", { willReadFrequently: true })!;
+}
+
+/** 48×48 경로를 채운 SDF 마스크(검정·불투명) — icon-color 로 칠한다. 선박 아이콘(ship-layers.ts)도 쓴다. */
+export function sdfImage(path: string, size = 48): ImageData {
+  const ctx = iconCanvas(size);
   ctx.fillStyle = "#000";
   ctx.fill(new Path2D(path));
   return ctx.getImageData(0, 0, size, size);

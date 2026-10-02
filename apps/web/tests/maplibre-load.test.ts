@@ -2,6 +2,7 @@
  * R-02: 상황판 첫 화면이 MapLibre 공용 코드(maplibre-gl-shared, 약 145 KiB gzip)를 두 번 받지 않는다.
  * 번들러가 maplibre-gl 을 번들하면 공용 코드가 메인 청크에 들어가고, 지도 워커는 public 에서 같은 코드를 또 받는다.
  * 그래서 상황판 쪽 모듈은 maplibre-gl 을 타입으로만 import 하고, 실행 코드는 public 배포본을 lib/maplibre.ts 로 불러온다.
+ * 재생 화면(ReplayMap)도 같다(PERF §15 — 전에는 번들본을 실어 재생 화면이 공용 코드를 번들 청크 286 KB + 워커의 공용 청크 149 KB 로 두 번 받았다).
  */
 import { readFileSync, readdirSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -15,8 +16,10 @@ const read = (p: string) => readFileSync(new URL(p, root), "utf8");
 const runtimeImports = (src: string) => [...src.matchAll(/^import\s+(?!type\b)[^;]*from\s+["']maplibre-gl["']/gm)].map((m) => m[0]);
 
 describe("MapLibre is loaded once from public (R-02)", () => {
-  it("dashboard modules import maplibre-gl only as types (no bundled copy of the shared chunk)", () => {
-    const files = ["components/MapView.tsx", "app/page.tsx", ...readdirSync(new URL("components/map/", root)).map((f) => `components/map/${f}`), ...readdirSync(new URL("lib/", root)).filter((f) => f.endsWith(".ts")).map((f) => `lib/${f}`)];
+  it("no module of the app imports maplibre-gl at runtime — dashboard and replay alike (no bundled copy of the shared chunk)", () => {
+    const files = ["app", "components", "lib"].flatMap((d) => (readdirSync(new URL(`${d}/`, root), { recursive: true }) as string[])
+      .filter((f) => /\.tsx?$/.test(f)).map((f) => `${d}/${f}`));
+    expect(files).toEqual(expect.arrayContaining(["components/ReplayMap.tsx", "app/replay/page.tsx", "components/MapView.tsx", "components/map/useMapLifecycle.ts"]));
     const offenders = files.flatMap((f) => runtimeImports(read(f)).map((i) => `${f}: ${i}`));
     expect(offenders).toEqual([]);
   });
@@ -30,8 +33,9 @@ describe("MapLibre is loaded once from public (R-02)", () => {
     expect(read("scripts/copy-maplibre-worker.mjs")).toMatch(/maplibre-gl\.mjs/);
   });
 
-  it("the dashboard waits for the public MapLibre module together with the map component chunk", () => {
+  it("the dashboard and the replay page wait for the public MapLibre module together with the map component chunk", () => {
     expect(read("app/page.tsx")).toMatch(/loadMaplibre\(\)/);
+    expect(read("app/replay/page.tsx")).toMatch(/Promise\.all\(\[import\("@\/components\/ReplayMap"\), loadMaplibre\(\)\]\)/);
   });
 
   it("the CSP comment in proxy.ts states how MapLibre is loaded now (same origin /maplibre/<version>/, allowed through 'strict-dynamic')", () => {

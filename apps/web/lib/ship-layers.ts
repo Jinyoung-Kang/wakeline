@@ -9,7 +9,7 @@
  * - 수신 범위(계약 v3 §A): 운영 설정 수신 범위의 바깥 경계만 옅은 점선. 범위 밖을 가리지 않는다. status 에 범위가 없으면 그리지 않는다.
  */
 import type * as maplibregl from "maplibre-gl";
-import { sdfImage } from "./maplayers";
+import { iconCanvas, sdfImage } from "./maplayers";
 import { SHIP_CATEGORIES, SHIP_CATEGORY_COLOR, SHIP_SELECTED_COLOR, type ShipCategory } from "./ships";
 
 /** 선체(48×48, 선수 위쪽) — 지도 아이콘과 범례가 같은 경로를 쓴다 */
@@ -23,9 +23,7 @@ export const HULL_COG_STROKE = 4;
 
 /** 침로 기준 아이콘 이미지(점선 외곽 선체 + 작은 선체) */
 export function shipCogImage(size = 48): ImageData {
-  const c = document.createElement("canvas");
-  c.width = c.height = size;
-  const ctx = c.getContext("2d")!;
+  const ctx = iconCanvas(size); // CPU 캔버스(읽기 전용 — lib/maplayers iconCanvas)
   ctx.fillStyle = "#000";
   ctx.strokeStyle = "#000";
   ctx.lineWidth = HULL_COG_STROKE;

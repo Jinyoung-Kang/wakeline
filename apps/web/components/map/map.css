@@ -1,0 +1,26 @@
+/*
+  지도 전용 스타일(PERF §15): MapLibre 기본 스타일 + 우리 덮어쓰기(컨트롤 · 출처 · 팝업). 지도 컴포넌트(상황판 MapView · 재생 ReplayMap)가 import 한다 —
+  두 컴포넌트는 첫 그리기 뒤 next/dynamic 으로 받으므로 이 CSS 도 그 조각과 함께 온다. 전에는 전역 CSS(app/globals.css)에 있어 지도가 없는 화면(/about · /stats …)
+  까지 모든 화면의 첫 그리기를 막는 스타일시트에 MapLibre CSS(원본 83 KB · gzip 약 10.6 KB)가 실렸다.
+  순서: MapLibre 기본을 먼저, 덮어쓰기를 뒤에(같은 우선순위면 뒤가 이긴다 — 전에 globals.css 의 맨 앞 @import 와 같은 순서).
+*/
+@import "maplibre-gl/dist/maplibre-gl.css";
+
+.maplibregl-canvas:focus-visible { outline-offset: -2px; }
+/*
+  지도 위 출처(FR-20): compact(ⓘ) — 좁은 지도에서는 접힌 채로 시작한다(lib/map-attribution). 전체 출처는 화면 아래 SOURCES 줄에 늘 보인다.
+  펼친 상자는 줄바꿈 허용·잘리지 않음. 폭은 지도의 절반 · 560 px 까지(전에는 70vw · 760 px — 노트북 지도에서 4줄 상자가 오른쪽 아래를 가렸다).
+*/
+.maplibregl-ctrl-attrib { background: rgba(11,13,16,0.88) !important; color: var(--color-fg-3) !important; font-size: 10px !important; font-family: var(--font-mono); max-width: min(50vw, 560px); line-height: 1.45; }
+.maplibregl-ctrl-attrib-inner { white-space: normal; }
+.maplibregl-ctrl-attrib a { color: var(--color-fg-2) !important; }
+/* 접힌 상태: ⓘ 단추만(24 px). 어두운 지도 위에서 보이게 밝은 아이콘 · 1px 경계 — MapLibre 기본(흰 반투명 원 · 검은 i)을 대신한다 */
+.maplibregl-ctrl-attrib.maplibregl-compact { min-height: 24px; border: 1px solid var(--color-line-2); }
+.maplibregl-ctrl-attrib-button { background-color: var(--color-bg-1) !important; background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' fill='%23a3aab4' fill-rule='evenodd' viewBox='0 0 20 20'%3E%3Cpath d='M4 10a6 6 0 1 0 12 0 6 6 0 1 0-12 0m5-3a1 1 0 1 0 2 0 1 1 0 1 0-2 0m0 3a1 1 0 1 1 2 0v3a1 1 0 1 1-2 0'/%3E%3C/svg%3E") !important; }
+.maplibregl-ctrl-attrib.maplibregl-compact-show .maplibregl-ctrl-attrib-button { background-color: #1c2a3f !important; }
+.maplibregl-ctrl-group { background: var(--color-bg-1) !important; border: 1px solid var(--color-line-2) !important; box-shadow: none !important; }
+.maplibregl-ctrl-group button { background: transparent !important; filter: invert(0.85); }
+.maplibregl-popup-content { background: var(--color-bg-1) !important; color: var(--color-fg) !important; border: 1px solid var(--color-line-2); padding: 8px 10px !important; font-size: 12px; box-shadow: none !important; }
+.maplibregl-popup-tip { border-top-color: var(--color-line-2) !important; border-bottom-color: var(--color-line-2) !important; }
+/* 호버 툴팁(.wakeline-tip 자체는 app/globals.css) */
+.wakeline-tip .maplibregl-popup-content { padding: 6px 8px !important; min-width: 180px; }

@@ -13,8 +13,12 @@ import { ReplayAircraftDetail, ReplaySigmetDetail } from "@/components/ReplayIns
 import { ReplayStatusRow } from "@/components/ReplayStatus";
 import { RequestIdCopy } from "@/components/logs/ErrorNote";
 import { useFocusRescue } from "@/lib/use-focus-rescue";
+import { loadMaplibre } from "@/lib/maplibre";
+import { afterFirstPaint } from "@/lib/after-paint";
 
-const ReplayMap = dynamic(() => import("@/components/ReplayMap").then((m) => m.ReplayMap), { ssr: false });
+// 재생 지도 청크와 MapLibre(public 배포본 — 상황판 · 지도 워커와 같은 파일, R-02)를 함께 받는다. 번들하지 않는다(공용 코드를 두 번 받고 해석했다 — PERF §15).
+// 상황판과 같이 첫 그리기 뒤에 받기 시작한다(lib/after-paint — ADR-026 개정 2026-10-02)
+const ReplayMap = dynamic(() => afterFirstPaint().then(() => Promise.all([import("@/components/ReplayMap"), loadMaplibre()])).then(([m]) => m.ReplayMap), { ssr: false });
 const SPEEDS = [1, 5, 10, 30, 60];
 
 /**

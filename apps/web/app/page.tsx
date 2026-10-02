@@ -6,9 +6,12 @@ import { RadarTimeline } from "@/components/RadarTimeline";
 import { SidePanel } from "@/components/SidePanel";
 import { StatusBar } from "@/components/StatusBar";
 import { loadMaplibre } from "@/lib/maplibre";
+import { afterFirstPaint } from "@/lib/after-paint";
 
-// 지도 컴포넌트 청크와 MapLibre(public 배포본 — 지도 워커와 공용 청크를 한 번만 받는다, R-02)를 함께 받는다
-const MapView = dynamic(() => Promise.all([import("@/components/MapView"), loadMaplibre()]).then(([m]) => m.MapView), {
+// 지도 컴포넌트 청크와 MapLibre(public 배포본 — 지도 워커와 공용 청크를 한 번만 받는다, R-02)를 함께 받는다.
+// 받기는 첫 그리기 뒤에 시작한다(lib/after-paint — ADR-026 개정 2026-10-02): 서버가 그린 화면이 먼저 보이고, 지도 라이브러리의 내려받기 · 해석 ·
+// WebGL 준비가 첫 그리기를 붙잡지 않는다(소프트웨어 GL 에서 2–5 s — PERF §15). 그 사이 자리는 아래 격자 배경.
+const MapView = dynamic(() => afterFirstPaint().then(() => Promise.all([import("@/components/MapView"), loadMaplibre()])).then(([m]) => m.MapView), {
   ssr: false, loading: () => <div className="grid-bg h-full w-full" />,
 });
 
