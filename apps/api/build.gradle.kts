@@ -21,7 +21,7 @@ val tomcatVersion = "11.0.26"
 // VERIFICATION #50: jackson-databind CVE-2026-68497(HIGH — 3.1.6 · 2.22.2 에서 수정)가 Boot 4.1.1 BOM 의 3.1.5 · 2.22.1 에 있다.
 // Jackson 3(Boot 기본)과 Jackson 2(springdoc · json-schema-validator)를 각 BOM 의 같은 minor 최신 패치로 올린다 — BOM 이라 core · annotations ·
 // 모듈이 같은 버전으로 맞춰진다. Boot 패치가 이 이상을 가져오면 지운다(JacksonVersionTest 가 하한을 지킨다).
-val jackson3Version = "3.1.7"
+val jackson3Version = "3.2.3"
 val jackson2Version = "2.22.3"
 
 dependencies {
