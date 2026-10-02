@@ -24,7 +24,7 @@ class RateLimitFilterTest {
      */
     @Test
     void the429BodyIsProblemJsonWithTheRequestPathEscaped() throws Exception {
-        RateLimiter over = new RateLimiter(new StringRedisTemplate(), new io.micrometer.core.instrument.simple.SimpleMeterRegistry()) {
+        RateLimiter over = new RateLimiter(new StringRedisTemplate(), RateLimiterTest.breaker(), new io.micrometer.core.instrument.simple.SimpleMeterRegistry()) {
             @Override public long[] hit(String bucket, String ip, int windowS) { return new long[]{121, 42}; }
         };
         String path = "/api/v1/aircraft/\"x\\y";
@@ -50,7 +50,7 @@ class RateLimitFilterTest {
 
     @Test
     void underTheLimitThePublicRequestPassesWithItsHeaders() throws Exception {
-        RateLimiter under = new RateLimiter(new StringRedisTemplate(), new io.micrometer.core.instrument.simple.SimpleMeterRegistry()) {
+        RateLimiter under = new RateLimiter(new StringRedisTemplate(), RateLimiterTest.breaker(), new io.micrometer.core.instrument.simple.SimpleMeterRegistry()) {
             @Override public long[] hit(String bucket, String ip, int windowS) { return new long[]{3, 40}; }
         };
         MockHttpServletRequest req = new MockHttpServletRequest("GET", "/api/v1/status");

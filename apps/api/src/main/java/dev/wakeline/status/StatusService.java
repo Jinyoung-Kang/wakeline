@@ -18,6 +18,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import dev.wakeline.platform.data.RedisBreaker;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
@@ -51,6 +52,8 @@ public class StatusService {
     private final RadarStore radar;
     private final EngineService engine;
     private final StringRedisTemplate redis;
+    /** Redis 무응답 차단기(ADR-032) — 열린 동안 공개 상태는 Redis 조회를 건너뛴다(QA 2026-10: 조회 셋 × 명령 상한 3 s 로 /status 12 s). */
+    private final RedisBreaker breaker;
     /** 관심 지역(중심·반경) — collector 와 같은 런타임 설정(계약 §2, COR-12). */
     private final Supplier<RegionSettings.Region> region;
     /** 수요 기반 추적 수(계약 v2 §A3) — DemandService 가 마지막 계산에서 남긴다. */
@@ -67,8 +70,8 @@ public class StatusService {
 
     @Autowired
     public StatusService(SnapshotStore snapshots, SigmetStore sigmets, RadarStore radar, EngineService engine, StringRedisTemplate redis, RegionSettings region,
-                         DemandStats demand, AisStatus ais, MeterRegistry meters) {
-        this(snapshots, sigmets, radar, engine, redis, (Supplier<RegionSettings.Region>) region::current, demand, ais, meters);
+                         DemandStats demand, AisStatus ais, MeterRegistry meters, RedisBreaker breaker) {
+        this(snapshots, sigmets, radar, engine, redis, (Supplier<RegionSettings.Region>) region::current, demand, ais, meters, breaker);
     }
 
     public StatusService(SnapshotStore snapshots, SigmetStore sigmets, RadarStore radar, EngineService engine, StringRedisTemplate redis, RegionSettings region,
@@ -97,6 +100,17 @@ public class StatusService {
 
     StatusService(SnapshotStore snapshots, SigmetStore sigmets, RadarStore radar, EngineService engine, StringRedisTemplate redis, Supplier<RegionSettings.Region> region,
                   DemandStats demand, AisStatus ais, MeterRegistry meters) {
+        this(snapshots, sigmets, radar, engine, redis, region, demand, ais, meters, standalone(meters));
+    }
+
+    /** 시험용 생성자의 차단기: 실제 차단기(무응답이면 열린다)지만 PING 은 늘 답한다고 본다 — 시험의 Redis 는 연결이 없거나 Testcontainers 다. */
+    private static RedisBreaker standalone(MeterRegistry meters) {
+        return new RedisBreaker(() -> {}, System::currentTimeMillis, Runnable::run, meters);
+    }
+
+    StatusService(SnapshotStore snapshots, SigmetStore sigmets, RadarStore radar, EngineService engine, StringRedisTemplate redis, Supplier<RegionSettings.Region> region,
+                  DemandStats demand, AisStatus ais, MeterRegistry meters, RedisBreaker breaker) {
+        this.breaker = breaker;
         // 캐시 적중률(R-53): 공유 status 페이로드(WS · REST /status)
         this.statusHit = Counter.builder("wakeline_cache_requests_total").tag("cache", "status").tag("result", "hit").register(meters);
         this.statusMiss = Counter.builder("wakeline_cache_requests_total").tag("cache", "status").tag("result", "miss").register(meters);
@@ -272,7 +286,13 @@ public class StatusService {
 
     @SuppressWarnings({"unchecked", "rawtypes"})
     private Map<String, Object> safeHash(String key) {
-        try { return (Map) redis.opsForHash().entries(key); } catch (RuntimeException e) { return REDIS_UNAVAILABLE; }
+        if (!breaker.available()) return REDIS_UNAVAILABLE;
+        try {
+            return (Map) redis.opsForHash().entries(key);
+        } catch (RuntimeException e) {
+            breaker.failed(e);
+            return REDIS_UNAVAILABLE;
+        }
     }
 
     /** 수집기가 wakeline:active 에 쓰는 작업(collector main.py — ProviderChain("region") · ProviderChain("global")). */

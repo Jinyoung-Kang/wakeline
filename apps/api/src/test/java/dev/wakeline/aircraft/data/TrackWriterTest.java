@@ -251,4 +251,30 @@ class TrackWriterTest {
             tw.stop();
         }
     }
+
+    /** ADR-032 writer_backlog: 쓰기가 막힌 동안(DB 무응답 흉내) 진행 중 배치의 첫 행이 들어온 시각이 남고, 커밋하면 -1. */
+    @Test
+    void oldestPendingIsTheBlockedBatchsFirstRowUntilItCommits() throws Exception {
+        GateJdbc jdbc = new GateJdbc();
+        var meters = new io.micrometer.core.instrument.simple.SimpleMeterRegistry();
+        TrackWriter tw = trackWriter(jdbc, meters, 5, 10);
+        tw.start();
+        assertThat(tw.oldestPendingAtMs()).isEqualTo(-1);
+        long before = System.currentTimeMillis();
+        tw.enqueue(java.util.List.of(ac("a00001")), dev.wakeline.platform.support.Receipt.NONE);
+        long after = System.currentTimeMillis();
+        jdbc.entered.await(); // 워커가 배치를 가져가 쓰기에서 막혔다
+        long at = tw.oldestPendingAtMs();
+        assertThat(at).isBetween(before, after);
+        Thread.sleep(5);
+        tw.enqueue(java.util.List.of(ac("a00002")), dev.wakeline.platform.support.Receipt.NONE);
+        assertThat(tw.oldestPendingAtMs()).as("막힌 배치의 첫 행 — 뒤에 들어온 행이 아니다").isEqualTo(at);
+        assertThat(meters.get("wakeline_writer_oldest_pending_seconds").tag("writer", "track").gauge().value()).isGreaterThanOrEqualTo(0.0);
+        jdbc.gate.countDown();
+        long deadline = System.currentTimeMillis() + 5_000;
+        while (tw.oldestPendingAtMs() != -1 && System.currentTimeMillis() < deadline) Thread.sleep(5);
+        assertThat(tw.oldestPendingAtMs()).isEqualTo(-1);
+        tw.stop();
+        assertThat(jdbc.written).containsExactly("a00001", "a00002");
+    }
 }
