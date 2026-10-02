@@ -87,11 +87,15 @@ test.describe("status bar resize", () => {
     for (const w of WIDTHS) {
       await page.setViewportSize({ width: w, height });
       await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
-      const m = await row.evaluate((el) => ({ sw: el.scrollWidth, cw: el.clientWidth, hidden: el.querySelectorAll('[data-overflow="true"]').length }));
+      const m = await row.evaluate((el) => ({ sw: el.scrollWidth, cw: el.clientWidth }));
       expect(m.sw, `${w}px`).toBeLessThanOrEqual(m.cw + 1);
-      const toggle = page.getByTestId("statusbar-details-toggle");
-      if (m.hidden) await expect(toggle, `${w}px`).toContainText(`+${m.hidden}`);
-      else await expect(toggle, `${w}px`).not.toContainText("+");
+      // 옮긴 칩 수와 '+N' 을 한 번에 읽어 견준다 — 따로 읽으면 그 사이 상태 갱신(칩 글자 길이가 바뀜)으로 칩이 돌아와 낡은 수를 기다렸다
+      // (CI 2026-10-03 KST 자정 직후: 잰 수 1 · 그 뒤 DOM 은 옮긴 칩 0 · 단추 '상세 ▾' — 제품은 서로 맞았다)
+      await expect.poll(() => row.evaluate((el) => {
+        const hidden = el.querySelectorAll('[data-overflow="true"]').length;
+        const t = document.querySelector('[data-testid="statusbar-details-toggle"]')?.textContent ?? "";
+        return hidden ? t.includes(`+${hidden}`) : !t.includes("+");
+      }), { message: `${w}px: '+N' = moved chips` }).toBe(true);
     }
     expect(await roErrors(page)).toEqual([]);
   });

@@ -28,7 +28,8 @@ test("KMA 'file not exist' streak from /radar/kr: the KMA chip says 파일 없�
   expect(title).toContain("기상청 내려받기 파일(PUB) 없음");
   expect(title).toContain("확인한 tm 12개 모두 없음");
   expect(title).toContain("목록에는 EXT");
-  expect(title).toMatch(/마지막 확인 \d\d:\d\d:\d\d KST/);
+  // 오늘(KST)이 아니면 날짜가 붙는다(lib/time — CI 가 KST 자정을 넘겨 돈 2026-10-03: "마지막 확인 10-02 23:59:35 KST")
+  expect(title).toMatch(/마지막 확인 (\d\d-\d\d )?\d\d:\d\d:\d\d KST/);
   expect(title).not.toContain("UTC");
   await page.getByTestId("statusbar-details-toggle").click();
   const row = page.getByTestId("statusbar-details").locator('[data-row="kma-missing"]');
