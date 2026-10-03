@@ -1,0 +1,13 @@
+/healthz
+      0.2s ..    16.2s  n=  5  max_ms=    38  status=200 health=ok
+     20.2s ..    44.2s  n=  7  max_ms=    33  status=200 health=degraded reasons=['redis_unavailable']
+     48.2s ..   128.3s  n= 21  max_ms=   208  status=200 health=degraded reasons=['consumer_stalled', 'redis_unavailable']
+    132.3s ..   164.3s  n=  9  max_ms=    80  status=200 health=degraded reasons=['region_feed_lag', 'consumer_stalled', 'redis_unavailable']
+    168.3s ..   168.3s  n=  1  max_ms=    17  status=200 health=degraded reasons=['redis_unavailable']
+    172.3s ..   208.4s  n= 10  max_ms=   138  status=200 health=ok
+/api/v1/ships?bbox=120,30,135,40
+      0.2s ..   208.4s  n= 53  max_ms=  3043  status=200
+/api/v1/aircraft?bbox=124,33,132,39
+      0.2s ..   208.4s  n= 53  max_ms=  3043  status=200
+/api/v1/alerts/history
+      0.2s ..   208.4s  n= 53  max_ms=  3050  status=200

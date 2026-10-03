@@ -191,6 +191,9 @@ describe("contract v5 amendment numbers are unique", () => {
     expect(amendment(43)).toContain("요청 파라미터를 너그럽게 읽지 않는다");
     expect(amendment(44)).toContain("405 의 `Allow` 는 그 자원이 받는 메서드 전부");
     expect(amendment(45)).toContain("같은 값으로 다시 누른 공급자 켜고 끄기 · 설정 저장은 바꾸는 것이 없다");
-    expect(amendment(46)).toBe("");
+    // Redis 장애 중 AIS 위치(2026-10-03 · QA 2026-10 신뢰성 개선 제안 2 · ADR-033): 27차 · §G46
+    expect(heading(46)).toMatch(/^## G\. 27차 개정\(2026-10-03 · Redis 장애 중 AIS 위치 /);
+    expect(amendment(46)).toContain("Redis 장애 동안의 선박 위치를 분당으로 모아 복구 뒤 보낸다");
+    expect(amendment(47)).toBe("");
   });
 });

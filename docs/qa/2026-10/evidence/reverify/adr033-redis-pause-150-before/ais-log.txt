@@ -1,0 +1,3 @@
+2026-10-03 04:56:54,145 WARNING ais.sink: ships xadd failed (TimeoutError) — 48 ships kept for the next flush
+2026-10-03 04:57:54,151 WARNING ais.sink: ships xadd failed (TimeoutError) — 307 ships kept for the next flush
+2026-10-03 04:58:54,173 WARNING ais.sink: ships xadd failed (TimeoutError) — 375 ships kept for the next flush
