@@ -1389,6 +1389,30 @@
   다른 edge 오류 시험과 같은 검사). 마지막 요청과의 사이에 기대지 않는다 — `sleep 0.3` 을 끼워도 통과(120번 중 85번 429), 끼우지 않으면 87번.
 - 확인: edge 시험 42 통과 · 인프라 정책 174 통과.
 
+## #117 의존성 주 버전 — TypeScript 6.0 · json-schema-validator 3.0.8 로 올리고(한 번 파싱으로 −11 ms), ESLint 10 · TypeScript 7 · Node 26 은 근거를 적고 미룸(브랜치 `chore/deps-major-2026-10`)
+- **대상**: Dependabot 이 주 버전 PR 을 열지 않게 둔 다섯(2026-10-02 첫 PR 들이 CI 에서 깨짐 — `.github/dependabot.yml` 의 ignore). 2026-10-03 에 하나씩 다시 봤다:
+
+  | 의존성 | 2026-10-03 에 본 것 | 결정 |
+  |---|---|---|
+  | TypeScript 5.9 → 6.0.3 | 6.0 은 JS 컴파일러 API 가 있는 마지막 판 — typescript-eslint 8.70 peer `< 6.1`, Next.js 16.3 은 기본으로 `tsc` CLI | **올림** |
+  | TypeScript 7.0.2 | JS API 없음(Next.js 는 CLI 로 받지만 typescript-eslint 가 받지 않는다) | 미룸 — typescript-eslint 가 받을 때 |
+  | ESLint 9 → 10.12 | eslint-config-next 16.3.8 의 peer 는 `>= 9` 이지만 함께 묶인 eslint-plugin-import 2.32 · jsx-a11y 6.10 · react 7.37 의 최신판 peer 가 ESLint ≤ 9 | 미룸(CTO 결정 7 그대로) |
+  | json-schema-validator 1.5.9 → 3.0.8 | 3.x 는 Jackson 3(api 의 Jackson) — 클래스 이름이 바뀐 주 버전 | **올림** + 한 번 파싱 |
+  | Node 24 → 26 · @types/node 24 → 26 | Node 26.10.0(2026-09-21)은 아직 LTS 가 아니다(24.21.0 'Krypton' 이 LTS) | 미룸 — 26 이 LTS 가 된 뒤(10월 말 예정) 웹 이미지 · 첫 화면 JS(이미지의 Node 로 잰다)와 함께 |
+
+  Python(uv)은 주 버전 갱신이 없다(mypy · ruff 부 버전만 — Dependabot 묶음 PR 몫).
+- **TypeScript 6**: 기본값만으로 tsc 오류 95(TS2503 'Cannot find namespace GeoJSON' 60 · 그 뒤를 따른 TS7006 35). 6.0 은 `types` 기본값이 `[]`(@types 를 저절로
+  싣지 않음)이고 모듈 안에서 UMD 전역(`export as namespace GeoJSON`)을 보이지 않는다(`--allowUmdGlobalAccess` 로 0 이 되는 것으로 원인 확인). 호환 옵션 대신
+  19개 파일이 `import type * as GeoJSON from "geojson"` 으로 명시하고(리팩터링 커밋 — 5.9 에서도 통과, 출력 같음) `@types/geojson` 을 devDependency 로 적었다,
+  tsconfig 는 `"types": ["node"]`. tsc · ESLint(오류 0) · next build · Vitest 1,716 통과 · 첫 화면 JS(웹 이미지의 Node) 547,751 B — 5.9 와 같다(타입은 지워진다).
+- **json-schema-validator 3**: 이름이 바뀌었다(JsonSchemaFactory → SchemaRegistry · JsonSchema → Schema · ValidationMessage → Error(List) · SpecVersion → SpecificationVersion ·
+  schemaMappers → schemaIdResolvers.mapPrefix). 원격 · `file:` 가져오기를 기본으로 막는다 — 운영은 클래스패스만 읽어 그대로, 시험 전용 WsSchemas 는 $id 를 저장소
+  파일 내용으로 푼다. 검증 결과는 같고, DLQ 이유의 위치가 두 번 찍히던 것(`/kind: /kind: …` — 1.5 의 getMessage 가 이미 위치로 시작했다)이 한 번이 됐다.
+- **한 번 파싱**(PERF §13 'P1 다시'): 3.x 가 Jackson 3 트리를 받아, 소비자가 코덱용으로 읽은 트리를 그대로 검증한다. `StreamParsePerfTest`(전세계 1만 대 메시지,
+  같은 기계 · 다른 부하 없음 · 세 번씩): parse() 66.8 · 67.2 · 78.4 ms(1.5.9) → 68.1 ms(3.0.8 올리기만) → **55.4 · 55.4 · 56.3 ms**(한 번 파싱). JSON 이 아닌
+  페이로드는 "payload: not JSON — …" 로 DLQ(새 시험이 고치기 전 날것의 Jackson 예외로 실패).
+- 확인: api 1,171 통과(+1 — 페이로드가 JSON 이 아님) · JaCoCo LINE 97.49 % · BRANCH 86.96 % · REST 계약 36 PASSED, 웹은 위, npm 감사 판정 High 0(기한부 예외 1), 인프라 정책 통과.
+
 ## 자동 검사 현황(2026-10-02 15:5x KST, QA 2026-10 브랜치 `qa/2026-10` — #103 뒤, 깨끗한 `git archive` 내보내기 · 격리 스택)
 | 층 | 도구 | 수 |
 |---|---|---|
