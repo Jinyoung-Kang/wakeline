@@ -36,6 +36,12 @@ final class OpsBrowser {
     /** CSRF 헤더(쿠키 값을 되돌려 보냄)를 단 변경 요청. */
     IntegrationTest.Res post(String path) { return send("POST", path, null, Map.of("X-CSRF-Token", String.valueOf(cookies.get("WAKELINE_CSRF")))); }
 
+    /** CSRF 헤더와 If-Match(낙관적 잠금 version)를 단 PUT(본문 JSON). */
+    IntegrationTest.Res put(String path, String body, int ifMatch) {
+        return send("PUT", path, body, Map.of("X-CSRF-Token", String.valueOf(cookies.get("WAKELINE_CSRF")), "If-Match", String.valueOf(ifMatch),
+                "Content-Type", "application/json"));
+    }
+
     static OpsBrowser login(IntegrationTest test, dev.wakeline.ops.OpsUserService users, String user, String password) {
         users.upsert(user, password);
         OpsBrowser b = new OpsBrowser(test);

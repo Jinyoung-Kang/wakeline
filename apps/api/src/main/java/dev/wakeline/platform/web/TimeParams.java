@@ -29,8 +29,8 @@ import java.util.function.Function;
  * toEpochMilli · KST 날짜 변환을 한다)이 양 끝에서도 넘치지 않는다. 각 경로의 창 규칙(항적 24 h · AIS 공백 31일 · 알림 이력 30일 · 통계 92일 · 재생 31일과
  * 미래 60 s · 재집계는 오늘 KST 이전)은 그대로 뒤에서 검사한다 — 재생의 보존(31일)과 통계의 날 범위(92일)는 이 범위보다 늘 좁다.
  * <p>
- * 해석은 바꾸지 않는다: 글자는 지금처럼 바인더의 변환 서비스(ISO 순간 · 날짜 형식기)가 읽고, 그 값만 범위로 거른다. 같은 이름의 파라미터가 여럿이면 전처럼
- * 첫 값을 쓴다.
+ * 해석: 시각은 바인더의 변환 서비스(ISO 순간 등 — 로캘과 상관없음)가 읽고, 날짜는 ISO(yyyy-MM-dd)만 읽는다(계약 v5 §G43 — 예전에는 로캘의 짧은 형식도).
+ * 그 값을 범위로 거른다. 같은 이름의 파라미터가 여럿이면 400 이다(SingleValueParams — 예전에는 첫 값).
  */
 public final class TimeParams {
     private TimeParams() {}
@@ -59,7 +59,9 @@ public final class TimeParams {
     public static void register(WebDataBinder binder) {
         ConversionService cs = binder.getConversionService();
         binder.registerCustomEditor(Instant.class, new Bounded<>(Instant.class, cs, Instant::parse, TimeParams::checked));
-        binder.registerCustomEditor(LocalDate.class, new Bounded<>(LocalDate.class, cs, LocalDate::parse, TimeParams::checked));
+        // 날짜는 ISO(yyyy-MM-dd)만 — 변환 서비스는 로캘의 짧은 형식도 읽었고 로캘은 요청의 Accept-Language(없으면 JVM 기본)라 같은 글자(02/10/26)가 클라이언트마다
+        // 다른 날(en-US 2월 10일 · en-GB 26년 · ko-KR 400)이 됐다(계약 v5 §G43). 시각(Instant)은 로캘과 상관없는 형식만 읽으므로 그대로.
+        binder.registerCustomEditor(LocalDate.class, new Bounded<>(LocalDate.class, null, s -> LocalDate.parse(s.strip()), TimeParams::checked));
     }
 
     /** 변환 서비스로 읽고(없으면 ISO) 범위로 거르는 편집기. */

@@ -416,7 +416,12 @@ function SettingsForm({ items, msg, setMsg, onSaved, onAuthMiss }: {
     setFieldErr((f) => { const c = { ...f }; delete c[k]; return c; });
     saving.current.add(k);
     setBusy(new Set(saving.current));
-    try { await saveSetting(k, parsed.value, settingIfMatch(ed)); setMsg({ ok: true, text: `${k} 저장됨 — 다음 주기부터 적용` }); drop(k); onSaved(); }
+    try {
+      const r = await saveSetting(k, parsed.value, settingIfMatch(ed));
+      // changed=false — 지금 값과 같아 version · 감사 행이 그대로다(계약 v5 §G45)
+      const same = typeof r === "object" && r !== null && (r as { changed?: unknown }).changed === false;
+      setMsg({ ok: true, text: same ? `${k} 지금 값과 같음 — 바뀐 것 없음` : `${k} 저장됨 — 다음 주기부터 적용` }); drop(k); onSaved();
+    }
     catch (e) {
       if (isAuthMiss(e)) onAuthMiss(e);
       const conflict = e instanceof ApiError && e.status === 409;

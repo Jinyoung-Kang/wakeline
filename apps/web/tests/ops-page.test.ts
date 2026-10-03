@@ -213,6 +213,22 @@ describe("R-94 ops: provider switch source (DB) vs mirror (Redis)", () => {
     expect(byTestId("provider-switch")!.getAttribute("title")).toContain("op");
     expect(byTestId("provider-switch")!.getAttribute("title")).toContain("v5 · 09-28 10:00:05 KST · op");
   });
+
+  it("a toggle the server reports as unchanged (already in that state — another tab got there first) says so instead of claiming a new version", async () => {
+    let sw: Record<string, unknown> = { provider: "adsbdb", disabled: false, version: 4, updated_at: "2026-09-28T00:59:00Z", updated_by: "op", redis_disabled: "0", mirror_differs: false };
+    stubRoutes({
+      "GET /api/v1/ops/providers": () => providers(sw),
+      "POST /api/v1/ops/providers/adsbdb/disable": () => {
+        // 다른 탭이 먼저 껐다(v5) — 이 요청은 바꾼 것이 없다(§G45)
+        sw = { provider: "adsbdb", disabled: true, version: 5, updated_at: "2026-09-28T01:00:05Z", updated_by: "op2", redis_disabled: "1", mirror_differs: false };
+        return { status: 200, body: { provider: "adsbdb", disabled: true, version: 5, updated_at: "2026-09-28T01:00:05Z", mirrored: true, changed: false } };
+      },
+    });
+    await mount();
+    await click(find((e) => e.tagName === "BUTTON" && visibleText(e) === "disable")!);
+    expect(byTestId("switch-ok")?.textContent).toContain("adsbdb 이미 꺼짐 — 바뀐 것 없음(v5 · 09-28 10:00:05 KST) · Redis 미러 반영");
+    expect(byTestId("switch-ok")?.textContent).not.toContain("DB 원본 반영");
+  });
 });
 
 /**
@@ -600,6 +616,17 @@ describe("ops writes in flight: one request per click burst (web-review B2)", ()
     await settle();
     expect(byTestId("settings-error")).toBeNull();
     expect(byTestId("settings-ok")?.textContent).toBe("region_poll_s 저장됨 — 다음 주기부터 적용");
+  });
+
+  it("saving the value the setting already has says nothing changed (the server keeps its version and writes no audit row)", async () => {
+    const writes: { method: string; url: string; reply: (r: Response) => void }[] = [];
+    stubHeldWrites(writes);
+    await mount();
+    await editRegionPoll("15");
+    await React.act(async () => { void propsOf(button("save")!).onClick(); });
+    writes[0].reply(json(200, { key: "region_poll_s", value: 15, version: 3, changed: false }));
+    await settle();
+    expect(byTestId("settings-ok")?.textContent).toBe("region_poll_s 지금 값과 같음 — 바뀐 것 없음");
   });
 
   it("save says it is busy (disabled · aria-busy) until its PUT answers", async () => {

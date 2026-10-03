@@ -23,7 +23,7 @@ public final class BboxParam {
         if (p.length != 4) throw Problem.badRequest("BAD_BBOX", "bbox must have 4 numbers");
         double[] v = new double[4];
         for (int i = 0; i < 4; i++) {
-            String t = p[i].trim();
+            String t = p[i].strip(); // 공백만 — trim() 은 NUL 같은 제어 문자도 지워 '124\u0000' 이 지났다(§G43)
             if (!DECIMAL.matcher(t).matches()) throw Problem.badRequest("BAD_BBOX", "bbox must be 4 decimal numbers");
             v[i] = Double.parseDouble(t);
         }

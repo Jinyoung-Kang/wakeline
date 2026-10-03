@@ -24,7 +24,7 @@ public final class Params {
      * ASCII 를 먼저 검사하고 Locale.ROOT 로 바꾼다(QA 2026-10 기능 개선 제안 5 — 바꾼 뒤 검사하면 비 ASCII 글자가 ASCII 로 바뀌어 지날 수 있다).
      */
     public static String hex(String hex) {
-        String h = hex == null ? "" : hex.trim();
+        String h = hex == null ? "" : hex.strip(); // strip: 공백만 — trim() 은 NUL 같은 제어 문자도 지웠다(§G43)
         if (!h.matches("^[0-9A-Fa-f]{6}$")) throw Problem.badRequest("BAD_HEX", "hex must be 6 hex chars");
         return h.toLowerCase(java.util.Locale.ROOT);
     }
@@ -36,7 +36,7 @@ public final class Params {
      */
     public static String choice(String name, String value, String def, String... allowed) {
         if (value == null || value.isBlank()) return def;
-        String v = value.trim();
+        String v = value.strip();
         for (String a : allowed) if (a.equalsIgnoreCase(v)) return a;
         throw Problem.badRequest("BAD_FILTER", name + " must be one of " + String.join(", ", allowed));
     }
@@ -46,7 +46,7 @@ public final class Params {
      * 예전에는 대문자로 바꾼 뒤 검사해 'rksı'(점 없는 ı — 어느 로캘에서든 대문자가 I)가 RKSI 로 찾아졌다).
      */
     public static String icao(String icao) {
-        String c = icao == null ? "" : icao.trim();
+        String c = icao == null ? "" : icao.strip();
         if (!c.matches("^[A-Za-z0-9]{4}$")) throw Problem.badRequest("BAD_ICAO", "icao must be 4 chars");
         return c.toUpperCase(java.util.Locale.ROOT);
     }

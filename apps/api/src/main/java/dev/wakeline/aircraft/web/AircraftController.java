@@ -92,7 +92,7 @@ public class AircraftController {
      */
     @GetMapping("/search")
     public ResponseEntity<Map<String, Object>> search(@RequestParam String q, HttpServletRequest req) {
-        String needle = q.trim().toUpperCase(java.util.Locale.ROOT);
+        String needle = q.strip().toUpperCase(java.util.Locale.ROOT); // 공백만 지운다(§G43)
         if (needle.length() < 2 || needle.length() > 10) throw Problem.badRequest("BAD_QUERY", "q must be 2..10 chars");
         if (!needle.matches("^[A-Z0-9-]+$")) throw Problem.badRequest("BAD_QUERY", "q may contain letters, digits and '-' only");
         Instant now = Instant.now();

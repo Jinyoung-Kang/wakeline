@@ -64,13 +64,20 @@ public class ProviderSwitchService {
     public static String key(String provider) { return "wakeline:provider:" + provider; }
 
     /**
-     * 스위치 변경 + 감사(한 트랜잭션) → 커밋 뒤 Redis 미러. 같은 값으로 다시 눌러도 version 이 오르고 감사 행이 남는다(운영자의 결정 기록).
-     * @return {provider, disabled, version, updated_at, mirrored}
+     * 스위치 변경 + 감사(한 트랜잭션) → 커밋 뒤 Redis 미러. 이미 그 값이면(행이 있고 같은 disabled) 바꾸는 것이 없다 — version 이 오르지 않고 감사 행도
+     * 없다(changed=false, 계약 v5 §G45 — QA 2026-10 기능 개선 제안 7: 예전에는 같은 값으로 다시 눌러도 version 이 오르고 감사 행이 남아 멱등 요청이 변경으로
+     * 기록됐다). 미러는 그때도 다시 한다 — 운영자가 '반영 안 됨'(mirrored=false) 뒤 같은 단추로 다시 맞출 수 있게. 행이 없으면(이관 전) 전처럼 만들고 기록한다.
+     * @return {provider, disabled, version, updated_at, changed, mirrored}
      */
     public Map<String, Object> set(String provider, boolean disabled, Integer userId, AuditHook auditHook) {
         if (!StatusService.PROVIDERS.contains(provider)) throw Problem.notFound("provider not found");
+        boolean[] changed = {true};
         Map<String, Object> row = tx.execute(status -> {
             Map<String, Object> before = find(provider, true);
+            if (before != null && Boolean.valueOf(disabled).equals(before.get("disabled"))) {
+                changed[0] = false;
+                return before; // 이미 그 값 — 바꾸지도 기록하지도 않는다
+            }
             // 행이 없으면(이관 전) 만든다 — 동시에 두 토글이 와도 한 행(PK 충돌은 갱신으로)
             db.sql("""
                     INSERT INTO provider_switch (provider, disabled, version, updated_at, updated_by) VALUES (:p, :d, 1, now(), :uid)
@@ -82,6 +89,7 @@ public class ProviderSwitchService {
             return after;
         });
         Map<String, Object> out = new LinkedHashMap<>(row);
+        out.put("changed", changed[0]);
         out.put("mirrored", tryMirror(provider));
         return out;
     }
