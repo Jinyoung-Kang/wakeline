@@ -6,6 +6,7 @@
  *   (USCG NAVCEN 문서 2026-09-28 확인: 흘수 "0 = not available = default", 크기 "As default should A = B = C = D be set to '0'").
  * - 항해 상태 이름: USCG NAVCEN Class A 위치 보고 문서(2026-09-28 확인)의 0–15 표.
  */
+import type * as GeoJSON from "geojson";
 import { fmtKstDayMinute, fmtKstMinute, fmtKstRange, fmtKstSpan } from "./time";
 import type { Tone } from "./tooltip";
 import { RX_FRESH_MS } from "./ws-protocol";

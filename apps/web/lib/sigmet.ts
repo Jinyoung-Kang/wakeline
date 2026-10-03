@@ -1,4 +1,5 @@
 /** SIGMET 클라이언트 규칙(순수 함수): 만료 필터(REL-13)·발효 전 표시(DH-8)·고도대 출처(SEC-17/COR-5). */
+import type * as GeoJSON from "geojson";
 import type { BandSource } from "./format";
 import type { Alert, SigmetCollection, SigmetProps } from "./types";
 

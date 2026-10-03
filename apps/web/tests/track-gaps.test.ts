@@ -1,6 +1,7 @@
 /**
  * R-04: 선택 항공기 항적이 수신 공백을 관측한 경로처럼 실선으로 잇지 않는다(선박 항적과 같은 규칙: 끊고 회색 점선 + 라벨).
  */
+import type * as GeoJSON from "geojson";
 import { describe, expect, it } from "vitest";
 import { validateStyleMin } from "@maplibre/maplibre-gl-style-spec";
 import { STALE_AFTER_OPENSKY_S, STALE_AFTER_S } from "@/lib/interpolate";

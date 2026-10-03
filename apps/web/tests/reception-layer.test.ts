@@ -4,6 +4,7 @@
  * 켜져 있는 동안만 조회 → 소스 하나에 칸을 싣고 레이어를 연안 교통량 아래에 보인다(지도가 아직 load 전이면 load 뒤) → 이 화면의 칸 수를 스토어에(칩 · 0척 알림) →
  * 툴팁을 등록 → 끄면(언마운트) 조회를 멈추고 숨기고 비우고 칸 수 · 툴팁을 지운다. 지도가 먼저 지워졌으면 그 지도를 건드리지 않는다.
  */
+import type * as GeoJSON from "geojson";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { installMiniDom } from "./helpers/mini-dom";
 import { FakeMap } from "./helpers/fake-maplibre";

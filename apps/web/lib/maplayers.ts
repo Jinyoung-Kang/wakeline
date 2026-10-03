@@ -1,4 +1,5 @@
 /** 지도 레이어 정의(11.2절) — 상황판·재생 화면이 공유. */
+import type * as GeoJSON from "geojson";
 import type * as maplibregl from "maplibre-gl";
 import { ALT_RAMP, ALT_UNKNOWN_COLOR, CAT_COLORS, CAT_STALE_FILL, CAT_STALE_STROKE, CAT_UNKNOWN_COLOR, GND_COLOR, HAZARD_COLORS, HAZARD_DEFAULT_COLOR, isMetarStale } from "./format";
 import { deadReckon, seenAtMs, thresholds } from "./interpolate";

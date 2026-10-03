@@ -4,6 +4,7 @@
  * 같은 ETag(304)면 소스를 다시 쓰지 않는다 → 끄면 조회를 멈추고 칸을 비운다. 받아 둔 ok 값이 이 브라우저 시계로 stale_after_s 를 넘기면
  * (조회가 실패해 새 답이 없어도) 칸을 그리지 않는다(검토 지적).
  */
+import type * as GeoJSON from "geojson";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { installMiniDom } from "./helpers/mini-dom";
 import { FakeMap } from "./helpers/fake-maplibre";
