@@ -193,6 +193,19 @@ async def test_a_failure_while_sending_the_held_samples_keeps_the_rest_in_order(
     assert not book.holding
 
 
+async def test_the_start_of_holding_is_logged_once_per_outage_even_when_another_warning_took_the_throttle(caplog):
+    r, book, sink, clock = _setup()
+    _receive(book, clock, ("440000001", T0 + 5))
+    r.down = True
+    assert await sink.write_status() is False  # 상태 쓰기 실패 경고가 60 s 경고 몫을 먼저 가져간다
+    with caplog.at_level("WARNING", logger="ais.sink"):
+        assert await sink.flush() == 0
+        _receive(book, clock, ("440000001", T0 + 65))
+        await sink.flush()
+    started = [m for m in caplog.messages if "holding the first position of each minute" in m]
+    assert len(started) == 1, caplog.messages
+
+
 async def test_normal_operation_holds_nothing():
     r, book, sink, clock = _setup()
     for k in range(5):

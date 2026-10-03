@@ -200,15 +200,18 @@ class AisSink:
                 await self._xadd(env)
             except (RedisError, OSError) as e:
                 kept = self._keep_unsent(states, statics, i)
+                started = not self.book.holding
                 self.book.hold(s["mmsi"] for s in states[i * CHUNK :])
                 self.publish_errors += 1
-                self._warn(
-                    "ships xadd failed (%s) — %d ships kept for the next flush, holding per-minute positions (%d held, cap %d)",
-                    type(e).__name__,
-                    kept,
-                    self.book.backlog,
-                    self.book.backfill_max,
-                )
+                if started:  # 장애마다 한 번은 반드시 남긴다 — 60 s 에 한 번인 경고(_warn)는 상태 쓰기 실패 경고가 먼저 가져갈 수 있다(격리 스택에서 본 것)
+                    log.warning(
+                        "ships xadd failed (%s) — holding the first position of each minute per ship until redis answers (%d held, cap %d)",
+                        type(e).__name__,
+                        self.book.backlog,
+                        self.book.backfill_max,
+                    )
+                else:
+                    self._warn("ships xadd failed (%s) — %d ships kept for the next flush", type(e).__name__, kept)
                 return sent
             except asyncio.CancelledError:
                 self._keep_unsent(states, statics, i)  # 종료 때 취소돼도 final() 의 flush 가 싣는다
