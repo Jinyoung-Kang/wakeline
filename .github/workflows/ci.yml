@@ -100,8 +100,9 @@ jobs:
       # (1350 · 범례가 처음부터 펼쳐지는 1700)에서 첫 화면에 받는 스크립트가 빌드 결과 목록과 같은지 본다(다르면 실패). 바이트는 러너의 Node 가 압축해 참고용이다
       - name: first-screen files in a browser = the build list (npm run measure:first-js -- --serve 8790 — ADR-026)
         run: npx playwright install --with-deps chromium && npm run measure:first-js -- --serve 8790
+      # --audit-level=high 와 같은 규칙(High 이상 0) + 기한부 예외(npm-audit-allow.json — 고친 판이 없는 개발 의존성 공지만, 31일 안. 실행 의존성은 예외 없음 — VERIFICATION #114)
       - name: dependency audit (npm audit, High 이상 0 건 — NFR-10)
-        run: npm audit --audit-level=high
+        run: python3 ../../tools/npm_audit_gate.py
 
   infra:
     runs-on: ubuntu-latest

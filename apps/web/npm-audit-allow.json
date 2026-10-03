@@ -1,0 +1,12 @@
+{
+  "note": "npm 감사(NFR-10)의 기한부 예외 — 고친 판이 없는 개발 의존성 공지만, 31일 안. 규칙은 tools/npm_audit_gate.py · 결정은 VERIFICATION #114(사용자 결정 2026-10-03).",
+  "advisories": [
+    {
+      "id": "GHSA-vfj7-8cjw-p6xm",
+      "package": "braces",
+      "added": "2026-10-03",
+      "expires": "2026-11-02",
+      "reason": "braces <=3.0.3(공개된 모든 판)의 깊게 중첩된 패턴 스택 소진 — 고친 판 없음. eslint-config-next → @next/eslint-plugin-next → fast-glob → micromatch 로만 들어오는 개발 도구(ESLint)이고 웹 이미지에는 없다. 패턴은 저장소의 설정에서만 온다. npm 의 해결책은 eslint-config-next 14 로 낮추기라 쓰지 않는다"
+    }
+  ]
+}
