@@ -1365,6 +1365,20 @@
   돌고 있는 api · web 이미지는 `:deployed-15e27821`(새 `:local` 과 층 · 설정이 같다 — 빌드 메타데이터만 다름).
 - **규칙**: 셸 반복문에서 태그를 붙일 때는 `${s}:rollback` 처럼 중괄호로 감싼다(CLAUDE.md '함정'에 적음). 붙인 뒤 `docker images | grep rollback` 으로 이름을 확인한다.
 
+## #114 고친 판이 없는 개발 도구 공지로 CI 의 npm 감사가 실패한 것 — 기한부 예외(사용자 결정 2026-10-03, 브랜치 `fix/npm-audit-exception-2026-10`)
+- **증상**: main `15e27821` 의 CI(`37094019927`)에서 web 작업의 `npm audit --audit-level=high` 만 실패(High 5건). 바로 앞 실행(`b236f862`)은 통과 — 코드가 아니라 새 공지
+  GHSA-vfj7-8cjw-p6xm(`braces` <=3.0.3 — 공개된 모든 판, 깊게 중첩된 패턴의 스택 소진, CVSS 7.5) 때문이다. 5건은 한 공지가 `eslint-config-next 16.3.8 →
+  @next/eslint-plugin-next → fast-glob 3.3.1 → micromatch 4.0.8 → braces 3.0.3` 의 노드마다 세어진 것이다. 고친 판이 없고 npm 의 해결책은 eslint-config-next 를
+  14.2.35 로 낮추기(메이저 되돌림)라 쓸 수 없다. 실행 의존성만 보면(`npm audit --omit=dev`) 0 건, 웹 이미지 trivy PASS — ESLint 에만 쓰이고 패턴은 저장소 설정에서만 온다.
+- **결정(사용자 2026-10-03 — 권장안)**: 이 공지만 기한부 예외. 다른 길: `--omit=dev`(앞으로 개발 도구의 High 를 모두 안 보게 됨) · 고친 판까지 기다림(main CI 실패 알림이 계속 옴).
+- **고침**: `tools/npm_audit_gate.py` 가 `npm audit --audit-level=high` 를 대신한다(CI web 작업 · `tools/dependency_audit.sh` 같은 명령 — `test_ci_policy` 가 대조).
+  `npm audit --json`(전체)과 `--omit=dev`(실행 의존성)를 돌려 — 실행 의존성의 High 이상은 예외 없이 실패, 전체의 High 이상은 `apps/web/npm-audit-allow.json` 에
+  GHSA 번호 · 패키지가 맞고 기한(더한 날부터 31일 안 — 이번 것은 2026-11-02) 안인 것만 통과. 기한이 지나면 실패, 예외 공지가 감사에서 사라지면 목록에서 빼라는 NOTE,
+  감사를 돌리지 못하면(npm 없음 · 네트워크 · JSON 아님 · npm 의 error · 취약점 없이 exit 1) 실패.
+- **시험이 지키는지(변이)**: `infra/tests/test_npm_audit_gate.py` 11건(실제 모양의 감사 JSON) — 실행 의존성 검사 · 기한 검사 · '취약점 없이 exit 1' 검사 · 패키지 대조를 하나씩
+  끄면 각각 실패. `test_ci_policy` 의 가짜 npm 은 감사 JSON 을 내게 고쳤다(전체 · `--omit=dev` 두 번 부름을 확인).
+- 확인: 로컬 `bash tools/dependency_audit.sh` — npm PASS(NOTE 예외 1건) · pip-audit PASS, 기한 다음 날(`--today 2026-11-03`)은 실패, 인프라 정책 174 통과.
+
 ## 자동 검사 현황(2026-10-02 15:5x KST, QA 2026-10 브랜치 `qa/2026-10` — #103 뒤, 깨끗한 `git archive` 내보내기 · 격리 스택)
 | 층 | 도구 | 수 |
 |---|---|---|
