@@ -1322,6 +1322,38 @@
   (+30 s 표본), 풀자 2.7 s 뒤 "answers again — writing 7 queued writes now", `db_ok` 1 · 대기 0. 예전: 얼린 내내 멈춤 · `db_ok` 1.
 - 확인: 수집기 1,931 통과(+2) · 24 건너뜀(실제 PostgreSQL 시험 +1 — `collector_pg_test.sh` · CI infra 작업에서 8 통과) · `db.py` 97 % · ruff · format · mypy 통과.
 
+## #112 남은 일관성 셋 — 너그러운 파라미터 읽기 · 405 의 Allow · 같은 값으로 다시 누른 공급자 끄기(QA 2026-10 기능 개선 제안 4 · 10 · 7, 브랜치 `fix/strict-inputs-2026-10`)
+- **증상(고치기 전 — QA 2026-10 제안 · 재현 시험 · 운영 스택에서 날짜 확인)**:
+  - 하나만 받는 파라미터를 두 번 보내도 200 — 형이 있으면 첫 값(`limit=5&limit=6` → 5), 글자면 쉼표로 이어 붙였다(`/sigmets?hazard=TS&hazard=ICE` → "TS,ICE" 라
+    일치 0건 · 200).
+  - 정수가 너그러웠다: `limit=0x10` · `limit=%235`(#5) · `limit=%2B5`(+5) · 전각 `limit=５` 가 200(Spring 의 `Integer.decode` · `Character.digit`).
+  - 날짜가 요청 로캘을 따랐다: `day=02/10/26` 이 `Accept-Language: en-US` 면 2026-02-10 의 통계(200), en-GB 면 서기 26년(400), ko-KR 이면 400 — 같은 글자가
+    클라이언트마다 다른 날. 시험 JVM 의 로캘이 ko-KR 이라 처음 쓴 재현은 통과했다 — 헤더를 넣어 재현했다.
+  - 앞뒤를 `trim()` 으로 지워 NUL 같은 제어 문자가 사라졌다: `hex=71be01%00` · `bbox=120%00,…` · `/ships/search?q=%00AB` 가 정상으로 지났다.
+  - 405 의 `Allow` 가 `GET` 뿐 — 같은 자원의 `OPTIONS` 는 `GET,HEAD,OPTIONS`(HEAD · OPTIONS 는 200).
+  - 이미 꺼진 공급자를 다시 끄면 version 이 오르고 `PROVIDER_DISABLE` 감사 행이 하나 더 남았다(설정을 같은 값으로 저장해도 `SETTING_UPDATE` · version +1).
+    `aircraft_providers` 는 `opensky,opensky` 를 받았다.
+- **재현(고치기 전 — api `StrictInputsIT` 6건 모두 실패)**: `aSingleValueParameterSentTwiceIs400` · `integersAreAsciiDigitsOnly` · `controlCharactersAreNotTrimmedAway`
+  `[status of /api/v1/alerts/history] expected: 400 but was: 200`, `datesAreIsoOnly` `[status of /api/v1/stats/traffic] expected: 400 but was: 200`(en-US),
+  `a405SaysEveryMethodTheResourceAllows` `[405 Allow = OPTIONS Allow (GET,HEAD,OPTIONS)] Expecting actual: ["GET"] … could not find ["HEAD", "OPTIONS"]`,
+  `pressingTheSameProviderSwitchOrSavingTheSameSettingAgainChangesNothing` `Expecting value to be true but was false`(`changed` 없음).
+- **고침(계약 v5 §G43 · §G44 · §G45)**:
+  - `platform.web.SingleValueParams`(HandlerInterceptor, `/api/**`): 핸들러의 `@RequestParam` 중 목록 · 배열 · Map 이 아닌 것이 두 번 이상 오면 400 `BAD_REQUEST`
+    (`parameter <이름> must be given once`). 운영 로그의 `level` · `service`(목록)는 그대로.
+  - `platform.web.NumberParams`: `int` · `long` 은 `^-?[0-9]{1,19}$` 만(공백만 지움) — `@InitBinder` 로 모든 컨트롤러에. 범위 규칙(§G41)은 그대로.
+  - `TimeParams` 의 LocalDate 는 변환 서비스(로캘 형식) 대신 `LocalDate.parse`(ISO). Instant 는 로캘과 상관없어 그대로.
+  - 요청 파라미터의 `trim()` → `strip()`(공백 글자만 — `Params` · `BboxParam` · `ShipQuery` · 항공기 검색 · 운영 로그 · 해결 처리).
+  - `ProblemAdvice`: 405 면 `Allow` = 매핑의 메서드 + (GET 이면) HEAD + OPTIONS.
+  - `ProviderSwitchService.set` · `SettingsService.update`: 트랜잭션 안에서 이미 같은 값이면 UPDATE · 감사 없이 지금 행을 돌려준다(`changed=false`, 미러는 다시 한다).
+    설정은 version 이 틀리면 값과 상관없이 전처럼 409. `aircraft_providers` 의 중복은 400 `BAD_VALUE`.
+  - 웹(/ops): `changed=false` 면 "이미 꺼짐 — 바뀐 것 없음" · "지금 값과 같음 — 바뀐 것 없음"(예전 문구 'DB 원본 반영 · 저장됨'은 바뀐 것처럼 읽혔다).
+    웹은 파라미터를 한 번씩(`URLSearchParams.set` · 목록은 쉼표) · ISO 날짜 · ASCII 정수로만 보낸다 — 화면의 요청은 그대로.
+- **함께 고친 시험**: `SecurityIT` 의 CSRF · Origin 시험 둘이 '이미 켜진 공급자를 다시 켬'의 감사 행을 셌다(고친 뒤 `expected 3 but was 2` · `expected 5 but was 2`) —
+  허용된 요청이 상태를 바꾸게 끄기 · 켜기를 번갈아 세도록 고쳤다(시험이 보려던 것 — 헤더 없는 요청은 거절, 다른 Origin 은 거절 — 은 그대로).
+- **시험이 지키는지(변이)**: 웹의 새 문구 시험은 `changed === false` 분기를 끄면 실패.
+- 확인: api 1,170 통과(+6 재현 · 시험 2건 고침) · JaCoCo LINE 97.49 % · BRANCH 86.93 % · REST 계약 36종 PASSED · `ArchitectureTest` 통과,
+  web 1,716 통과(+3) · 3 건너뜀 · eslint 오류 0 · tsc 통과, 인프라 정책 163.
+
 ## 자동 검사 현황(2026-10-02 15:5x KST, QA 2026-10 브랜치 `qa/2026-10` — #103 뒤, 깨끗한 `git archive` 내보내기 · 격리 스택)
 | 층 | 도구 | 수 |
 |---|---|---|

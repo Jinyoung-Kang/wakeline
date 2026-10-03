@@ -1191,3 +1191,30 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
     없으면 0건(대소문자 무관).
   - 웹은 `group=fir|hazard` 만 보낸다 — 화면 변화 없음.
   - 회귀 막기: api `FilterRulesIT.anUnknownValueForAChoiceFilterIs400` · `ParamsTest.aChoiceFilterAcceptsItsValuesInAnyCaseAndRejectsOthers`.
+
+## G. 26차 개정(2026-10-03 · 남은 일관성 — QA 2026-10 기능 개선 제안 4 · 7 · 10, 사용자 지시 "모두 진행")
+- G43(계약 §2 의 공통 입력 · §G32 · §G42 · QA 2026-10 기능 개선 제안 4) **요청 파라미터를 너그럽게 읽지 않는다**
+  - **하나만 받는 파라미터가 두 번 이상** 오면 400 `BAD_REQUEST`(detail `parameter <이름> must be given once`). 예전: 형이 있으면 첫 값(`from=a&from=b` → a),
+    글자면 쉼표로 이어 붙였다(`hazard=TS&hazard=ICE` → "TS,ICE" — 일치 0건). 여러 값을 받는 파라미터(운영 로그의 `level` · `service` — 목록)는 그대로.
+  - **정수**(`limit` · `days` 등)는 ASCII 10진 숫자만(앞에 `-` 하나, 앞뒤 공백은 지운다). 예전: `0x10` · `#10`(16진) · `+5` · 전각 숫자(`５`)도 읽었다. 밖이면 400
+    `BAD_REQUEST`(`invalid parameter: <이름>`). 범위 규칙(§G41 끝값으로 · 경로마다의 400)은 그대로.
+  - **날짜**(`day` · 통계의 `from` · `to`)는 ISO `yyyy-MM-dd` 만. 예전: 요청의 `Accept-Language`(없으면 서버 JVM 의 로캘)에 맞는 짧은 형식도 읽어 같은 글자가 클라이언트마다
+    다른 날이 됐다(`02/10/26` → en-US 2026-02-10 · en-GB 서기 26년(400) · ko-KR 400). 시각(`from` · `to` · `at` 등 Instant)은 로캘과 상관없는 형식만 읽으므로 그대로.
+  - **앞뒤 공백**은 공백 글자만 지운다 — NUL 같은 제어 문자는 남아 각 경로의 형식 검사에 걸린다(`hex=71be01%00` → 400 `BAD_HEX`, `bbox` 의 `%00` → 400 `BAD_BBOX`,
+    `/ships/search?q=%00AB` → 400 `BAD_QUERY`). 예전: `trim()` 이 지워 정상으로 지났다.
+  - 웹은 파라미터를 한 번씩 · ISO 날짜 · ASCII 정수로만 보낸다 — 화면 변화 없음.
+  - 회귀 막기: api `StrictInputsIT`(중복 · 정수 · 날짜(en-US · en-GB) · 제어 문자).
+- G44(계약 §2 의 오류 형식 · QA 2026-10 기능 개선 제안 10) **405 의 `Allow` 는 그 자원이 받는 메서드 전부**
+  - 받지 않는 메서드로 부르면 405 의 `Allow` 가 `OPTIONS` 응답의 `Allow` 와 같다 — GET 자원이면 `GET, HEAD, OPTIONS`(HEAD · OPTIONS 는 이미 200 이었다). 예전: `GET` 만.
+    본문 · 상태는 그대로(problem+json 405).
+  - 회귀 막기: api `StrictInputsIT.a405SaysEveryMethodTheResourceAllows`.
+- G45(§G14 의 운영 공급자 켜고 끄기 · 설정 · QA 2026-10 기능 개선 제안 7) **같은 값으로 다시 누른 공급자 켜고 끄기 · 설정 저장은 바꾸는 것이 없다**
+  - `POST /api/v1/ops/providers/{name}/{enable|disable}` 가 이미 그 상태면 `version` 이 오르지 않고 감사 행(`PROVIDER_ENABLE` · `PROVIDER_DISABLE`)도 남지 않는다.
+    `PUT /api/v1/ops/settings/{key}` 가 지금 값과 같으면(그리고 `If-Match` 의 version 이 맞으면) 마찬가지(`SETTING_UPDATE` 없음 — version 이 틀리면 값과 상관없이 전처럼 409).
+    두 응답에 `changed`(boolean)를 더한다 — 바뀌었으면 true. Redis 미러는 그때도 다시 한다(`mirrored` — 반영되지 않았던 미러를 같은 단추로 다시 맞출 수 있게).
+    예전: 같은 값이어도 version 이 오르고 감사 행이 남았다(멱등 요청이 변경으로 기록). 공급자 행이 없으면(이관 전) 전처럼 만들고 기록한다.
+  - `aircraft_providers` 는 같은 공급자를 두 번 받지 않는다(`opensky,opensky` → 400 `BAD_VALUE` `each provider at most once`).
+  - 웹(/ops)은 `changed=false` 면 'DB 원본 반영 · 저장됨' 대신 "<공급자> 이미 꺼짐 — 바뀐 것 없음(vN · …)" · "<키> 지금 값과 같음 — 바뀐 것 없음"을 보인다
+    (다른 탭에서 먼저 바꿈 · 같은 값을 다시 입력함). 필드가 없으면 바뀐 것으로 본다.
+  - 회귀 막기: api `StrictInputsIT.pressingTheSameProviderSwitchOrSavingTheSameSettingAgainChangesNothing` · `SecurityIT`(허용된 요청은 끄기 · 켜기를 번갈아 센다) ·
+    web `ops-page.test.ts`(바뀐 것 없음 문구 둘).
