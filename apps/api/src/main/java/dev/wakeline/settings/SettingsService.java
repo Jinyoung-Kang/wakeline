@@ -79,16 +79,22 @@ public class SettingsService {
     }
 
     /**
-     * 설정 변경 + 감사 기록(한 트랜잭션) → 커밋 후 Redis 미러.
-     * @return 갱신된 설정 + mirrored(Redis 반영 여부)
+     * 설정 변경 + 감사 기록(한 트랜잭션) → 커밋 후 Redis 미러. version 이 맞고 값이 지금과 같으면 바꾸는 것이 없다 — version 이 오르지 않고 감사 행도
+     * 없다(changed=false, 계약 v5 §G45 — 공급자 켜고 끄기와 같은 규칙). 미러는 그때도 다시 한다. version 이 틀리면 값과 상관없이 409(전과 같다).
+     * @return 갱신된 설정 + changed + mirrored(Redis 반영 여부)
      */
     public Map<String, Object> update(String key, JsonNode value, int expectedVersion, String by, AuditHook audit) {
         if (!KEYS.contains(key)) throw Problem.notFound("setting not found");
         validate(key, value);
+        boolean[] changed = {true};
         Map<String, Object> after = tx.execute(status -> {
             Map<String, Object> before = db.sql("SELECT key, value::text value, version, updated_by, updated_at FROM app_setting WHERE key = :k FOR UPDATE")
                     .param("k", key).query().listOfRows().stream().findFirst().map(this::row)
                     .orElseThrow(() -> Problem.notFound("setting not found"));
+            if (before.get("version") instanceof Number v && v.intValue() == expectedVersion && value.equals(before.get("value"))) {
+                changed[0] = false;
+                return before; // 같은 값 — 바꾸지도 기록하지도 않는다
+            }
             int n = db.sql("UPDATE app_setting SET value = :v::jsonb, version = version + 1, updated_by = :by, updated_at = now() WHERE key = :k AND version = :ver")
                     .param("v", json.writeValueAsString(value)).param("by", by).param("k", key).param("ver", expectedVersion).update();
             if (n == 0) throw Problem.conflict("VERSION_MISMATCH", "setting changed by someone else; reload and retry");
@@ -97,8 +103,9 @@ public class SettingsService {
             return a;
         });
         Map<String, Object> out = new LinkedHashMap<>(after);
+        out.put("changed", changed[0]);
         out.put("mirrored", tryMirror());
-        if (key.startsWith("region_")) region.refreshNow();
+        if (changed[0] && key.startsWith("region_")) region.refreshNow();
         return out;
     }
 
@@ -173,6 +180,9 @@ public class SettingsService {
             case "aircraft_providers" -> {
                 if (!v.isString() || !v.asString().matches("^(adsb_lol|adsb_fi|opensky)(,(adsb_lol|adsb_fi|opensky))*$"))
                     throw Problem.badRequest("BAD_VALUE", "comma-separated list of adsb_lol|adsb_fi|opensky");
+                String[] names = v.asString().split(",");
+                if (java.util.Arrays.stream(names).distinct().count() != names.length) // 같은 공급자 두 번(opensky,opensky) — §G45
+                    throw Problem.badRequest("BAD_VALUE", "each provider at most once");
             }
             case "region_center" -> {
                 if (!v.isString() || !LAT_LON.matcher(v.asString()).matches()) throw Problem.badRequest("BAD_VALUE", "\"lat,lon\" required");

@@ -186,6 +186,11 @@ describe("contract v5 amendment numbers are unique", () => {
     expect(amendment(40)).toContain("ICAO · hex 는 ASCII 로만");
     expect(amendment(41)).toContain("목록 크기(`limit` · `days`)는 범위 밖이면 끝값으로 잘라 쓴다");
     expect(amendment(42)).toContain("정해진 값 중 하나를 고르는 필터는 모르는 값이면 400 `BAD_FILTER`");
-    expect(amendment(43)).toBe("");
+    // 남은 일관성(2026-10-03 · QA 2026-10 기능 개선 제안 4 · 7 · 10): 26차 · §G43–§G45
+    expect(heading(43)).toMatch(/^## G\. 26차 개정\(2026-10-03 · 남은 일관성 /);
+    expect(amendment(43)).toContain("요청 파라미터를 너그럽게 읽지 않는다");
+    expect(amendment(44)).toContain("405 의 `Allow` 는 그 자원이 받는 메서드 전부");
+    expect(amendment(45)).toContain("같은 값으로 다시 누른 공급자 켜고 끄기 · 설정 저장은 바꾸는 것이 없다");
+    expect(amendment(46)).toBe("");
   });
 });

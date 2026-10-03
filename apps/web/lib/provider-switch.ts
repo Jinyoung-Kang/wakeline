@@ -22,8 +22,11 @@ export interface SwitchState {
   mirror_differs?: boolean | null;
 }
 
-/** POST /api/v1/ops/providers/{name}/{enable|disable} 응답 */
-export interface ToggleResult { provider: string; disabled: boolean; version: number; updated_at: string; mirrored: boolean }
+/**
+ * POST /api/v1/ops/providers/{name}/{enable|disable} 응답. changed=false 는 이미 그 상태였다는 뜻 — version 이 오르지 않고 감사 행도 없다(계약 v5 §G45,
+ * 예: 다른 탭에서 먼저 바꿈). 미러는 그때도 다시 한다. 필드가 없으면(§G45 전 서버) 바뀐 것으로 본다.
+ */
+export interface ToggleResult { provider: string; disabled: boolean; version: number; updated_at: string; mirrored: boolean; changed?: boolean }
 
 /** api 의 주기 미러(StartupMirror fixedDelay) — 초 */
 export const MIRROR_PERIOD_S = 60;
@@ -34,7 +37,9 @@ const onOff = (disabled: boolean) => (disabled ? "꺼짐" : "켜짐");
 export interface SwitchNote { ok: boolean; text: string; provider: string; version: number }
 
 export function toggleNote(r: ToggleResult): SwitchNote {
-  const head = `${r.provider} ${r.disabled ? "끔" : "켬"} — DB 원본 반영(v${r.version} · ${fmtKst(r.updated_at)})`;
+  const head = r.changed === false
+    ? `${r.provider} 이미 ${onOff(r.disabled)} — 바뀐 것 없음(v${r.version} · ${fmtKst(r.updated_at)})`
+    : `${r.provider} ${r.disabled ? "끔" : "켬"} — DB 원본 반영(v${r.version} · ${fmtKst(r.updated_at)})`;
   if (r.mirrored) return { ok: true, text: `${head} · Redis 미러 반영 — 수집기는 다음 호출부터 따른다`, provider: r.provider, version: r.version };
   return {
     ok: false,

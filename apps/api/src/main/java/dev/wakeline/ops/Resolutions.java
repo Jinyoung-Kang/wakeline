@@ -48,7 +48,7 @@ public final class Resolutions {
      * (/ops/logs · /ops/logs/groups · /ops/runs 가 같은 규칙).
      */
     public static boolean hide(String resolved) {
-        String v = resolved == null ? "" : resolved.trim().toLowerCase(Locale.ROOT);
+        String v = resolved == null ? "" : resolved.strip().toLowerCase(Locale.ROOT);
         return switch (v) {
             case "", "hide" -> true;
             case "show" -> false;

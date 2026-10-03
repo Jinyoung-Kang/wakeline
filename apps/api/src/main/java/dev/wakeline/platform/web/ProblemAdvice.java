@@ -70,7 +70,10 @@ public class ProblemAdvice {
 
     /** 시각 · 날짜 요청 파라미터의 범위(QA-207 · QA-201 · QA-202 · QA-208) — 모든 컨트롤러의 @RequestParam · @PathVariable 바인더에. */
     @InitBinder
-    void timeParams(WebDataBinder binder) { TimeParams.register(binder); }
+    void timeParams(WebDataBinder binder) {
+        TimeParams.register(binder);
+        NumberParams.register(binder); // 정수는 ASCII 10진만(계약 v5 §G43)
+    }
 
     @ExceptionHandler(Problem.class)
     ResponseEntity<ProblemDetail> problem(Problem e, HttpServletRequest req) {
@@ -272,6 +275,14 @@ public class ProblemAdvice {
         else log.info("client error {} {} {} request_id={}: {}", st.value(), req.getMethod(), req.getRequestURI(), RequestIdFilter.current(req), e.getClass().getSimpleName());
         HttpHeaders headers = new HttpHeaders();
         headers.putAll(er.getHeaders());
+        // 405 의 Allow 는 OPTIONS 가 알리는 것과 같게(계약 v5 §G44 — QA 2026-10 기능 개선 제안 10): Spring 은 매핑의 메서드만(GET) 적지만 GET 이면 HEAD 도,
+        // OPTIONS 는 늘 답한다(둘 다 200). RFC 9110 §15.5.6 — Allow 는 그 자원이 받는 메서드 전부.
+        if (e instanceof org.springframework.web.HttpRequestMethodNotSupportedException m && m.getSupportedHttpMethods() != null) {
+            java.util.Set<org.springframework.http.HttpMethod> allow = new java.util.LinkedHashSet<>(m.getSupportedHttpMethods());
+            if (allow.contains(org.springframework.http.HttpMethod.GET)) allow.add(org.springframework.http.HttpMethod.HEAD);
+            allow.add(org.springframework.http.HttpMethod.OPTIONS);
+            headers.setAllow(allow);
+        }
         // 406: 클라이언트가 받을 수 있는 형식이 없다 — problem+json 본문을 붙이면 다시 406 이 된다. 상태만.
         if (e instanceof HttpMediaTypeNotAcceptableException) return ResponseEntity.status(st).headers(headers).build();
         String title = st.getReasonPhrase().toLowerCase(Locale.ROOT);

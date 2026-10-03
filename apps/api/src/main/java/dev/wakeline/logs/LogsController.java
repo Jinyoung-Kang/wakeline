@@ -82,7 +82,7 @@ public class LogsController {
     @GetMapping("/{id:\\d{1,20}-\\d{1,20}}")
     public JsonNode one(@PathVariable String id, @RequestParam(required = false) String stream) {
         LogStream only = null;
-        if (stream != null && !stream.isBlank() && (only = LogStream.ofLabel(stream.trim())) == null)
+        if (stream != null && !stream.isBlank() && (only = LogStream.ofLabel(stream.strip())) == null)
             throw Problem.badRequest("BAD_STREAM", "stream must be server or client");
         JsonNode n = LogReader.parseId(id) == null ? null // 64비트를 넘는 id 는 스트림에 있을 수 없다
                 : reader.get(id, only, resolver());
@@ -95,11 +95,11 @@ public class LogsController {
         if (!SERVICES.containsAll(services)) throw Problem.badRequest("BAD_SERVICE", "service must be one or more of api, collector, ais, web-client");
         Set<String> levels = values(level, true);
         if (!LEVELS.containsAll(levels)) throw Problem.badRequest("BAD_LEVEL", "level must be ERROR and/or WARN");
-        String text = q == null || q.isBlank() ? null : q.trim();
+        String text = q == null || q.isBlank() ? null : q.strip();
         if (text != null && text.length() > Q_MAX) throw Problem.badRequest("BAD_QUERY", "q must be at most " + Q_MAX + " characters");
-        String f = fp == null || fp.isBlank() ? null : fp.trim();
+        String f = fp == null || fp.isBlank() ? null : fp.strip();
         if (f != null && !FP.matcher(f).matches()) throw Problem.badRequest("BAD_FP", "fp must be 16 lowercase hex digits");
-        String r = rid == null || rid.isBlank() ? null : rid.trim();
+        String r = rid == null || rid.isBlank() ? null : rid.strip();
         if (r != null && !LogEvents.REQUEST_ID.matcher(r).matches()) throw Problem.badRequest("BAD_RID", "rid must be 8-64 characters of [0-9A-Za-z-]");
         if (since != null && until != null && since.isAfter(until)) throw Problem.badRequest("BAD_RANGE", "since must not be after until");
         return new LogReader.Filter(services, levels, text, f, r, since, until);
@@ -127,7 +127,7 @@ public class LogsController {
         for (String s : raw) {
             if (s == null) continue;
             for (String v : s.split(",")) {
-                String t = v.trim();
+                String t = v.strip();
                 if (!t.isEmpty()) out.add(upper ? t.toUpperCase(Locale.ROOT) : t);
             }
         }

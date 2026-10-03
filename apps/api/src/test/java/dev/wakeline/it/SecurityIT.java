@@ -292,15 +292,20 @@ class SecurityIT extends IntegrationTest {
         users.upsert("it-csrf-param", PW);
         Browser b = new Browser();
         assertThat(b.login("it-csrf-param", PW).status()).isEqualTo(200);
-        String path = "/api/v1/ops/providers/rainviewer/enable";
+        // 끄기로 본다 — 켜진 공급자를 다시 켜면 바꾸는 것이 없어(계약 v5 §G45) 감사 행으로 '처리됨'을 셀 수 없다
+        String path = "/api/v1/ops/providers/rainviewer/disable";
         String masked = maskedToken(b.csrf());
-        long before = audit("PROVIDER_ENABLE", "rainviewer");
+        long before = audit("PROVIDER_DISABLE", "rainviewer");
         assertProblem(b.send("POST", path + "?_csrf=" + masked, null, Map.of()), 403, "CSRF_INVALID", path);
         assertProblem(b.send("POST", path, "_csrf=" + masked, headers("Content-Type", "application/x-www-form-urlencoded")), 403, "CSRF_INVALID", path);
-        assertThat(audit("PROVIDER_ENABLE", "rainviewer")).as("nothing was changed").isEqualTo(before);
+        assertThat(audit("PROVIDER_DISABLE", "rainviewer")).as("nothing was changed").isEqualTo(before);
         // 헤더(쿠키 값 그대로 — 웹 lib/api.ts 가 보내는 모양)는 된다
-        assertThat(b.send("POST", path, null, b.withCsrf()).status()).isEqualTo(200);
-        assertThat(audit("PROVIDER_ENABLE", "rainviewer")).isEqualTo(before + 1);
+        try {
+            assertThat(b.send("POST", path, null, b.withCsrf()).status()).isEqualTo(200);
+            assertThat(audit("PROVIDER_DISABLE", "rainviewer")).isEqualTo(before + 1);
+        } finally {
+            b.send("POST", "/api/v1/ops/providers/rainviewer/enable", null, b.withCsrf());
+        }
     }
 
     /**
@@ -312,8 +317,11 @@ class SecurityIT extends IntegrationTest {
         users.upsert("it-origin", PW);
         Browser b = new Browser();
         assertThat(b.login("it-origin", PW).status()).isEqualTo(200);
-        String path = "/api/v1/ops/providers/rainviewer/enable";
-        long before = audit("PROVIDER_ENABLE", "rainviewer");
+        // 끄기 · 켜기를 번갈아 — 같은 값으로 다시 누르면 바꾸는 것이 없어(계약 v5 §G45) 감사 행으로 '처리됨'을 셀 수 없다
+        String path = "/api/v1/ops/providers/rainviewer/disable";
+        String on = "/api/v1/ops/providers/rainviewer/enable";
+        long before = audit("PROVIDER_DISABLE", "rainviewer");
+        long beforeOn = audit("PROVIDER_ENABLE", "rainviewer");
         // 다른 포트 · 다른 호스트 · 불투명 출처(null), 같은 사이트의 다른 출처(Sec-Fetch-Site: same-site = 다른 포트), 교차 사이트
         assertProblem(b.send("POST", path, null, b.withCsrf("Origin", "http://localhost:9999")), 403, "ORIGIN_NOT_ALLOWED", path);
         assertProblem(b.send("POST", path, null, b.withCsrf("Origin", "http://evil.example")), 403, "ORIGIN_NOT_ALLOWED", path);
@@ -324,13 +332,19 @@ class SecurityIT extends IntegrationTest {
         assertProblem(b.send("PUT", "/api/v1/ops/settings/region_poll_s", "{\"value\":15}", b.withCsrf("If-Match", "1", "Origin", "http://localhost:9999")),
                 403, "ORIGIN_NOT_ALLOWED", "/api/v1/ops/settings/region_poll_s");
         assertProblem(b.send("DELETE", "/api/v1/ops/session", null, b.withCsrf("Sec-Fetch-Site", "cross-site")), 403, "ORIGIN_NOT_ALLOWED", "/api/v1/ops/session");
-        assertThat(audit("PROVIDER_ENABLE", "rainviewer")).as("nothing was changed").isEqualTo(before);
+        assertThat(audit("PROVIDER_DISABLE", "rainviewer")).as("nothing was changed").isEqualTo(before);
+        assertThat(audit("PROVIDER_ENABLE", "rainviewer")).as("nothing was changed").isEqualTo(beforeOn);
         // 허용된 출처(두 주소 모두) + same-origin · 출처 헤더 없음(브라우저가 아닌 클라이언트)은 된다. 읽기(GET)는 출처를 보지 않는다
-        assertThat(b.send("POST", path, null, b.withCsrf("Origin", ORIGIN, "Sec-Fetch-Site", "same-origin")).status()).isEqualTo(200);
-        assertThat(b.send("POST", path, null, b.withCsrf("Origin", "http://127.0.0.1:8700")).status()).isEqualTo(200);
-        assertThat(b.send("POST", path, null, b.withCsrf()).status()).isEqualTo(200);
-        assertThat(b.send("GET", "/api/v1/ops/providers", null, headers("Origin", "http://localhost:9999", "Sec-Fetch-Site", "cross-site")).status()).isEqualTo(200);
-        assertThat(audit("PROVIDER_ENABLE", "rainviewer")).isEqualTo(before + 3);
+        try {
+            assertThat(b.send("POST", path, null, b.withCsrf("Origin", ORIGIN, "Sec-Fetch-Site", "same-origin")).status()).isEqualTo(200);
+            assertThat(b.send("POST", on, null, b.withCsrf("Origin", "http://127.0.0.1:8700")).status()).isEqualTo(200);
+            assertThat(b.send("POST", path, null, b.withCsrf()).status()).isEqualTo(200);
+            assertThat(b.send("GET", "/api/v1/ops/providers", null, headers("Origin", "http://localhost:9999", "Sec-Fetch-Site", "cross-site")).status()).isEqualTo(200);
+            assertThat(audit("PROVIDER_DISABLE", "rainviewer")).isEqualTo(before + 2);
+            assertThat(audit("PROVIDER_ENABLE", "rainviewer")).isEqualTo(beforeOn + 1);
+        } finally {
+            b.send("POST", on, null, b.withCsrf());
+        }
         // 로그인도 — 다른 출처의 페이지가 운영자 브라우저를 남의 계정으로 로그인시키지 못한다(세션 쿠키가 없어 CSRF 면제인 요청)
         Browser other = new Browser();
         assertProblem(other.login("it-origin", PW, headers("Origin", "http://localhost:9999")), 403, "ORIGIN_NOT_ALLOWED", "/api/v1/ops/session");
