@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # 의존성 감사(make security 의 한 단계 · S2 · M-2) — 원격이 없어 돈 적이 없는 ci.yml 의 두 감사를 같은 명령으로 로컬에서 돌린다:
-#   1) web(ci.yml web job): npm audit --audit-level=high — apps/web 의 package-lock.json 전체(dev 포함), High 이상이 있으면 실패
+#   1) web(ci.yml web job): tools/npm_audit_gate.py — npm audit(apps/web 의 package-lock.json 전체 · dev 포함)의 High 이상이 있으면 실패.
+#      예외는 npm-audit-allow.json 의 기한부 개발 의존성 공지만(실행 의존성 --omit=dev 는 예외 없음 — VERIFICATION #114)
 #   2) collector(ci.yml collector job): uv.lock 의 런타임 의존성을 해시 고정 requirements 로 내보내 pip-audit(같은 버전 · 같은 옵션)
 # 둘 다 네트워크가 필요하다(npm 레지스트리 · PyPI 취약점 DB, uvx 가 pip-audit 를 받는다).
 #   SCAN_OFFLINE=1 이면 돌리지 않고 SKIP 을 알린다 — 이번 실행은 의존성을 감사하지 않았다는 뜻이다.
@@ -22,9 +23,9 @@ result() { # result <이름> <rc>
   if [ "$2" = 0 ]; then echo "PASS  $1"; else echo "FAIL  $1 (exit $2 — 취약점이 있거나 돌리지 못했다)"; fail=1; fi
 }
 
-echo "-- npm audit (apps/web, High 이상)"
-rc=0; (cd apps/web && npm audit --audit-level=high) || rc=$?
-result "npm audit (apps/web, --audit-level=high)" "$rc"
+echo "-- npm audit (apps/web, High 이상 — 기한부 예외 npm-audit-allow.json)"
+rc=0; (cd apps/web && python3 ../../tools/npm_audit_gate.py) || rc=$?
+result "npm audit (apps/web, High 이상)" "$rc"
 
 echo "-- pip-audit $PIP_AUDIT_VERSION (apps/collector 런타임 의존성, uv.lock 해시 고정)"
 rc=0

@@ -238,7 +238,7 @@ class LocalDependencyAuditTest(unittest.TestCase):
 
     def test_npm_audit_is_the_ci_command(self):
         (ci,) = self.ci_command("web", "npm audit")
-        self.assertEqual(ci, "npm audit --audit-level=high")
+        self.assertEqual(ci, "python3 ../../tools/npm_audit_gate.py", "npm audit 판정(High 이상 0 · 기한부 개발 의존성 예외 — VERIFICATION #114)")
         self.assertIn(f"(cd apps/web && {ci})", script_commands(self.audit), "CI 의 web job 과 같은 디렉터리 · 같은 명령")
 
     def test_pip_audit_is_the_ci_command(self):
@@ -264,7 +264,9 @@ class LocalDependencyAuditTest(unittest.TestCase):
                 if tool in missing:
                     continue
                 rc = 1 if tool in fail else 0
-                (bin_dir / tool).write_text(f'#!/bin/sh\necho "{tool} $(basename "$PWD") $*" >> "{log}"\nexit {rc}\n')
+                # npm audit --json 은 감사 결과 JSON 을 낸다(판정 스크립트가 읽는다). 실패면 취약점 없이 exit 1 — 돌리지 못한 것으로 본다
+                out = """echo '{"vulnerabilities":{}}'\n""" if tool == "npm" else ""
+                (bin_dir / tool).write_text(f'#!/bin/sh\necho "{tool} $(basename "$PWD") $*" >> "{log}"\n{out}exit {rc}\n')
                 (bin_dir / tool).chmod(0o755)
             env = {"PATH": f"{bin_dir}:/usr/bin:/bin", "HOME": tmp, "TMPDIR": tmp}
             if offline:
@@ -278,7 +280,8 @@ class LocalDependencyAuditTest(unittest.TestCase):
         self.assertEqual(rc, 0, out)
         self.assertRegex(out, r"(?m)^PASS  npm audit")
         self.assertRegex(out, r"(?m)^PASS  pip-audit")
-        self.assertEqual(calls[0], "npm web audit --audit-level=high")
+        self.assertEqual(calls[0:2], ["npm web audit --json", "npm web audit --json --omit=dev"], "전체(dev 포함)와 실행 의존성만")
+        calls = calls[1:]
         self.assertRegex(calls[1], r"^uv collector export --locked --no-dev --no-emit-project --format requirements-txt -o \S+/requirements\.txt$")
         self.assertRegex(calls[2], r"^uvx collector pip-audit@2\.10\.1 --disable-pip --require-hashes -r \S+/requirements\.txt --progress-spinner off$")
 
