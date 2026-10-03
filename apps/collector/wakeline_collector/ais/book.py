@@ -13,12 +13,19 @@
 24B 는 call_sign · ship_type · dim_*(보조 선박 98MIDxxxx 는 크기 없음), 19 는 name · ship_type · dim_*. 레코드가 시작된 뒤 실제로 받은 필드를 비트로 들고
 있다가 발행 때 함께 꺼낸다(drain_received) — None 이 '받지 않음' 인지 '빈 값으로 받음'(선박이 비워 보냄)인지 api 가 가릴 수 있게. 받은 필드가 늘기만 해도
 (값은 같은 None) '바뀜' 이다 — 빈 값으로 받은 칸이 저장값을 비우도록.
+
+발행이 실패하는 동안의 위치(ADR-033 · 계약 v5 §G46 — QA 2026-10 신뢰성 개선 제안 2): 발행(sink)이 실패를 알리면(hold) 그때부터 MMSI 별로 60 s 창
+(에포크 정렬 — api ShipRepository.WINDOW_S 와 같은 창)마다 처음 받아들인 위치 하나를 받은 순서대로 모은다. api 는 창마다 첫 보고 하나만 저장하므로
+이것이 장애가 없었다면 DB 에 들어갔을 행과 같다(첫 줄은 보내지 못한 그 발행의 최신값 — 그 창에서 받은 마지막 위치일 수 있다). 예전에는 '바뀜' 표시만
+되돌려 복구 뒤 최신값 하나만 실렸다 — redis 150 s pause 에서 분당 선박 행이 244–284 → 116 · 137 로 줄고 그 빈 곳을 설명하는 기록도 없었다.
+모으는 수 상한 BACKFILL_MAX(위치 튜플 참조 — 하나 ≈ 350 B, 상한에서 ≈ 35 MB · 운영 2026-10-03 의 분당 표본 ≈ 2,700 으로 ≈ 37분). 넘으면 더 모으지
+않고 (MMSI, 창) 수와 처음 모으지 못한 위치의 시각을 센다 — sink 가 복구 뒤 그 시각부터 공백(ais_gap, 구역 없음)으로 남긴다. 다 보낸 뒤(release) 모으기를 끝낸다.
 """
 
 from __future__ import annotations
 
 import time
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from collections.abc import Callable, Iterable
 from typing import Any
 
@@ -42,6 +49,8 @@ STATE_FIELDS = (
 )
 QUARANTINE_RULES = ("position_jump", "seen_in_future", "stale_position")
 _EMPTY_STATIC: tuple[Any, ...] = (None,) * len(STATIC_FIELDS)
+BACKFILL_WINDOW_S = 60  # api ShipRepository.WINDOW_S — MMSI 별 창마다 첫 보고 하나(DB 의 줄이기와 같은 창)
+BACKFILL_MAX = 100_000  # 발행이 실패하는 동안 모으는 분당 위치 상한(tools/contract_check.py 의 영수증 표식 상한 계산이 읽는다)
 _STATIC_INDEX = {f: i for i, f in enumerate(STATIC_FIELDS)}
 
 
@@ -75,6 +84,7 @@ class ShipBook:
         future_s: float = 30.0,
         stale_s: float = 600.0,
         static_refresh_s: float = 1800.0,
+        backfill_max: int = BACKFILL_MAX,
         mono: Callable[[], float] = time.monotonic,
     ) -> None:
         self.provider = provider
@@ -90,6 +100,14 @@ class ShipBook:
         self._dirty_state: set[str] = set()
         self._dirty_static: set[str] = set()
         self.evicted = 0
+        # 발행 실패 동안의 분당 위치(hold → release)
+        self.backfill_max = backfill_max
+        self.holding = False
+        self._backlog: deque[tuple[Any, ...]] = deque()
+        self._sampled: dict[str, int] = {}  # 모으는 동안 MMSI → 표본을 고른(또는 상한으로 버린) 마지막 창
+        self.backfill_dropped = 0  # 이번 장애에서 상한 때문에 모으지 못한 (MMSI, 창) 수
+        self.backfill_dropped_since: float | None = None  # 처음 모으지 못한 위치의 수신 시각(epoch)
+        self.backfill_dropped_total = 0  # 누계(상태 해시)
 
     def __len__(self) -> int:
         return len(self._ships)
@@ -155,6 +173,8 @@ class ShipBook:
             return "duplicate"
         ship.state, ship.t = state, p.t
         self._dirty_state.add(p.mmsi)
+        if self.holding:
+            self._sample(p.mmsi, state, p.t)
         return "accepted"
 
     def apply_static(self, part: StaticPart, now: float) -> str:
@@ -216,6 +236,54 @@ class ShipBook:
         for m in static_mmsis:
             if m in self._ships:
                 self._dirty_static.add(m)
+
+    # ── 발행 실패 동안의 분당 위치 ──────────────────────────────
+
+    @property
+    def backlog(self) -> int:
+        """모아 두고 아직 보내지 못한 위치 수."""
+        return len(self._backlog)
+
+    def hold(self, state_mmsis: Iterable[str]) -> None:
+        """발행이 실패했다 — 이때부터 분당 첫 위치를 모은다. state_mmsis: 보내지 못한 선박(그 최신 위치가 표본의 첫 줄)."""
+        self.holding = True
+        for m in state_mmsis:
+            ship = self._ships.get(m)
+            if ship is not None and ship.state is not None:
+                self._sample(m, ship.state, ship.t)
+
+    def _sample(self, mmsi: str, state: tuple[Any, ...], t: float) -> None:
+        w = int(t // BACKFILL_WINDOW_S)
+        last = self._sampled.get(mmsi)
+        if last is not None and w <= last:
+            return  # 이 창은 이미 골랐다(또는 버렸다)
+        self._sampled[mmsi] = w
+        if len(self._backlog) >= self.backfill_max:
+            self.backfill_dropped += 1
+            self.backfill_dropped_total += 1
+            if self.backfill_dropped_since is None or t < self.backfill_dropped_since:
+                self.backfill_dropped_since = t
+            return
+        self._backlog.append(state)
+
+    def take_backfill(self) -> list[dict[str, Any]]:
+        """모은 위치를 받은 순서대로 모두 꺼낸다(모으기는 계속 — 그 사이 받은 위치는 새로 쌓인다)."""
+        out = [dict(zip(STATE_FIELDS, s, strict=True)) for s in self._backlog]
+        self._backlog.clear()
+        return out
+
+    def return_backfill(self, unsent: list[dict[str, Any]]) -> None:
+        """보내지 못한 위치를 맨 앞으로 되돌린다(순서 그대로 — 그 뒤에 새로 쌓인 것보다 먼저 보낸다)."""
+        self._backlog.extendleft(tuple(d[f] for f in STATE_FIELDS) for d in reversed(unsent))
+
+    def release(self) -> tuple[int, float | None]:
+        """모으기를 끝낸다(모은 것을 다 보냈고 최신값 발행도 됐다). 반환: (상한 때문에 모으지 못한 수, 처음 그런 위치의 시각)."""
+        dropped, since = self.backfill_dropped, self.backfill_dropped_since
+        self.holding = False
+        self._backlog.clear()
+        self._sampled.clear()
+        self.backfill_dropped, self.backfill_dropped_since = 0, None
+        return dropped, since
 
     def evict(self) -> int:
         """마지막 갱신 뒤 ttl_s 가 지난 선박을 지운다(LRU 앞쪽부터)."""

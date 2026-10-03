@@ -174,6 +174,21 @@ final class Streams {
         return env;
     }
 
+    /** Redis 장애 동안 모은 분당 위치(계약 v5 §G46 — payload backfill: true, 같은 MMSI 가 시간 순서로 여러 번). */
+    static Map<String, String> shipsBackfill(Instant fetchedAt, List<Map<String, Object>> states) {
+        Map<String, Object> p = new LinkedHashMap<>();
+        p.put("ships", states);
+        p.put("static", List.of());
+        p.put("static_received", Map.of());
+        p.put("stats", Map.of("msgs", 10, "msgs_per_s", 1.0, "dropped", 0, "quarantined", 0, "connected", true));
+        p.put("part", 1);
+        p.put("parts", 1);
+        p.put("backfill", true);
+        Map<String, String> env = envelope("ships", "ships", "fixture", fetchedAt, p, states.size());
+        env.put("raw_ref", "-");
+        return env;
+    }
+
     static Map<String, String> aisGap(Instant fetchedAt, Instant started, Instant ended, String reason) {
         return envelope("ais_gap", "ships", "fixture", fetchedAt, Map.of("started_at", started.toString(), "ended_at", ended.toString(), "reason", reason), 1);
     }

@@ -27,7 +27,7 @@ from jsonschema import Draft202012Validator, FormatChecker  # noqa: E402
 from referencing import Registry, Resource  # noqa: E402
 
 from wakeline_collector.ais.bbox import SCOPE_RE, format_bboxes, parse_shards  # noqa: E402
-from wakeline_collector.ais.book import STATE_FIELDS, ShipBook  # noqa: E402
+from wakeline_collector.ais.book import BACKFILL_MAX, STATE_FIELDS, ShipBook  # noqa: E402
 from wakeline_collector.ais.config import AisSettings  # noqa: E402
 from wakeline_collector.ais.diag import LoopLag  # noqa: E402
 from wakeline_collector.ais.parse import (  # noqa: E402
@@ -41,7 +41,7 @@ from wakeline_collector.ais.parse import (  # noqa: E402
 )
 from wakeline_collector.ais.queue import RawQueue  # noqa: E402
 from wakeline_collector.ais.shards import SHARD_FIELDS, ShardSet  # noqa: E402
-from wakeline_collector.ais.sink import CHUNK, AisSink  # noqa: E402
+from wakeline_collector.ais.sink import BACKFILL_ROUNDS, CHUNK, AisSink  # noqa: E402
 from wakeline_collector.ais.worker import Worker  # noqa: E402
 from wakeline_collector.demand import MAX_FOCUS_HEXES, MAX_HOT_CELLS, HotCell, parse_cell_key  # noqa: E402
 from wakeline_collector.jobs.demand import (  # noqa: E402
@@ -745,7 +745,10 @@ def receipt_mark_bounds() -> dict[str, int]:
     """보존 창(MINID ~ 지금 − STREAM_RETENTION_S) 안에 들 수 있는 메시지 수의 상한 — 설정의 가장 짧은 주기로, 수집기 코드의 상수에서 센다.
     api 는 메시지마다 표식 하나를 잡는다(ShipWriter · TrackWriter). 두 Java 클래스의 MAX_MARKS 설명이 같은 계산을 글로 적는다.
     - 선박(wakeline:ships, 'ships'): ais sink 는 ais_flush_s(하한 = 설정 ge)마다 XADD 한 번(바뀐 선박 · 정적 정보가 CHUNK 를 넘을 때만 나눈다 —
-      장애 뒤 몰린 한 번은 그동안 못 보낸 flush 들을 대신한다). XADD 실패는 다음 flush 에 다시 싣는다(따로 쌓는 재전송 큐가 없다). + 끝 flush 1.
+      장애 뒤 몰린 한 번은 그동안 못 보낸 flush 들을 대신한다). XADD 실패는 다음 flush 에 다시 싣는다. + 끝 flush 1.
+      + Redis 장애 동안 모은 분당 위치(ADR-033 · 계약 v5 §G46): 복구 뒤 최신값보다 먼저 CHUNK 씩 — 모으는 수 상한 BACKFILL_MAX 이므로 꽉 찬 엔트리
+      ceil(BACKFILL_MAX / CHUNK) 개. 보내다 실패해 되돌린 묶음의 마지막 조각 · 한 발행에서 꺼내는 횟수(BACKFILL_ROUNDS)마다 덜 찬 조각이 하나씩 더
+      생길 수 있어 보수적으로 두 배 + BACKFILL_ROUNDS 를 더한다(장애 동안의 flush 는 보내지 않으므로 실제로는 위 주기 몫이 그만큼 준다).
       ais_gap 메시지는 순서 큐(OrderedWriter)로 가 ShipWriter 표식을 잡지 않는다.
     - 항공기(wakeline:aircraft): 관심 지역 · 전세계 = 주기 하한마다 1(RuntimeSettings 가 거는 하한을 그대로 읽는다),
       focus = 시작 사이 간격이 정기(FOCUS_INTERVAL_S) 또는 빠른 첫 조회(FOCUS_MIN_GAP_S, 빠른 것끼리는 FOCUS_FAST_EVERY_S)이므로
@@ -761,9 +764,11 @@ def receipt_mark_bounds() -> dict[str, int]:
     focus_runs = 1 + math.ceil(w / FOCUS_INTERVAL_S) + math.ceil(fast * max(0.0, 1 - FOCUS_MIN_GAP_S / FOCUS_INTERVAL_S))
     focus = focus_runs * math.ceil(MAX_FOCUS_HEXES / FOCUS_BATCH)
     hot = MAX_HOT_CELLS * (math.ceil(w / min(HOT_LEVELS_S)) + 1) + HOT_NEW_BURST * (math.ceil(w / HOT_NEW_WINDOW_S) + 1)
-    ships = math.ceil(w / _field_floor(AisSettings, "ais_flush_s")) + 1 + 1
+    backfill = 2 * math.ceil(BACKFILL_MAX / CHUNK) + BACKFILL_ROUNDS
+    ships = math.ceil(w / _field_floor(AisSettings, "ais_flush_s")) + 1 + 1 + backfill
     return {
         "ships": ships,
+        "backfill": backfill,
         "aircraft": region + global_ + focus + hot + PUBLISHER_QUEUE_MAX,
         "region": region,
         "global": global_,

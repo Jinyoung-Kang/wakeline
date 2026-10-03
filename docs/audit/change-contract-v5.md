@@ -1218,3 +1218,19 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
     (다른 탭에서 먼저 바꿈 · 같은 값을 다시 입력함). 필드가 없으면 바뀐 것으로 본다.
   - 회귀 막기: api `StrictInputsIT.pressingTheSameProviderSwitchOrSavingTheSameSettingAgainChangesNothing` · `SecurityIT`(허용된 요청은 끄기 · 켜기를 번갈아 센다) ·
     web `ops-page.test.ts`(바뀐 것 없음 문구 둘).
+
+## G. 27차 개정(2026-10-03 · Redis 장애 중 AIS 위치 — QA 2026-10 신뢰성 개선 제안 2 · ADR-033, 사용자 위임 "권장 방안대로 진행")
+- G46(계약 v2 §B1 · v3 §A 의 선박 스트림 `wakeline:ships` · `ais_gap`) **Redis 장애 동안의 선박 위치를 분당으로 모아 복구 뒤 보낸다**
+  - ais 의 발행(XADD)이 실패하면 그때부터 MMSI 별 60 s 창(에포크 정렬 — api 의 저장 창과 같다)마다 처음 받은 위치 하나를 받은 순서대로 모은다(상한 100,000).
+    복구되면 같은 발행에서 모은 위치를 먼저, 최신값을 그다음에 보낸다. 예전: 최신값 하나만 실려 장애 동안의 분이 DB 에서 빠졌다(QA redis 150 s pause —
+    분당 선박 행 244–284 → 116 · 137, 공백 기록 0).
+  - `ships_payload` 에 선택 필드 `backfill`(boolean)을 더한다 — true 인 엔트리는 모은 위치이고 같은 MMSI 가 시간 순서로 여러 번 올 수 있으며 static 은 비어 있다.
+    stats 는 같은 발행의 값(집계는 part 1 규칙 그대로 — backfill 엔트리는 세지 않는다). 없으면 평소 발행. 스키마는 루트 · Java 사본을 함께 바꿨다(설명 · 선택 필드만).
+  - api 는 바꾸지 않는다: 저장은 메시지 순서대로 MMSI 별 창마다 첫 보고(장애가 없었을 때와 같은 행), 메모리 상태 · REST · WS 는 더 새 보고만(최신값 — WS 팬아웃은
+    10 s 에 한 번이라 되감기지 않는다).
+  - 상한을 넘어 모으지 못한 구간은 최신값까지 보낸 뒤 `ais_gap`(scope 없음 — 모든 선박, reason `redis unavailable — N per-minute positions beyond the 100000 held
+    were not kept`)으로 보낸다 — 항적 끊기 · 공백 목록은 기존 규칙 그대로.
+  - 상태 해시 `wakeline:ais:status` 에 `backfill_pending` · `backfill_published_total` · `backfill_dropped_total`(api 는 읽지 않는다 — 운영 진단용).
+  - 영수증 표식 상한 계산(`tools/contract_check.py`)에 복구 뒤 엔트리를 더한다 — 보존 창의 선박 메시지 ≤ 9,045(`ShipWriter.MAX_MARKS` 10,000).
+  - 웹 · 공개 API 의 모양은 그대로(항적에 장애 동안의 분이 채워진다).
+  - 회귀 막기: collector `test_ais_backfill.py` · api `ShipsIT.positionsHeldDuringARedisOutageBecomeOneRowPerMinute_andTheMapKeepsTheLatest`.

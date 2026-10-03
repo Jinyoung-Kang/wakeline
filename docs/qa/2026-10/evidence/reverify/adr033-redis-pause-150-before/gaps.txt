@@ -1,0 +1,4 @@
+ started_at | ended_at | reason 
+------------+----------+--------
+(0 rows)
+
