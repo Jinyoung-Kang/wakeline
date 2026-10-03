@@ -1354,6 +1354,17 @@
 - 확인: api 1,170 통과(+6 재현 · 시험 2건 고침) · JaCoCo LINE 97.49 % · BRANCH 86.93 % · REST 계약 36종 PASSED · `ArchitectureTest` 통과,
   web 1,716 통과(+3) · 3 건너뜀 · eslint 오류 0 · tsc 통과, 인프라 정책 163.
 
+## #113 되돌리기 태그가 zsh 에서 다른 이름으로 만들어졌던 것(#109 배포 · #112 배포)
+- **증상**: 배포 전 `for s in api web; do docker tag … wakeline-$s:rollback; done` 이 `wakeline-api:rollback` 이 아니라 `wakeline-apiollback:latest` 를 만들었다.
+  zsh 는 `$s:r` 을 변수의 수정자(`:r` — 확장자 떼기)로 읽어 `:r` 을 먹는다(bash 는 그대로 `api:rollback`). 오류가 나지 않아 몰랐다.
+- **영향**: #109 배포(2026-10-03 03:59 KST) 기록의 `wakeline-{api,web,edge}:rollback` 은 실제로 `wakeline-{api,web,edge}ollback:latest` 였고, 진짜 `:rollback` 은
+  그보다 오래된 이미지(api 00:50 KST · web 2026-10-02 05:56 KST 빌드)를 가리켰다. #112 배포에서 같은 반복문이 `apiollback` · `webollback` 을 이미 바뀐 이미지로 덮어,
+  바꾸기 전 이미지는 이름 없는 이미지로만 남았다.
+- **바로잡음**: 이미지의 compose 서비스 라벨 · 빌드 시각 · 배포 기록(#109 배포 03:59 KST)으로 바꾸기 전 이미지를 찾아 `wakeline-api:rollback`(d2b1185aed96, 03:59 KST 빌드) ·
+  `wakeline-web:rollback`(089837825561) · `wakeline-edge:rollback`(fbe5840d637b — 지금 edge 와 같다)으로 붙이고, 잘못된 이름 셋은 떼었다(이미지는 그대로).
+  돌고 있는 api · web 이미지는 `:deployed-15e27821`(새 `:local` 과 층 · 설정이 같다 — 빌드 메타데이터만 다름).
+- **규칙**: 셸 반복문에서 태그를 붙일 때는 `${s}:rollback` 처럼 중괄호로 감싼다(CLAUDE.md '함정'에 적음). 붙인 뒤 `docker images | grep rollback` 으로 이름을 확인한다.
+
 ## 자동 검사 현황(2026-10-02 15:5x KST, QA 2026-10 브랜치 `qa/2026-10` — #103 뒤, 깨끗한 `git archive` 내보내기 · 격리 스택)
 | 층 | 도구 | 수 |
 |---|---|---|
@@ -1378,3 +1389,4 @@
 | 배포 뒤 확인(DLQ 를 쓰지 못한 메시지 — #108) | `docker compose build api` · `up -d --no-deps api`(main `ef21d23e`) · `docker logs` · api 지표 · curl | 2026-10-03 02:24 KST — api 만 다시 만듦(수집기는 시험만 바뀜 — 이미지 그대로, 다른 서비스 그대로), 되돌리기용 `wakeline-api:rollback`(이전 api). 배포 전 새 이미지 trivy PASS · gitleaks 누출 0 · 이미지 검사 11. 임대 뒤 소비자 부트스트랩(항공기 12,869 · SIGMET 172), `/healthz` · `/` · `/api/v1/status` · `/ops` 200, `/healthz` ok. 새 지표 `wakeline_stream_dlq_write_failures_total` 0. 5분 동안 api · collector · ais · web WARN · ERROR 0 · 재시작 0, 스트림 지연 0 · 거부 0 · 적용 오류 0(처리 71건), 저장기 미기록 나이 0, api 메모리 520.5 MiB. edge 의 연결 거부 1줄은 api 가 다시 뜨는 동안(17:24:42 UTC)뿐 |
 | 배포 뒤 확인(일관성 정리 — #109) | `docker compose build api web` · `up -d --no-deps` api → web → edge(main `a61ac5a0`) · `docker logs` · api 지표 · curl · 내장 브라우저 | 2026-10-03 03:59 KST — api · web 새 이미지, edge 는 이미지 그대로 새 설정 파일(problem.conf · problem_pages.conf)로 다시 만듦. db · redis · 수집기 그대로. 되돌리기용 `wakeline-{api,web,edge}:rollback`. 배포 전 trivy(api · web) PASS · gitleaks 0 · 이미지 검사 11. `/healthz` · `/` · `/api/v1/status` · `/ops` · `/replay` · `/logs` 200, `/alerts?kind=observed` 200 · `kind=bogus` 400 BAD_FILTER, 9 KB URI → edge 414 problem+json(URI_TOO_LONG), `ships/search?limit=99` 200, `/ws/v1` 101. 내장 브라우저(운영 화면): 범례가 열린 채 본문에서 Esc → 닫힘 · 단추로 다시 열림, 레이더 토글 이름 '레이더 애니메이션' · aria-pressed false, 콘솔 오류 0. 5분 동안 api · collector · ais · web WARN · ERROR 0, edge 오류 줄 0, 재시작 0, 스트림 지연 0 · 거부 0 · 적용 오류 0(처리 77건), 저장기 미기록 나이 0, 메모리 api 568.5 · web 68.2 · edge 10.7 MiB |
 | 배포 뒤 확인(수집기 DB writer — #110 · #111) | `docker compose build collector` · `up -d --no-deps collector ais`(main `48f6a784`) · `docker logs` · heartbeat · api 지표 | 2026-10-03 04:59 KST — collector · ais 만 새 이미지로(같은 이미지), 다른 서비스 그대로. 되돌리기용 `wakeline-collector:rollback`. 배포 전 trivy PASS · gitleaks 0 · 이미지 검사 11. ais 는 8.4 s 만에 다시 구독하고 그 사이를 공백(ais process stopped)으로 발행. 5분 동안 api · collector · ais · web WARN · ERROR 0 · 재시작 0, heartbeat db_ok 1 · db_failures 0 · db_dropped 0, 스트림 지연 0 · 거부 0 · 적용 오류 0(처리 959건), `/healthz` ok, 메모리 collector 231.5 · ais 44.7 MiB |
+| 배포 뒤 확인(엄격한 입력 — #112) | `docker compose build api web` · `up -d --no-deps api web`(main `15e27821`) · `docker logs` · api 지표 · curl | 2026-10-03 12:44 KST — api · web 만 다시 만듦(마이그레이션 변화 없음, db · redis · collector · ais · edge 그대로). 배포 전 새 이미지 trivy PASS · 보안 게이트 PASS · 이미지 검사 11 · 첫 화면 JS 547,751 B / 550,000 B. 운영 확인: `limit=5&limit=6` · `limit=0x10` · `day=02/10/26`(Accept-Language en-US) 400, `limit=5` 200, POST `/api/v1/status` 405 `Allow: GET,HEAD,OPTIONS`, `/healthz` · `/` · `/ops` · `/api/v1/status` 200. 8분 동안 api · web · collector · ais WARN · ERROR 0 · 재시작 0, 스트림 지연 0 · 거부 0 · 적용 오류 0, 선박 · 항적 dropped 0 · WS 누락 0, api 메모리 502 MiB. edge 의 연결 거부 3줄은 api 가 다시 뜨는 6초(03:44:28–34 UTC)뿐. 되돌리기 `wakeline-api:rollback` · `wakeline-web:rollback`(바꾸기 전 이미지 — #113 에서 바로잡음), 지금 이미지는 `:deployed-15e27821` 로도 남김. CI(`37094019927`)는 이번 변경과 상관없는 새 npm 공지(GHSA-vfj7-8cjw-p6xm — `braces`, 고친 판 없음)로 web 의 `npm audit` 이 실패 — api · collector · infra · security 통과 |

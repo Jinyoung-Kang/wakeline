@@ -88,6 +88,7 @@ python3 -m unittest discover -s infra/tests                                     
 
 ## 함정
 - macOS 에는 `timeout` 명령이 없다(쓰면 종료 코드 127 로 아무것도 돌지 않는다).
+- 셸은 zsh 다: `$s:rollback` 의 `:r` 은 변수 수정자로 먹혀 `wakeline-apiollback` 이 된다 — 태그 · 경로에 변수를 붙일 때는 `${s}:rollback` 처럼 감싼다(VERIFICATION #113).
 - `npx next build` 는 `prebuild`(MapLibre 워커를 `public/maplibre/<버전>` 에 복사)를 건너뛴다 → `check:first-js` 가 '버전 폴더 0개'로 실패한다. `npm run build` 를 쓴다.
 - `apps/web/node_modules` 가 `package.json` 의 버전보다 오래됐을 수 있다(Next 16.3.6 이 남아 수치가 틀렸던 적이 있다) — 측정 전에 설치된 `next` 버전을 확인한다.
 - api DB 시험(Testcontainers)은 `wakeline-db:local` 이미지를 쓴다(`make test-api` 가 `infra/db` 로 빌드). 측정 시험 5종(`@Tag("perf")`)은 `test` · 커버리지에서 빠진다.
