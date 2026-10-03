@@ -11,7 +11,9 @@ updates:
     groups:
       web-minor-patch: { update-types: [minor, patch] }
     # 주 버전은 호환을 확인하는 계획된 작업으로 올린다(PR 을 열지 않는다 — 부 · 패치와 보안 갱신은 그대로 온다). 2026-10-02 첫 PR 들이 CI 에서 깨졌다:
-    # ESLint 10 은 eslint-config-next 가 아직 받지 않는다(CTO 리뷰 2026-10 결정 7) · TypeScript 7(새 컴파일러) · @types/node 는 실행 Node(24)와 맞춘다
+    # ESLint 10 은 eslint-config-next 가 아직 받지 않는다(CTO 리뷰 2026-10 결정 7 — 2026-10-03 다시 봄: 묶인 eslint-plugin-import 2.32 · jsx-a11y 6.10 · react 7.37 의
+    # 최신판도 peer 가 ESLint ≤ 9) · TypeScript 는 6.0 까지 올렸고(2026-10-03) 7(새 컴파일러 — JS API 없음)은 typescript-eslint 가 받을 때(peer < 6.1) ·
+    # @types/node 는 실행 Node(24)와 맞춘다 — Node 26 이 LTS 가 된 뒤(2026-10 말 예정) 웹 이미지와 함께
     ignore:
       - { dependency-name: "eslint", update-types: ["version-update:semver-major"] }
       - { dependency-name: "typescript", update-types: ["version-update:semver-major"] }
