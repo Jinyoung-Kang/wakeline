@@ -1,7 +1,6 @@
 package dev.wakeline.ingest;
 
 import com.networknt.schema.InputFormat;
-import com.networknt.schema.serialization.JsonMapperFactory;
 import dev.wakeline.aircraft.core.SnapshotStore;
 import dev.wakeline.weather.core.RadarStore;
 import dev.wakeline.weather.core.SigmetStore;
@@ -13,9 +12,6 @@ import org.springframework.data.redis.connection.stream.RecordId;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.json.JsonMapper;
-import tools.jackson.databind.node.ArrayNode;
-import tools.jackson.databind.node.JsonNodeFactory;
-import tools.jackson.databind.node.ObjectNode;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -28,9 +24,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * 측정(리뷰 cto-2026-10 P1 · api-review §4 P1 — docs/PERF.md §13): 전세계 항공기 메시지 하나(10,000대 — 리뷰의 합성 고정본과 같은 모양)를 소비 스레드가
- * 해석하는 데 드는 시간과 그 나눔. 페이로드는 두 번 파싱된다 — 스키마 검증(networknt, Jackson 2 트리)과 코덱용 Jackson 3 readTree.
- * 한 번 파싱의 후보(검증은 그대로 전부 — 결정 8): Jackson 2 로 한 번 읽어 그 트리를 검증하고(networknt 가 문자열을 받을 때 쓰는 것과 같은
- * JsonMapperFactory 의 매퍼 → 같은 트리) 코덱용 Jackson 3 트리로 옮긴다(이 시험 안의 시제품 {@link #toJackson3}). 그 차이가 얻을 수 있는 이득이다.
+ * 해석하는 데 드는 시간과 그 나눔. 페이로드는 두 번 파싱된다 — 스키마 검증(networknt 가 문자열을 읽는다)과 코덱용 Jackson 3 readTree.
+ * 한 번 파싱의 후보(검증은 그대로 전부 — 결정 8): Jackson 3 로 한 번 읽어 그 트리를 검증하고 코덱에 그대로 쓴다. 그 차이가 얻을 수 있는 이득이다.
+ * json-schema-validator 3.x 부터 검증기도 Jackson 3 트리를 받는다(1.5 는 Jackson 2 — 그때의 후보는 Jackson 2 트리를 Jackson 3 트리로 옮겨야 했다).
  * 실행: {@code ./gradlew --offline perfTest --tests 'dev.wakeline.ingest.StreamParsePerfTest'} — 단계마다 데우기 10번 뒤 21번의 가운데 값.
  */
 @Tag("perf")
@@ -59,12 +55,11 @@ class StreamParsePerfTest {
         StreamConsumer c = new StreamConsumer(null, v, new SnapshotStore(), new SigmetStore(), new RadarStore(), e -> { }, J3, new SimpleMeterRegistry());
         var fld = SchemaValidator.class.getDeclaredField("aircraftPayload"); // 운영 코드는 바꾸지 않는다 — 같은 스키마 객체를 읽는다
         fld.setAccessible(true);
-        var aircraftSchema = (com.networknt.schema.JsonSchema) fld.get(v);
+        var aircraftSchema = (com.networknt.schema.Schema) fld.get(v);
 
-        // 같은 결과인지 먼저: 한 번 파싱 경로의 트리 = Jackson 3 readTree 의 트리, 검증 결과(문자열 · 트리) 같음
-        var j2 = JsonMapperFactory.getInstance().readTree(payloadJson);
-        assertThat(toJackson3(j2)).isEqualTo(J3.readTree(payloadJson));
-        assertThat(aircraftSchema.validate(j2)).isEqualTo(aircraftSchema.validate(payloadJson, InputFormat.JSON)).isEmpty();
+        // 같은 결과인지 먼저: 검증 결과(문자열 · Jackson 3 트리) 같음
+        JsonNode once = J3.readTree(payloadJson);
+        assertThat(aircraftSchema.validate(once)).isEqualTo(aircraftSchema.validate(payloadJson, InputFormat.JSON)).isEmpty();
         assertThat(c.parse(rec).aircraft()).hasSize(N);
 
         List<String> out = new ArrayList<>();
@@ -75,27 +70,23 @@ class StreamParsePerfTest {
         out.add(row("  봉투 직렬화 + 검증", median(() -> v.validateEnvelope(J3.writeValueAsString(f)))));
         out.add(row("  페이로드 풀기(base64 + gunzip)", median(() -> StreamConsumer.decode(f.get("payload")))));
         double validateString = median(() -> v.validatePayload("aircraft", payloadJson));
-        out.add(row("  페이로드 스키마 검증(문자열 — Jackson 2 파싱 포함)", validateString));
-        double j2Parse = median(() -> JsonMapperFactory.getInstance().readTree(payloadJson));
-        out.add(row("    그중 Jackson 2 파싱", j2Parse));
-        out.add(row("    그중 트리 검증", median(() -> aircraftSchema.validate(j2))));
+        out.add(row("  페이로드 스키마 검증(문자열 — 파싱 포함)", validateString));
+        out.add(row("    그중 트리 검증", median(() -> aircraftSchema.validate(once))));
         double j3Parse = median(() -> J3.readTree(payloadJson));
         out.add(row("  Jackson 3 readTree(두 번째 파싱)", j3Parse));
         JsonNode tree = J3.readTree(payloadJson);
         out.add(row("  코덱(10,000 상태)", median(() -> { int k = 0; for (JsonNode n : tree.path("states")) if (Codec.aircraft(n) != null) k++; return k; })));
-        double convert = median(() -> toJackson3(j2));
-        out.add(row("후보: Jackson 2 트리 → Jackson 3 트리 옮기기", convert));
         double single = median(() -> {
-            var t2 = JsonMapperFactory.getInstance().readTree(payloadJson);
-            if (!aircraftSchema.validate(t2).isEmpty()) throw new AssertionError();
-            return toJackson3(t2);
+            JsonNode t = J3.readTree(payloadJson);
+            if (!aircraftSchema.validate(t).isEmpty()) throw new AssertionError();
+            return t;
         });
         double twice = median(() -> {
             if (v.validatePayload("aircraft", payloadJson) != null) throw new AssertionError();
             return J3.readTree(payloadJson);
         });
         out.add(row("검증 + 코덱용 트리: 지금(문자열 검증 + J3 파싱)", twice));
-        out.add(row("검증 + 코덱용 트리: 후보(J2 한 번 파싱 + 트리 검증 + 옮기기)", single));
+        out.add(row("검증 + 코덱용 트리: 후보(J3 한 번 파싱 + 트리 검증)", single));
         out.add(String.format("이득(지금 − 후보) %.1f ms = parse() 의 %.0f %%", twice - single, 100 * (twice - single) / parse));
         out.forEach(System.out::println);
         java.nio.file.Path p = java.nio.file.Path.of("build/perf/stream-parse.txt");
@@ -144,35 +135,5 @@ class StreamParsePerfTest {
             states.add(s);
         }
         return J3.writeValueAsString(Map.of("region", Map.of("lat", 36.5, "lon", 127.8, "radius_nm", 250), "states", states));
-    }
-
-    /** 시제품: Jackson 2 트리 → Jackson 3 트리(수 종류 그대로). */
-    static JsonNode toJackson3(com.fasterxml.jackson.databind.JsonNode n) {
-        JsonNodeFactory f = JsonNodeFactory.instance;
-        return switch (n.getNodeType()) {
-            case OBJECT -> {
-                ObjectNode o = f.objectNode();
-                for (var e : n.properties()) o.set(e.getKey(), toJackson3(e.getValue()));
-                yield o;
-            }
-            case ARRAY -> {
-                ArrayNode a = f.arrayNode(n.size());
-                for (var c : n) a.add(toJackson3(c));
-                yield a;
-            }
-            case STRING -> f.stringNode(n.textValue());
-            case BOOLEAN -> f.booleanNode(n.booleanValue());
-            case NULL -> f.nullNode();
-            case NUMBER -> switch (n.numberType()) {
-                case INT -> f.numberNode(n.intValue());
-                case LONG -> f.numberNode(n.longValue());
-                case BIG_INTEGER -> f.numberNode(n.bigIntegerValue());
-                case FLOAT -> f.numberNode(n.floatValue());
-                case DOUBLE -> f.numberNode(n.doubleValue());
-                case BIG_DECIMAL -> f.numberNode(n.decimalValue());
-                default -> throw new IllegalArgumentException("unsupported number " + n.numberType());
-            };
-            default -> throw new IllegalArgumentException("unsupported node " + n.getNodeType());
-        };
     }
 }

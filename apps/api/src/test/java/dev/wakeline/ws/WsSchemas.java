@@ -1,22 +1,22 @@
 package dev.wakeline.ws;
 
-import com.networknt.schema.AbsoluteIri;
+import com.networknt.schema.Error;
 import com.networknt.schema.InputFormat;
-import com.networknt.schema.JsonSchema;
-import com.networknt.schema.JsonSchemaFactory;
+import com.networknt.schema.Schema;
 import com.networknt.schema.SchemaLocation;
-import com.networknt.schema.SchemaValidatorsConfig;
-import com.networknt.schema.SpecVersion;
-import com.networknt.schema.ValidationMessage;
-import com.networknt.schema.resource.SchemaMapper;
+import com.networknt.schema.SchemaRegistry;
+import com.networknt.schema.SchemaRegistryConfig;
+import com.networknt.schema.SpecificationVersion;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -27,23 +27,29 @@ public final class WsSchemas {
     public static final Path DIR = Path.of("../../schemas/ws").toAbsolutePath().normalize();
     static final String BASE = "https://wakeline.invalid/schemas/ws/";
     private static final JsonMapper READ = JsonMapper.builder().build();
-    private static final SchemaValidatorsConfig CONFIG = new SchemaValidatorsConfig.Builder().formatAssertionsEnabled(true).build();
-    private static final JsonSchemaFactory FACTORY;
-    static {
-        String dir = DIR.toUri().toString().replaceAll("/?$", "/");
-        SchemaMapper mapper = iri -> iri.toString().startsWith(BASE) ? AbsoluteIri.of(dir + iri.toString().substring(BASE.length())) : null;
-        FACTORY = JsonSchemaFactory.getInstance(SpecVersion.VersionFlag.V202012, b -> b.schemaMappers(m -> m.add(mapper)));
+    /** $id(https://wakeline.invalid/schemas/ws/…)를 저장소 파일 내용으로 푼다 — json-schema-validator 3.x 는 원격 · file: 가져오기를 기본으로 막는다. */
+    private static final SchemaRegistry REGISTRY = SchemaRegistry.withDefaultDialect(SpecificationVersion.DRAFT_2020_12, b -> b
+            .resourceLoaders(r -> r.resources(WsSchemas::read))
+            .schemaRegistryConfig(SchemaRegistryConfig.builder().formatAssertionsEnabled(true).build()));
+
+    private static String read(String iri) {
+        if (!iri.startsWith(BASE)) return null;
+        try {
+            return Files.readString(DIR.resolve(iri.substring(BASE.length())));
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
     }
     static final String SERVER_FILE = "server.v1.json";
     static final String CLIENT_FILE = "client.v1.json";
-    private static final JsonSchema SERVER = load(SERVER_FILE);
-    private static final JsonSchema CLIENT = load(CLIENT_FILE);
+    private static final Schema SERVER = load(SERVER_FILE);
+    private static final Schema CLIENT = load(CLIENT_FILE);
     /** 실패 설명용: type 이 가리키는 가지($defs/&lt;type&gt;)만 — oneOf 는 모든 가지의 위반을 늘어놓는다. */
-    private static final Map<String, JsonSchema> BRANCHES = new ConcurrentHashMap<>();
+    private static final Map<String, Schema> BRANCHES = new ConcurrentHashMap<>();
 
     private WsSchemas() {}
 
-    static JsonSchema load(String fileAndPointer) { return FACTORY.getSchema(SchemaLocation.of(BASE + fileAndPointer), CONFIG); }
+    static Schema load(String fileAndPointer) { return REGISTRY.getSchema(SchemaLocation.of(BASE + fileAndPointer)); }
 
     /** 서버 → 클라이언트 메시지의 위반(맞으면 빈 목록). */
     public static List<String> server(String message) { return violations(SERVER, SERVER_FILE, message); }
@@ -51,15 +57,15 @@ public final class WsSchemas {
     /** 클라이언트 → 서버 메시지의 위반(맞으면 빈 목록). */
     public static List<String> client(String message) { return violations(CLIENT, CLIENT_FILE, message); }
 
-    private static List<String> describe(Set<ValidationMessage> msgs) {
+    private static List<String> describe(List<Error> msgs) {
         List<String> out = new ArrayList<>();
-        for (ValidationMessage m : msgs) out.add(m.getInstanceLocation() + ": " + m.getMessage());
+        for (Error m : msgs) out.add(m.getInstanceLocation() + ": " + m.getMessage());
         return out;
     }
 
     /** 틀렸으면 그 type 의 가지만의 위반을(가지가 통과하면 — 예: 모르는 type — 전체 위반을) 돌려준다. */
-    private static List<String> violations(JsonSchema root, String file, String message) {
-        Set<ValidationMessage> msgs;
+    private static List<String> violations(Schema root, String file, String message) {
+        List<Error> msgs;
         try {
             msgs = root.validate(message, InputFormat.JSON);
         } catch (RuntimeException e) {
@@ -70,7 +76,7 @@ public final class WsSchemas {
         String t = n.path("type").asString("");
         if (t.matches("^[a-z_]{1,40}$")) {
             try {
-                JsonSchema branch = BRANCHES.computeIfAbsent(file + "#" + t, k -> load(file + "#/$defs/" + t));
+                Schema branch = BRANCHES.computeIfAbsent(file + "#" + t, k -> load(file + "#/$defs/" + t));
                 List<String> b = describe(branch.validate(message, InputFormat.JSON));
                 if (!b.isEmpty()) return b;
             } catch (RuntimeException ignored) {

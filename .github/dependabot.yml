@@ -34,7 +34,7 @@ updates:
     cooldown: { default-days: 7 }
     groups:
       api-minor-patch: { update-types: [minor, patch] }
-    # json-schema-validator 3.x 는 API 가 바뀐 주 버전 — 스트림 검증(SchemaValidator)을 옮기는 계획된 작업으로
+    # json-schema-validator 는 3.x 로 옮겼다(2026-10-03 — API 가 바뀐 주 버전은 앞으로도 계획된 작업으로)
     ignore:
       - { dependency-name: "com.networknt:json-schema-validator", update-types: ["version-update:semver-major"] }
 

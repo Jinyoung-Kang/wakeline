@@ -1,17 +1,14 @@
 package dev.wakeline.ingest;
 
-import com.networknt.schema.AbsoluteIri;
+import com.networknt.schema.Error;
 import com.networknt.schema.InputFormat;
-import com.networknt.schema.JsonSchema;
-import com.networknt.schema.JsonSchemaFactory;
-import com.networknt.schema.SchemaId;
+import com.networknt.schema.Schema;
 import com.networknt.schema.SchemaLocation;
-import com.networknt.schema.SpecVersion;
-import com.networknt.schema.ValidationMessage;
-import com.networknt.schema.resource.SchemaMapper;
+import com.networknt.schema.SchemaRegistry;
+import com.networknt.schema.SpecificationVersion;
 import org.springframework.stereotype.Component;
 
-import java.util.Set;
+import java.util.List;
 
 /**
  * 스트림 메시지 계약 검증 — schemas/*.json(저장소 루트가 단일 원천, 빌드 시 클래스패스로 복사).
@@ -20,28 +17,23 @@ import java.util.Set;
 @Component
 public class SchemaValidator {
     private static final String PREFIX = "https://wakeline.invalid/schemas/";
-    private final JsonSchema envelope;
-    private final JsonSchema aircraftPayload;
-    private final JsonSchema sigmetPayload;
-    private final JsonSchema radarPayload;
-    private final JsonSchema shipsPayload;
-    private final JsonSchema aisGapPayload;
+    private final Schema envelope;
+    private final Schema aircraftPayload;
+    private final Schema sigmetPayload;
+    private final Schema radarPayload;
+    private final Schema shipsPayload;
+    private final Schema aisGapPayload;
 
     public SchemaValidator() {
-        SchemaMapper mapper = iri -> {
-            String s = iri.toString();
-            if (s.startsWith(PREFIX)) return AbsoluteIri.of("classpath:schemas/" + s.substring(PREFIX.length()));
-            return null;
-        };
-        JsonSchemaFactory factory = JsonSchemaFactory.getInstance(SpecVersion.VersionFlag.V202012,
-                b -> b.schemaMappers(m -> m.add(mapper)));
-        var config = new com.networknt.schema.SchemaValidatorsConfig.Builder().build();
-        envelope = factory.getSchema(SchemaLocation.of("classpath:schemas/stream_envelope.v1.json"), config);
-        aircraftPayload = factory.getSchema(SchemaLocation.of("classpath:schemas/stream_envelope.v1.json#/$defs/aircraft_payload"), config);
-        sigmetPayload = factory.getSchema(SchemaLocation.of("classpath:schemas/stream_envelope.v1.json#/$defs/sigmet_payload"), config);
-        radarPayload = factory.getSchema(SchemaLocation.of("classpath:schemas/stream_envelope.v1.json#/$defs/radar_payload"), config);
-        shipsPayload = factory.getSchema(SchemaLocation.of("classpath:schemas/stream_envelope.v1.json#/$defs/ships_payload"), config);
-        aisGapPayload = factory.getSchema(SchemaLocation.of("classpath:schemas/stream_envelope.v1.json#/$defs/ais_gap_payload"), config);
+        // 스키마의 $id(https://wakeline.invalid/schemas/…)는 클래스패스 사본으로 푼다 — 네트워크에 묻지 않는다
+        SchemaRegistry registry = SchemaRegistry.withDefaultDialect(SpecificationVersion.DRAFT_2020_12,
+                b -> b.schemaIdResolvers(r -> r.mapPrefix(PREFIX, "classpath:schemas/")));
+        envelope = registry.getSchema(SchemaLocation.of("classpath:schemas/stream_envelope.v1.json"));
+        aircraftPayload = registry.getSchema(SchemaLocation.of("classpath:schemas/stream_envelope.v1.json#/$defs/aircraft_payload"));
+        sigmetPayload = registry.getSchema(SchemaLocation.of("classpath:schemas/stream_envelope.v1.json#/$defs/sigmet_payload"));
+        radarPayload = registry.getSchema(SchemaLocation.of("classpath:schemas/stream_envelope.v1.json#/$defs/radar_payload"));
+        shipsPayload = registry.getSchema(SchemaLocation.of("classpath:schemas/stream_envelope.v1.json#/$defs/ships_payload"));
+        aisGapPayload = registry.getSchema(SchemaLocation.of("classpath:schemas/stream_envelope.v1.json#/$defs/ais_gap_payload"));
     }
 
     public String validateEnvelope(String json) { return first(envelope.validate(json, InputFormat.JSON)); }
@@ -57,9 +49,9 @@ public class SchemaValidator {
         };
     }
 
-    private static String first(Set<ValidationMessage> msgs) {
+    private static String first(List<Error> msgs) {
         if (msgs.isEmpty()) return null;
-        ValidationMessage m = msgs.iterator().next();
+        Error m = msgs.getFirst();
         return m.getInstanceLocation() + ": " + m.getMessage() + (msgs.size() > 1 ? " (+" + (msgs.size() - 1) + " more)" : "");
     }
 }
