@@ -329,6 +329,15 @@ class StreamConsumerTest {
         });
     }
 
+    /** 페이로드는 한 번 읽어 그 트리를 검증 · 해석한다(PERF §13 — json-schema-validator 3.x). JSON 이 아니면 이유를 밝혀 DLQ 로. */
+    @Test void payloadThatIsNotJson_isRejectedWithAPayloadReason() throws Exception {
+        for (String bad : new String[]{"not json", "{\"states\":[", ""})
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> consumer.parse(envelope(StreamConsumer.S_AIRCRAFT, "aircraft", "region", T, bad)))
+                    .as(bad).isInstanceOf(IllegalArgumentException.class).hasMessageStartingWith("payload: ");
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> consumer.parse(envelope(StreamConsumer.S_AIRCRAFT, "aircraft", "region", T, "not json")))
+                .hasMessageStartingWith("payload: not JSON");
+    }
+
     @Test void hot_withoutValidCell_isRejected() throws Exception {
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> consumer.parse(
                         envelope(StreamConsumer.S_AIRCRAFT, "aircraft", "hot", T, hotPayload(null, "b00003", T))))

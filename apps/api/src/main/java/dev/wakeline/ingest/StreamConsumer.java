@@ -38,6 +38,7 @@ import org.springframework.data.redis.connection.stream.StreamReadOptions;
 import org.springframework.data.redis.core.StreamOperations;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
+import tools.jackson.core.JacksonException;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
@@ -687,9 +688,15 @@ public class StreamConsumer implements SmartLifecycle {
         if (S_SHIPS.equals(r.getStream()) != SHIP_KINDS.contains(kind))
             throw new IllegalArgumentException("envelope: kind " + kind + " is not accepted on stream " + r.getStream());
         String payloadJson = decode(f.get("payload"));
-        err = validator.validatePayload(kind, payloadJson);
+        // 한 번 읽어 그 트리를 검증하고 코덱이 그대로 쓴다(PERF §13 — json-schema-validator 3.x 는 Jackson 3 트리를 받는다. 예전에는 검증이 문자열을 다시 읽었다)
+        JsonNode payload;
+        try {
+            payload = mapper.readTree(payloadJson);
+        } catch (JacksonException e) {
+            throw new IllegalArgumentException("payload: not JSON — " + e.getOriginalMessage(), e);
+        }
+        err = validator.validatePayload(kind, payload);
         if (err != null) throw new IllegalArgumentException("payload: " + err);
-        JsonNode payload = mapper.readTree(payloadJson);
         Instant fetchedAt = Instant.parse(f.get("fetched_at"));
         return switch (kind) {
             case "aircraft" -> {

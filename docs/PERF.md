@@ -447,6 +447,18 @@ statement_timeout 30 s · lock_timeout 5 s)에 운영 클래스 그대로의 기
 새 노드 형)을 지켜야 한다. 검증(48.6 ms 라던 것 — 이 기계에서는 32–34 ms)은 결정 8 대로 건드리지 않는다. 운영에서 전세계 메시지의 p95 가 커지면
 위 태그로 보고 다시 판단한다. 리뷰의 84 ms 와의 차이는 기계 · JIT 상태다(같은 고정본).
 
+**P1 다시(2026-10-03 — json-schema-validator 1.5.9 → 3.0.8)**: 3.x 는 검증기도 Jackson 3 트리를 받는다 — 위 결정의 까닭이던 '손으로 쓴 Jackson 2 → 3 트리
+변환'이 없어져, 소비자가 코덱용으로 읽은 트리를 그대로 검증하게 바꿨다(검증은 그대로 전부 — 결정 8). 같은 시험 · 같은 기계 · 다른 부하 없음, 세 번씩:
+
+| 단계 | 1.5.9(두 번 파싱) | 3.0.8 두 번 파싱(올리기만) | 3.0.8 한 번 파싱(지금) |
+|---|---|---|---|
+| parse() 전체 | 66.8 · 67.2 · 78.4 ms | 68.1 ms | **55.4 · 55.4 · 56.3 ms** |
+| 페이로드 검증 | 문자열 35.2–39.4 ms(그중 트리 18.7 ms) | 문자열 36.6 ms(그중 트리 26.7 ms) | 트리 24.0 ms |
+| Jackson 3 readTree | 11.3–13.0 ms | 11.4 ms | 15.2 ms(한 번) |
+
+올리기만으로는 같은 수준(트리 검증은 3.x 가 느리고 문자열 파싱은 빠르다), 한 번 파싱으로 parse() 가 약 11 ms(17 %) 줄었다 — 120 s 에 한 번 오는 전세계 메시지와
+그 뒤에 줄 선 메시지의 지연. 재현: `./gradlew --offline perfTest --tests 'dev.wakeline.ingest.StreamParsePerfTest'`(결과 build/perf/stream-parse.txt).
+
 **P4 — SIGMET 재생 조건(api-review §4 P7 · PLAN Phase 4-5)** — `weather/data/SigmetReplayPlanPerfTest`: SIGMET 은 지우지 않아(MaintenanceJobs) 표가
 계속 자란다. 합성 200,000건(약 250일 — 하루 약 800건 · 2–6 h 유효라 같은 때 유효한 것 약 130건 = 운영 실측과 같은 크기, 5 % 철회 · 5 % 도형 없음, 도형은
 세계 곳곳의 3° × 2° 상자)을 넣고 `VACUUM ANALYZE` 한 뒤, 재생이 받는 시각(지난 31일) 넷 × bbox 둘(전세계 · 한국 주변)로 `SigmetRepository.validAt`(운영 SQL
