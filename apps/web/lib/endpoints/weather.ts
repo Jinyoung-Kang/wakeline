@@ -3,6 +3,7 @@
  * (tests/first-screen-lazy CARRIED_BY_PARTS). 상황판 지도의 기상청 레이더 · 감시 공항 조회는 조건부 요청(304)이라 lib/etag-poller 가 따로 맡는다.
  * 함수마다 { signal } 을 받아 그대로 넘기고, 경로 조각은 ./path 로 인코딩하고(빈 값 · "." · ".." 는 요청하지 않고 거절), 파싱한 값을 돌려준다.
  */
+import type * as GeoJSON from "geojson";
 import { apiGet } from "@/lib/api";
 import { parseWx, type AirportWx } from "@/lib/airport-wx";
 import type { AirportProps } from "@/lib/tooltip";

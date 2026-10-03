@@ -8,7 +8,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * VERIFICATION #50: jackson-databind CVE-2026-68497(HIGH, trivy — 3.1.6 · 2.22.2 에서 수정). api 는 Jackson 3(Boot 4 기본)과
- * Jackson 2(springdoc · json-schema-validator 가 가져온다)를 함께 싣는다 — 둘 다 build.gradle.kts 의 jackson BOM 제약이 올린다
+ * Jackson 2(springdoc 이 가져온다 — json-schema-validator 는 3.x 부터 Jackson 3)를 함께 싣는다 — 둘 다 build.gradle.kts 의 jackson BOM 제약이 올린다
  * (Boot 4.1.1 BOM 은 3.1.5 · 2.22.1). 제약을 지우거나 BOM 이 더 낮은 버전을 고르면 여기서 깨진다.
  */
 class JacksonVersionTest {

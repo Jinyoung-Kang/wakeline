@@ -11,6 +11,7 @@
  *   0척 칸은 회색. 밀집도 %는 공급자 값 그대로 툴팁에.
  * - 시각: 기준(regDt)은 KST 로 적는다(공급자 원본도 KST 벽시계) — 공유 형식기 lib/time(계약 v5 §G20): 상태 줄은 날짜 · 초까지, 지도 툴팁은 초까지.
  */
+import type * as GeoJSON from "geojson";
 import { EtagPoller, POLL_NONE, watchVisible, type Fetcher, type PollState, type WatchVisible } from "./etag-poller";
 import { fmtKst } from "./time";
 import type { Tip } from "./tooltip";

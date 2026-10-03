@@ -5,6 +5,7 @@
  * 이런 행(provider "1m_summary")은 "기록 위치"가 아니라 "1분 평균(요약)"으로 표시한다(DH-11).
  * 시각: 고르는 입력 · 보이는 글자 · title 은 KST 만(계약 v5 §G20, lib/time), api 요청(at)은 그 순간의 UTC ISO(…Z — 저장 · 전송 형식) 그대로.
  */
+import type * as GeoJSON from "geojson";
 import { ApiError } from "./api";
 import { DISPLAY_TZ, fmtKst, fmtKstRange, fmtRangeTitle, fmtTimeTitle, timeParts } from "./time";
 import { band, fmtAltGndDual, fmtBool, fmtDuration, fmtGsDual, fmtNum } from "./format";

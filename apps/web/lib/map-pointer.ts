@@ -2,6 +2,7 @@
  * 상황판 지도의 포인터 규칙(web-review §3.3 — components/MapView 에서 옮겼다): 호버 · 클릭이 고르는 레이어(우선순위), 레이어마다의 툴팁, 클릭 동작.
  * 지도 · 스토어를 직접 읽지 않는다 — 부른 쪽(MapView)이 지금 값(TipContext)과 지도에 물은 결과를 준다.
  */
+import type * as GeoJSON from "geojson";
 import type * as maplibregl from "maplibre-gl";
 import { RECEPTION_FILL_LAYER } from "./reception-meta";
 import { isMmsi, selectedShipLabel, type ShipLite } from "./ships";

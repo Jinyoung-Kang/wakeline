@@ -4,6 +4,7 @@
  * - 워커 렌더 → 항공기 소스(속성 · 선택 표시), 감시 공항 소스(오래됨 · 같은 내용이면 다시 넣지 않음), SIGMET 소스(만료 제외 · '안에 항공기' · 같으면 다시 넣지 않음)
  * 최소 DOM + MapLibre 대역(tests/helpers/fake-maplibre). 툴팁은 DOM 대신 Tip 값 그대로 받는다(renderTip 대역).
  */
+import type * as GeoJSON from "geojson";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { installMiniDom } from "./helpers/mini-dom";
 import { FakeMap } from "./helpers/fake-maplibre";

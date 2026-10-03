@@ -2,6 +2,7 @@
  * 선택 항공기 항적(FR-18 · GAP-10) — 순수 함수. REST(/aircraft/{hex}/track, DB 기록)로 한 번 받고,
  * 이후 WS "selected" 상태의 새 관측(seen_at 이 바뀐 것)을 끝에 붙인다. REST 응답 전에 온 관측은 보류했다가 합친다.
  */
+import type * as GeoJSON from "geojson";
 import { seenAtMs, STALE_AFTER_S, thresholds } from "./interpolate";
 import type { AircraftState } from "./types";
 import { fmtKstSpan } from "./time";

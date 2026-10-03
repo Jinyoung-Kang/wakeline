@@ -1,4 +1,5 @@
 "use client";
+import type * as GeoJSON from "geojson";
 import type * as maplibregl from "maplibre-gl";
 import { useEffect, useRef, useState } from "react";
 import { airportLayerFeatures, COVERAGE_PAINT, coverageTileUrl, frameDisplay, RADAR_SLOT, radarTileUrl, syncFrames, type Frame } from "@/lib/maplayers";

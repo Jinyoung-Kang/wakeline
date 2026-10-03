@@ -10,6 +10,7 @@
  * - 색: 한 가지(lib/reception-meta RECEPTION_COLOR), 채움 불투명도만 선박 수 구간으로(범례와 같은 표 — 표시용 선택값).
  * - 시각: KST 만(공유 형식기 lib/time — 계약 v5 §G20).
  */
+import type * as GeoJSON from "geojson";
 import { EtagPoller, POLL_NONE, watchVisible, type Fetcher, type PollState, type WatchVisible } from "./etag-poller";
 import { RECEPTION_BINS, RECEPTION_COLOR, RECEPTION_FILL_LAYER, RECEPTION_LINE_LAYER } from "./reception-meta";
 import { fmtKst, fmtKstMinute, fmtKstRange } from "./time";
