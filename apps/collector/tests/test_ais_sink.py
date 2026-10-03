@@ -90,17 +90,21 @@ async def test_flush_splits_large_batches(monkeypatch):
     assert len(mmsis) == len(set(mmsis))
 
 
-async def test_redis_outage_coalesces_instead_of_queueing():
+async def test_redis_outage_keeps_the_latest_marked_and_holds_the_minute_positions():
+    """최신값은 '바뀜' 표시로 되돌리고(합치기), 그와 별도로 분당 첫 위치를 모은다(ADR-033 — 자세한 규칙은 test_ais_backfill.py)."""
     r, _q, book, feed, w, sink = _setup()
     _load_fixture(w, feed)
     r.down = True
     assert await sink.flush() == 0 and sink.publish_errors == 1
     dirty = book.dirty
-    assert dirty[0] > 250  # 표시가 되돌아왔다(변경분을 따로 쌓지 않는다)
+    assert dirty[0] > 250  # 표시가 되돌아왔다
+    assert book.holding and book.backlog == dirty[0]  # 보내지 못한 최신값이 표본의 첫 줄
     r.down = False
-    assert await sink.flush() == 1
-    payload = _assert_valid(r.streams[STREAM_SHIPS][0][1])
-    assert len(payload["ships"]) == dirty[0] and book.dirty == (0, 0)
+    assert await sink.flush() == 2
+    held, latest = (_assert_valid(f) for _, f in r.streams[STREAM_SHIPS])
+    assert held["backfill"] is True and "backfill" not in latest
+    assert len(held["ships"]) == len(latest["ships"]) == dirty[0] and book.dirty == (0, 0)
+    assert not book.holding and book.backlog == 0
 
 
 async def test_partial_failure_keeps_unsent_parts(monkeypatch):

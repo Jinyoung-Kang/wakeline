@@ -15,7 +15,12 @@
   reconnects_quick_total: 받던 연결이 끊겨 열린 공백(마지막 데이터 → 다시 받음)이 30 s 안에 닫힌 횟수(누적) — 로그 수준과 상관없이 공백 길이로
   센다(reconnect.py: 회복 줄은 INFO, 되풀이 끊김 줄 · 데이터 없이 끝난 재연결 시도는 WARN 이어도 공백이 창 안에 닫히면 센다).
 
-Redis 장애: 선박 변경분은 쌓지 않고 ShipBook 에 '바뀜' 표시를 되돌린다 — 복구 뒤 첫 발행이 그때의 최신값을 싣는다(메모리는 선박 수 상한 안).
+Redis 장애(ADR-033 · 계약 v5 §G46): 선박 변경분은 '바뀜' 표시를 되돌리고(복구 뒤 첫 발행이 그때의 최신값), 발행이 실패한 때부터 ShipBook 이 MMSI 별
+분당 첫 위치를 모은다(상한 book.BACKFILL_MAX). 복구되면 모은 위치를 받은 순서대로 먼저 보내고(payload backfill: true — 같은 MMSI 가 시간 순서로 여러 번
+올 수 있다) 그다음 최신값을 보낸다. api 는 메시지 순서대로 MMSI 별 창마다 첫 보고를 저장하고(ShipWriter) 메모리 상태는 더 새 보고만 받으므로(ShipStore),
+장애가 없었을 때와 같은 행이 남고 지도는 최신값이다(WS 팬아웃은 10 s 에 한 번이라 되감기지 않는다). 예전에는 최신값 하나만 실려 장애 동안의 분이
+DB 에서 빠졌다(QA 2026-10: redis 150 s pause 에서 분당 선박 행 244–284 → 116 · 137, 공백 기록 0). 상한을 넘어 모으지 못한 구간은 최신값까지 보낸 뒤
+ais_gap(구역 없음 — 모든 선박, reason 'redis unavailable …')으로 남긴다. 프로세스가 장애 중에 멈추면 모은 위치는 메모리와 함께 사라진다(이어받지 않는다).
 공백 이벤트는 구역마다 순서대로 최대 1,000건 보관했다가 다시 보낸다(api 는 (source, scope, started_at) 로 중복을 막는다).
 """
 
@@ -61,6 +66,7 @@ STATUS_EVERY_S = 5.0
 STATUS_MIN_GAP_S = 0.5
 TICK_S = 1.0
 ERROR_TEXT_MAX = 300
+BACKFILL_ROUNDS = 3  # 한 발행에서 모은 위치를 꺼내 보내는 횟수 상한(보내는 사이 새로 모인 것까지 — 그 뒤 남은 것은 이번 분의 위치라 최신값이 대신한다)
 
 
 def _iso(epoch: float | None) -> str:
@@ -114,6 +120,8 @@ class AisSink:
         self.publish_errors = 0
         self.status_errors = 0
         self.last_publish_at: float | None = None
+        self.backfill_published = 0  # 장애 뒤 보낸 분당 위치 수(누계 — 상태 해시)
+        self._held_gaps: deque[dict[str, str]] = deque()  # 모으지 못한 구간의 공백(구역 없음) — 구역 공백과 같은 길로 보낸다
         self._gap_lock = asyncio.Lock()  # 발행 루프와 final() 이 같은 공백을 동시에 보내지 않게
         self._loop_lag = loop_lag  # 이벤트 루프 지연 측정(main 이 띄운다) — 없으면 진단 값은 모름
 
@@ -152,16 +160,22 @@ class AisSink:
         }
 
     async def flush(self) -> int:
-        """바뀐 선박을 발행한다. 반환: 보낸 XADD 수."""
+        """바뀐 선박을 발행한다. 반환: 보낸 XADD 수.
+        발행이 실패하면 그때부터 분당 첫 위치를 모으고(book.hold), 복구되면 모은 것을 먼저 · 최신값을 그다음에 보낸 뒤 모으기를 끝낸다(모듈 설명)."""
         stats = self._window()
         self.book.evict()
+        sent = 0
+        if self.book.holding:
+            sent, ok = await self._publish_backfill(stats)
+            if not ok:
+                return sent  # 아직 장애 — 최신값은 '바뀜' 표시 그대로(모으기는 계속)
         states, statics, received = self.book.drain_received()
         if not states and not statics:
-            return 0
+            self._end_hold()
+            return sent
         parts = max(1, -(-len(states) // CHUNK), -(-len(statics) // CHUNK))
         now = self._wall()
         fetched = datetime.fromtimestamp(now, UTC)
-        sent = 0
         for i in range(parts):
             ships, static = states[i * CHUNK : (i + 1) * CHUNK], statics[i * CHUNK : (i + 1) * CHUNK]
             payload = {
@@ -186,9 +200,16 @@ class AisSink:
                 await self._xadd(env)
             except (RedisError, OSError) as e:
                 kept = self._keep_unsent(states, statics, i)
+                self.book.hold(s["mmsi"] for s in states[i * CHUNK :])
                 self.publish_errors += 1
-                self._warn("ships xadd failed (%s) — %d ships kept for the next flush", type(e).__name__, kept)
-                break
+                self._warn(
+                    "ships xadd failed (%s) — %d ships kept for the next flush, holding per-minute positions (%d held, cap %d)",
+                    type(e).__name__,
+                    kept,
+                    self.book.backlog,
+                    self.book.backfill_max,
+                )
+                return sent
             except asyncio.CancelledError:
                 self._keep_unsent(states, statics, i)  # 종료 때 취소돼도 final() 의 flush 가 싣는다
                 raise
@@ -196,7 +217,70 @@ class AisSink:
             self.published_entries += 1
             self.published_ships += len(ships)
             self.last_publish_at = now
+        self._end_hold()
         return sent
+
+    async def _publish_backfill(self, stats: dict[str, Any]) -> tuple[int, bool]:
+        """모은 분당 위치를 받은 순서대로 보낸다(CHUNK 씩, part/parts 는 꺼낸 묶음 안의 순번). 실패하면 못 보낸 것을 맨 앞으로 되돌린다.
+        반환: (보낸 XADD 수, 모두 보냈는지)."""
+        n = positions = 0
+        for _ in range(BACKFILL_ROUNDS):
+            batch = self.book.take_backfill()
+            if not batch:
+                break
+            parts = -(-len(batch) // CHUNK)
+            fetched = datetime.fromtimestamp(self._wall(), UTC)
+            for i in range(parts):
+                ships = batch[i * CHUNK : (i + 1) * CHUNK]
+                payload = {
+                    "ships": ships,
+                    "static": [],
+                    "static_received": {},
+                    "stats": stats,
+                    "part": i + 1,
+                    "parts": parts,
+                    "backfill": True,
+                }
+                env = envelope(
+                    kind="ships",
+                    scope="ships",
+                    provider=self.provider,
+                    fetched_at=fetched,
+                    raw_ref=self.raw_ref,
+                    count=len(ships),
+                    payload=payload,
+                )
+                try:
+                    await self._xadd(env)
+                except (RedisError, OSError) as e:
+                    self.book.return_backfill(batch[i * CHUNK :])
+                    self.publish_errors += 1
+                    self._warn("ships backfill xadd failed (%s) — %d held positions kept", type(e).__name__, self.book.backlog)
+                    return n, False
+                except asyncio.CancelledError:
+                    self.book.return_backfill(batch[i * CHUNK :])
+                    raise
+                n += 1
+                positions += len(ships)
+                self.published_entries += 1
+                self.backfill_published += len(ships)
+                self.last_publish_at = self._wall()
+        if positions:
+            log.info("published %d per-minute positions held during the redis outage (%d entries)", positions, n)
+        return n, True
+
+    def _end_hold(self) -> None:
+        """최신값까지 보냈다 — 모으기를 끝낸다. 그 사이(최신값을 보내는 동안) 받은 위치는 '바뀜' 표시로 다음 발행에 실린다.
+        상한 때문에 모으지 못한 구간이 있었으면 그 시각부터 지금까지를 공백(구역 없음)으로 보관한다 — 다음 틱의 publish_gaps 가 보낸다."""
+        if not self.book.holding:
+            return
+        dropped, since = self.book.release()
+        if not dropped or since is None:
+            return
+        ended = max(self._wall(), since + 0.001)  # 공백은 ended_at > started_at(api 검사)
+        reason = f"redis unavailable — {dropped} per-minute positions beyond the {self.book.backfill_max} held were not kept"
+        self._held_gaps.append({"started_at": iso_ms(since), "ended_at": iso_ms(ended), "reason": reason})
+        log.warning("ships not kept during the redis outage: %s → %s (%s)", iso_ms(since), iso_ms(ended), reason)
 
     async def _xadd(self, env: dict[str, str]) -> None:
         size = entry_size(env)
@@ -217,7 +301,7 @@ class AisSink:
         XADD 가 실패하면 그 틱은 멈춘다(다음 틱에 다시)."""
         async with self._gap_lock:
             n = 0
-            for pending in self.shards.pending_queues():
+            for pending in (*self.shards.pending_queues(), self._held_gaps):
                 sent, ok = await self._publish_queue(pending)
                 n += sent
                 if not ok:
@@ -277,7 +361,7 @@ class AisSink:
             "last_gap_ended_at": last.get("ended_at", ""),
             "last_gap_reason": last.get("reason", ""),
             "last_gap_scope": last.get("scope", ""),  # 계약 v4 G: 마지막 닫힌 공백의 구역("" = 구역 없음 — 모든 선박에 적용)
-            "gaps_pending": str(sh.gaps_pending),
+            "gaps_pending": str(sh.gaps_pending + len(self._held_gaps)),
             "bbox": sh.bbox,
             "deflate": "" if deflate is None else ("1" if deflate else "0"),
             "sessions_ended": str(sh.sessions_ended),
@@ -312,6 +396,10 @@ class AisSink:
             "reconnect_warn_window_s": _setting(REPEAT_WINDOW_S),
             "shards": orjson.dumps(sh.shards_view()).decode(),
             "published_ships_total": str(self.published_ships),
+            # ADR-033: Redis 장애 동안 모은 분당 위치 — 아직 못 보낸 수 · 보낸 누계 · 상한 때문에 모으지 못한 (MMSI, 창) 누계
+            "backfill_pending": str(self.book.backlog),
+            "backfill_published_total": str(self.backfill_published),
+            "backfill_dropped_total": str(self.book.backfill_dropped_total),
             "last_publish_at": _iso(self.last_publish_at),
             "publish_errors": str(self.publish_errors),
             "stream_budget_trims": str(self._trim.budget_trims),  # R-14: 바이트 예산 때문에 보존 창(2.5 h)보다 일찍 자른 XADD 수

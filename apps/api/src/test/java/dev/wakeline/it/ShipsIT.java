@@ -83,6 +83,34 @@ class ShipsIT extends IntegrationTest {
         assertThat(track.path("geometry").path("type").asString()).isEqualTo("MultiLineString");
     }
 
+    /**
+     * Redis 장애 뒤(ADR-033 · 계약 v5 §G46): ais 가 장애 동안 모은 분당 위치를 최신값보다 먼저 보낸다 — 같은 MMSI 가 한 메시지에 시간 순서로 여러 번.
+     * 저장은 메시지 순서대로 창마다 첫 보고(장애가 없었을 때와 같은 행), 메모리 상태 · REST 는 최신값.
+     */
+    @Test
+    void positionsHeldDuringARedisOutageBecomeOneRowPerMinute_andTheMapKeepsTheLatest() {
+        String a = "440700051", c = "440700052";
+        Instant b = Instant.now().minus(10, ChronoUnit.MINUTES).truncatedTo(ChronoUnit.MINUTES).plusSeconds(1);
+        Streams.xaddAis(Streams.ships(Streams.nextFetchedAt(), List.of(Streams.shipState(a, 35.0, 129.0, b), Streams.shipState(c, 35.5, 129.5, b)), List.of()));
+        Streams.xaddAis(Streams.shipsBackfill(Streams.nextFetchedAt(), List.of(
+                Streams.shipState(a, 35.001, 129.0, b.plusSeconds(20)), Streams.shipState(c, 35.501, 129.5, b.plusSeconds(21)),
+                Streams.shipState(a, 35.01, 129.0, b.plusSeconds(60)), Streams.shipState(c, 35.51, 129.5, b.plusSeconds(62)),
+                Streams.shipState(a, 35.02, 129.0, b.plusSeconds(120)), Streams.shipState(c, 35.52, 129.5, b.plusSeconds(121)),
+                Streams.shipState(a, 35.03, 129.0, b.plusSeconds(180)), Streams.shipState(c, 35.53, 129.5, b.plusSeconds(184)))));
+        Streams.xaddAis(Streams.ships(Streams.nextFetchedAt(), List.of(Streams.shipState(a, 35.031, 129.0, b.plusSeconds(190)),
+                Streams.shipState(c, 35.531, 129.5, b.plusSeconds(195))), List.of()));
+
+        await("one row per minute for each ship", WAIT, () -> count("SELECT count(*) FROM ship_position WHERE mmsi IN (?, ?)", a, c) == 8);
+        await("acknowledged", WAIT, () -> pendingShips() == 0);
+        List<Instant> rowsA = db.sql("SELECT ts FROM ship_position WHERE mmsi = ? ORDER BY ts").param(1, a).query(OffsetDateTime.class).list()
+                .stream().map(OffsetDateTime::toInstant).toList();
+        assertThat(rowsA).as("first fix of each minute — the outage minutes are not missing")
+                .containsExactly(b, b.plusSeconds(60), b.plusSeconds(120), b.plusSeconds(180));
+        assertThat(ships.view().get(a).state().seenAt()).as("memory keeps the latest").isEqualTo(b.plusSeconds(190));
+        assertThat(ships.view().get(c).state().seenAt()).isEqualTo(b.plusSeconds(195));
+        assertThat(get("/api/v1/ships/" + a).json().path("state").path("lat").asDouble()).isEqualTo(35.031);
+    }
+
     @Test
     void gapsArePersistedOnce_andListed() {
         Instant s = Instant.now().minusSeconds(900).truncatedTo(ChronoUnit.MILLIS), e = s.plusSeconds(95);
