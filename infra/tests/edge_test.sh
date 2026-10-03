@@ -97,11 +97,15 @@ grep -qi "^cache-control: public, max-age=31536000, immutable" <<<"$hdr" && grep
 sleep 7   # 화면 양동이(10 r/s · burst 60)가 비워진 뒤 다음 시험
 
 echo "[edge 가 만든 /api 오류 — api 와 같은 problem+json(type · title · status · detail · code · request_id), 상류가 만든 오류는 그대로]"
-# problem <설명> <기대 상태> <기대 code> <Retry-After 필요(1|0)> <curl 인자…>
+# problem <설명> <기대 상태> <기대 code> <Retry-After 필요(1|0)> <curl 인자…> — 한 번 불러 그 응답을 problem_check 로 본다
 problem() {
   local what="$1" want="$2" wcode="$3" ra="$4"; shift 4
-  local out hdr body st
-  out="$(curl -s -D - "$@")"; hdr="${out%%$'\r\n\r\n'*}"; body="${out#*$'\r\n\r\n'}"
+  local out; out="$(curl -s -D - "$@")"
+  problem_check "$what" "$want" "$wcode" "$ra" "${out%%$'\r\n\r\n'*}" "${out#*$'\r\n\r\n'}"
+}
+# problem_check <설명> <기대 상태> <기대 code> <Retry-After 필요(1|0)> <응답 헤더> <응답 본문>
+problem_check() {
+  local what="$1" want="$2" wcode="$3" ra="$4" hdr="$5" body="$6" st
   st="$(head -1 <<<"$hdr" | awk '{print $2}')"
   [ "$st" = "$want" ] && grep -qi '^content-type: application/problem+json' <<<"$hdr" \
     && grep -q "\"status\":$want" <<<"$body" && grep -q "\"code\":\"$wcode\"" <<<"$body" \
@@ -113,8 +117,17 @@ problem() {
 problem "/api 본문 1 MB 넘음" 413 CONTENT_TOO_LARGE 0 -H "Host: localhost:8700" -H "Content-Type: application/json" --data-binary @<(head -c 1100000 /dev/zero | tr '\0' 'a') "http://127.0.0.1:$PORT/api/v1/client-errors"
 problem "/api URI 8 KB 넘음" 414 URI_TOO_LONG 0 -H "Host: localhost:8700" "http://127.0.0.1:$PORT/api/v1/status?x=$(head -c 9000 /dev/zero | tr '\0' 'a')"
 problem "/api 경로에 NUL" 400 BAD_REQUEST 0 -H "Host: localhost:8700" "http://127.0.0.1:$PORT/api/v1/%00"
-seq 1 80 | xargs -P 20 -I{} curl -s -o /dev/null -H "Host: localhost:8700" "http://127.0.0.1:$PORT/api/v1/status"  # 동시에 — 10 r/s · burst 30 을 넘긴다
-problem "/api 양동이 넘침" 429 RATE_LIMITED 1 -H "Host: localhost:8700" "http://127.0.0.1:$PORT/api/v1/status"
+# 양동이 넘침(10 r/s · burst 30): 동시에 120번 보내고 넘친 응답 하나를 그대로 본다. 예전에는 80번 뒤 한 번 더 불렀는데, 그 사이가 0.1 s(양동이 한 칸이
+# 비는 시간)를 넘으면 200 이 나와 느린 CI 러너에서 가끔 실패했다(VERIFICATION #115 — 0.3 s 를 끼우면 늘 실패).
+mkdir "$TMP/burst"
+seq 1 120 | xargs -P 20 -I{} curl -s -D "$TMP/burst/{}.h" -o "$TMP/burst/{}.b" -H "Host: localhost:8700" "http://127.0.0.1:$PORT/api/v1/status"
+hits="$(grep -l '^HTTP/[0-9.]* 429' "$TMP/burst"/*.h || true)"
+if [ -n "$hits" ]; then
+  h="$(head -1 <<<"$hits")"
+  problem_check "/api 양동이 넘침(동시 120번 중 $(wc -l <<<"$hits" | tr -d ' ')번)" 429 RATE_LIMITED 1 "$(cat "$h")" "$(cat "${h%.h}.b")"
+else
+  check "/api 양동이 넘침 → 429" 1 "동시 120번이 모두 429 아님"
+fi
 sleep 7
 body="$(curl -s -H "Host: localhost:8700" "http://127.0.0.1:$PORT/api/v1/upstream-404")"
 grep -q '"from":"api"' <<<"$body"; check "api 가 만든 오류는 바꾸지 않고 그대로" $? "$body"
