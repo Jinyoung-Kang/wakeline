@@ -1270,3 +1270,19 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
     범위와 기준 · 차수 · 가정 · 경계 근처), 항공기 카드의 '들어 있는 공역'. 닫힘 문구 `sigmet_ended`(전에는 문구가 없어 '—') · `zone_ended`.
   - 회귀 막기: api `AirspaceJudgementTest` · `WeatherPersistDbTest` · `WsSchemaContractTest`(공역 표본 · 틀린 표본 셋) · `RestSamplesIT`(공역 알림 · 들어 있는
     공역) · `QueryPlanDbTest` · `RegionSettingsTest` · `tools/rest_contract_check.py` · web `airspace-alerts.test.ts` · `ws-validate-v5` · `ws-schema-sweep-v5`.
+
+## G. 29차 개정(2026-10-09 · 기상특보 — 차별화 기능 단계 2 · ADR-036, 사용자 승인 "권장안대로")
+- G49(새 스트림 · 새 공개 자원) **기상특보 현황 — `wakeline:wxwarn` · `GET /api/v1/warnings` · `/warnings/history`**
+  - 스트림 봉투 kind `wx_warnings`(scope `-`, 스트림 `wakeline:wxwarn` 에서만 — 다른 스트림이면 DLQ), payload `wx_warnings_payload` = `{complete: true, dropped,
+    warnings[]}` — 특보마다 `zone_code`(`^[LS][0-9]{7}$` · S = 해상) · `zone_name` · `parent_code` · `parent_name` · `sea` · `kind` · `level` · `command`(원문 글자) ·
+    `preliminary` · `issued_at` · `effective_at`(정규 특보만 — 예비에는 없다) · `effective_from` · `effective_to` · `effective_text`(예비의 때) · `end_notice`(원문) · `raw`.
+    시각은 UTC. 수집기 5분 주기 · 목록 전체(빈 목록도 발행 — '특보 없음'). 호출이 실패하면 발행하지 않는다.
+  - `GET /api/v1/warnings`: `{received, items[], dropped, source, meta}` — 받은 적이 없으면 `received: false` · 빈 목록. `meta.fetched_at` = 목록 수신 시각,
+    `meta.stale` = 15분 넘음. `ETag`(목록 판) · `Cache-Control: max-age=30, public`.
+  - `GET /api/v1/warnings/history?from&to&zone&limit`: 창(≤ 30일, 기본 24 h — 넘으면 400 `BAD_RANGE`)과 발효 중이던 동안이 겹치는 특보, 처음 받은 시각 최신순,
+    limit 1–500(기본 200, 끝값으로 자름), `zone` 이 틀리면 400 `BAD_ZONE`. 항목은 위 필드 + `provider` · `first_seen` · `last_seen` · `ended_at`(목록에서 빠진 시각).
+    보존: 끝난 행 90일.
+  - WS 는 바꾸지 않는다. 운영 화면 공급자 표에 `kma_warning`(heartbeat `kma_warning_state` no_key · disabled · ok).
+  - 웹: 오른쪽 패널 'wx' 탭(해상 상위 구역별 · 육상 접음 · 예비는 때 · KST), 선박 카드의 해상특보 수 한 줄(구역 판정 안 함).
+  - 회귀 막기: collector `test_kma_warning_rules.py` · `test_kma_warning_job.py` · `contract_check`(wx_warnings) · api `StreamConsumerWarningsTest` · `WarningControllerTest` ·
+    `WarningPersistDbTest` · `RestSamplesIT` · `tools/rest_contract_check.py`(WARNINGS · WARNINGS_HISTORY) · Redis ACL 시험 · web `warnings.test.ts` · e2e `warnings.spec.ts`.

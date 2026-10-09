@@ -786,6 +786,11 @@ B 몰림(300 → 400 rps 각 60 s) → I 쉼 300 s(마지막 60 s = 몰림 뒤 �
   계획서의 '다섯 단계 합쳐 +600 B 이하' 목표를 단계 1 에서 **넘었다**(+659 B). 늘어난 것: 공역 레이어 단추 · 호버 순서, WS 검사기의 공역 알림 규칙
   (`ws-validate` — 스키마와 잎 하나하나 맞춘다), 알림 행 · 배너의 구역 글(`alertZone`).
 
+## 17. 기상특보(ADR-036 — 2026-10-09)
+- 첫 화면 JS(`check:first-js -- --in-image`): 548,410 B → **548,497 B**(+87 B — 오른쪽 패널의 'wx' 탭 단추 · 이름, 패널 내용은 조각 `WarningPanelPart`).
+  선박 카드의 해상특보 한 줄 · `lib/warnings.ts` · `lib/endpoints/warnings.ts` 는 조각 전용(`first-screen-lazy.test.ts`). 고친 목표(단계 2–5 합쳐 +300 B)의 87 B.
+- 수집: 5분마다 한 번(하루 288 — 예산 400), 실제 응답 1.7 KB(예비 3건). api 쪽은 목록 교체 · 행 수십 개 이어 쓰기라 재지 않았다.
+
 ## 재현
 ```bash
 make bench SHIPS=1               # k6 REST + WS(선박 포함), api 층 직접
