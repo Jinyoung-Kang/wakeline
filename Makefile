@@ -7,7 +7,10 @@ COMPOSE := docker compose -f infra/compose.yml --env-file .env
 ISO_ENV := WAKELINE_FIXTURE_MODE=1 WAKELINE_PORT=8701 WAKELINE_NET_PREFIX=10.78.0 aisstream_key= OPENSKY_CLIENT_ID= OPENSKY_CLIENT_SECRET= KMA_APIHUB_KEY= DATA_GO_KR_SERVICE_KEY= EXTRA_ALLOWED_ORIGINS=
 ISO := $(ISO_ENV) docker compose -p wakeline-e2e -f infra/compose.yml --env-file .env
 # 격리 스택은 합성 공역(가짜 자료 — 실제 AIP 도형이 아니다 · ADR-034)을 가져온다: E2E · 설명서 그림이 공역 레이어 · 판정을 보게
-AIRSPACE_FIXTURE_IMPORT := $(ISO) exec -T collector python -m wakeline_collector.tools.airspace_import --edition "합성 시험 공역 1차" < apps/collector/tests/fixtures/airspace/synthetic.kml >/dev/null
+# 가져온 뒤 api 가 새 차수를 읽을 때까지(60 s 주기 — 최대 90 s) 기다린다: 기다리지 않으면 먼저 도는 시험이 '공역 자료 없음'을 받는다(VERIFICATION #118)
+# (한 덩어리의 부속 셸 — e2e 레시피의 if/elif 안에서 쓰여 exit 가 레시피를 끝내지 않게)
+AIRSPACE_FIXTURE_IMPORT := ( $(ISO) exec -T collector python -m wakeline_collector.tools.airspace_import --edition "합성 시험 공역 1차" < apps/collector/tests/fixtures/airspace/synthetic.kml >/dev/null \
+  && for i in $$(seq 1 45); do curl -fsS -H 'Accept: application/geo+json' http://localhost:8701/api/v1/airspace | grep -q '"label":"합성 시험 공역 1차"' && exit 0; sleep 2; done; echo "api 가 합성 공역을 90 s 안에 읽지 않았다" >&2; exit 1 )
 # 부하 시험 도구 — 버전+다이제스트 고정(latest 가 바뀌어 내부망에 붙는 도구가 조용히 달라지지 않게). Dependabot 대상 아님: 올릴 때 여기서 함께 바꾼다.
 K6_IMAGE := grafana/k6:2.3.0@sha256:9c2dee7f8ed74d317e4027c06a10f169b625638189de8d4555d0b3486a5aeb34
 # 개발 스택의 api 주소·네트워크(compose 의 고정 IP) 와 WS Origin(api 의 허용 목록 WAKELINE_ALLOWED_ORIGINS 에 있는 값)
