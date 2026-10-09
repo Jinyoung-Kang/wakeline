@@ -348,6 +348,12 @@ public class ShipController {
         if (!start.isBefore(end) || Duration.between(start, end).compareTo(TRACK_MAX_RANGE) > 0)
             throw Problem.badRequest("BAD_RANGE", "range must be within 24 h and from < to");
         List<ShipRepository.TrackPoint> pts = repo.track(m, start, end, TRACK_MAX_POINTS);
+        // 원해상도가 없으면(보존 72 h 밖) 지정 보존 1분 점(ADR-038 — 운영자가 지정한 선박만). resolution 이 어느 것인지 밝힌다(§G52)
+        String resolution = "raw";
+        if (pts.isEmpty()) {
+            pts = repo.retainedTrack(m, start, end, TRACK_MAX_POINTS);
+            if (!pts.isEmpty()) resolution = "1m_retained";
+        }
         List<AisGap> open = openGaps(end);
         List<AisGap> breaks = new ArrayList<>(repo.gapsAtLeast(start, end, GAP_BREAK_MIN_S, TRACK_BREAK_GAPS_MAX));
         breaks.addAll(open);
@@ -377,6 +383,7 @@ public class ShipController {
         properties.put("points", pts.size());
         properties.put("truncated", pts.size() >= TRACK_MAX_POINTS);
         properties.put("sampling", "first_fix_per_60s");
+        properties.put("resolution", resolution);
         properties.put("gap_break_min_s", GAP_BREAK_MIN_S);
         properties.put("gaps_truncated", listed.truncated());
         properties.put("segments", segMeta);

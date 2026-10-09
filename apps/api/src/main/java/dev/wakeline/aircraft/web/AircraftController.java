@@ -199,6 +199,12 @@ public class AircraftController {
         // 정확히 비교한다(R-71 — toHours() 절삭은 24 h 59 m 을 통과시켰다)
         if (Duration.between(start, end).compareTo(TRACK_MAX_RANGE) > 0 || !start.isBefore(end)) throw Problem.badRequest("BAD_RANGE", "range must be within 24 h");
         List<Map<String, Object>> rows = tracks.track(h, start, end, Math.max(0, Math.min(stepS, 3600)), TRACK_MAX_POINTS + 1);
+        // 원해상도가 없으면(보존 72 h 밖 · 지워진 파티션) 지정 보존 1분 점(ADR-038 — 운영자가 지정한 대상만). resolution 이 어느 것인지 밝힌다(§G52)
+        String resolution = "raw";
+        if (rows.isEmpty()) {
+            rows = tracks.retained(h, start, end, TRACK_MAX_POINTS + 1);
+            if (!rows.isEmpty()) resolution = "1m_retained";
+        }
         boolean truncated = rows.size() > TRACK_MAX_POINTS;
         List<Map<String, Object>> pts = truncated ? rows.subList(0, TRACK_MAX_POINTS) : rows;
         List<double[]> coords = new ArrayList<>(pts.size());
@@ -206,7 +212,7 @@ public class AircraftController {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("type", "Feature");
         m.put("geometry", Map.of("type", "LineString", "coordinates", coords));
-        m.put("properties", Map.of("hex", h, "from", start, "to", end, "points", pts.size(), "truncated", truncated));
+        m.put("properties", Map.of("hex", h, "from", start, "to", end, "points", pts.size(), "truncated", truncated, "resolution", resolution));
         m.put("points", pts);
         m.put("meta", Meta.of(req, "db", pts.isEmpty() ? null : (Instant) pts.getLast().get("ts"), 120));
         return ResponseEntity.ok().cacheControl(CacheControl.maxAge(30, TimeUnit.SECONDS).cachePublic()).body(m);

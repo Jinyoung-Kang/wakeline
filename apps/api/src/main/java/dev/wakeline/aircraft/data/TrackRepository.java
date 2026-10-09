@@ -35,6 +35,22 @@ public class TrackRepository {
         }).toList();
     }
 
+    /**
+     * 지정 보존 항적(V21 retained_track — ADR-038 · 계약 v5 §G52): 원해상도가 지워진 뒤 운영자가 지정한 항공기의 1분에 첫 점. [from, to] 시간순, 최대 limit 점.
+     * 행 모양은 {@link #track} 과 같다(그 분의 첫 실제 점 — 평균이 아니다).
+     */
+    public List<Map<String, Object>> retained(String hex, Instant from, Instant to, int limit) {
+        return Sql.publicRead(db, "aircraft.track_retained", """
+                SELECT target_id hex, ts, ST_X(geom) lon, ST_Y(geom) lat, alt_ft, gs_kt, track_deg, provider
+                FROM retained_track WHERE kind = 'aircraft' AND target_id = :hex AND ts_minute BETWEEN :from AND :to ORDER BY ts_minute LIMIT :lim""")
+                .param("hex", hex).param("from", Sql.ts(from)).param("to", Sql.ts(to)).param("lim", limit)
+                .query().listOfRows().stream().map(r -> {
+                    var m = new java.util.LinkedHashMap<>(r);
+                    m.put("ts", Sql.toInstant(m.get("ts")));
+                    return (Map<String, Object>) m;
+                }).toList();
+    }
+
     /** 재생 결과: 행 + 실제로 행을 준 테이블(track_point | track_point_1m | none, 계약 §2 — COR-22). */
     public record Replay(List<Map<String, Object>> aircraft, String source) {}
 

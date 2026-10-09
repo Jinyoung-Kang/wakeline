@@ -3,6 +3,7 @@ package dev.wakeline.history;
 import dev.wakeline.platform.config.AppProperties;
 import dev.wakeline.geo.Bbox;
 import dev.wakeline.settings.RegionSettings;
+import dev.wakeline.settings.RetainTargets;
 import dev.wakeline.platform.data.Sql;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -124,6 +125,7 @@ public class MaintenanceJobs {
         retention("quality_rule_count", () -> db.sql("DELETE FROM quality_rule_count WHERE day < :d").param("d", todayKst().minusDays(90)).update());
         // 기상특보 이력(V20 — ADR-036 · 계획 결정 D6): 끝난 지 90일 지난 행. 발효 중인 행(ended_at 없음)은 남긴다
         retention("wx_warning (ended)", () -> db.sql("DELETE FROM wx_warning WHERE ended_at < now() - interval '90 days'").update());
+        retention("retained_track", this::deleteOldRetained);
     }
 
     /**
@@ -173,6 +175,7 @@ public class MaintenanceJobs {
         } catch (RuntimeException e) {
             log.warn("summary job failed: {}", e.toString());
         }
+        copyRetained(); // 지정 대상 보존 — 요약과 따로 실패를 가둔다
     }
 
     /** [hourStart, hourStart+1h) 를 1분 요약한다. (hex, ts_minute) 충돌은 무시 — 다시 돌려도 같다. */
@@ -190,6 +193,78 @@ public class MaintenanceJobs {
                 .param("lomin", b.lomin()).param("lamin", b.lamin()).param("lomax", b.lomax()).param("lamax", b.lamax()).update();
     }
 
+    /** 지정 대상 보존 기간(ADR-038 — 계획 결정 D7) */
+    static final int RETAINED_DAYS = 365;
+    /** 매시간 옮기는 창(닫힌 시간까지 거슬러) — 한두 번 놓쳐도 다음 실행이 채운다(겹치면 무시) */
+    static final int RETAIN_COPY_HOURS = 3;
+    /** 기동 뒤 따라잡기 창 — 원해상도 보존(72 h)보다 조금 짧게(지워지는 중인 파티션을 읽지 않게) */
+    static final int RETAIN_CATCH_UP_HOURS = 70;
+
+    /**
+     * 지정 대상 기록 보존(ADR-038 · SPEC F7): 지난 {@value #RETAIN_COPY_HOURS}시간(닫힌 시간까지)을 옮긴다. 매시 1분 요약 작업({@link #summarize1m})이 이어서
+     * 부른다 — 예약 작업을 더하면 스케줄러 풀(SchedulingConfig.POOL_SIZE)이 작업 수와 같아진다(SchedulingIT).
+     */
+    public void copyRetained() {
+        Instant to = clock.instant().truncatedTo(ChronoUnit.HOURS);
+        try {
+            int n = copyRetained(to.minus(RETAIN_COPY_HOURS, ChronoUnit.HOURS), to);
+            if (n > 0) log.info("retained track: {} new minute points", n);
+        } catch (RuntimeException e) {
+            log.warn("retained track copy failed (next hour retries): {}", e.toString());
+        }
+    }
+
+    /** 지금 설정(retain_targets)의 대상 — 읽지 못하거나 틀린 값이면 지정 없음(옮기지 않는다 · 경고 로그) */
+    RetainTargets retainTargets() {
+        String raw = db.sql("SELECT value #>> '{}' FROM app_setting WHERE key = 'retain_targets'").query(String.class).optional().orElse("");
+        try {
+            return RetainTargets.parse(raw);
+        } catch (IllegalArgumentException e) {
+            log.warn("retain_targets ignored (invalid): {}", e.getMessage());
+            return RetainTargets.NONE;
+        }
+    }
+
+    /**
+     * [from, to) 의 지정 대상 원해상도 점을 1분에 첫 점 하나로 retained_track 에 옮긴다 — 이미 있는 분은 그대로(다시 돌려도 같다).
+     * 지정을 풀면 다음 실행부터 옮기지 않고, 옮긴 점은 보존 기간까지 남는다. @return 새로 들어간 행 수
+     */
+    int copyRetained(Instant from, Instant to) {
+        RetainTargets t = retainTargets();
+        int n = 0;
+        if (!t.aircraft().isEmpty())
+            n += db.sql("""
+                    INSERT INTO retained_track (kind, target_id, ts_minute, ts, geom, alt_ft, gs_kt, track_deg, provider)
+                    SELECT DISTINCT ON (hex, date_trunc('minute', ts)) 'aircraft', hex::text, date_trunc('minute', ts), ts, geom, alt_ft, gs_kt, track_deg, provider
+                    FROM track_point WHERE hex IN (:ids) AND ts >= :from AND ts < :to
+                    ORDER BY hex, date_trunc('minute', ts), ts
+                    ON CONFLICT (kind, target_id, ts_minute) DO NOTHING""")
+                    .param("ids", t.aircraft()).param("from", Sql.ts(from)).param("to", Sql.ts(to)).update();
+        if (!t.ships().isEmpty())
+            n += db.sql("""
+                    INSERT INTO retained_track (kind, target_id, ts_minute, ts, geom, sog_kn, cog_deg, provider)
+                    SELECT DISTINCT ON (mmsi, date_trunc('minute', ts)) 'ship', mmsi::text, date_trunc('minute', ts), ts, geom, sog_kn, cog_deg, provider
+                    FROM ship_position WHERE mmsi IN (:ids) AND ts >= :from AND ts < :to
+                    ORDER BY mmsi, date_trunc('minute', ts), ts
+                    ON CONFLICT (kind, target_id, ts_minute) DO NOTHING""")
+                    .param("ids", t.ships()).param("from", Sql.ts(from)).param("to", Sql.ts(to)).update();
+        return n;
+    }
+
+    /** 보존 기간이 지난 지정 보존 점을 지운다 — 한 문장에 {@value #ALERT_DELETE_BATCH} 행씩(긴 잠금을 피한다). @return 지운 행 수 */
+    int deleteOldRetained() {
+        int total = 0;
+        for (int i = 0; i < ALERT_DELETE_MAX_BATCHES; i++) {
+            int n = db.sql("""
+                    DELETE FROM retained_track WHERE ctid IN (
+                      SELECT ctid FROM retained_track WHERE ts_minute < :cut LIMIT :n)""")
+                    .param("cut", Sql.ts(clock.instant().minus(RETAINED_DAYS, ChronoUnit.DAYS))).param("n", ALERT_DELETE_BATCH).update();
+            total += n;
+            if (n < ALERT_DELETE_BATCH) break;
+        }
+        return total;
+    }
+
     /** 기동 1분 뒤, 그 뒤 3시간마다: 놓친 1분 요약·일 통계를 채운다(REL-18). */
     @Scheduled(initialDelay = 60_000, fixedDelay = 3 * 3600_000)
     public void catchUp() {
@@ -197,6 +272,9 @@ public class MaintenanceJobs {
             List<Instant> hours = catchUpSummaries(Instant.now());
             List<LocalDate> days = catchUpStats(todayKst());
             List<LocalDate> older = backfillStats(todayKst());
+            Instant hour = clock.instant().truncatedTo(ChronoUnit.HOURS);
+            int retained = copyRetained(hour.minus(RETAIN_CATCH_UP_HOURS, ChronoUnit.HOURS), hour); // 지정 대상 — 기동 · 놓친 시간(겹치면 무시)
+            if (retained > 0) log.info("catch-up: retained track {} new minute points", retained);
             if (!hours.isEmpty() || !days.isEmpty() || !older.isEmpty())
                 log.info("catch-up: summarized hours {}, aggregated days {}, backfilled {} older days {}", hours, days, older.size(),
                         older.isEmpty() ? "" : older.get(older.size() - 1) + ".." + older.get(0));
