@@ -35,11 +35,15 @@ export const AirspaceStatusPart = lazyPart("공역", () => import("./AirspaceLay
 
 /** 기상특보 탭(ADR-036) — 탭을 열 때 받는다 */
 export const WarningPanelPart = lazyPart("기상특보", () => import("./WarningPanel").then((m) => m.WarningPanel));
+/** 관심 대상 탭(ADR-037 — 계약 v5 §G50) */
+export const WatchPanelPart = lazyPart("관심 대상", () => import("./WatchPanel").then((m) => m.WatchPanel));
+/** 관심 대상 실행기(조회 · 배너 · 브라우저 알림) — 탭과 같은 모듈. 미리 받기가 받은 뒤에만 그린다(SidePanel 의 useLoaded) */
+export const WatchRunnerPart = lazyPart("관심 대상 알림", () => import("./WatchPanel").then((m) => m.WatchRunner), { frameClassName: "hidden" });
 
 /** 모든 조각(시험이 미리 받을 때 · 목록 점검) */
 export const DASHBOARD_PARTS = [
   AircraftCardPart, ShipPanelPart, SigmetCardPart, SigmetListPart, AirportCardPart, AirportListPart, EvidenceCardPart, KrRadarPanelPart, ShipTablePart,
-  ReceptionStatusPart, AirspaceStatusPart, WarningPanelPart,
+  ReceptionStatusPart, AirspaceStatusPart, WarningPanelPart, WatchPanelPart, WatchRunnerPart,
 ] as const;
 
 /**

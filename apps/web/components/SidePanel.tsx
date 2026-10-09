@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useRef } from "react";
 import { AlertPanel } from "./AlertPanel";
-import { AircraftCardPart, AirportCardPart, AirportListPart, ShipPanelPart, SigmetCardPart, SigmetListPart, WarningPanelPart } from "./DashboardParts";
+import { AircraftCardPart, AirportCardPart, AirportListPart, ShipPanelPart, SigmetCardPart, SigmetListPart, WarningPanelPart, WatchPanelPart, WatchRunnerPart } from "./DashboardParts";
 import { isAttached, isShown, rescueFocus } from "@/lib/focus-rescue";
 import { useUi, type UiPanel } from "@/lib/ui-store";
 
@@ -13,10 +13,12 @@ export function SidePanel() {
   const airport = useUi((s) => s.selectedAirport);
   const ship = useUi((s) => s.selectedShip);
   const shipsOn = useUi((s) => s.layers.ships);
-  return <SidePanelView panel={panel} hex={hex} sigmet={sigmet} airport={airport} ship={ship} shipsOn={shipsOn} />;
+  // 관심 대상 실행기(ADR-037): 첫 화면 뒤 미리 받기가 받은 뒤에만 — 여기서 받기를 시작하지 않는다
+  const watch = WatchRunnerPart.useLoaded();
+  return <><SidePanelView panel={panel} hex={hex} sigmet={sigmet} airport={airport} ship={ship} shipsOn={shipsOn} />{watch ? <WatchRunnerPart /> : null}</>;
 }
 
-const PANEL_NAME: Record<UiPanel, string> = { alerts: "알림", aircraft: "항공기", ship: "선박", sigmet: "SIGMET", airport: "공항", wx: "기상특보" };
+const PANEL_NAME: Record<UiPanel, string> = { alerts: "알림", aircraft: "항공기", ship: "선박", sigmet: "SIGMET", airport: "공항", wx: "기상특보", watch: "관심 대상" };
 /** 카드를 닫은 뒤 돌아갈 목록 줄(그 탭의 목록에서 닫은 항목): [목록 줄의 data-testid, 항목 id 를 단 속성] */
 const LIST_ITEM: Partial<Record<UiPanel, readonly [string, string]>> = {
   sigmet: ["sigmet-list-item", "data-id"], airport: ["airport-list-item", "data-icao"], ship: ["ship-list-item", "data-mmsi"],
@@ -76,7 +78,7 @@ export function SidePanelView({ panel, hex, sigmet, airport, ship = null, shipsO
   return (
     <>
       <div className="flex border-b border-line">
-        {(["alerts", "aircraft", "ship", "sigmet", "airport", "wx"] as const).map((p) => (
+        {(["alerts", "aircraft", "ship", "sigmet", "airport", "wx", "watch"] as const).map((p) => (
           <button key={p} className="btn flex-1 border-0 border-r border-line" aria-pressed={panel === p} onClick={() => setPanel(p)} data-testid={`tab-${p}`}>{p}</button>
         ))}
       </div>
@@ -89,6 +91,7 @@ export function SidePanelView({ panel, hex, sigmet, airport, ship = null, shipsO
         {panel === "sigmet" ? (sigmet ? <SigmetCardPart id={sigmet} /> : <SigmetListPart />) : null}
         {panel === "airport" ? (airport ? <AirportCardPart icao={airport} /> : <AirportListPart />) : null}
         {panel === "wx" ? <WarningPanelPart /> : null}
+        {panel === "watch" ? <WatchPanelPart /> : null}
       </div>
     </>
   );

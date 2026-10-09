@@ -1,4 +1,5 @@
 "use client";
+import { WatchButton } from "./watch/WatchButton";
 import { useEscapeClose } from "@/lib/use-escape-close";
 import { useMemo, useRef } from "react";
 import { aircraftDetail } from "@/lib/endpoints/aircraft";
@@ -195,6 +196,7 @@ export function AircraftCard({ hex }: { hex: string }) {
           {gone ? <span className="badge warn" data-testid="aircraft-gone">스냅샷에 없음 · 수신 중단</span> : null}
           {r?.estimated ? <span className="badge est">{r.capped ? "위치 추정 상한 도달 · STALE" : "지도 위치 추정 · dead reckoning"}</span> : null}
           {r && r.stale && !r.capped ? <span className="badge warn">STALE · 수신 지연</span> : null}
+          <WatchButton kind="aircraft" id={hex} label={s?.callsign} />
           <button className="btn" onClick={() => select(null)}>닫기</button>
         </div>
       </div>
