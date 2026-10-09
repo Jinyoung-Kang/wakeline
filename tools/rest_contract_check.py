@@ -817,6 +817,30 @@ WARNINGS: Schema = {
     "if": {"properties": {"received": {"const": False}}},
     "then": {"properties": {"items": {"maxItems": 0}}},
 }
+# 알림 한 건 — 근거 공유(계약 v5 §G51): 열린 알림은 엔진 모양(ALERT), 닫힌 알림은 이력 모양(HISTORY_ALERT) + 구역 사본
+ALERT_DETAIL: Schema = {
+    "type": "object",
+    "required": ["alert", "source", "retention_days", "meta"],
+    "properties": {
+        "alert": {"anyOf": [ALERT, HISTORY_ALERT]},
+        "source": {"enum": ["engine", "db"]},
+        "sigmet": {
+            "type": "object",
+            "required": ["id", "fir_id", "hazard", "base_ft", "valid_from", "valid_to", "raw_text", "provider"],
+            "properties": {"id": STR, "valid_from": TS, "valid_to": TS, "withdrawn_at": TS, "raw_text": STR, "base_ft": INT, "top_ft": INT},
+        },
+        "airspace": {
+            "type": "object",
+            "required": ["id", "category", "type_ko", "name", "lower_basis", "lower_raw", "upper_basis", "upper_raw", "edition", "edition_active"],
+            "properties": {"id": INT, "lower_ft": INT, "upper_ft": INT, "edition": STR, "edition_active": BOOL},
+        },
+        "retention_days": INT,
+        "meta": META,
+    },
+    "if": {"properties": {"source": {"const": "engine"}}},
+    "then": {"properties": {"alert": {"not": {"required": ["left_at"]}}}},
+}
+
 # 관심 대상(계약 v5 §G50 · ADR-037) — 대상마다 한 줄(요청 순서 · 중복 한 번), 모르면 found=false 이고 상태 키가 없다
 WATCH_ALERT: Schema = {
     "type": "object",
@@ -1107,6 +1131,7 @@ SCHEMAS: dict[str, dict[str, Any]] = {
     "warnings": WARNINGS,
     "warnings_history": WARNINGS_HISTORY,
     "watch": WATCH,
+    "alert_detail": ALERT_DETAIL,
     "sigmet_detail": {
         **SIGMET_FEATURE,
         "required": [*SIGMET_FEATURE["required"], "aircraft_inside", "meta"],
@@ -1683,6 +1708,9 @@ CHECKS = [
     Check("warnings", "warnings", 200, "application/json", True),
     Check("warnings_history", "warnings_history", 200, "application/json", True),
     Check("watch", "watch", 200, "application/json", False),  # private — 요청 URL 이 개인의 관심 목록(ADR-037)
+    Check("alert_detail", "alert_detail", 200, "application/json", True, recorded_only=True),
+    Check("alert_detail_airspace", "alert_detail", 200, "application/json", True, recorded_only=True),
+    Check("alert_detail_missing", "problem", 404, "application/problem+json", False, recorded_only=True),
     # 기록에만: 공역(합성 차수의 금지구역) 안의 항공기 상세 — inside_airspace · 공역 알림(계약 v5 §G48)
     Check("aircraft_detail_airspace", "aircraft_detail", 200, "application/json", True, recorded_only=True),
     Check("alerts", "alerts", 200, "application/json", True),

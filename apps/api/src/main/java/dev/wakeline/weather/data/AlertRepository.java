@@ -209,6 +209,51 @@ public class AlertRepository {
     }
 
     /**
+     * 알림 한 건(계약 v5 §G51 — 근거 공유). 이력과 같은 모양(구역 필드 · 근거 · eta_at). 없으면(보존 삭제 · 없는 id) null. 기본 키 조회 한 번.
+     */
+    public Map<String, Object> byId(long id) {
+        var rows = Sql.publicRead(db, "alerts.by_id", """
+                SELECT e.id, e.hex, e.callsign, e.sigmet_id, s.fir_id, s.hazard, s.qualifier, e.kind, e.entered_at, e.left_at, e.close_reason, e.eta_s,
+                       CASE WHEN e.kind = 'PREDICTED' AND e.eta_s IS NOT NULL AND e.evidence->>'entry' IS NOT NULL AND e.evidence->>'judged_at' IS NOT NULL
+                            THEN (e.evidence->>'judged_at')::timestamptz + make_interval(secs => e.eta_s) END eta_at,
+                       e.alt_ft_at_entry, e.evidence::text evidence, e.zone_type, e.level,
+                       a.id airspace_id, a.category airspace_category, a.type_ko airspace_type_ko, a.ident airspace_ident, a.name airspace_name,
+                       ed.label airspace_edition
+                FROM alert_event e LEFT JOIN sigmet s ON s.id = e.sigmet_id
+                LEFT JOIN airspace a ON a.id = e.airspace_id LEFT JOIN airspace_edition ed ON ed.id = a.edition_id
+                WHERE e.id = :id""").param("id", id).query().listOfRows();
+        if (rows.isEmpty()) return null;
+        var m = new java.util.LinkedHashMap<>(rows.get(0));
+        Object ev = m.get("evidence");
+        m.put("evidence", ev == null ? null : json.readTree(ev.toString()));
+        for (String k : List.of("entered_at", "left_at", "eta_at")) m.put(k, Sql.toInstant(m.get(k)));
+        m.put("estimated", "PREDICTED".equals(m.get("kind")));
+        zoneFields(m);
+        return m;
+    }
+
+    /** 그 알림의 SIGMET 사본(원문 · 유효 시간 · 고도대 · 철회) — 근거 공유 화면이 경보가 끝난 뒤에도 보이게. 없으면 null */
+    public Map<String, Object> sigmetCopy(String sigmetId) {
+        if (sigmetId == null) return null;
+        var rows = Sql.publicRead(db, "alerts.sigmet_copy", """
+                SELECT id, fir_id, fir_name, hazard, qualifier, base_ft, top_ft, base_source, top_source, valid_from, valid_to, withdrawn_at, raw_text, provider
+                FROM sigmet WHERE id = :id""").param("id", sigmetId).query().listOfRows();
+        if (rows.isEmpty()) return null;
+        var m = new java.util.LinkedHashMap<>(rows.get(0));
+        for (String k : List.of("valid_from", "valid_to", "withdrawn_at")) m.put(k, Sql.toInstant(m.get(k)));
+        return m;
+    }
+
+    /** 그 알림의 공역 사본(이름 · 종류 · 고도 한계 원문 · 차수) — 차수가 바뀌어도 옛 차수의 행을 가리킨다(ADR-034). 없으면 null */
+    public Map<String, Object> airspaceCopy(long airspaceId) {
+        var rows = Sql.publicRead(db, "alerts.airspace_copy", """
+                SELECT a.id, a.category, a.type_ko, a.ident, a.name, a.lower_ft, a.lower_basis, a.lower_raw, a.upper_ft, a.upper_basis, a.upper_raw,
+                       ed.label edition, ed.active edition_active
+                FROM airspace a JOIN airspace_edition ed ON ed.id = a.edition_id WHERE a.id = :id""").param("id", airspaceId).query().listOfRows();
+        return rows.isEmpty() ? null : new java.util.LinkedHashMap<>(rows.get(0));
+    }
+
+    /**
      * 구역 필드(계약 v5 §G48): SIGMET 행은 예전 모양 그대로(구역 필드 없음). 공역 행은 zone_type · level · airspace{id, category, type_ko, ident, name,
      * label, edition}(실시간 알림의 airspace 와 같은 이름 — 고도 한계는 근거 lower · upper 에 있다).
      */

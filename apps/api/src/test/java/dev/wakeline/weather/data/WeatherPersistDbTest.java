@@ -188,6 +188,17 @@ class WeatherPersistDbTest {
         Map<String, Object> hs = page.items().stream().filter(m -> ((Number) m.get("id")).longValue() == id + 2).findFirst().orElseThrow();
         assertThat(hs).containsEntry("sigmet_id", s.id()).containsEntry("hazard", "ICE").doesNotContainKeys("zone_type", "level", "airspace");
 
+        // 근거 공유(계약 v5 §G51): 한 건 조회는 이력과 같은 모양, 구역 사본은 SIGMET 원문 · 공역 고도 한계 원문과 차수
+        assertThat(repo.byId(id)).containsEntry("zone_type", "airspace").containsEntry("close_reason", "zone_ended").containsKey("airspace")
+                .doesNotContainKeys("airspace_id", "airspace_edition");
+        assertThat(repo.byId(id + 2)).containsEntry("sigmet_id", s.id()).containsEntry("hazard", "ICE").doesNotContainKeys("zone_type", "airspace");
+        assertThat(repo.byId(Long.MAX_VALUE)).isNull();
+        assertThat(repo.sigmetCopy(s.id())).containsEntry("raw_text", "RAW9").containsEntry("hazard", "ICE").containsKeys("valid_from", "valid_to", "base_ft");
+        assertThat(repo.sigmetCopy("RKRR:NONE")).isNull();
+        assertThat(repo.airspaceCopy(aid)).containsEntry("ident", "RK P99").containsEntry("edition", "합성 시험").containsEntry("edition_active", true)
+                .containsKeys("lower_raw", "upper_raw", "lower_basis", "upper_basis");
+        assertThat(repo.airspaceCopy(-1)).isNull();
+
         // 공역 행의 자연키는 부분 유일 색인 — 같은 (hex, airspace_id, kind, entered_at) 는 두 번 들어가지 않는다(오류가 아니라 0행)
         events(repo, new Event(EventType.ENTERED, Alert.of(id + 9, "OBSERVED", "abd001", "TST1", head, T0.minusSeconds(60), null, null, 15_000, ev, false)));
         writer.drainNow();

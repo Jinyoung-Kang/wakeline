@@ -199,6 +199,10 @@ class RestSamplesIT extends IntegrationTest {
         record("sigmets", "/api/v1/sigmets", 200);
         record("sigmet_detail", "/api/v1/sigmets/" + sigmetId, 200);
         record("alerts", "/api/v1/alerts", 200);
+        // 근거 공유(계약 v5 §G51): 열린 SIGMET 알림 · 열린 공역 알림 한 건(구역 사본 함께) · 없는 id(404)
+        record("alert_detail", "/api/v1/alerts/" + count("SELECT min(id) FROM alert_event WHERE hex = ? AND zone_type = 'sigmet'", inside), 200);
+        record("alert_detail_airspace", "/api/v1/alerts/" + count("SELECT min(id) FROM alert_event WHERE hex = ? AND zone_type = 'airspace'", inAirspace), 200);
+        record("alert_detail_missing", "/api/v1/alerts/1", 404);
         record("alerts_history", "/api/v1/alerts/history", 200);
         record("radar_frames", "/api/v1/radar/frames", 200);
         // 기상청 합성 레이더(ADR-021): 수집기 역할로 영상 · 목록 · meta — 14:40 은 부분 합성(7/15곳, 한 번 다시 받음), 14:45 는 완전(15/15곳)
