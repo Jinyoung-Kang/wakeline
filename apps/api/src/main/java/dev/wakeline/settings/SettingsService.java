@@ -28,7 +28,7 @@ public class SettingsService {
     private static final Logger log = LoggerFactory.getLogger(SettingsService.class);
     public static final String REDIS_KEY = "wakeline:settings";
     static final Set<String> KEYS = Set.of("region_poll_s", "global_poll_s", "sigmet_poll_s", "radar_poll_s", "metar_poll_s",
-            "aircraft_providers", "region_center", "region_radius_nm", "global_enabled", "ais_bboxes");
+            "aircraft_providers", "region_center", "region_radius_nm", "global_enabled", "ais_bboxes", "airspace_alerts");
     /** "lat,lon" — 숫자 형식만 여기서 보고, 범위는 숫자로 검사한다(정규식만으로는 lat 99 · lon 999 가 통과했다, COR-12). */
     private static final Pattern LAT_LON = Pattern.compile("^\\s*-?\\d{1,3}(\\.\\d{1,8})?\\s*,\\s*-?\\d{1,3}(\\.\\d{1,8})?\\s*$");
     /** 관심 지역 위도 한계: 웹 메르카토르 표시 범위이자 bbox 경도 보정(cos 위도)이 발산하지 않는 범위. */
@@ -192,6 +192,10 @@ public class SettingsService {
                     throw Problem.badRequest("BAD_VALUE", "lat must be within ±" + (int) MAX_ABS_LAT + ", lon within ±180");
             }
             case "ais_bboxes" -> aisBboxes(v);
+            // 공역 판정(ADR-035 · 계약 v5 §G48): off 판정 안 함 · shadow 판정 · 건수만(저장 · 방송 없음) · on 알림. api 가 60 s 안에 따른다(AirspaceRefresher)
+            case "airspace_alerts" -> {
+                if (!v.isString() || !v.asString().matches("^(off|shadow|on)$")) throw Problem.badRequest("BAD_VALUE", "one of off|shadow|on");
+            }
             default -> throw Problem.notFound("setting not found");
         }
     }

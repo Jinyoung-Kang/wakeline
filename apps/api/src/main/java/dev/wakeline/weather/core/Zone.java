@@ -45,6 +45,9 @@ public interface Zone {
     /** 근거: 고도대와 판정 가정(관측 · 예측 공통). */
     void putBand(Map<String, Object> ev);
 
+    /** 근거: 그 고도에 대한 판정 주석(공역 — 고도 경계 근처). SIGMET 은 적지 않는다(근거 그대로). */
+    default void putJudgement(Map<String, Object> ev, int altFt) {}
+
     /** 근거: 유효 시간(SIGMET) 또는 기준 차수(공역). */
     void putValidity(Map<String, Object> ev);
 

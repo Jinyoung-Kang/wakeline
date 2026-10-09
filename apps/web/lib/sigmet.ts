@@ -21,7 +21,7 @@ export function activeSigmetFeatures(fc: SigmetCollection | null | undefined, no
  * 폴리곤 전체를 다시 색인하지 않게 부른 쪽이 지난 컬렉션 · key 와 견준다.
  */
 export function sigmetLayerData(sigmets: SigmetCollection, alerts: Iterable<Pick<Alert, "kind" | "sigmet_id">>, nowMs: number): { fc: GeoJSON.FeatureCollection; key: string } {
-  const inside = new Set([...alerts].filter((a) => a.kind === "OBSERVED").map((a) => a.sigmet_id));
+  const inside = new Set([...alerts].filter((a) => a.kind === "OBSERVED" && a.sigmet_id).map((a) => a.sigmet_id as string));
   const active = activeSigmetFeatures(sigmets, nowMs);
   const ids = (pred: (f: (typeof active)[number]) => boolean) => active.filter(pred).map((f) => f.properties.id).sort().join(",");
   const key = `${active.length}|${ids((f) => inside.has(f.properties.id))}|${ids((f) => f.properties.pending === true)}`;
@@ -93,7 +93,8 @@ export function polygonCenter(g: GeoJSON.MultiPolygon | null | undefined): [numb
  */
 export function sigmetListItems(fc: SigmetCollection | null | undefined, alerts: Iterable<Alert> | null, nowMs: number): SigmetListItem[] {
   const inside = new Map<string, number>(), predicted = new Map<string, number>();
-  if (alerts) for (const a of alerts) { const m = a.kind === "OBSERVED" ? inside : predicted; m.set(a.sigmet_id, (m.get(a.sigmet_id) ?? 0) + 1); }
+  // 공역 알림(계약 v5 §G48 — sigmet_id 없음)은 SIGMET 의 수에 넣지 않는다
+  if (alerts) for (const a of alerts) { if (!a.sigmet_id) continue; const m = a.kind === "OBSERVED" ? inside : predicted; m.set(a.sigmet_id, (m.get(a.sigmet_id) ?? 0) + 1); }
   const known = alerts != null;
   return activeSigmetFeatures(fc, nowMs)
     .map((f): SigmetListItem => {

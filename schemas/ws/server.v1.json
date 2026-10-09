@@ -141,10 +141,13 @@
     },
 
     "alert": {
-      "description": "알림(domain Alert). evidence 는 판정 근거(자유 형식 객체). left_at 이 있으면 닫힌 알림.",
+      "description": "알림(domain Alert). evidence 는 판정 근거(자유 형식 객체). left_at 이 있으면 닫힌 알림. 구역(계약 v5 §G48): zone_type 이 없으면 SIGMET 알림(sigmet_id · fir_id · hazard 필수), 'airspace' 면 공역 알림(airspace · level 필수, SIGMET 필드 없음).",
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "kind", "hex", "sigmet_id", "fir_id", "hazard", "entered_at", "evidence", "estimated"],
+      "required": ["id", "kind", "hex", "entered_at", "evidence", "estimated"],
+      "if": { "required": ["zone_type"], "properties": { "zone_type": { "const": "airspace" } } },
+      "then": { "required": ["airspace", "level"], "not": { "anyOf": [{ "required": ["sigmet_id"] }, { "required": ["fir_id"] }, { "required": ["hazard"] }] } },
+      "else": { "required": ["sigmet_id", "fir_id", "hazard"], "not": { "anyOf": [{ "required": ["airspace"] }, { "required": ["level"] }] } },
       "properties": {
         "id": { "type": "integer" },
         "kind": { "enum": ["OBSERVED", "PREDICTED"] },
@@ -156,12 +159,41 @@
         "qualifier": { "type": "string" },
         "entered_at": { "$ref": "#/$defs/date_time" },
         "left_at": { "$ref": "#/$defs/date_time" },
-        "close_reason": { "enum": ["left", "signal_lost", "restart", "sigmet_ended", "prediction_cleared"] },
+        "close_reason": { "enum": ["left", "signal_lost", "restart", "sigmet_ended", "prediction_cleared", "zone_ended"] },
         "eta_s": { "type": "integer" },
         "eta_at": { "$ref": "#/$defs/date_time" },
         "alt_ft": { "type": "integer" },
         "evidence": { "type": "object" },
-        "estimated": { "type": "boolean" }
+        "estimated": { "type": "boolean" },
+        "zone_type": { "enum": ["airspace"] },
+        "level": { "enum": ["alert", "info"] },
+        "airspace": {
+          "description": "공역 알림의 구역(국토교통부 공역 — 기준 차수 edition). 고도 한계 lower · upper = {ft(UNL · UNKNOWN 이면 없음), basis, raw}.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "category", "type_ko", "name", "label", "edition", "lower", "upper"],
+          "properties": {
+            "id": { "type": "integer" },
+            "category": { "type": "string", "pattern": "^[a-z_]{1,32}$" },
+            "type_ko": { "type": "string" },
+            "ident": { "type": "string" },
+            "name": { "type": "string" },
+            "label": { "type": "string" },
+            "edition": { "type": "string" },
+            "lower": { "$ref": "#/$defs/airspace_limit" },
+            "upper": { "$ref": "#/$defs/airspace_limit" }
+          }
+        }
+      }
+    },
+    "airspace_limit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["basis", "raw"],
+      "properties": {
+        "ft": { "type": "integer" },
+        "basis": { "enum": ["MSL", "FL", "AGL", "SFC", "UNL", "UNKNOWN"] },
+        "raw": { "type": "string" }
       }
     },
     "alerts": {
@@ -190,7 +222,7 @@
             "additionalProperties": false,
             "required": ["event", "alert"],
             "properties": {
-              "event": { "enum": ["ENTERED", "LEFT", "LOST", "SIGMET_ENDED", "PREDICTED", "PREDICTION_UPDATED", "PREDICTION_CLEARED"] },
+              "event": { "enum": ["ENTERED", "LEFT", "LOST", "SIGMET_ENDED", "PREDICTED", "PREDICTION_UPDATED", "PREDICTION_CLEARED", "ZONE_ENDED"] },
               "alert": { "$ref": "#/$defs/alert" }
             }
           }

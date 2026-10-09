@@ -52,7 +52,7 @@ class QueryPlanDbTest {
         admin.sql("ANALYZE alert_event").update();
         admin.sql("ANALYZE sigmet").update();
 
-        PlanCapture plans = new PlanCapture(DbTestSupport.apiDataSource(), "FROM alert_event e JOIN sigmet s", PlanCapture.Mode.GENERIC);
+        PlanCapture plans = new PlanCapture(DbTestSupport.apiDataSource(), "FROM alert_event e LEFT JOIN sigmet s", PlanCapture.Mode.GENERIC);
         SimpleMeterRegistry meters = new SimpleMeterRegistry();
         OrderedWriter writer = new OrderedWriter(meters, 10, 20);
         JdbcClient db = JdbcClient.create(plans.dataSource());

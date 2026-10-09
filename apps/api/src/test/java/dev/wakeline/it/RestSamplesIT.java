@@ -109,6 +109,13 @@ class RestSamplesIT extends IntegrationTest {
                 "missing_probe_every_s", "300", "missing_list_tm", "202609291510", "missing_list_newer", "0");
     }
 
+    /** 공역 판정을 기본(shadow)으로 되돌린다 — 같은 DB 를 쓰는 다른 통합 시험에 on 이 남지 않게 */
+    @org.junit.jupiter.api.AfterEach
+    void airspaceModeBack() {
+        admin().sql("UPDATE app_setting SET value = '\"shadow\"' WHERE key = 'airspace_alerts'").update();
+        airspaceRefresher.refresh();
+    }
+
     @Test
     void recordsRestResponsesForThePythonContractCheck() throws Exception {
         // 자료: SIGMET 1(관측 판정 대상) + 관심 지역 3대(1대는 SIGMET 안) + 전세계 1대 + 레이더 프레임 + 공항·METAR
@@ -131,18 +138,29 @@ class RestSamplesIT extends IntegrationTest {
         Streams.xadd(Streams.AIRCRAFT, Streams.aircraft("global", fg, List.of(Streams.state("a1d0aa", 51.47, -0.45, 35000, fg.minusSeconds(20), fg))));
         await("global", WAIT, () -> snapshots.global().fetchedAt().equals(fg));
         String inside = "a1d001";
+        // 공역(계약 v5 §G47 · §G48 · ADR-034/035): 합성 차수(가짜 자료)를 수집기 계정으로 넣어 켜고, 공역 판정을 on 으로 둔 뒤 읽기 빈을 한 번 돌린다
+        // (60 s 주기를 기다리지 않게). 금지구역 'RK P99'(132.0–132.2E · 36.0–36.2N, 지면 – 무제한) 안의 a1d00a 가 공역 알림을 만든다. 끝나면 shadow 로 되돌린다.
+        String inAirspace = "a1d00a";
+        var collectorDb = org.springframework.jdbc.core.simple.JdbcClient.create(new org.springframework.jdbc.datasource.DriverManagerDataSource(
+                dev.wakeline.DbTestSupport.jdbcUrl(ItStack.DB), "wakeline_collector", dev.wakeline.DbTestSupport.COLLECTOR_PW));
+        dev.wakeline.airspace.AirspaceFixtures.insertEdition(sql -> collectorDb.sql(sql).update(), "%064x".formatted(System.nanoTime()), "합성 시험 공역",
+                true, dev.wakeline.airspace.AirspaceFixtures.defaults());
+        admin().sql("UPDATE app_setting SET value = '\"on\"' WHERE key = 'airspace_alerts'").update();
+        airspaceRefresher.refresh();
         for (int i = 0; i < 2; i++) { // 2번 관측 → 관측 알림(ENTERED)
             Instant f = Streams.nextFetchedAt();
             Instant seen = f.minusMillis(500);
             Streams.xadd(Streams.AIRCRAFT, Streams.aircraft("region", f, List.of(
                     Streams.state(inside, 34.8 + i * 0.01, 128.7, 30000, seen, f),
                     Streams.state("a1d002", 37.46, 126.44, 5000, seen, f),
-                    Streams.state("a1d003", 36.0, 127.0, null, seen, f))));
+                    Streams.state("a1d003", 36.0, 127.0, null, seen, f),
+                    Streams.state(inAirspace, 36.1, 132.1 + i * 0.001, 15000, seen, f))));
             await("region " + i, WAIT, () -> snapshots.region().fetchedAt().equals(f));
             Thread.sleep(20);
         }
         await("alert", WAIT, () -> engine.activeAlerts("OBSERVED").stream().anyMatch(a -> a.hex().equals(inside)));
         await("alert persisted", WAIT, () -> count("SELECT count(*) FROM alert_event WHERE hex = ?", inside) >= 1);
+        await("airspace alert persisted", WAIT, () -> count("SELECT count(*) FROM alert_event WHERE hex = ? AND zone_type = 'airspace'", inAirspace) >= 1);
         await("track", WAIT, () -> count("SELECT count(*) FROM track_point WHERE hex = ?", inside) >= 2);
         await("static", WAIT, () -> count("SELECT count(*) FROM aircraft WHERE hex = ?", inside) == 1);
         // 공항·METAR 는 수집기 테이블 — 수집기와 같은 역할(wakeline_collector)로 쓴다
@@ -203,11 +221,8 @@ class RestSamplesIT extends IntegrationTest {
         } finally {
             ItStack.deleteKeys("wakeline:traffic_grid");
         }
-        // 공역(계약 v5 §G47 · ADR-034): 합성 차수(가짜 자료)를 수집기 계정으로 넣어 켜고, 읽기 빈을 한 번 돌린다(60 s 주기를 기다리지 않게)
-        dev.wakeline.airspace.AirspaceFixtures.insertEdition(sql -> adm.sql(sql).update(), "%064x".formatted(System.nanoTime()), "합성 시험 공역",
-                true, dev.wakeline.airspace.AirspaceFixtures.defaults());
-        airspaceRefresher.refresh();
         record("airspace", "/api/v1/airspace", 200);
+        record("aircraft_detail_airspace", "/api/v1/aircraft/" + inAirspace, 200);
         record("airports", "/api/v1/airports", 200);
         record("airport_wx", "/api/v1/airports/RKSI/wx", 200);
         record("replay", "/api/v1/replay?at=" + Instant.now().minusSeconds(5).truncatedTo(ChronoUnit.SECONDS) + "&bbox=" + bbox, 200);

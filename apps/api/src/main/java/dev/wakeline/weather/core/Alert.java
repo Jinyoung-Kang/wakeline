@@ -6,7 +6,7 @@ import java.util.Map;
 
 /**
  * 알림. 근거(evidence) 없이는 생성되지 않는다. kind = OBSERVED | PREDICTED.
- * closeReason: 닫힌 이유(left | signal_lost | restart | sigmet_ended | prediction_cleared), 열려 있으면 null.
+ * closeReason: 닫힌 이유(left | signal_lost | restart | sigmet_ended | prediction_cleared | zone_ended), 열려 있으면 null.
  * sigmet_ended = 항공기가 나간 것이 아니라 경보(SIGMET)가 만료·철회(취소·대체)되어 끝났다(DH-6·API-CONC-4).
  * etaAt: PREDICTED 전용 — 판정 시각(evidence.judged_at) + etaS. 클라이언트는 이 절대 시각에서 남은 시간을 센다.
  * <p>구역(ADR-035): SIGMET 알림은 sigmetId · firId · hazard · qualifier 가 있고 zoneType · level · airspace 는 null 이다(직렬화에서 빠진다 — 계약 그대로).
@@ -23,6 +23,8 @@ public record Alert(
     public static final String CLOSE_RESTART = "restart";
     public static final String CLOSE_PREDICTION_CLEARED = "prediction_cleared";
     public static final String CLOSE_SIGMET_ENDED = "sigmet_ended";
+    /** SIGMET 이 아닌 구역이 끝났다(공역 차수 교체 · 판정 끔 — 근거 end_cause, ADR-035). */
+    public static final String CLOSE_ZONE_ENDED = "zone_ended";
 
     /** 구역이 정하는 알림 머리(Zone#head). SIGMET 은 앞 네 필드, 공역은 뒤 세 필드. */
     public record Head(String sigmetId, String firId, String hazard, String qualifier, String zoneType, String level, Map<String, Object> airspace) {}

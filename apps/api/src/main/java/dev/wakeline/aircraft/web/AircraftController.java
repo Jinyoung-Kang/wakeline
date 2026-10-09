@@ -44,10 +44,19 @@ public class AircraftController {
     private final TrackRepository tracks;
     private final AppProperties props;
     private final RouteReader routes;
+    /** 들어 있는 공역(ADR-035 · 계약 v5 §G48) — 없으면(시험) 키를 싣지 않는다 */
+    private final dev.wakeline.airspace.core.AirspaceLookup airspace;
     static final int SEARCH_LIMIT = 20;
 
     public AircraftController(SnapshotStore snapshots, EngineService engine, AircraftRepository aircraft, TrackRepository tracks, AppProperties props,
                               RouteReader routes) {
+        this(snapshots, engine, aircraft, tracks, props, routes, null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public AircraftController(SnapshotStore snapshots, EngineService engine, AircraftRepository aircraft, TrackRepository tracks, AppProperties props,
+                              RouteReader routes, dev.wakeline.airspace.core.AirspaceLookup airspace) {
+        this.airspace = airspace;
         this.snapshots = snapshots;
         this.engine = engine;
         this.aircraft = aircraft;
@@ -163,6 +172,11 @@ public class AircraftController {
         List<Alert> alerts = engine.activeAlerts(null).stream().filter(x -> x.hex().equals(h)).toList();
         m.put("active_alerts", alerts);
         m.put("inside_sigmets", engine.insideSigmets(h));
+        // 들어 있는 공역(요청 때 계산 — 엔진 사건 아님): 차수가 없거나 실시간 위치가 없으면 키 없음(모름)
+        if (airspace != null && a != null) {
+            Map<String, Object> in = airspace.inside(a.lat(), a.lon(), a.onGround() ? Integer.valueOf(0) : a.altFt()); // 지상 = 지면(0 ft)
+            if (in != null) m.put("inside_airspace", in);
+        }
         m.put("emergency", a != null && a.emergency());
         Map<String, Object> meta = Meta.of(req, a == null ? "db" : a.provider(), a == null ? null : a.fetchedAt(), 60);
         if (dbUnavailable) meta.put("db_unavailable", true);

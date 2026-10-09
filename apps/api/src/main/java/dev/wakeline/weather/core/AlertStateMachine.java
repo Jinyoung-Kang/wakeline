@@ -47,7 +47,8 @@ public final class AlertStateMachine {
     public static final int LOST_CONFIRM = LEAVE_CONFIRM;
     public static final int ETA_UPDATE_THRESHOLD_S = 30;
 
-    public enum EventType { ENTERED, LEFT, LOST, SIGMET_ENDED, PREDICTED, PREDICTION_UPDATED, PREDICTION_CLEARED }
+    /** ZONE_ENDED(ADR-035): SIGMET 이 아닌 구역(공역)이 끝났다 — 차수 교체 · 판정 끔. SIGMET 은 예전처럼 SIGMET_ENDED. */
+    public enum EventType { ENTERED, LEFT, LOST, SIGMET_ENDED, PREDICTED, PREDICTION_UPDATED, PREDICTION_CLEARED, ZONE_ENDED }
 
     /** SIGMET_ENDED 근거의 end_cause 값. */
     public static final String END_EXPIRED = "expired";
@@ -216,9 +217,8 @@ public final class AlertStateMachine {
             Key k = e.getKey();
             Track t = e.getValue();
             Ended end = cycle.ended(k.zoneId(), t.zone, now);
-            if (end != null) { // 경보가 끝났다 — 항공기 관측과 무관하게 닫는다(이탈이 아니다)
-                if (t.confirmed && t.alert != null)
-                    out.add(new Event(EventType.SIGMET_ENDED, t.alert.closed(end.clamp(t.alert.enteredAt(), now), Alert.CLOSE_SIGMET_ENDED, endedEvidence(t, end, now))));
+            if (end != null) { // 경보(구역)가 끝났다 — 항공기 관측과 무관하게 닫는다(이탈이 아니다)
+                if (t.confirmed && t.alert != null) out.add(endedEvent(t, end, now));
                 it.remove();
                 continue;
             }
@@ -303,12 +303,46 @@ public final class AlertStateMachine {
             if (!best.containsKey(e.getKey())) {
                 // 예측이 사라진 까닭이 경보 종료면 근거에 밝힌다(항공기 궤적이 바뀐 것이 아니다)
                 Ended end = cycle.ended(e.getKey().zoneId(), e.getValue().zone(), now);
-                Map<String, Object> why = end == null ? null : Map.of("cleared_by", "sigmet_ended", "end_cause", end.cause());
+                Map<String, Object> why = end == null ? null : Map.of("cleared_by", isSigmet(e.getValue().alert()) ? "sigmet_ended" : "zone_ended", "end_cause", end.cause());
                 out.add(new Event(EventType.PREDICTION_CLEARED, e.getValue().alert().closed(now, Alert.CLOSE_PREDICTION_CLEARED, why)));
                 pit.remove();
             }
         }
         return out;
+    }
+
+    /**
+     * 모두 닫는다(구역 판정을 끌 때 — ADR-035): 확정된 관측 알림은 ZONE_ENDED(close_reason zone_ended, 근거 end_cause = cause), 예측은 PREDICTION_CLEARED.
+     * 확정 전 트랙도 버린다. SIGMET 상태 머신에는 쓰지 않는다.
+     */
+    public List<Event> closeAll(Instant now, String cause) {
+        List<Event> out = new ArrayList<>();
+        for (Track t : observed.values()) {
+            if (!t.confirmed || t.alert == null) continue;
+            Map<String, Object> ev = new LinkedHashMap<>();
+            ev.put("end_cause", cause);
+            ev.put("last_seen_at", t.lastSeenAt == null ? null : t.lastSeenAt.toString());
+            ev.put("judged_at", now.toString());
+            out.add(new Event(EventType.ZONE_ENDED, t.alert.closed(now, Alert.CLOSE_ZONE_ENDED, ev)));
+        }
+        for (Pred p : predicted.values())
+            out.add(new Event(EventType.PREDICTION_CLEARED, p.alert().closed(now, Alert.CLOSE_PREDICTION_CLEARED, Map.of("cleared_by", "zone_ended", "end_cause", cause))));
+        observed.clear();
+        predicted.clear();
+        return out;
+    }
+
+    private static boolean isSigmet(Alert a) { return Zone.SIGMET.equals(a.zoneTypeOrSigmet()); }
+
+    /** 구역 종료 사건: SIGMET 은 SIGMET_ENDED(근거 그대로), 다른 구역은 ZONE_ENDED(근거: end_cause · 마지막 관측 · 판정 시각). */
+    private static Event endedEvent(Track t, Ended end, Instant now) {
+        Instant at = end.clamp(t.alert.enteredAt(), now);
+        if (isSigmet(t.alert)) return new Event(EventType.SIGMET_ENDED, t.alert.closed(at, Alert.CLOSE_SIGMET_ENDED, endedEvidence(t, end, now)));
+        Map<String, Object> ev = new LinkedHashMap<>();
+        ev.put("end_cause", end.cause());
+        ev.put("last_seen_at", t.lastSeenAt == null ? null : t.lastSeenAt.toString());
+        ev.put("judged_at", now.toString());
+        return new Event(EventType.ZONE_ENDED, t.alert.closed(at, Alert.CLOSE_ZONE_ENDED, ev));
     }
 
     public List<Alert> activeObserved() {
@@ -350,6 +384,7 @@ public final class AlertStateMachine {
         ev.put("polygon_index", h.polygonIndex());
         z.putBand(ev);
         ev.put("aircraft_alt_ft", h.altFt());
+        z.putJudgement(ev, h.altFt());
         z.putValidity(ev);
         ev.put("judged_at", now.toString());
         ev.put("method", "observed_point_in_polygon");
@@ -398,6 +433,7 @@ public final class AlertStateMachine {
         ev.put("polygon_index", p.polygonIndex());
         z.putBand(ev);
         ev.put("alt_ft_at_entry", p.altAtEntry());
+        z.putJudgement(ev, p.altAtEntry());
         z.putValidity(ev);
         ev.put("method", "dead_reckoning_10min");
         ev.put("entry", p.entry());

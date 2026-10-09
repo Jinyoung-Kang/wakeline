@@ -1249,3 +1249,24 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
   - 자료는 국토교통부 저작물이라 저장소에 없다 — 시험 · 격리 스택(`make e2e` · `make demo`)은 합성(가짜) 공역을 쓴다.
   - 회귀 막기: api `AirspaceControllerTest` · `AirspaceRefresherDbTest` · `RestSamplesIT`(airspace) · `tools/rest_contract_check.py`(AIRSPACE) · OpenAPI 스냅샷 ·
     `RolePrivilegesDbTest`(V18 — collector 가 쓰고 api 는 읽기만) · collector `test_airspace.py` · `test_db_pg_integration.py`(가져오기) · infra `test_airspace_policy.py`.
+- G48(계약 §1 의 Alert · §2 의 /alerts · /alerts/history · /aircraft/{hex} · WS `alerts` · `alerts_batch`) **공역 알림 — 알림의 구역이 SIGMET 밖으로 넓어진다**
+  - 알림에 선택 필드 `zone_type`(`airspace`) · `level`(`alert` · `info`) · `airspace`(`id` · `category` · `type_ko` · `ident`(없으면 키 없음) · `name` · `label` ·
+    `edition` · 실시간에는 `lower` · `upper` = `{ft(UNL · UNKNOWN 이면 키 없음), basis, raw}`). **`zone_type` 이 없으면 SIGMET 알림**이고 예전과 같다
+    (`sigmet_id` · `fir_id` · `hazard` 필수 · 구역 필드 없음 — SIGMET 알림의 JSON 은 바이트 단위로 그대로). `airspace` 면 `airspace` · `level` 필수, SIGMET
+    필드 없음. WS 스키마는 `if/then/else` 로 적었다(`$defs/alert` · 새 `$defs/airspace_limit`).
+  - 사건 `ZONE_ENDED`(WS `alerts_batch` 의 event) · 닫힘 사유 `zone_ended`: 구역 쪽이 끝났다 — 근거 `end_cause` = `edition_replaced`(새 공역 차수에 없음) ·
+    `judging_off`(운영 설정을 on 에서 바꿈). 항공기가 나간 것이 아니다. SIGMET 의 `SIGMET_ENDED` · `sigmet_ended` 는 그대로.
+  - 공역 알림의 근거: `band_ft`(판정에 쓴 값) · `lower` · `upper` · `assumption: pressure_altitude_as_msl`(기압고도를 해면 고도로 — QNH 보정 없음) ·
+    `top_unlimited` · `altitude_uncertain`(전이고도 14,000 ft 아래에서 한계와 500 ft 안) · `edition_id` · `edition` — `valid_from` · `valid_to` 는 없다(공역에는
+    유효 시간이 없다). 판정 대상: 비행금지 · 원전 · 안보 임시비행금지(alert) · 비행제한(info). 고도 기준을 비교할 수 없는 구역은 판정하지 않는다.
+  - `/alerts/history` 의 공역 행: `zone_type` · `level` · `airspace{id, category, type_ko, ident, name, label, edition}`(SIGMET 행은 예전 모양). `/alerts` 는
+    운영 설정이 on 일 때만 공역 알림을 싣는다.
+  - `/aircraft/{hex}` 에 `inside_airspace{edition, items[{id, category, type_ko, label, name, level?, vertical}]}` — 요청 때 위치로 계산(사건 아님, 모드와 무관):
+    금지 · 원전 · 안보 · 제한(고도대 안일 때) · 위험구역(`vertical: not_judged` — 지면 기준이라 수평만). 항공기 고도를 모르면 `unknown`. 공역 차수가 없거나
+    실시간 위치가 없으면 키 없음.
+  - 운영 설정 `airspace_alerts`(`off` · `shadow` · `on`, V19 기본 `shadow` — 판정하고 `wakeline_zone_events_total` 로 세기만). 틀린 값은 400 `BAD_VALUE`.
+    api 가 60 s 안에 따른다. 알림 일 통계(`alerts_by_kind` · 체류)는 SIGMET 알림만 센다.
+  - 웹: 알림 행 · 배너가 구역(SIGMET 위험기상 · FIR / 공역 이름표 · 종류)을 적고, `level: info` 는 배너로 알리지 않는다. 근거 카드의 공역 변형(구역 · 수준 · 고도
+    범위와 기준 · 차수 · 가정 · 경계 근처), 항공기 카드의 '들어 있는 공역'. 닫힘 문구 `sigmet_ended`(전에는 문구가 없어 '—') · `zone_ended`.
+  - 회귀 막기: api `AirspaceJudgementTest` · `WeatherPersistDbTest` · `WsSchemaContractTest`(공역 표본 · 틀린 표본 셋) · `RestSamplesIT`(공역 알림 · 들어 있는
+    공역) · `QueryPlanDbTest` · `RegionSettingsTest` · `tools/rest_contract_check.py` · web `airspace-alerts.test.ts` · `ws-validate-v5` · `ws-schema-sweep-v5`.

@@ -6,8 +6,8 @@ import type { Alert } from "@/lib/types";
 import { useUi } from "@/lib/ui-store";
 import { EvidenceCardPart } from "./DashboardParts";
 import { fmtKst, fmtKstClock, fmtKstTitle, fmtTimeTitle } from "@/lib/time";
-import { fmtEta, hazardColor } from "@/lib/format";
-import { alertListState, alertsInScope, EVENT_LABEL, etaRemainingS, eventBannerVisible, type AlertListState } from "@/lib/alerts";
+import { fmtEta } from "@/lib/format";
+import { alertListState, alertsInScope, alertZone, EVENT_LABEL, etaRemainingS, eventBannerVisible, type AlertListState } from "@/lib/alerts";
 import { aircraftPos, panIfOutside } from "@/lib/focus";
 import { AltStack } from "./UnitStack";
 
@@ -87,14 +87,14 @@ function AlertPanelBody() {
           </div>
         ) : null}
         {list.length === 0 && alertsVersion == null ? <div className="p-3 text-[11px] text-fg-3" data-testid="alerts-waiting">알림 목록 수신 대기 중 — 아직 “없음”을 뜻하지 않습니다.</div> : null}
-        {list.map((a) => (
-            <div key={a.id} className="border-b border-line" data-testid="alert-item" data-kind={a.kind}>
+        {list.map((a) => { const z = alertZone(a); return (
+            <div key={a.id} className="border-b border-line" data-testid="alert-item" data-kind={a.kind} data-zone={a.zone_type ?? "sigmet"}>
               <button className="flex w-full items-center gap-2 px-2 py-1.5 text-left hover:bg-bg-2" aria-expanded={open === a.id} aria-controls={open === a.id ? `evidence-${a.id}` : undefined}
                 onClick={() => setOpen(open === a.id ? null : a.id)} data-testid="alert-toggle">
-                <span className="inline-block h-2 w-2 shrink-0" style={{ background: hazardColor(a.hazard) }} />
+                <span className="inline-block h-2 w-2 shrink-0" style={{ background: z.color }} />
                 <span className="mono w-16 shrink-0 text-[12px]">{a.callsign ?? a.hex}</span><span className="sr-only">, </span>
-                <span className="w-[72px] shrink-0 overflow-hidden text-[11px] text-ellipsis whitespace-nowrap text-fg-2" title={`${a.hazard}${a.qualifier ? ` ${a.qualifier}` : ""}`}>{a.hazard}{a.qualifier ? ` ${a.qualifier}` : ""}</span><span className="sr-only">, </span>
-                <span className="mono w-12 shrink-0 text-[11px] text-fg-3">{a.fir_id}</span><span className="sr-only">, </span>
+                <span className="w-[72px] shrink-0 overflow-hidden text-[11px] text-ellipsis whitespace-nowrap text-fg-2" title={`${z.kind} ${z.label}`}>{z.label}</span><span className="sr-only">, </span>
+                <span className="mono w-12 shrink-0 overflow-hidden text-[11px] text-ellipsis whitespace-nowrap text-fg-3">{z.sub}</span><span className="sr-only">, </span>
                 {a.kind === "PREDICTED"
                   ? <span className="mono est-val w-16 shrink-0 text-[11px]" title="진입 시 고도 — 추정(현재 고도·수직속도로 외삽)" data-testid="alert-alt-est"><span className="sr-only">진입 시 고도 추정 </span><AltStack ft={a.alt_ft} est align="start" nowrap /></span>
                   : <span className="mono w-16 shrink-0 text-[11px]" title="관측 고도"><AltStack ft={a.alt_ft} align="start" nowrap /></span>}<span className="sr-only">, </span>
@@ -107,7 +107,7 @@ function AlertPanelBody() {
                 </div>
               ) : null}
             </div>
-        ))}
+        ); })}
         {list.some((a) => a.kind === "PREDICTED") ? <div className="px-2 py-1 text-[10px] text-fg-3">예측 행의 고도(<span className="est-val">보라 점선</span>) = 진입 시 고도 추정값 · ETA 도 추정</div> : null}
       </div>
     </>
@@ -126,9 +126,10 @@ function EventBanner({ ev }: { ev: NonNullable<ServerData["lastEvent"]> }) {
   const a = ev.alert;
   const at = serverNowMs(ev.at);
   const who = a.callsign ?? a.hex;
-  const sigmet = `${a.hazard}${a.qualifier ? ` ${a.qualifier}` : ""} · ${a.fir_id}`;
+  const z = alertZone(a);
+  const sigmet = `${z.label} · ${z.sub}`;
   const label = EVENT_LABEL[ev.type] ?? ev.type;
-  const full = `${ev.type} ${label} · ${who} · SIGMET ${sigmet}${a.sigmet_id ? `(${a.sigmet_id})` : ""} · 수신 ${fmtKst(at)}`;
+  const full = `${ev.type} ${label} · ${who} · ${z.kind} ${sigmet}${a.sigmet_id ? `(${a.sigmet_id})` : ""} · 수신 ${fmtKst(at)}`;
   return (
     <div className="flash flex h-full flex-col justify-center px-2 text-[11px] leading-[16px] text-fg-2" data-testid="alert-banner" data-event={ev.type} title={full}>
       <div className="truncate" data-line="event">
@@ -137,7 +138,7 @@ function EventBanner({ ev }: { ev: NonNullable<ServerData["lastEvent"]> }) {
         {" · "}<span className="mono font-semibold text-fg">{who}</span>
       </div>
       <div className="truncate" data-line="sigmet">
-        <span className="label mr-1">SIGMET</span>{sigmet}
+        <span className="label mr-1">{z.kind}</span>{sigmet}
         {" · "}<span className="text-fg-3" data-testid="alert-banner-time" title={fmtTimeTitle(at)}>수신 {fmtKstClock(at)}</span>
       </div>
     </div>

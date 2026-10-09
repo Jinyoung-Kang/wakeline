@@ -6,7 +6,7 @@ Wakeline — 실시간 항공기 · 선박 · 위험기상 상황판(개인 포�
 커밋 메시지는 영어(끝에 `Co-Authored-By` 줄). 자세한 설명은 [README.md](README.md), 결정은 [docs/adr](docs/adr), 검증 기록은 [docs/VERIFICATION.md](docs/VERIFICATION.md).
 
 ## 스택
-- `apps/api` Spring Boot 4.1 · Java 25 · Gradle(`./gradlew --offline`) · Flyway(`src/main/resources/db/migration`, V1–V18) · Testcontainers
+- `apps/api` Spring Boot 4.1 · Java 25 · Gradle(`./gradlew --offline`) · Flyway(`src/main/resources/db/migration`, V1–V19) · Testcontainers
 - `apps/collector` Python 3.13 asyncio · uv — 패키지 `wakeline_collector`(폴링 수집기)와 `ais`(aisstream.io WebSocket 수신, 같은 이미지 · 다른 컨테이너)
 - `apps/web` Next.js 16.3 · React 19.3 · MapLibre · zustand · Vitest · Playwright — **학습한 Next.js 와 다르다**: 코드를 쓰기 전에 `apps/web/AGENTS.md` 대로
   `apps/web/node_modules/next/dist/docs/` 를 읽는다

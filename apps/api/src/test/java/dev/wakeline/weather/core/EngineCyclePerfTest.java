@@ -89,6 +89,33 @@ class EngineCyclePerfTest {
         return new double[]{ns[RUNS / 2] / 1e6, ns[(int) Math.ceil(RUNS * 0.95) - 1] / 1e6, index.size()};
     }
 
+    /** SIGMET 과 구역을 따로 — 상태 머신 · 색인 둘(EngineService 의 공역 판정과 같은 배치) */
+    static double[] runTwo(List<SigmetRecord> sig, List<SigmetRecord> zones) {
+        AlertIds ids = new AlertIds(System::currentTimeMillis);
+        AlertStateMachine f1 = new AlertStateMachine(ids::next), f2 = new AlertStateMachine(ids::next);
+        Map<String, SigmetRecord> a = new HashMap<>(), b = new HashMap<>();
+        for (SigmetRecord x : sig) a.put(x.id(), x);
+        for (SigmetRecord x : zones) b.put(x.id(), x);
+        AlertStateMachine.SigmetSet sa = AlertStateMachine.SigmetSet.of(a, T0), sb = AlertStateMachine.SigmetSet.of(b, T0);
+        ZoneIndex ia = new ZoneIndex(sig, T0), ib = new ZoneIndex(zones, T0);
+        long[] ns = new long[RUNS];
+        for (int k = 0; k < WARM + RUNS; k++) {
+            Instant now = T0.plusSeconds(10L * k);
+            List<AircraftState> states = aircraft(new Random(7), now);
+            Map<String, AircraftState> all = new HashMap<>(states.size() * 2);
+            for (AircraftState s : states) all.put(s.hex(), s);
+            long t = System.nanoTime();
+            f1.step(IntersectionEngine.observe(states, ia, now), IntersectionEngine.predict(states, ia, now, f1.confirmedByHex(), Set.of()), all, now,
+                    new AlertStateMachine.Cycle(k, k, false, false, Set.of(), sa));
+            f2.step(IntersectionEngine.observe(states, ib, now), IntersectionEngine.predict(states, ib, now, f2.confirmedByHex(), Set.of()), all, now,
+                    new AlertStateMachine.Cycle(k, k, false, false, Set.of(), sb));
+            long d = System.nanoTime() - t;
+            if (k >= WARM) ns[k - WARM] = d;
+        }
+        Arrays.sort(ns);
+        return new double[]{ns[RUNS / 2] / 1e6, ns[(int) Math.ceil(RUNS * 0.95) - 1] / 1e6};
+    }
+
     @Test
     void measure() {
         List<SigmetRecord> s = sigmets(new Random(1));
@@ -97,5 +124,7 @@ class EngineCyclePerfTest {
         double[] a = run(s), b = run(both);
         System.out.printf("engine cycle (%d aircraft) — sigmet: median %.1f ms · p95 %.1f ms (index %d polygons)%n", N, a[0], a[1], (int) a[2]);
         System.out.printf("engine cycle (%d aircraft) — sigmet+zones: median %.1f ms · p95 %.1f ms (index %d polygons)%n", N, b[0], b[1], (int) b[2]);
+        double[] c = runTwo(s, zones(new Random(2)));
+        System.out.printf("engine cycle (%d aircraft) — sigmet | zones (two state machines): median %.1f ms · p95 %.1f ms%n", N, c[0], c[1]);
     }
 }

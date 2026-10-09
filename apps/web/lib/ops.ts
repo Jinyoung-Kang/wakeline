@@ -389,6 +389,8 @@ const SETTING_SPECS: Record<string, SettingSpec> = {
     check: (v) => { const [la, lo] = v.split(",").map((x) => Number(x.trim())); return Math.abs(la) > 85 || Math.abs(lo) > 180 ? "위도는 ±85, 경도는 ±180 안이어야 합니다." : null; },
   },
   ais_bboxes: { kind: "text", hint: "lat1,lon1,lat2,lon2(여러 상자 ;, 구역 |) · 비우면 .env AIS_BBOXES — 서버가 검사" },
+  // 공역 판정(ADR-035 · 계약 v5 §G48): off 안 함 · shadow 판정하고 건수만(저장 · 방송 없음 — wakeline_zone_events_total) · on 알림. api 가 60 s 안에 따른다
+  airspace_alerts: { kind: "text", pattern: /^(off|shadow|on)$/, hint: "off · shadow(건수만) · on(알림) — api 가 60 s 안에 따른다" },
 };
 
 export function settingSpec(key: string): SettingSpec | null {

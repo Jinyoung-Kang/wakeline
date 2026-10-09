@@ -162,14 +162,25 @@ const AIRCRAFT = shape({
 /** $defs/source(스냅샷 sources.region/global) */
 const SOURCE = shape({ provider: str(1), fetched_at: TIME, lag_s: num(), stale: isBool });
 
-/** AlertStateMachine.EventType 이름 그대로(SIGMET_ENDED 포함 — 목록에서 빼는 이벤트) */
-const ALERT_EVENTS = ["ENTERED", "LEFT", "LOST", "SIGMET_ENDED", "PREDICTED", "PREDICTION_UPDATED", "PREDICTION_CLEARED"] as const;
-/** $defs/alert */
-const ALERT = shape({
+/** AlertStateMachine.EventType 이름 그대로(SIGMET_ENDED · ZONE_ENDED 포함 — 목록에서 빼는 이벤트) */
+const ALERT_EVENTS = ["ENTERED", "LEFT", "LOST", "SIGMET_ENDED", "PREDICTED", "PREDICTION_UPDATED", "PREDICTION_CLEARED", "ZONE_ENDED"] as const;
+/** $defs/airspace_limit · alert.airspace(계약 v5 §G48) */
+const AIRSPACE_LIMIT = shape({ ft: int(), basis: oneOf("MSL", "FL", "AGL", "SFC", "UNL", "UNKNOWN"), raw: str() }, ["basis", "raw"]);
+const ALERT_AIRSPACE = shape({
+  id: int(), category: re(/^[a-z_]{1,32}$/), type_ko: str(), ident: str(), name: str(), label: str(), edition: str(), lower: AIRSPACE_LIMIT, upper: AIRSPACE_LIMIT,
+}, ["id", "category", "type_ko", "name", "label", "edition", "lower", "upper"]);
+/** $defs/alert — 구역 규칙(if/then/else): zone_type 이 없으면 SIGMET 필드 셋 필수 · 공역 필드 없음, 'airspace' 면 airspace · level 필수 · SIGMET 필드 없음 */
+const ALERT_FIELDS = shape({
   id: int(), kind: oneOf("OBSERVED", "PREDICTED"), hex: HEX, callsign: str(), sigmet_id: str(1), fir_id: str(1), hazard: str(1), qualifier: str(),
-  entered_at: TIME, left_at: TIME, close_reason: oneOf("left", "signal_lost", "restart", "sigmet_ended", "prediction_cleared"), eta_s: int(), eta_at: TIME,
-  alt_ft: int(), evidence: ANY_OBJ, estimated: isBool,
-}, ["id", "kind", "hex", "sigmet_id", "fir_id", "hazard", "entered_at", "evidence", "estimated"]);
+  entered_at: TIME, left_at: TIME, close_reason: oneOf("left", "signal_lost", "restart", "sigmet_ended", "prediction_cleared", "zone_ended"), eta_s: int(),
+  eta_at: TIME, alt_ft: int(), evidence: ANY_OBJ, estimated: isBool, zone_type: oneOf("airspace"), level: oneOf("alert", "info"), airspace: ALERT_AIRSPACE,
+}, ["id", "kind", "hex", "entered_at", "evidence", "estimated"]);
+const ALERT: Rule = (v) => {
+  if (!ALERT_FIELDS(v)) return false;
+  return v.zone_type === "airspace"
+    ? v.airspace != null && v.level != null && v.sigmet_id == null && v.fir_id == null && v.hazard == null
+    : v.sigmet_id != null && v.fir_id != null && v.hazard != null && v.airspace == null && v.level == null;
+};
 const ALERT_ITEM = shape({ event: oneOf(...ALERT_EVENTS), alert: ALERT }, ["event", "alert"]);
 
 /** $defs/airport · route(계약 v4 §A) */

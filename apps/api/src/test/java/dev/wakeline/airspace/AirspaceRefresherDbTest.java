@@ -3,6 +3,7 @@ package dev.wakeline.airspace;
 import dev.wakeline.DbTestSupport;
 import dev.wakeline.airspace.core.AirspaceRecord;
 import dev.wakeline.airspace.core.AirspaceStore;
+import dev.wakeline.airspace.core.AirspaceZones;
 import dev.wakeline.airspace.data.AirspaceRefresher;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -36,9 +37,16 @@ class AirspaceRefresherDbTest {
     @Test
     void loadsOnlyTheActiveEditionAndReloadsOnlyWhenItChanges_keepingTheSnapshotWhenTheDatabaseFails() {
         AirspaceStore store = new AirspaceStore();
-        AirspaceRefresher r = new AirspaceRefresher(api, store, JsonMapper.builder().build());
+        AirspaceZones zones = new AirspaceZones(store);
+        zones.setMode("off");
+        AirspaceRefresher r = new AirspaceRefresher(api, store, JsonMapper.builder().build(), zones);
         r.refresh();
         assertThat(store.snapshot()).isSameAs(AirspaceStore.Snapshot.EMPTY);
+        assertThat(zones.mode()).as("V19 의 기본 설정 shadow 를 읽는다").isEqualTo("shadow");
+        DbTestSupport.exec(DB, "UPDATE app_setting SET value = '\"on\"' WHERE key = 'airspace_alerts'");
+        r.refresh();
+        assertThat(zones.mode()).isEqualTo("on");
+        DbTestSupport.exec(DB, "UPDATE app_setting SET value = '\"shadow\"' WHERE key = 'airspace_alerts'");
 
         AirspaceFixtures.insertEdition(sql -> DbTestSupport.exec(DB, sql), AirspaceFixtures.sha('1'), "합성 1차", false, AirspaceFixtures.defaults());
         r.refresh();
@@ -71,7 +79,7 @@ class AirspaceRefresherDbTest {
 
         AirspaceStore.Snapshot kept = store.snapshot();
         JdbcClient broken = JdbcClient.create(new DriverManagerDataSource(DbTestSupport.jdbcUrl(DB), "wakeline_api", "wrong-password"));
-        new AirspaceRefresher(broken, store, JsonMapper.builder().build()).refresh();
+        new AirspaceRefresher(broken, store, JsonMapper.builder().build(), zones).refresh();
         assertThat(store.snapshot()).as("DB 실패 — 이전 스냅숏").isSameAs(kept);
 
         DbTestSupport.exec(DB, "UPDATE airspace_edition SET active = false WHERE active");

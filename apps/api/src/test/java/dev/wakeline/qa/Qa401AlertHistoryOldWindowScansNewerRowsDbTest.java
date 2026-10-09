@@ -93,7 +93,7 @@ class Qa401AlertHistoryOldWindowScansNewerRowsDbTest {
 
     @Test
     void anOldOneHourWindowDoesNotScanEveryNewerAlert() {
-        PlanCapture plans = new PlanCapture(DbTestSupport.apiDataSource(), "FROM alert_event e JOIN sigmet s", PlanCapture.Mode.ANALYZE);
+        PlanCapture plans = new PlanCapture(DbTestSupport.apiDataSource(), "FROM alert_event e LEFT JOIN sigmet s", PlanCapture.Mode.ANALYZE);
         AlertRepository repo = repo(plans);
 
         Instant from = Instant.now().minus(25, ChronoUnit.DAYS);
@@ -139,7 +139,7 @@ class Qa401AlertHistoryOldWindowScansNewerRowsDbTest {
                     cursors.add(null);
                     if (first.nextCursor() != null) cursors.add(first.nextCursor());
                     for (Long cursor : cursors) {
-                        PlanCapture plans = new PlanCapture(DbTestSupport.apiDataSource(), "FROM alert_event e JOIN sigmet s", mode);
+                        PlanCapture plans = new PlanCapture(DbTestSupport.apiDataSource(), "FROM alert_event e LEFT JOIN sigmet s", mode);
                         var page = repo(plans).history(w.from(), w.to(), hex, cursor, LIMIT);
                         JsonNode root = M.readTree(plans.last()).get(0);
                         JsonNode plan = root.get("Plan");

@@ -36,6 +36,11 @@ import java.util.concurrent.atomic.AtomicReference;
  *       FSM 은 이전 상태를 유지한다. 예외가 이벤트 발행자(스트림 소비)로 새면 유효한 메시지가 DLQ 로 가고 뒤의 리스너(항적·WS)가 건너뛰어졌다.</li>
  *   <li>FSM 은 인덱스를 만든 바로 그 SIGMET 세트를 받아, 만료·철회된 경보의 알림을 SIGMET_ENDED 로 닫는다. 유효시간 만료 점검(30 s)도
  *       인덱스를 다시 만든 뒤 한 주기를 돌린다 — 모든 피드가 멈춰도 만료된 경보의 알림이 열린 채 남지 않는다.</li>
+ *   <li>SIGMET 밖의 판정 구역(공역 — {@link ZoneSource}, ADR-035)은 같은 판정 코드의 <b>두 번째</b> 상태 머신이 다룬다(SIGMET 의 상태 · 사건은 그대로).
+ *       운영 설정에 따라 off(판정 안 함) · shadow(판정하고 사건 수만 wakeline_zone_events_total 로 센다 — 저장 · 방송 없음) · on(SIGMET 알림과
+ *       같은 사건 묶음으로 발행 — 저장 · WS · REST). on 에서 벗어나면 열린 공역 알림을 구역 종료(zone_ended · end_cause judging_off)로 닫아 발행하고,
+ *       shadow 와 on 은 상태 머신을 따로 둔다(그림자 건수가 알림 상태를 바꾸지 않게). 판(차수)이 바뀌면 색인을 다시 짓고, 새 판에 없는 구역의
+ *       알림은 edition_replaced 로 닫힌다. 이 길의 예외는 SIGMET 판정을 막지 않는다(따로 가둔다).</li>
  * </ul>
  */
 @Service
@@ -72,7 +77,30 @@ public class EngineService {
     /** 마지막으로 알린 '활성'(valid_to > now) SIGMET id 집합. lock 으로 보호. */
     private Set<String> activeSigmetIds = Set.of();
 
+    /** SIGMET 밖의 판정 구역(없으면 null — 시험 · 공역 기능이 없는 구성). */
+    private final ZoneSource extra;
+    /** 공역 알림 상태 머신(on) · 그림자 상태 머신(shadow — 건수만) */
+    private final AlertStateMachine zoneFsm = new AlertStateMachine(alertIds::next);
+    private final AlertStateMachine shadowFsm = new AlertStateMachine(alertIds::next);
+    private record ExtraIndex(long version, ZoneIndex index, AlertStateMachine.ZoneSet set) {}
+    private ExtraIndex extraIndex;
+    private String lastMode = ZoneSource.MODE_OFF;
+    private final MeterRegistry meters;
+    public static final String END_JUDGING_OFF = "judging_off";
+
     public EngineService(SnapshotStore snapshots, SigmetStore sigmets, ApplicationEventPublisher events, MeterRegistry meters) {
+        this(snapshots, sigmets, events, meters, (ZoneSource) null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public EngineService(SnapshotStore snapshots, SigmetStore sigmets, ApplicationEventPublisher events, MeterRegistry meters,
+                         org.springframework.beans.factory.ObjectProvider<ZoneSource> extra) {
+        this(snapshots, sigmets, events, meters, extra.getIfAvailable());
+    }
+
+    public EngineService(SnapshotStore snapshots, SigmetStore sigmets, ApplicationEventPublisher events, MeterRegistry meters, ZoneSource extra) {
+        this.extra = extra;
+        this.meters = meters;
         this.snapshots = snapshots;
         this.sigmets = sigmets;
         this.events = events;
@@ -163,6 +191,11 @@ public class EngineService {
                         view.region().stale(now, REGION_FEED_STALE_S), view.global().stale(now, GLOBAL_FEED_STALE_S),
                         view.region().states().keySet(), is.set(), new ViewScopes(view, now));
                 evs = fsm.step(hits, predictions, all, now, cycle);
+                List<AlertStateMachine.Event> zoneEvs = runExtra(view, all, turning, now);
+                if (!zoneEvs.isEmpty()) {
+                    evs = new java.util.ArrayList<>(evs);
+                    evs.addAll(zoneEvs);
+                }
                 n = all.size();
                 inside = hits.size();
                 predicted = predictions.size();
@@ -177,13 +210,47 @@ public class EngineService {
                 }
                 return;
             }
-            activeCount = fsm.activeCount();
+            activeCount = fsm.activeCount() + (extra != null && ZoneSource.MODE_ON.equals(lastMode) ? zoneFsm.activeCount() : 0);
             lastCycleMs = (System.nanoTime() - t0) / 1_000_000;
             cycleTimer.record(Duration.ofNanos(System.nanoTime() - t0));
             if (!evs.isEmpty()) {
                 log.info("engine: {} aircraft, {} inside, {} predicted, {} events ({} ms)", n, inside, predicted, evs.size(), lastCycleMs);
                 events.publishEvent(new EngineEvents.AlertsChanged(evs));
             }
+        }
+    }
+
+    /**
+     * 공역 판정 한 주기(ADR-035). 예외는 여기서 가둔다(SIGMET 판정 · 사건은 그대로 나간다). 돌려주는 것은 on 일 때 발행할 사건뿐 —
+     * shadow 의 사건은 세기만 한다. lock 안에서 부른다.
+     */
+    private List<AlertStateMachine.Event> runExtra(SnapshotStore.View view, Map<String, AircraftState> all, Set<String> turning, Instant now) {
+        if (extra == null) return List.of();
+        try {
+            String mode = extra.mode();
+            List<AlertStateMachine.Event> out = new java.util.ArrayList<>();
+            if (ZoneSource.MODE_ON.equals(lastMode) && !ZoneSource.MODE_ON.equals(mode)) out.addAll(zoneFsm.closeAll(now, END_JUDGING_OFF));
+            if (ZoneSource.MODE_SHADOW.equals(lastMode) && !ZoneSource.MODE_SHADOW.equals(mode)) shadowFsm.closeAll(now, END_JUDGING_OFF);
+            lastMode = mode;
+            if (ZoneSource.MODE_OFF.equals(mode)) return out;
+            long v = extra.version();
+            if (extraIndex == null || extraIndex.version() != v) extraIndex = new ExtraIndex(v, new ZoneIndex(extra.zones(), now), extra.set());
+            AlertStateMachine m = ZoneSource.MODE_ON.equals(mode) ? zoneFsm : shadowFsm;
+            var hits = IntersectionEngine.observe(all.values(), extraIndex.index(), now);
+            var preds = IntersectionEngine.predict(all.values(), extraIndex.index(), now, m.confirmedByHex(), turning);
+            var cycle = new AlertStateMachine.Cycle(view.region().version(), view.global().version(),
+                    view.region().stale(now, REGION_FEED_STALE_S), view.global().stale(now, GLOBAL_FEED_STALE_S),
+                    view.region().states().keySet(), extraIndex.set(), new ViewScopes(view, now));
+            var evs = m.step(hits, preds, all, now, cycle);
+            for (var e : evs)
+                meters.counter("wakeline_zone_events_total", "zone_type", extra.zoneType(), "mode", mode,
+                        "level", e.alert().level() == null ? Zone.LEVEL_ALERT : e.alert().level(), "event", e.type().name()).increment();
+            if (ZoneSource.MODE_ON.equals(mode)) out.addAll(evs);
+            return out;
+        } catch (RuntimeException ex) {
+            cycleErrors.increment();
+            log.warn("zone judgement failed — skipped this cycle, SIGMET judgement unaffected: {}", ex.toString());
+            return List.of();
         }
     }
 
@@ -244,12 +311,13 @@ public class EngineService {
         return predictionAvailability(snapshots.find(hex));
     }
 
+    /** 열린 알림 — SIGMET 과 공역(on 일 때만 — shadow 의 상태는 알림이 아니다). */
     public List<Alert> activeAlerts(String kind) {
         synchronized (lock) {
-            if ("observed".equalsIgnoreCase(kind)) return fsm.activeObserved();
-            if ("predicted".equalsIgnoreCase(kind)) return fsm.activePredicted();
-            List<Alert> all = new java.util.ArrayList<>(fsm.activeObserved());
-            all.addAll(fsm.activePredicted());
+            boolean on = extra != null && ZoneSource.MODE_ON.equals(lastMode);
+            List<Alert> all = new java.util.ArrayList<>();
+            if (!"predicted".equalsIgnoreCase(kind)) { all.addAll(fsm.activeObserved()); if (on) all.addAll(zoneFsm.activeObserved()); }
+            if (!"observed".equalsIgnoreCase(kind)) { all.addAll(fsm.activePredicted()); if (on) all.addAll(zoneFsm.activePredicted()); }
             return all;
         }
     }

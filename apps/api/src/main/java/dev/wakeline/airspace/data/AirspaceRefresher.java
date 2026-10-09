@@ -3,6 +3,7 @@ package dev.wakeline.airspace.data;
 import dev.wakeline.airspace.core.AirspaceEdition;
 import dev.wakeline.airspace.core.AirspaceRecord;
 import dev.wakeline.airspace.core.AirspaceStore;
+import dev.wakeline.airspace.core.AirspaceZones;
 import dev.wakeline.platform.data.Sql;
 import org.locationtech.jts.geom.Geometry;
 import org.locationtech.jts.io.ParseException;
@@ -22,6 +23,8 @@ import java.util.Map;
  * 켜진 공역 차수를 60 s 마다 확인하고, 바뀌었을 때만 도형을 다시 읽어 {@link AirspaceStore} 를 통째로 바꾼다(ADR-034).
  * 가져오기(수집기의 1회성 명령)는 한 트랜잭션으로 새 차수를 켜므로 반쯤 들어간 차수를 읽지 않는다. 읽기가 실패하면(DB 장애) 이전 스냅숏을 둔다 —
  * 공역은 자주 바뀌지 않는다. 차수가 꺼져 없어지면(운영자가 migrator 로 끔) 빈 스냅숏으로 바꾼다.
+ * 같은 주기에 운영 설정 airspace_alerts(off · shadow · on — ADR-035)를 읽어 판정 구역 공급원({@link AirspaceZones})에 넘긴다 — /ops 에서 바꾸면
+ * 60 s 안에 따른다. 읽지 못하면 이전 값을 둔다(기본 shadow).
  */
 @org.springframework.context.annotation.Profile("!cli & !migrate")
 @Component
@@ -30,17 +33,23 @@ public class AirspaceRefresher {
     private final JdbcClient db;
     private final AirspaceStore store;
     private final ObjectMapper json;
+    private final AirspaceZones zones;
     private volatile boolean warned;
 
-    public AirspaceRefresher(JdbcClient db, AirspaceStore store, ObjectMapper json) {
+    public AirspaceRefresher(JdbcClient db, AirspaceStore store, ObjectMapper json, AirspaceZones zones) {
         this.db = db;
         this.store = store;
         this.json = json;
+        this.zones = zones;
     }
 
     @Scheduled(initialDelay = 2_000, fixedDelay = 60_000)
     public void refresh() {
         try {
+            db.sql("SELECT value #>> '{}' FROM app_setting WHERE key = 'airspace_alerts'").query(String.class).optional().ifPresent(m -> {
+                if (!m.equals(zones.mode())) log.info("airspace alerts mode: {} (was {})", m, zones.mode());
+                zones.setMode(m);
+            });
             AirspaceEdition ed = db.sql("SELECT id, label, document_name, source_sha256, imported_at FROM airspace_edition WHERE active")
                     .query((rs, i) -> new AirspaceEdition(rs.getLong(1), rs.getString(2), rs.getString(3), rs.getString(4), Sql.toInstant(rs.getObject(5))))
                     .optional().orElse(null);

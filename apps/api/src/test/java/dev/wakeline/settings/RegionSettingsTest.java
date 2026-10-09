@@ -133,4 +133,14 @@ class RegionSettingsTest {
             assertThatThrownBy(() -> SettingsService.validate("region_poll_s", bad)).as(bad.toString()).isInstanceOf(Problem.class)
                     .satisfies(e -> assertThat(((Problem) e).code()).isEqualTo("BAD_VALUE"));
     }
+
+    /** 공역 판정 모드(ADR-035 · 계약 v5 §G48): off · shadow · on 만 */
+    @Test
+    void airspaceAlertsModeIsOneOfOffShadowOn() {
+        for (String ok : List.of("off", "shadow", "on"))
+            assertThatCode(() -> SettingsService.validate("airspace_alerts", JsonNodeFactory.instance.stringNode(ok))).as(ok).doesNotThrowAnyException();
+        for (String bad : List.of("ON", "", "maybe", " on"))
+            assertThatThrownBy(() -> SettingsService.validate("airspace_alerts", JsonNodeFactory.instance.stringNode(bad))).as(bad).isInstanceOf(Problem.class);
+        assertThatThrownBy(() -> SettingsService.validate("airspace_alerts", JsonNodeFactory.instance.booleanNode(true))).isInstanceOf(Problem.class);
+    }
 }
