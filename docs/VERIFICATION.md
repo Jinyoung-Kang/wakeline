@@ -1563,6 +1563,15 @@
 - **배포 때**: 지금 도는 운영 redis 에는 라벨이 없어 이 변경의 첫 `make up` 에서 한 번 다시 만들어진다.
 - **배포(2026-10-09 20:2x KST, main `d924f461`)**: `make up` 이 redis 를 다시 만들었다(`47fd498e1985` → `41de7e838025`, 라벨 `2d67f09a35bc57df` = `make print-REDIS_CONFIG_SHA`). redis 에 기대는 api · collector · ais 도 다시 떴다. 그 뒤 특보 수신 · region 지연 4.3 s · global 120.4 s(정상) · 권한 오류 0.
 
+## #126 edge(nginx) 설정이 바뀌면 배포가 edge 를 다시 만든다(#125 와 같은 틈, 브랜치 `fix/edge-config-recreate-2026-10`)
+- **문제**: nginx 는 마운트한 설정 5개(nginx.conf · proxy_headers.conf · security_headers.conf · problem.conf · problem_pages.conf)를 시작할 때만 읽는다. 내용만 바뀌면
+  `make up` 이 edge 를 다시 만들지 않아 옛 설정으로 돈다(redis 와 같은 틈 — #124 · #125). 지금까지는 edge 이미지를 다시 빌드한 배포에서만 새 설정이 들어갔다.
+- **시험 먼저**: `test_edge_is_recreated_when_a_mounted_nginx_file_changes` — 고치기 전 실패 `AssertionError: None != 'abc123'`. 시험은 파일 목록을 compose 의 edge
+  마운트에서 읽는다 — 새 파일을 마운트하고 해시에 빼면 실패한다.
+- **고친 것**: Makefile `EDGE_CONFIG_FILES`(compose 마운트 순서) → `EDGE_CONFIG_SHA`(export) → compose edge 라벨 `wakeline.edge-config-sha`.
+- **확인**: 인프라 정책 시험 전부 통과. 격리 프로젝트의 edge 하나로(의존 없이) — 같은 해시면 같은 컨테이너(`2338bfcb837d`), 바꾸면 새 컨테이너(`4ce201ecc63e`), 정리.
+- **배포 때**: 운영 edge 에는 라벨이 없어 첫 `make up` 에서 한 번 다시 만들어진다(게시 포트가 몇 초 끊긴다).
+
 ## 자동 검사 현황(2026-10-02 15:5x KST, QA 2026-10 브랜치 `qa/2026-10` — #103 뒤, 깨끗한 `git archive` 내보내기 · 격리 스택)
 | 층 | 도구 | 수 |
 |---|---|---|

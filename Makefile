@@ -11,6 +11,10 @@ ISO := $(ISO_ENV) docker compose -p wakeline-e2e -f infra/compose.yml --env-file
 # export: 이 Makefile 의 모든 compose 호출(개발 · 격리)이 같은 값을 받는다 — 빠지면 라벨이 'unset' 이 되어 redis 가 다시 만들어진다. 비밀값이 아니다.
 REDIS_CONFIG_SHA := $(shell cat infra/redis/start.sh infra/redis/redis.conf | python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest()[:16])')
 export REDIS_CONFIG_SHA
+# edge(nginx)도 같다 — 마운트한 설정 파일은 시작할 때만 읽는다. compose 의 edge 마운트 목록과 같은 순서(infra/tests 가 대조한다, VERIFICATION #126)
+EDGE_CONFIG_FILES := infra/edge/nginx.conf infra/edge/proxy_headers.conf infra/edge/security_headers.conf infra/edge/problem.conf infra/edge/problem_pages.conf
+EDGE_CONFIG_SHA := $(shell cat $(EDGE_CONFIG_FILES) | python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest()[:16])')
+export EDGE_CONFIG_SHA
 # 격리 스택은 합성 공역(가짜 자료 — 실제 AIP 도형이 아니다 · ADR-034)을 가져온다: E2E · 설명서 그림이 공역 레이어 · 판정을 보게
 # 가져온 뒤 api 가 새 차수를 읽을 때까지(60 s 주기 — 최대 90 s) 기다린다: 기다리지 않으면 먼저 도는 시험이 '공역 자료 없음'을 받는다(VERIFICATION #118)
 # (한 덩어리의 부속 셸 — e2e 레시피의 if/elif 안에서 쓰여 exit 가 레시피를 끝내지 않게)
@@ -182,7 +186,7 @@ rotate-db-passwords: init ## DB 서비스 계정(migrator·api·collector) 비�
 
 # 변수 값 출력(CI · 보안 게이트 · 정책 시험용, 예: make -s print-K6_IMAGE). 허용 목록의 고정 설정만 — make 는 환경변수도 변수로 읽으므로
 # 아무 이름이나 받으면 셸 · CI 에 export 된 비밀값까지 찍는다(I-8). 늘릴 때는 비밀값이 아닌지 확인하고 이름을 더한다(test_scripts_policy.py).
-PRINTABLE_VARS := K6_IMAGE ISO_ENV REDIS_CONFIG_SHA
+PRINTABLE_VARS := K6_IMAGE ISO_ENV REDIS_CONFIG_SHA EDGE_CONFIG_SHA
 .PHONY: $(addprefix print-,$(PRINTABLE_VARS))
 $(addprefix print-,$(PRINTABLE_VARS)): print-%:
 	@echo '$($*)'
