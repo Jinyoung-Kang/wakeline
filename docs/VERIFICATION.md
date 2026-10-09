@@ -1540,6 +1540,17 @@
   `make security` PASS(gitleaks 1,323 커밋). 운영 `:local` 이미지는 `:mainsafe` 로 보관했다가 되돌렸다.
 - **남은 것**: 화면에서 1년 전 항적을 고르는 길(재생 30일 한계)은 이번 범위 밖(ADR-038 버린 대안). 실제 보존 크기는 배포 뒤 잰다.
 
+## #124 단계 2–5 배포(2026-10-09 19:58 KST, main `4cc125ad`) — V20 · V21 적용, 배포 때 Redis ACL 을 다시 읽지 않아 특보 발행이 막혔다
+- **무엇**: 네 브랜치를 단계 순서대로 병합(병합 커밋 넷) → 운영 이미지를 `:rollback` 으로 태그 → `make up`. migrate 가 V20 · V21 을 0.07 s 에 적용, api · collector · ais · web 이
+  새 이미지로 다시 떴다(edge · db · redis 는 그대로).
+- **겪은 문제**: 수집기의 첫 특보 발행이 `xadd failed (NoPermissionError)` — 그 뒤 발행이 대기열에 쌓였다(`queued 8 · dropped 0`). 원인: 수집기 ACL(`infra/redis/start.sh`
+  — 새 스트림 `~wakeline:wxwarn`)은 Redis 컨테이너가 시작할 때만 만든다. 바뀐 것은 마운트한 파일 내용뿐이라 compose 가 redis 를 다시 만들지 않았다(4시간째 가동).
+  격리 시험(`make infra-docker-test` · `make e2e`)은 새 컨테이너라 통과했다 — 운영 배포 절차의 틈.
+- **고친 것**: `docker restart wakeline-redis-1`(AOF 로 자료 유지) — 곧바로 특보 3건 수신(`/api/v1/warnings` received · 예비 풍랑 3), 대기열의 발행도 이어졌다(버린 것 0).
+  피드 지연 region 1.1 s · global 46.6 s(정상).
+- **배포 뒤 확인**: `/api/v1/watch`(공항 RKSI · RKPC VFR) · `/api/v1/alerts/{id}`(엔진 · SIGMET 사본) · 없는 알림 404 · 화면 `/` · `/m` · `/alerts/{id}` 200.
+- **앞으로**: Redis ACL(start.sh)을 바꾸는 배포는 redis 를 다시 시작한다 — compose 가 스스로 알도록 고치는 일은 따로 제안했다(start.sh 해시를 라벨로).
+
 ## 자동 검사 현황(2026-10-02 15:5x KST, QA 2026-10 브랜치 `qa/2026-10` — #103 뒤, 깨끗한 `git archive` 내보내기 · 격리 스택)
 | 층 | 도구 | 수 |
 |---|---|---|
