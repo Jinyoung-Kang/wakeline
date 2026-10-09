@@ -1,4 +1,7 @@
 "use client";
+import { gapsPart, lagPart, positionPart } from "@/lib/reliability";
+import { ReliabilityLine } from "./ReliabilityLine";
+import { isRxFresh } from "@/lib/ws-protocol";
 import { WatchButton } from "./watch/WatchButton";
 import { warningsNow } from "@/lib/endpoints/warnings";
 import { useApiResource } from "@/lib/use-api-resource";
@@ -6,10 +9,10 @@ import type { Warnings } from "@/lib/warnings";
 import { useEscapeClose } from "@/lib/use-escape-close";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { shipDetail } from "@/lib/endpoints/ship-detail";
-import { useServerNow } from "@/lib/clock";
+import { useNow, useServerNow } from "@/lib/clock";
 import { fmtKstTitle, fmtRangeTitle } from "@/lib/time";
 import { ageS, fmtDuration, fmtSogDual } from "@/lib/format";
-import { notLiveText, GAP_BREAK_MIN_MS, isMmsi, navStatusLabel, newerLite, positionBadge, ROT_LABEL, SHIP_CATEGORY_CODES, SHIP_CATEGORIES, SHIP_STALE_S, SHIP_TRACK_HOURS, shipAgeS, shipCategory, shipRotation, shipsChip, SHIPS_RULE_TEXT, sortShipRows, STORED_STATIC_LABEL, STORED_STATIC_TIME_LABEL, type ShipCategory, type ShipSort, type ShipSortKey, type ShipState, type ShipStatic } from "@/lib/ships";
+import { aisBadge, notLiveText, GAP_BREAK_MIN_MS, isMmsi, navStatusLabel, newerLite, positionBadge, ROT_LABEL, SHIP_CATEGORY_CODES, SHIP_CATEGORIES, SHIP_STALE_S, SHIP_TRACK_HOURS, shipAgeS, shipCategory, shipRotation, shipsChip, SHIPS_RULE_TEXT, sortShipRows, STORED_STATIC_LABEL, STORED_STATIC_TIME_LABEL, type ShipCategory, type ShipSort, type ShipSortKey, type ShipState, type ShipStatic } from "@/lib/ships";
 import { fmtDraught, fmtShipEta, LAST_SEEN_TITLE, fmtShipSize, fmtShipType, gapDurationS, gapSummary, imoField, pickDestinationInfo, positionSourceLabel, SHIP_SORT_DEFAULT, SHIP_TRACK_WINDOW_MS, shipDestinationLines, shipList, shipOriginText, shipRowFromLite, staticProvenance, storedPortCallsNote, STORED_STATIC_FIELDS_TEXT, STORED_STATIC_PORT_CALLS_TEXT, STORED_STATIC_PORT_CALLS_UNREAD_TEXT, STORED_STATIC_TITLE, STORED_STATIC_UNAVAILABLE_TEXT, type ShipDetail } from "@/lib/ship-card";
 import { shipStates, useServerData } from "@/lib/store";
 import { saveLayers } from "@/lib/prefs";
@@ -53,6 +56,17 @@ export function ShipCard({ mmsi }: { mmsi: string }) {
  * 표시 부분(REST 상세·오류·서버 기준 시각을 인자로 — 서버 렌더 시험용). error = 상세 조회 실패(문자열 또는 오류 — ApiError 면 요청 id 를 복사할 수 있게,
  * 계약 v5 §G5), 없으면 null.
  */
+/** AIS 지연 — 상태 바 칩(lib/ships aisBadge)과 같은 값. 꺼짐 · 끊김이면 경고, 모르면 null */
+function useAisLag(): { lag: number | null; stale: boolean } | null {
+  const ais = useServerData((x) => x.ais);
+  const conn = useServerData((x) => x.conn);
+  const lastRxAt = useServerData((x) => x.lastRxAt);
+  const wall = useNow(5_000);
+  const b = wall ? aisBadge(ais, wall, isRxFresh(conn, lastRxAt, wall)) : null;
+  if (!b || b.kind === "disabled") return null;
+  return { lag: b.kind === "live" ? b.lag : (b.lag ?? 0), stale: b.kind !== "live" || b.tone === "bad" };
+}
+
 export function ShipCardView({ mmsi, detail: d, error: err, now }: { mmsi: string; detail: ShipDetail | null; error: unknown; now: number }) {
   const selectShip = useUi((s) => s.selectShip);
   const root = useRef<HTMLDivElement>(null);
@@ -84,6 +98,7 @@ export function ShipCardView({ mmsi, detail: d, error: err, now }: { mmsi: strin
   // 문구의 기간은 받은 항적의 창(선택 버튼은 다음에 받을 창)
   const hours = track?.hours ?? SHIP_TRACK_WINDOW_MS / 3600_000;
   const savedAge = ageS(d?.last_position_at, now);
+  const aisLag = useAisLag();
   const heardAge = ageS(d?.last_seen_at, now);
   // 실시간 상태가 없고 상세(REST)도 실시간이 아니라고 했으면 "실시간 아님 · 마지막 수신 hh:mm · 마지막 저장 hh:mm"(계약 v5 §B3 · §G4) — 위치를 지어내지 않는다.
   // 검색에서 실시간이 아닌 선박을 고르면 서버가 곧바로 ship_selected{state:null} 로 답하므로 gone 이어도 같은 문구.
@@ -146,6 +161,8 @@ export function ShipCardView({ mmsi, detail: d, error: err, now }: { mmsi: strin
           <button className="btn" onClick={() => selectShip(null)}>닫기</button>
         </div>
       </div>
+      {/* 신뢰도 한 줄(SPEC F6): 위치 나이(선박 5 · 15분 경계) · AIS 지연(상태 바와 같은 값) · 받은 항적 창의 수신 공백(불러오기 전에는 모름) */}
+      <ReliabilityLine parts={[positionPart("ship", age), lagPart(aisLag), gapsPart(gaps ? { count: gaps.count, window: track?.error ? "선택 뒤" : `최근 ${hours} h` } : null)]} />
       <div className="min-h-0 flex-1 overflow-y-auto px-2 py-1 text-[12px]">
         <SeaWarningsLine />
         {err != null ? <div className="text-[11px] text-bad" data-testid="ship-detail-error">

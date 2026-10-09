@@ -8,7 +8,9 @@ import { aircraftStates, useServerData } from "@/lib/store";
 import { useUi } from "@/lib/ui-store";
 import { useElapsedSince, useNow, useServerNow } from "@/lib/clock";
 import { focusChip } from "@/lib/demand";
-import { isRxFresh } from "@/lib/ws-protocol";
+import { feedLag, GLOBAL_STALE_S, isRxFresh, REGION_STALE_S } from "@/lib/ws-protocol";
+import { gapsPart, lagPart, positionPart } from "@/lib/reliability";
+import { ReliabilityLine } from "./ReliabilityLine";
 import { predict, seenAtMs } from "@/lib/interpolate";
 import { EMERGENCY_SQUAWKS, newerState, qualityLabel, REASON_LABEL } from "@/lib/aircraft-card";
 import type { AircraftState } from "@/lib/types";
@@ -133,6 +135,15 @@ export function RouteSection({ route, pos, callsign, pendingForS = null }: { rou
  * 고도·지상속도·수직속도는 두 단위(계약 v5 §A — ft·kt·ft/min 과 m·km/h·m/s).
  * 경과·stale·외삽은 서버 기준 시각으로 — 지도(워커)·툴팁과 같은 기준(WS-3 · DH-1). 지상이면 고도 대신 GND(DH-3).
  */
+/** 그 항공기의 위치를 실어 온 피드(관심 지역 공급자와 같으면 region, 아니면 전세계)의 지연 — 상태 바 칩과 같은 계산. 모르면 null */
+export function aircraftFeedLag(provider: string | null | undefined, feeds: { region: import("@/lib/types").FeedInfo | null; global: import("@/lib/types").FeedInfo | null },
+  nowMs: number, live: boolean): { lag: number | null; stale: boolean } | null {
+  if (!provider || !nowMs) return null;
+  if (feeds.region?.provider === provider) return feedLag(feeds.region, nowMs, live, REGION_STALE_S);
+  if (feeds.global?.provider === provider) return feedLag(feeds.global, nowMs, live, GLOBAL_STALE_S);
+  return null;
+}
+
 export function AircraftCard({ hex }: { hex: string }) {
   /**
    * REST 상세 — 항공기마다의 결과, 30 s 마다 다시 받기(lib/use-api-resource): 요청이 떠 있으면 그 주기는 건너뛴다 — 전에는 주기마다 앞 요청의 답을 버리고
@@ -149,6 +160,7 @@ export function AircraftCard({ hex }: { hex: string }) {
   const demand = useServerData((x) => x.demand);
   const conn = useServerData((x) => x.conn);
   const lastRxAt = useServerData((x) => x.lastRxAt);
+  const feeds = useServerData((x) => x.feeds);
   // 응답의 hex 가 이 카드의 것일 때만(다른 항공기의 응답을 보여주지 않는다)
   const d = res.data && res.data.hex?.toLowerCase() === hex.toLowerCase() ? res.data : null;
   const err = res.error != null ? String((res.error as Error).message) : null;
@@ -200,6 +212,9 @@ export function AircraftCard({ hex }: { hex: string }) {
           <button className="btn" onClick={() => select(null)}>닫기</button>
         </div>
       </div>
+      {/* 신뢰도 한 줄(SPEC F6): 위치 나이(추정이면 밝힘) · 그 위치를 실어 온 피드의 지연(상태 바와 같은 값) · 공백은 항적 기록이 없어 모름 */}
+      <ReliabilityLine parts={[positionPart("aircraft", r?.age_s, r?.estimated === true),
+        lagPart(aircraftFeedLag(s?.provider, feeds, wall, isRxFresh(conn, lastRxAt, wall))), gapsPart(null)]} />
       <div className="flex items-center gap-2 border-b border-line px-2 py-1 text-[11px]" data-testid="demand-row">
         <span className="text-fg-3">갱신</span>
         {chip ? <DemandBadge chip={chip} testId="demand-chip" />

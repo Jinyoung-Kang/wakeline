@@ -150,3 +150,19 @@ h3.g-h > .g-n { font-size: 12px; }
 /* 번호 칸(그림 위 겹침과 설명 목록이 같은 모양) — 파랑 바탕 · 어두운 글자, 밝은 1px 테두리로 레이더 색 위에서도 보인다 */
 .g-num { display: inline-flex; height: calc(var(--spacing) * 5); min-width: calc(var(--spacing) * 5); flex-shrink: 0; align-items: center; justify-content: center; border: 1px solid var(--color-bg); background: var(--color-accent); padding-inline: calc(var(--spacing) * 0.5); font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 11px; font-weight: 700; line-height: 1; color: var(--color-bg); box-shadow: 0 0 0 1px rgba(230, 232, 235, 0.85); }
 .g-mark { position: absolute; z-index: 10; transform: translate(-50%, -50%); }
+
+/*
+ * 인쇄(SPEC F5-3 — 알림 근거 화면): 흰 바탕 · 검은 글자로 색 토큰을 바꾸고, 머리 줄 · 건너뛰기 링크를 뺀다. 스크롤 상자는 펼친다(A4 한 쪽).
+ * 단추 · 링크 줄은 각 화면이 print:hidden 으로 뺀다. 서버 PDF 는 만들지 않는다(브라우저 인쇄 → PDF).
+ */
+@media print {
+  @page { size: A4; margin: 12mm; }
+  :root {
+    --color-bg: #fff; --color-bg-1: #fff; --color-bg-2: #fff; --color-line: #9aa0a6; --color-line-2: #80868b;
+    --color-fg: #000; --color-fg-2: #1f1f1f; --color-fg-3: #3c4043; --color-warn: #7a4b00; --color-bad: #a50e0e; --color-ok: #0b6b3a; --color-est: #5b3a99;
+  }
+  html, body { height: auto; font-size: 10pt; }
+  header, .skip-link { display: none !important; }
+  [data-print="sheet"] { height: auto !important; overflow: visible !important; padding: 0 !important; }
+}
+

@@ -392,6 +392,33 @@
         "tags" : [ "weather-controller" ]
       }
     },
+    "/api/v1/alerts/{id}" : {
+      "get" : {
+        "operationId" : "alert",
+        "parameters" : [ {
+          "in" : "path",
+          "name" : "id",
+          "required" : true,
+          "schema" : {
+            "type" : "string"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "additionalProperties" : { },
+                  "type" : "object"
+                }
+              }
+            },
+            "description" : "OK"
+          }
+        },
+        "tags" : [ "weather-controller" ]
+      }
+    },
     "/api/v1/client-errors" : {
       "post" : {
         "operationId" : "report",

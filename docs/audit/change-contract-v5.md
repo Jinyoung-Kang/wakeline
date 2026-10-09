@@ -1300,3 +1300,19 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
   - 웹: 카드의 '관심 대상' 단추 · 오른쪽 패널 'watch' 탭 · 화면 배너 · 브라우저 알림(허락 시). 숨은 탭에서도 이 요청만 30 s 에 한 번(관심 대상 있음 + 알림 허락).
   - 회귀 막기: api `WatchControllerTest` · `RecentClosedAlertsTest` · `RestSamplesIT` · `tools/rest_contract_check.py`(WATCH) · web `watch.test.ts` · `watch-runner.test.ts` ·
     e2e `watch.spec.ts`.
+
+## G. 31차 개정(2026-10-09 · 근거 공유 · 신뢰도 한 줄 — 차별화 기능 단계 4, 사용자 승인 "권장안대로")
+- G51(새 공개 자원 · 새 화면 URL 규칙) **알림 한 건 — `GET /api/v1/alerts/{id}` · `/alerts/{id}` · `/replay?at&bbox&hex`**
+  - `GET /api/v1/alerts/{id}`: id 는 숫자(1–18자리) — 아니면 400 `BAD_ID`. 열린 알림은 엔진 메모리에서(`source: "engine"` — `GET /api/v1/alerts` 의 원소와 같은 모양,
+    `Cache-Control: max-age=5, public`), 아니면 DB(`source: "db"` — `/alerts/history` 의 원소와 같은 모양, `max-age=300, public`). 둘 다 없으면 404(닫힌 알림 보존
+    `retention_days` — 기본 30일).
+  - 응답 `{alert, source, sigmet?, airspace?, retention_days, meta}` — 구역 사본: `sigmet` = `{id, fir_id, fir_name?, hazard, qualifier?, base_ft, top_ft?, base_source,
+    top_source, valid_from, valid_to, withdrawn_at?, raw_text, provider}`(원문 그대로) · `airspace` = `{id, category, type_ko, ident?, name, lower_ft?, lower_basis, lower_raw,
+    upper_ft?, upper_basis, upper_raw, edition, edition_active}`(옛 차수의 행도 그대로 — ADR-034).
+  - 웹 `/alerts/{id}`: 근거 카드 · 판정 때 위치(좌표 표) · 구역 사본 · 닫힌 까닭 · JSON 내려받기(`{downloaded_at_kst, downloaded_at, response}` — 응답 그대로) · 인쇄 모양
+    (흰 바탕 · 머리 줄 없음 · A4). 404 는 '보존 기간이 지나 볼 수 없음'.
+  - 재생 링크 `/replay?at=<UTC ISO …Z>&bbox=w,s,e,n&hex=<6자리>`: 재생 화면이 읽는다 — at 은 최근 30일 ~ 1분 전, bbox 는 위경도 범위 · w<e · s<n · 넓이 ≤ 2,500 sq°,
+    hex 는 16진 6자리. 틀린 값은 버리고(기본 시각 · 영역 · 고르지 않음) 까닭을 지도 위에 적는다. 근거 카드에 '근거 링크' · '그 시각 재생'.
+  - 신뢰도 한 줄(SPEC F6 — 계약 변경 없음, 화면만): 항공기 · 선박 카드 머리 아래, 근거 카드 맨 아래(판정 때 값).
+  - 회귀 막기: api `AlertByIdEndpointTest` · `WeatherPersistDbTest`(byId · 사본) · `RestSamplesIT`(alert_detail · airspace · 404) · `tools/rest_contract_check.py`(ALERT_DETAIL) ·
+    web `evidence-share.test.ts` · e2e `evidence-share.spec.ts`(인쇄 A4 한 쪽 · 내려받기 · 재생 링크).

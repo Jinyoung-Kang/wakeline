@@ -48,6 +48,9 @@ public class WeatherController {
     private final KrRadarReader radarKr;
     private final tools.jackson.databind.ObjectMapper json;
     private final io.micrometer.core.instrument.MeterRegistry meters;
+    /** 닫힌 알림 보존(일 — MaintenanceJobs 와 같은 설정). 근거 공유 화면이 '보존 기간이 지나 볼 수 없음'을 적는다 */
+    @org.springframework.beans.factory.annotation.Value("${wakeline.alert-retention-days:30}")
+    int alertRetentionDays = 30;
 
     public WeatherController(SigmetStore sigmets, EngineService engine, RadarStore radar, AirportRepository airports, AlertRepository alertRepo, AppProperties props,
                              KrRadarReader radarKr, tools.jackson.databind.ObjectMapper json,
@@ -117,6 +120,43 @@ public class WeatherController {
         m.put("meta", Meta.of(req, "db", Instant.now(), 60));
         return ResponseEntity.ok().cacheControl(CacheControl.maxAge(60, TimeUnit.SECONDS).cachePublic()).body(m);
     }
+
+    /**
+     * 알림 한 건 — 근거 공유(계약 v5 §G51 · SPEC F5): 열린 알림은 엔진 메모리에서(아직 저장 전일 수 있다), 아니면 DB(닫힌 알림 보존 30일). 그 구역의 사본
+     * (SIGMET 원문 · 유효 시간 · 고도대 / 공역 이름 · 고도 한계 원문 · 차수)을 함께 — 경보가 끝나거나 차수가 바뀐 뒤에도 근거를 읽을 수 있게.
+     * id 가 숫자가 아니면 400 BAD_ID, 없으면 404. 캐시: 열린 알림은 5 s(바뀐다), 닫힌 알림은 300 s(바뀌지 않는다).
+     */
+    @GetMapping("/alerts/{id}")
+    public ResponseEntity<Map<String, Object>> alert(@PathVariable String id, HttpServletRequest req) {
+        if (id == null || !id.matches("^[0-9]{1,18}$")) throw Problem.badRequest("BAD_ID", "alert id must be a positive integer");
+        long n = Long.parseLong(id);
+        Map<String, Object> m = new LinkedHashMap<>();
+        Alert live = engine.activeAlerts(null).stream().filter(a -> a.id() == n).findFirst().orElse(null);
+        String sigmetId;
+        Number airspaceId = null;
+        boolean open;
+        if (live != null) {
+            m.put("alert", live);
+            sigmetId = live.sigmetId();
+            if (live.airspace() != null && live.airspace().get("id") instanceof Number x) airspaceId = x;
+            open = true;
+        } else {
+            Map<String, Object> row = alertRepo.byId(n);
+            if (row == null) throw Problem.notFound("alert not found — closed alerts are kept for " + alertRetentionDays() + " days");
+            m.put("alert", row);
+            sigmetId = (String) row.get("sigmet_id");
+            if (row.get("airspace") instanceof Map<?, ?> as && as.get("id") instanceof Number x) airspaceId = x;
+            open = row.get("left_at") == null;
+        }
+        m.put("source", live != null ? "engine" : "db");
+        m.put("sigmet", sigmetId == null ? null : alertRepo.sigmetCopy(sigmetId));
+        m.put("airspace", airspaceId == null ? null : alertRepo.airspaceCopy(airspaceId.longValue()));
+        m.put("retention_days", alertRetentionDays());
+        m.put("meta", Meta.of(req, live != null ? "engine" : "db", Instant.now(), 60));
+        return ResponseEntity.ok().cacheControl(CacheControl.maxAge(open ? 5 : 300, TimeUnit.SECONDS).cachePublic()).body(m);
+    }
+
+    int alertRetentionDays() { return alertRetentionDays; }
 
     /** RainViewer 프레임 목록. ETag = 목록 생성 시각(generated) + 수신 시각 — 새 목록이 올 때만 바뀐다. */
     @GetMapping("/radar/frames")
