@@ -224,10 +224,17 @@ def test_cursor_is_a_number_or_absent():
 
 
 def test_aircraft_track_is_capped_and_says_so():
-    """R-52: 점 수 상한 5,000 · truncated 필수 · 점 수와 좌표 수가 같다."""
+    """R-52: 점 수 상한 5,000 · truncated 필수 · 점 수와 좌표 수가 같다. 계약 v5 §G52: resolution 필수 — raw | 1m_retained."""
     v = Draft202012Validator(rcc.SCHEMAS["aircraft_track"], format_checker=rcc.FORMATS)
     pts = [{"ts": f"2026-09-28T00:00:0{i}Z", "lat": 36.0, "lon": 127.0} for i in range(3)]
-    props = {"hex": "abc123", "from": "2026-09-27T22:00:00Z", "to": "2026-09-28T00:00:00Z", "points": 3, "truncated": False}
+    props = {
+        "hex": "abc123",
+        "from": "2026-09-27T22:00:00Z",
+        "to": "2026-09-28T00:00:00Z",
+        "points": 3,
+        "truncated": False,
+        "resolution": "raw",
+    }
     body = {
         "type": "Feature",
         "geometry": {"type": "LineString", "coordinates": [[127.0, 36.0]] * 3},
@@ -238,6 +245,9 @@ def test_aircraft_track_is_capped_and_says_so():
     assert not list(v.iter_errors(body))
     assert rcc._aircraft_track(body) == []
     assert list(v.iter_errors({**body, "properties": {k: x for k, x in props.items() if k != "truncated"}}))
+    assert not list(v.iter_errors({**body, "properties": {**props, "resolution": "1m_retained"}}))  # 지정 보존 점(§G52)
+    assert list(v.iter_errors({**body, "properties": {k: x for k, x in props.items() if k != "resolution"}}))
+    assert list(v.iter_errors({**body, "properties": {**props, "resolution": "1m_summary"}}))
     assert rcc._aircraft_track({**body, "properties": {**props, "truncated": True}})  # 상한보다 적은데 잘렸다고 함
     assert rcc._aircraft_track({**body, "points": pts[:2]})  # 점 수 불일치
     assert rcc._aircraft_track({**body, "points": list(reversed(pts))})  # 시간순 아님
