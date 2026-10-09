@@ -312,6 +312,8 @@ class RestSamplesIT extends IntegrationTest {
         record("ships", "/api/v1/ships?bbox=128,34,130,36", 200);
         record("ship_detail", "/api/v1/ships/" + mmsi, 200);
         record("ship_track", "/api/v1/ships/" + mmsi + "/track", 200);
+        // 관심 대상(계약 v5 §G50 · ADR-037): 공역 알림이 열린 항공기 · 모르는 hex · 표본 선박 · 모르는 MMSI · 공항(METAR 있음) · 모르는 공항
+        record("watch", "/api/v1/watch?aircraft=" + inAirspace + ",ffffff&ships=" + mmsi + ",440999999&airports=RKSI,ZZZZ", 200);
         record("ais_gaps", "/api/v1/ais/gaps", 200);
         record("problem_bad_mmsi", "/api/v1/ships/12345", 400);
         record("ship_detail_nostatic", "/api/v1/ships/440700101", 200); // 정적 정보 없음 → 분류 unknown(추정하지 않는다)

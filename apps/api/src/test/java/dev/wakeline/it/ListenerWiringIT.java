@@ -51,7 +51,7 @@ class ListenerWiringIT extends IntegrationTest {
             entry(ShipEvents.ShipsUpdated.class, Set.of("ShipWriter#onShips", "ShipFanout#onShips")),
             entry(ShipEvents.ShipsSampled.class, Set.of("ShipCoverage#onSampled")),
             entry(ShipEvents.AisGapReceived.class, Set.of("ShipWriter#onGap")),
-            entry(EngineEvents.AlertsChanged.class, Set.of("AlertRepository#onAlerts", "WsHub#onAlerts")));
+            entry(EngineEvents.AlertsChanged.class, Set.of("AlertRepository#onAlerts", "WsHub#onAlerts", "RecentClosedAlerts#onAlerts")));
 
     /** 멀티캐스터가 이 페이로드 형의 이벤트에 부르는 리스너 — 부르는 순서 그대로, dev.wakeline 의 것만(프레임워크 리스너는 뺀다). */
     List<String> listeners(Class<?> payload) throws Exception {

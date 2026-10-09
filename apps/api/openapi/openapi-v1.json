@@ -951,6 +951,47 @@
         "tags" : [ "warning-controller" ]
       }
     },
+    "/api/v1/watch" : {
+      "get" : {
+        "operationId" : "watch",
+        "parameters" : [ {
+          "in" : "query",
+          "name" : "aircraft",
+          "required" : false,
+          "schema" : {
+            "type" : "string"
+          }
+        }, {
+          "in" : "query",
+          "name" : "ships",
+          "required" : false,
+          "schema" : {
+            "type" : "string"
+          }
+        }, {
+          "in" : "query",
+          "name" : "airports",
+          "required" : false,
+          "schema" : {
+            "type" : "string"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "content" : {
+              "*/*" : {
+                "schema" : {
+                  "additionalProperties" : { },
+                  "type" : "object"
+                }
+              }
+            },
+            "description" : "OK"
+          }
+        },
+        "tags" : [ "watch-controller" ]
+      }
+    },
     "/healthz" : {
       "get" : {
         "operationId" : "healthz",

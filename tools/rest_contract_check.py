@@ -817,6 +817,85 @@ WARNINGS: Schema = {
     "if": {"properties": {"received": {"const": False}}},
     "then": {"properties": {"items": {"maxItems": 0}}},
 }
+# 관심 대상(계약 v5 §G50 · ADR-037) — 대상마다 한 줄(요청 순서 · 중복 한 번), 모르면 found=false 이고 상태 키가 없다
+WATCH_ALERT: Schema = {
+    "type": "object",
+    "required": ["id", "kind", "zone_type", "entered_at"],
+    "properties": {
+        "id": INT,
+        "kind": {"enum": ["OBSERVED", "PREDICTED"]},
+        "zone_type": STR,
+        "level": STR,
+        "sigmet_id": STR,
+        "hazard": STR,
+        "zone_name": STR,
+        "entered_at": TS,
+        "eta_at": TS,
+        "left_at": TS,
+        "close_reason": STR,
+    },
+    "additionalProperties": False,
+}
+WATCH: Schema = {
+    "type": "object",
+    "required": ["aircraft", "ships", "airports", "closed_window_s", "closed_dropped", "meta"],
+    "properties": {
+        "aircraft": {
+            "type": "array",
+            "maxItems": 50,
+            "items": {
+                "type": "object",
+                "required": ["hex", "found", "open_alerts", "closed_alerts"],
+                "properties": {
+                    "hex": {"type": "string", "pattern": "^[0-9a-f]{6}$"},
+                    "found": BOOL,
+                    "callsign": STR,
+                    "seen_at": TS,
+                    "fresh": BOOL,
+                    "open_alerts": {"type": "array", "items": WATCH_ALERT},
+                    "closed_alerts": {"type": "array", "items": {**WATCH_ALERT, "required": [*WATCH_ALERT["required"], "left_at", "close_reason"]}},
+                },
+                "additionalProperties": False,
+            },
+        },
+        "ships": {
+            "type": "array",
+            "maxItems": 50,
+            "items": {
+                "type": "object",
+                "required": ["mmsi", "found"],
+                "properties": {"mmsi": {"type": "string", "pattern": "^[0-9]{9}$"}, "found": BOOL, "name": STR, "seen_at": TS, "age_s": INT},
+                "additionalProperties": False,
+            },
+        },
+        "airports": {
+            "type": "array",
+            "maxItems": 50,
+            "items": {
+                "type": "object",
+                "required": ["icao", "found"],
+                "properties": {
+                    "icao": {"type": "string", "pattern": "^[A-Z0-9]{4}$"},
+                    "found": BOOL,
+                    "name": STR,
+                    "flight_cat": STR,
+                    "obs_time": TS,
+                    "obs_age_s": INT,
+                    "stale": BOOL,
+                },
+                "additionalProperties": False,
+            },
+        },
+        "ais_last_gap": {
+            "type": "object",
+            "required": ["started_at", "reason"],
+            "properties": {"started_at": TS, "ended_at": TS, "reason": STR},
+        },
+        "closed_window_s": {"const": 900},
+        "closed_dropped": INT,
+        "meta": META,
+    },
+}
 WARNINGS_HISTORY: Schema = {
     "type": "object",
     "required": ["items", "source", "meta"],
@@ -1027,6 +1106,7 @@ SCHEMAS: dict[str, dict[str, Any]] = {
     "airspace": AIRSPACE,
     "warnings": WARNINGS,
     "warnings_history": WARNINGS_HISTORY,
+    "watch": WATCH,
     "sigmet_detail": {
         **SIGMET_FEATURE,
         "required": [*SIGMET_FEATURE["required"], "aircraft_inside", "meta"],
@@ -1602,6 +1682,7 @@ CHECKS = [
     Check("airspace", "airspace", 200, "application/geo+json", True),
     Check("warnings", "warnings", 200, "application/json", True),
     Check("warnings_history", "warnings_history", 200, "application/json", True),
+    Check("watch", "watch", 200, "application/json", False),  # private — 요청 URL 이 개인의 관심 목록(ADR-037)
     # 기록에만: 공역(합성 차수의 금지구역) 안의 항공기 상세 — inside_airspace · 공역 알림(계약 v5 §G48)
     Check("aircraft_detail_airspace", "aircraft_detail", 200, "application/json", True, recorded_only=True),
     Check("alerts", "alerts", 200, "application/json", True),
@@ -1678,6 +1759,7 @@ def live_paths(base: str) -> dict[str, str | None]:
         "airspace": "/api/v1/airspace",
         "warnings": "/api/v1/warnings",
         "warnings_history": "/api/v1/warnings/history",
+        "watch": "/api/v1/watch?aircraft=ffffff&ships=440999999&airports=RKSI",
         "alerts": "/api/v1/alerts",
         "alerts_history": "/api/v1/alerts/history",
         "radar_frames": "/api/v1/radar/frames",
