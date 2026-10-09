@@ -222,7 +222,7 @@ class PrintHelperTest(unittest.TestCase):
         files = [ROOT / ".github" / "workflows" / "ci.yml", *(ROOT / "tools").glob("*.sh"), *(ROOT / "infra" / "tests").glob("*.py"),
                  *(ROOT / "perf").glob("*.sh")]
         used = {v for f in files if f != Path(__file__).resolve() for v in re.findall(r"(?<![-\w])print-([A-Za-z0-9_]+)", f.read_text())}
-        self.assertEqual(used, {"K6_IMAGE", "ISO_ENV"}, "쓰는 곳(CI · 보안 게이트 · 정책 시험)")
+        self.assertEqual(used, {"K6_IMAGE", "ISO_ENV", "REDIS_CONFIG_SHA"}, "쓰는 곳(CI · 보안 게이트 · 정책 시험)")  # REDIS_CONFIG_SHA: 설정 파일 해시(비밀값 아님 — VERIFICATION #124)
         for var in sorted(used):
             with self.subTest(var=var):
                 r = self.make_print(var)
