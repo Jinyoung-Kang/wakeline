@@ -28,6 +28,7 @@ final class Streams {
     static final String RADAR = "wakeline:radar";
     static final String DLQ = "wakeline:dlq";
     static final String SHIPS = "wakeline:ships";
+    static final String WXWARN = "wakeline:wxwarn";
     static final ObjectMapper JSON = JsonMapper.builder().build();
     private static final AtomicLong clock = new AtomicLong();
 

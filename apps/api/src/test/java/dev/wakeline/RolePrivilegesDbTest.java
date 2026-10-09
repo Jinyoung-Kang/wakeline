@@ -145,6 +145,7 @@ class RolePrivilegesDbTest {
                     "DELETE FROM airspace",                       // V18 공역은 넣고(INSERT) 차수를 켜고 끄기(UPDATE)만 — 지우지 않는다
                     "DELETE FROM airspace_edition",
                     "UPDATE airspace SET name = 'x'",
+                    "SELECT * FROM wx_warning",                   // V20 특보 이력은 api 만 — 수집기는 스트림으로만 보낸다
                     "CREATE TABLE evil (id int)",
             }) {
                 assertThat(state(c, sql)).as(sql).isEqualTo(INSUFFICIENT_PRIVILEGE);
@@ -435,7 +436,9 @@ class RolePrivilegesDbTest {
                     java.util.Map.entry("kst_day_cutover", "SELECT"),
                     // V18(ADR-034): 공역 차수 · 도형 — collector(가져오기 명령)가 쓰고 api 는 읽기만
                     java.util.Map.entry("airspace_edition", "SELECT"),
-                    java.util.Map.entry("airspace", "SELECT")));
+                    java.util.Map.entry("airspace", "SELECT"),
+                    // V20(ADR-036): 기상특보 이력 — api 가 쓰고(스트림 순서대로) 보존 삭제
+                    java.util.Map.entry("wx_warning", "SELECT,INSERT,UPDATE,DELETE")));
             assertThat(actual).isEqualTo(expected);
             // 열 단위 UPDATE 스냅샷(표 단위 권한이 없는 표만): api 가 고칠 수 있는 열은 이것뿐이다
             java.util.Map<String, String> columns = new java.util.TreeMap<>();

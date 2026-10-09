@@ -50,6 +50,8 @@ class RestSamplesIT extends IntegrationTest {
     @Autowired dev.wakeline.history.MaintenanceJobs jobs;
     /** 공역 읽기(ADR-034) — 60 s 주기 대신 직접 돌린다 */
     @Autowired dev.wakeline.airspace.data.AirspaceRefresher airspaceRefresher;
+    /** 기상특보 현황(ADR-036) — 반영을 기다린다 */
+    @Autowired dev.wakeline.weather.core.WarningStore warnings;
 
     final Map<String, String> index = new LinkedHashMap<>();
     static final String ASIA_PACIFIC = "-90,45,90,180";
@@ -222,6 +224,22 @@ class RestSamplesIT extends IntegrationTest {
             ItStack.deleteKeys("wakeline:traffic_grid");
         }
         record("airspace", "/api/v1/airspace", 200);
+        // 기상특보(계약 v5 §G49 · ADR-036): 수집기와 같은 경로(수집기 ACL 사용자로 XADD)로 예비 풍랑 1 · 호우주의보 1 — 실시간 목록과 이력(저장 뒤)
+        Instant fw = Streams.nextFetchedAt();
+        Streams.xadd(Streams.WXWARN, Streams.envelope("wx_warnings", "-", "kma_warning", fw, Map.of("complete", true, "dropped", 0, "warnings", List.of(
+                Map.ofEntries(Map.entry("zone_code", "S1312020"), Map.entry("zone_name", "남해동부바깥먼바다"), Map.entry("parent_code", "S1310000"),
+                        Map.entry("parent_name", "남해동부전해상"), Map.entry("sea", true), Map.entry("kind", "풍랑"), Map.entry("level", "예비"),
+                        Map.entry("command", "발표"), Map.entry("preliminary", true), Map.entry("issued_at", fw.minusSeconds(600).toString()),
+                        Map.entry("effective_from", fw.plusSeconds(86400).toString()), Map.entry("effective_to", fw.plusSeconds(86400 + 21600).toString()),
+                        Map.entry("effective_text", "내일 오후(12–18시 KST)"), Map.entry("raw", "S1310000, 남해동부전해상, S1312020, 남해동부바깥먼바다, …,=")),
+                Map.ofEntries(Map.entry("zone_code", "L1100100"), Map.entry("zone_name", "서울"), Map.entry("sea", false), Map.entry("kind", "호우"),
+                        Map.entry("level", "주의보"), Map.entry("command", "발표"), Map.entry("preliminary", false),
+                        Map.entry("issued_at", fw.minusSeconds(900).toString()), Map.entry("effective_at", fw.minusSeconds(600).toString()),
+                        Map.entry("end_notice", "202610091800"), Map.entry("raw", "L1000000, 전국, L1100100, 서울, …,=")))), 2));
+        await("warnings", WAIT, () -> warnings.state().fetchedAt().equals(fw));
+        await("warnings persisted", WAIT, () -> count("SELECT count(*) FROM wx_warning WHERE first_seen = ?", java.sql.Timestamp.from(fw)) == 2);
+        record("warnings", "/api/v1/warnings", 200);
+        record("warnings_history", "/api/v1/warnings/history", 200);
         record("aircraft_detail_airspace", "/api/v1/aircraft/" + inAirspace, 200);
         record("airports", "/api/v1/airports", 200);
         record("airport_wx", "/api/v1/airports/RKSI/wx", 200);

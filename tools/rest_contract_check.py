@@ -784,6 +784,56 @@ AIRSPACE: Schema = {
     "then": {"properties": {"features": {"maxItems": 0}}},
 }
 
+# 기상특보(계약 v5 §G49 · ADR-036) — 원문의 종류 · 수준 · 명령 글자 그대로, 시각 UTC. 예비특보는 effective_at 없이 때(effective_from/to · text)
+WARNING_ITEM: Schema = {
+    "type": "object",
+    "required": ["zone_code", "zone_name", "sea", "kind", "level", "command", "preliminary", "issued_at", "raw"],
+    "properties": {
+        "zone_code": {"type": "string", "pattern": "^[LS][0-9]{7}$"},
+        "zone_name": STR,
+        "parent_code": {"type": "string", "pattern": "^[LS][0-9]{7}$"},
+        "parent_name": STR,
+        "sea": BOOL,
+        "kind": STR,
+        "level": STR,
+        "command": STR,
+        "preliminary": BOOL,
+        "issued_at": TS,
+        "effective_at": TS,
+        "effective_from": TS,
+        "effective_to": TS,
+        "effective_text": STR,
+        "end_notice": STR,
+        "raw": STR,
+    },
+    "if": {"properties": {"preliminary": {"const": True}}},
+    "then": {"not": {"required": ["effective_at"]}, "required": ["effective_text"]},
+    "else": {"required": ["effective_at"]},
+}
+WARNINGS: Schema = {
+    "type": "object",
+    "required": ["received", "items", "dropped", "source", "meta"],
+    "properties": {"received": BOOL, "items": {"type": "array", "items": WARNING_ITEM}, "dropped": INT, "source": STR, "meta": META},
+    "if": {"properties": {"received": {"const": False}}},
+    "then": {"properties": {"items": {"maxItems": 0}}},
+}
+WARNINGS_HISTORY: Schema = {
+    "type": "object",
+    "required": ["items", "source", "meta"],
+    "properties": {
+        "items": {
+            "type": "array",
+            "items": {
+                **WARNING_ITEM,
+                "required": [*WARNING_ITEM["required"], "provider", "first_seen", "last_seen"],
+                "properties": {**WARNING_ITEM["properties"], "provider": STR, "first_seen": TS, "last_seen": TS, "ended_at": TS},
+            },
+        },
+        "source": STR,
+        "meta": META,
+    },
+}
+
 SHIP_SEARCH_Q: Schema = {"type": "string", "pattern": "^[A-Z0-9 .\\-/]{2,40}$"}  # 정규화(trim · 대문자)한 검색어
 
 COVERAGE_CELL_DEG = 0.5  # api CoverageGrid.CELL_DEG
@@ -975,6 +1025,8 @@ SCHEMAS: dict[str, dict[str, Any]] = {
     },
     "sigmets": feature_collection(SIGMET_FEATURE, META),
     "airspace": AIRSPACE,
+    "warnings": WARNINGS,
+    "warnings_history": WARNINGS_HISTORY,
     "sigmet_detail": {
         **SIGMET_FEATURE,
         "required": [*SIGMET_FEATURE["required"], "aircraft_inside", "meta"],
@@ -1548,6 +1600,8 @@ CHECKS = [
     Check("sigmets", "sigmets", 200, "application/geo+json", True),
     Check("sigmet_detail", "sigmet_detail", 200, "application/json", True),
     Check("airspace", "airspace", 200, "application/geo+json", True),
+    Check("warnings", "warnings", 200, "application/json", True),
+    Check("warnings_history", "warnings_history", 200, "application/json", True),
     # 기록에만: 공역(합성 차수의 금지구역) 안의 항공기 상세 — inside_airspace · 공역 알림(계약 v5 §G48)
     Check("aircraft_detail_airspace", "aircraft_detail", 200, "application/json", True, recorded_only=True),
     Check("alerts", "alerts", 200, "application/json", True),
@@ -1622,6 +1676,8 @@ def live_paths(base: str) -> dict[str, str | None]:
         "aircraft_full": f"/api/v1/aircraft?bbox={bbox}&detail=full",
         "sigmets": sigmets_path,
         "airspace": "/api/v1/airspace",
+        "warnings": "/api/v1/warnings",
+        "warnings_history": "/api/v1/warnings/history",
         "alerts": "/api/v1/alerts",
         "alerts_history": "/api/v1/alerts/history",
         "radar_frames": "/api/v1/radar/frames",
