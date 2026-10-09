@@ -95,7 +95,7 @@ class ComposePolicyTest(unittest.TestCase):
     @classmethod
     def _config(cls, extra: dict[str, str], project: str | None = None, env_file: Path | None = None) -> dict:
         # 호스트 셸의 값이 해석 결과에 섞이지 않게(시험은 임시 .env + 명시한 값만 본다)
-        drop = ("WAKELINE_", "REDIS_", "DB_", "COMPOSE_", "OPENSKY_", "KMA_", "AIS_", "aisstream", "EXTRA_ALLOWED_ORIGINS")
+        drop = ("WAKELINE_", "REDIS_", "EDGE_", "DB_", "COMPOSE_", "OPENSKY_", "KMA_", "AIS_", "aisstream", "EXTRA_ALLOWED_ORIGINS")  # EDGE_: make test-infra 가 export 한 EDGE_CONFIG_SHA(#128)
         env = {k: v for k, v in os.environ.items() if not k.startswith(drop)}
         env.update(extra)
         cmd = ["docker", "compose"] + (["-p", project] if project else []) + ["-f", str(COMPOSE), "--env-file", str(env_file or cls.env_file), "config", "--format", "json"]
@@ -506,7 +506,7 @@ class ComposePolicyTest(unittest.TestCase):
             with self.subTest(secret=key):
                 broken = Path(self._tmp.name) / f"missing-{key}.env"
                 broken.write_text(re.sub(rf"^{re.escape(key)}=.*\n", "", text, flags=re.M))
-                drop = ("WAKELINE_", "REDIS_", "DB_", "COMPOSE_", "OPENSKY_", "KMA_", "AIS_", "aisstream", "EXTRA_ALLOWED_ORIGINS")
+                drop = ("WAKELINE_", "REDIS_", "EDGE_", "DB_", "COMPOSE_", "OPENSKY_", "KMA_", "AIS_", "aisstream", "EXTRA_ALLOWED_ORIGINS")  # EDGE_: make test-infra 가 export 한 EDGE_CONFIG_SHA(#128)
                 env = {k: v for k, v in os.environ.items() if not k.startswith(drop)}
                 r = subprocess.run(["docker", "compose", "-f", str(COMPOSE), "--env-file", str(broken), "config", "--quiet"],
                                    capture_output=True, text=True, env=env)
