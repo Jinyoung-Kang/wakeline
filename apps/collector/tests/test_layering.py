@@ -51,6 +51,7 @@ RULE_FEATURES: dict[str, str] = {
     "budget_rules": KERNEL,
     "textutil": KERNEL,
     "timeutil": KERNEL,
+    "xml_intake": KERNEL,  # 믿지 않는 XML 의 입구(marine_grid · airspace)
     "diag": KERNEL,  # LoopLag.run 은 실행 도우미(모듈 설명 rules — asyncio 위에서 돈다)
     "retry": KERNEL,  # 실행 도우미(모듈 설명 rules — asyncio 위에서 돈다)
     "chain_state": KERNEL,
