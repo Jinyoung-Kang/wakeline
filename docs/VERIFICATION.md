@@ -1581,6 +1581,13 @@
 - **고친 것**: 시험 응답에 `resolution: raw`, 1m_retained 는 통과 · 없음 · 모르는 값은 실패를 함께 고정. collector 1,974 통과 · ruff · ruff format 통과.
 - **앞으로**: `tools/` 의 계약 검사를 바꾸면 collector 시험도 돌린다(그 시험이 수집기 venv 에 있다).
 
+## #128 main CI 의 infra 작업 실패 — 시험이 make 가 export 한 EDGE_CONFIG_SHA 를 받았다(브랜치 `fix/ci-edge-sha-env-2026-10`)
+- **증상**: edge 수정(#126) 뒤 CI(37924016835) infra 작업 실패 — `test_edge_is_recreated_when_a_mounted_nginx_file_changes` `'461d3621f8f4c459' != 'unset'`.
+- **원인**: CI 는 `make test-infra` 로 돌린다 — Makefile 이 export 한 `EDGE_CONFIG_SHA` 가 시험의 compose 해석 환경에 들어갔다. 시험은 호스트 값 중 `REDIS_` 등은 걸러 냈지만
+  `EDGE_` 는 아니었다(그래서 redis 쪽 같은 시험은 통과). 로컬에서는 `python3 -m unittest` 로 직접 돌려 export 가 없어 통과했다.
+- **고친 것**: 거르는 접두사에 `EDGE_`. `make test-infra` 로 실패를 재현한 뒤 고쳐 179 통과(직접 실행도 통과).
+- **앞으로**: 인프라 정책 시험은 CI 와 같은 `make test-infra` 로 돌린다.
+
 ## 자동 검사 현황(2026-10-02 15:5x KST, QA 2026-10 브랜치 `qa/2026-10` — #103 뒤, 깨끗한 `git archive` 내보내기 · 격리 스택)
 | 층 | 도구 | 수 |
 |---|---|---|
