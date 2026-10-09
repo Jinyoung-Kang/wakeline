@@ -199,6 +199,8 @@ describe("contract v5 amendment numbers are unique", () => {
     expect(amendment(48)).toContain("공역 알림 — 알림의 구역이 SIGMET 밖으로 넓어진다");
     expect(heading(49)).toMatch(/^## G\. 29차 개정\(2026-10-09 · 기상특보 /);
     expect(amendment(49)).toContain("기상특보 현황 — `wakeline:wxwarn` · `GET /api/v1/warnings` · `/warnings/history`");
-    expect(amendment(50)).toBe("");
+    expect(heading(50)).toMatch(/^## G\. 30차 개정\(2026-10-09 · 관심 대상 /);
+    expect(amendment(50)).toContain("관심 대상 지금 상태 — `GET /api/v1/watch`");
+    expect(amendment(51)).toBe("");
   });
 });

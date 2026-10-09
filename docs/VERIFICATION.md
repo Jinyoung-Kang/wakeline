@@ -1497,6 +1497,19 @@
   `make infra-docker-test` 모두 통과(edge 42 · Redis ACL 301 · db 권한 36 · 백업 48 · 비밀번호 교체 27 · 이미지 교체 11 · 수집기 PG 11) ·
   `make security` PASS(gitleaks 1,312 커밋 누출 0 · trivy 자체 6 · npm audit · pip-audit). 운영 `:local` 이미지는 `:mainsafe` 로 보관했다가 되돌렸다.
 
+## #121 차별화 기능 단계 3 — 관심 대상 · 브라우저 알림(ADR-037 · 계약 v5 §G50, 브랜치 `feat/watchlist-2026-10`)
+- **무엇**: 카드의 '관심 대상' 단추(브라우저에만 · 50개) → 실행기가 `GET /api/v1/watch` 를 30 s 마다(숨은 탭은 대상 + 알림 허락일 때만) 묻고 이전 답 · WS 알림과
+  비교해 사건 → 화면 배너 · 브라우저 알림. 'watch' 탭에서 목록 · 지우기 · 알림 켜기.
+- **겪은 문제와 고친 것**
+  - 실행기를 `createRoot` 로 문서 끝에 따로 그리자 첫 화면 JS 가 +416 B — Turbopack 이 `react-dom/client` 를 나눠 쓰려고 첫 화면의 큰 청크를 둘로 쪼갰다(PERF §18).
+    조각의 `useLoaded()`(미리 받기가 받은 뒤에만 그림)로 바꿔 +184 B.
+  - api 시험의 선박 나이 단언이 초 경계에서 흔들렸다(40 ↔ 41) — 나이를 밀리초 차이로 셈하고, 시험은 범위로 본다.
+  - 오른쪽 패널을 흉내 내는 시험(focus-rescue)의 조각 목록에 새 조각이 없어 4건 실패 — 흉내에 더했다.
+  - 숨은 탭 예외 조건(`permission === "granted"`)을 지우면 `watch-runner.test.ts` 가 실패함을 확인했다(변이 확인).
+- **확인(단계 3 끝)**: api 1,196 통과(LINE 97.51 % · BRANCH 86.93 %) · REST 계약 41 · web 1,775 통과 · eslint · tsc 오류 0 · 첫 화면 JS 548,681 B ·
+  `make e2e` 46 통과(새 관심 대상 시험 포함) · `make security` PASS(gitleaks 1,315 커밋 · trivy 자체 6 · npm audit · pip-audit). DB · Redis 를 바꾸지 않아
+  `make infra-docker-test` 는 돌리지 않았다. 운영 `:local` 이미지는 `:mainsafe` 로 보관했다가 되돌렸다.
+
 ## 자동 검사 현황(2026-10-02 15:5x KST, QA 2026-10 브랜치 `qa/2026-10` — #103 뒤, 깨끗한 `git archive` 내보내기 · 격리 스택)
 | 층 | 도구 | 수 |
 |---|---|---|

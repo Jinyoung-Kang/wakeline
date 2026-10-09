@@ -28,6 +28,7 @@ const LAZY_PARTS: Record<string, string> = {
   "components/ReceptionLayer.tsx": "레이어 단추 '관측 수신 범위(최근 24 h)'를 켠 뒤(기본 끔 — 이 브라우저에 켜 둔 선택이 남아 있으면 처음부터 받는다)",
   "components/WarningPanel.tsx": "오른쪽 패널의 'wx'(기상특보) 탭을 연 뒤",
   "components/AirspaceLayer.tsx": "레이어 단추 '공역'을 켠 뒤(기본 끔 — 이 브라우저에 켜 둔 선택이 남아 있으면 처음부터 받는다)",
+  "components/WatchPanel.tsx": "오른쪽 패널의 'watch'(관심 대상) 탭을 연 뒤 · 관심 대상 실행기(첫 화면이 다 그려진 뒤 — ADR-037)",
 };
 /** 조각과 함께만 오는 모듈(첫 화면의 정적 그래프에 없어야 한다) */
 const CARRIED_BY_PARTS: Record<string, string> = {
@@ -42,6 +43,12 @@ const CARRIED_BY_PARTS: Record<string, string> = {
   "lib/aircraft-card.ts": "항공기 카드의 행 규칙(품질 · 비상 squawk · 예측 까닭 · 더 새 관측) — 항공기를 고른 뒤",
   "lib/airport-list.ts": "공항 탭 목록의 줄(카테고리 · 오래됨 · 색)",
   "lib/endpoints/weather.ts": "공항 카드 · 공항 탭 · SIGMET 카드의 REST 조회(고르거나 탭을 연 뒤)",
+  "components/watch/WatchRunner.tsx": "관심 대상 실행기 — 관심 탭과 같은 조각, 첫 화면이 다 그려진 뒤(미리 받기) 받는다(ADR-037)",
+  "components/watch/WatchButton.tsx": "항공기 · 선박 · 공항 카드의 '관심 대상' 단추",
+  "lib/watch.ts": "관심 대상 규칙(목록 · 저장소 · 답 해석 · 사건 · 억제) — 실행기 · 관심 탭 · 카드 단추",
+  "lib/watch-store.ts": "관심 대상 상태 — 실행기 · 관심 탭 · 카드 단추",
+  "lib/notify.ts": "브라우저 알림 감싸기 — 실행기 · 관심 탭",
+  "lib/endpoints/watch.ts": "관심 대상 조회(실행기)",
 };
 
 /**

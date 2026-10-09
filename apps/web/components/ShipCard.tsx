@@ -1,4 +1,5 @@
 "use client";
+import { WatchButton } from "./watch/WatchButton";
 import { warningsNow } from "@/lib/endpoints/warnings";
 import { useApiResource } from "@/lib/use-api-resource";
 import type { Warnings } from "@/lib/warnings";
@@ -141,6 +142,7 @@ export function ShipCardView({ mmsi, detail: d, error: err, now }: { mmsi: strin
           {stale ? <span className="badge warn" data-testid="ship-stale">STALE · 15분 넘게 위치 없음</span> : null}
           {pb ? <span className={`badge ${pb.tone === "est" ? "est" : "warn"}`} data-testid="ship-pos-badge">{pb.text}</span> : null}
           {rot && rot.mode !== "heading" ? <span className="badge">{ROT_LABEL[rot.mode]}</span> : null}
+          <WatchButton kind="ship" id={mmsi} label={st?.name} />
           <button className="btn" onClick={() => selectShip(null)}>닫기</button>
         </div>
       </div>

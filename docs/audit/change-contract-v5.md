@@ -1286,3 +1286,17 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
   - 웹: 오른쪽 패널 'wx' 탭(해상 상위 구역별 · 육상 접음 · 예비는 때 · KST), 선박 카드의 해상특보 수 한 줄(구역 판정 안 함).
   - 회귀 막기: collector `test_kma_warning_rules.py` · `test_kma_warning_job.py` · `contract_check`(wx_warnings) · api `StreamConsumerWarningsTest` · `WarningControllerTest` ·
     `WarningPersistDbTest` · `RestSamplesIT` · `tools/rest_contract_check.py`(WARNINGS · WARNINGS_HISTORY) · Redis ACL 시험 · web `warnings.test.ts` · e2e `warnings.spec.ts`.
+
+## G. 30차 개정(2026-10-09 · 관심 대상 — 차별화 기능 단계 3 · ADR-037, 사용자 승인 "권장안대로")
+- G50(새 공개 자원) **관심 대상 지금 상태 — `GET /api/v1/watch`**
+  - 쿼리 `aircraft`(hex 6자리) · `ships`(MMSI 9자리) · `airports`(ICAO 4자) — 쉼표 목록, 합쳐 50개(중복은 한 번 · 빈 칸 건너뜀). 틀리면 400 `BAD_HEX` · `BAD_MMSI` ·
+    `BAD_ICAO` · `TOO_MANY_TARGETS`. 셋 다 없으면 빈 목록 셋(200).
+  - 응답 `{aircraft[], ships[], airports[], ais_last_gap?, closed_window_s: 900, closed_dropped, meta}` — 요청 순서대로 대상마다 한 줄, 모르면 `found: false` 이고 상태 키가 없다.
+    항공기 `{hex, found, callsign?, seen_at?, fresh?, open_alerts[], closed_alerts[]}`(알림 요약 `{id, kind, zone_type, level?, sigmet_id?, hazard?, zone_name?, entered_at,
+    eta_at?, left_at?, close_reason?}` — 근거 없음, 닫힌 것은 최근 15분 · 상한 5,000건 — 버린 수 `closed_dropped`) · 선박 `{mmsi, found, name?, seen_at?, age_s?}`
+    (30분 넘게 못 받으면 found=false) · 공항 `{icao, found, name?, flight_cat?, obs_time?, obs_age_s?, stale?}`(최신 METAR) · `ais_last_gap` = 마지막 AIS 수신 공백
+    `{started_at, ended_at?, reason}`.
+  - `Cache-Control: max-age=5, private`(목록이 개인의 것). 서버는 목록을 저장하지 않는다 — 요청 URL 이 edge 접근 기록에 남는다(ADR-037).
+  - 웹: 카드의 '관심 대상' 단추 · 오른쪽 패널 'watch' 탭 · 화면 배너 · 브라우저 알림(허락 시). 숨은 탭에서도 이 요청만 30 s 에 한 번(관심 대상 있음 + 알림 허락).
+  - 회귀 막기: api `WatchControllerTest` · `RecentClosedAlertsTest` · `RestSamplesIT` · `tools/rest_contract_check.py`(WATCH) · web `watch.test.ts` · `watch-runner.test.ts` ·
+    e2e `watch.spec.ts`.

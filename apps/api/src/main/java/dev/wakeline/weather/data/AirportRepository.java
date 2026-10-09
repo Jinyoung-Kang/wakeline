@@ -60,6 +60,22 @@ public class AirportRepository {
         return m;
     }
 
+    /**
+     * 관심 공항(계약 v5 §G50): 코드마다 최신 METAR 의 비행 등급 · 관측 시각 · 나이. 공항 표에 없는 코드는 결과에 없다(호출자가 found=false).
+     * 코드 50개까지(호출자가 막는다) — 공항마다 색인 한 번(LATERAL, metar_obs (icao, obs_time)).
+     */
+    public List<Map<String, Object>> latestFor(List<String> icaos) {
+        if (icaos.isEmpty()) return List.of();
+        Instant now = Instant.now();
+        return Sql.publicRead(db, "airports.watch", """
+                SELECT a.icao, a.name, m.obs_time, m.flight_cat, m.flight_cat_source
+                FROM airport a
+                LEFT JOIN LATERAL (SELECT obs_time, flight_cat, flight_cat_source FROM metar_obs mo WHERE mo.icao = a.icao ORDER BY obs_time DESC LIMIT 1) m ON true
+                WHERE a.icao IN (:icaos)
+                ORDER BY a.icao""")
+                .param("icaos", icaos).query().listOfRows().stream().map(r -> withAge(fix(r), now)).toList();
+    }
+
     /** obs_age_s·stale 을 붙인다. 관측 시각이 없으면 둘 다 null(모름). 시계 차로 음수가 되면 0. */
     static Map<String, Object> withAge(Map<String, Object> m, Instant now) {
         Object t = m.get("obs_time");
