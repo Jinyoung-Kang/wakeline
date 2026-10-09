@@ -19,7 +19,7 @@ test("alert permalink: evidence, coordinates, SIGMET copy, JSON download, one A4
   await expect(sheet).toBeVisible({ timeout: 20_000 });
   await expect(page.getByTestId("evidence")).toBeVisible();
   await expect(page.getByTestId("alert-state")).toContainText("열림(지금 판정 중)");
-  await expect(page.getByTestId("alert-position")).toContainText(/위도 · 경도 -?\d+\.\d{4}, -?\d+\.\d{4}/);
+  await expect(page.getByTestId("alert-position")).toContainText(/위도 · 경도\s*-?\d+\.\d{4}, -?\d+\.\d{4}/);
   await expect(page.getByTestId("alert-sigmet-copy")).toContainText("원문");
   await expect(page.getByTestId("evidence-permalink")).toHaveCount(0);
   const screen = (await page.getByTestId("alert-sheet").innerText()).replace(await page.locator('[data-raw="bulletin"]').innerText(), "");

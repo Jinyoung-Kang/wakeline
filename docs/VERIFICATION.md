@@ -1510,6 +1510,21 @@
   `make e2e` 46 통과(새 관심 대상 시험 포함) · `make security` PASS(gitleaks 1,315 커밋 · trivy 자체 6 · npm audit · pip-audit). DB · Redis 를 바꾸지 않아
   `make infra-docker-test` 는 돌리지 않았다. 운영 `:local` 이미지는 `:mainsafe` 로 보관했다가 되돌렸다.
 
+## #122 차별화 기능 단계 4 — 근거 공유 · 신뢰도 한 줄(계약 v5 §G51, 브랜치 `feat/evidence-share-2026-10`)
+- **무엇**: `GET /api/v1/alerts/{id}`(엔진 → DB, 구역 사본) · 화면 `/alerts/[id]`(근거 · 좌표 · 사본 · JSON · 인쇄) · 재생 링크(`/replay?at&bbox&hex` 를 재생 화면이 검증해 읽음) ·
+  카드와 근거 카드의 신뢰도 한 줄.
+- **겪은 문제와 고친 것**
+  - 첫 화면 JS 가 두 번 늘었다(+590 B · +30 B) — 카드 조각이 첫 화면 모듈 · 재생 모듈을 불러 Turbopack 의 청크 나눔이 바뀌었다. 기호를 옮겨 두고 링크 만들기를
+    따로 떼어 548,679 B(PERF §19).
+  - 근거 카드에 `next/link` 를 쓰자 알림 패널 측정 시험(mini-dom)이 `self is not defined` 로 실패 — 새 화면으로 가는 링크라 보통 `<a>` 로 바꿨다.
+  - 화면 글의 'UTC' 검사(kst-dashboard)가 재생 링크 안내('UTC ISO(…Z)')를 잡았다 — '…Z 로 끝나는 ISO 형식'으로. 새 경로는 KST 검사 목록(kst-only-screens)에 등록.
+  - 선박 카드의 공백 줄: 기록 조회가 실패했을 때 '최근 6 h'라고 쓰지 않게(기존 규칙 — ships-demand 시험이 잡음) '선택 뒤'로.
+  - api 시험: Mockito 는 Map 을 돌려주는 메서드에 빈 Map 을 준다 — '없음(null)'을 시험에서 명시했다.
+  - 첫 e2e 실행에서 새 근거 화면 시험 1건 실패 — 표의 칸 사이에 공백이 없는 글을 시험이 공백 있게 기대했다(화면 문제 아님). 정규식을 고쳐 다시 돌렸다.
+- **확인(단계 4 끝)**: api 1,199 통과(LINE 97.52 % · BRANCH 86.94 %) · REST 계약 44 · web 1,786 통과 · eslint · tsc 오류 0 · 첫 화면 JS 548,679 B ·
+  `make e2e` 48 통과(인쇄 PDF A4 한 쪽 · JSON 내려받기 · 재생 링크 · 틀린 링크 안내) · `make security` PASS(gitleaks 1,320 커밋 · trivy 자체 6 · npm audit · pip-audit).
+  DB · Redis 를 바꾸지 않아 `make infra-docker-test` 는 돌리지 않았다. 운영 `:local` 이미지는 `:mainsafe` 로 보관했다가 되돌렸다.
+
 ## 자동 검사 현황(2026-10-02 15:5x KST, QA 2026-10 브랜치 `qa/2026-10` — #103 뒤, 깨끗한 `git archive` 내보내기 · 격리 스택)
 | 층 | 도구 | 수 |
 |---|---|---|

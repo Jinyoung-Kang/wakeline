@@ -201,6 +201,8 @@ describe("contract v5 amendment numbers are unique", () => {
     expect(amendment(49)).toContain("기상특보 현황 — `wakeline:wxwarn` · `GET /api/v1/warnings` · `/warnings/history`");
     expect(heading(50)).toMatch(/^## G\. 30차 개정\(2026-10-09 · 관심 대상 /);
     expect(amendment(50)).toContain("관심 대상 지금 상태 — `GET /api/v1/watch`");
-    expect(amendment(51)).toBe("");
+    expect(heading(51)).toMatch(/^## G\. 31차 개정\(2026-10-09 · 근거 공유 /);
+    expect(amendment(51)).toContain("알림 한 건 — `GET /api/v1/alerts/{id}` · `/alerts/{id}` · `/replay?at&bbox&hex`");
+    expect(amendment(52)).toBe("");
   });
 });
