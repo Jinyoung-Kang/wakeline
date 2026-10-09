@@ -1571,6 +1571,7 @@
 - **고친 것**: Makefile `EDGE_CONFIG_FILES`(compose 마운트 순서) → `EDGE_CONFIG_SHA`(export) → compose edge 라벨 `wakeline.edge-config-sha`.
 - **확인**: 인프라 정책 시험 전부 통과. 격리 프로젝트의 edge 하나로(의존 없이) — 같은 해시면 같은 컨테이너(`2338bfcb837d`), 바꾸면 새 컨테이너(`4ce201ecc63e`), 정리.
 - **배포 때**: 운영 edge 에는 라벨이 없어 첫 `make up` 에서 한 번 다시 만들어진다(게시 포트가 몇 초 끊긴다).
+- **배포(2026-10-09 20:4x KST, main `972433c0`)**: `make up` 이 edge 만 다시 만들었다(`48b9872a7847` → `e15c1839c4f8`, 라벨 `461d3621f8f4c459` = `make print-EDGE_CONFIG_SHA` — redis · api 등은 그대로). healthy 뒤 `/` · `/m` · `/api/v1/warnings` · `/api/v1/status` 200, 보안 머리(CSP · X-Frame-Options) 그대로, nginx 오류 로그 없음.
 
 ## 자동 검사 현황(2026-10-02 15:5x KST, QA 2026-10 브랜치 `qa/2026-10` — #103 뒤, 깨끗한 `git archive` 내보내기 · 격리 스택)
 | 층 | 도구 | 수 |
