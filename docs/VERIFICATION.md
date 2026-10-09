@@ -1457,7 +1457,15 @@
   - 웹의 닫힘 문구에 `sigmet_ended` 가 없어 '—'였다(목록에는 닫힌 알림이 남지 않아 화면에 드러난 적은 없다) — 구역 종료 문구와 함께 더했다.
 - **계획 목표를 넘은 것(보고)**: 엔진 한 주기 약 +3 ms(PERF §16.1 — 목표 'p95 +10 %' 초과, 10 s 주기라 절대량은 작음) · 첫 화면 JS 단계 1 합계 +659 B
   (PERF §16.3 — 목표 '다섯 단계 합쳐 +600 B' 초과, ADR-026 예산 550,000 B 안 · 여유 1,590 B).
-- **확인**: 아래 '단계 1 검사' 줄.
+- **확인(단계 1 끝)**: collector 1,959 통과 · 27 건너뜀(실 Redis · 실 PostgreSQL 은 따로 — 실 PostgreSQL 11 통과) · ruff · mypy 오류 0 · api 1,185 통과(LINE 97.43 % · BRANCH 86.87 %) · REST 계약 38 · contract_check PASSED ·
+  web 1,739 통과 · eslint · tsc 오류 0 · 첫 화면 JS 548,410 B · 인프라 정책 177 · `make e2e` 44 통과(첫 실행은 공역 시험 1건 실패 — 가져온 공역을 api 가
+  60 s 주기로 읽기 전에 시험이 돌았다 → 격리 스택이 api 가 합성 차수를 보일 때까지 기다리게 고침, 493facec) · `make infra-docker-test` 모두 통과
+  (edge 42 · Redis ACL 299 · db 권한 36 · 백업 48 · 비밀번호 교체 27 · 이미지 교체 11 · 수집기 PG 11 — V19 까지).
+- **`make security` 실패 — 이번 변경과 무관한 새 공지(2026-10-09 스캔)**: gitleaks · pip-audit PASS. 실패한 것: api 이미지의 기반 이미지 안 `usr/bin/pebble`(Go
+  stdlib CVE-2026-78667 · CVE-2026-97031 — 고친 Go 1.26.9 · 1.27.2) · web 의 `sharp` 0.35.4(next 가 끌어옴 — GHSA-wq5f-xc86-pv6w, 0.35.5 에서 고침)와
+  `source-map-js` 1.2.1(GHSA-68fv-2mgg-jv7q — tailwind · postcss 가 끌어옴) · edge 의 alpine `tiff` 4.7.1-r0(CVE-2026-4775 — 4.7.2-r0) · 부하 시험 도구
+  k6 이미지의 libcrypto3 · Go stdlib. 모두 main 의 의존성 · 기반 이미지에도 그대로 있다. 고치는 방법(기반 이미지 다이제스트 · npm overrides · 캐시 없는 다시
+  빌드 · 기한부 예외)은 사용자에게 묻는다.
 
 ## 자동 검사 현황(2026-10-02 15:5x KST, QA 2026-10 브랜치 `qa/2026-10` — #103 뒤, 깨끗한 `git archive` 내보내기 · 격리 스택)
 | 층 | 도구 | 수 |
