@@ -35,13 +35,15 @@ export function wsAlert(a: Alert): WatchAlert {
   };
 }
 
-export function WatchRunner() {
+export function WatchRunner({ open = (e: WatchEvent) => openTarget(e.target) }: { open?: (e: WatchEvent) => void } = {}) {
   const targets = useWatch((s) => s.targets);
   const permission = useWatch((s) => s.permission);
   const prev = useRef<WatchState | null>(null);
   const fired = useRef(new Map<string, number>());
   const seenAlerts = useRef<Set<number> | null>(null);
   const busy = useRef(false);
+  const openRef = useRef(open);
+  useEffect(() => { openRef.current = open; });
   const [hidden, setHidden] = useState(false);
 
   const fire = (evs: readonly WatchEvent[]) => {
@@ -50,7 +52,7 @@ export function WatchRunner() {
     fired.current = r.fired;
     if (!r.pass.length) return;
     useWatch.getState().pushEvents(r.pass, now);
-    for (const e of r.pass) showNotification(e.title, e.body, e.key, () => openTarget(e.target));
+    for (const e of r.pass) showNotification(e.title, e.body, e.key, () => openRef.current(e));
   };
 
   const poll = () => {
@@ -103,11 +105,11 @@ export function WatchRunner() {
     return subscribeData(check);
   }, []);
 
-  return <WatchBanner />;
+  return <WatchBanner open={open} />;
 }
 
 /** 화면 안 배너(늘 — 브라우저 알림을 허락하지 않아도). 닫기 · 카드로 */
-export function WatchBanner() {
+export function WatchBanner({ open = (e: WatchEvent) => openTarget(e.target) }: { open?: (e: WatchEvent) => void } = {}) {
   const banner = useWatch((s) => s.banner);
   const dismiss = useWatch((s) => s.dismiss);
   if (!banner.length) return null;
@@ -121,7 +123,7 @@ export function WatchBanner() {
           </div>
           <div className="text-fg-2">{e.body}</div>
           <div className="mt-1 flex gap-1">
-            <button className="btn" onClick={() => { openTarget(e.target); dismiss(e.key); }}>{label(e.target)} 카드</button>
+            <button className="btn" onClick={() => { open(e); dismiss(e.key); }}>{label(e.target)} 카드</button>
             <button className="btn" onClick={() => dismiss(e.key)} aria-label={`${e.title} 알림 닫기`}>닫기</button>
           </div>
         </div>

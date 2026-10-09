@@ -391,6 +391,11 @@ const SETTING_SPECS: Record<string, SettingSpec> = {
   ais_bboxes: { kind: "text", hint: "lat1,lon1,lat2,lon2(여러 상자 ;, 구역 |) · 비우면 .env AIS_BBOXES — 서버가 검사" },
   // 공역 판정(ADR-035 · 계약 v5 §G48): off 안 함 · shadow 판정하고 건수만(저장 · 방송 없음 — wakeline_zone_events_total) · on 알림. api 가 60 s 안에 따른다
   airspace_alerts: { kind: "text", pattern: /^(off|shadow|on)$/, hint: "off · shadow(건수만) · on(알림) — api 가 60 s 안에 따른다" },
+  // 지정 대상 기록 보존(ADR-038 · 계약 v5 §G52): 항공기 hex · 선박 MMSI 20개까지 — 매시간 1분 첫 점을 1년 남긴다(브라우저의 관심 대상과 별개)
+  retain_targets: {
+    kind: "text", pattern: /^$|^\s*([0-9A-Fa-f]{6}|[0-9]{9})\s*(,\s*([0-9A-Fa-f]{6}|[0-9]{9})\s*)*$/, hint: "항공기 hex · 선박 MMSI 를 쉼표로 20개까지 · 1년 보존(1분 첫 점) · 비우면 없음",
+    check: (v) => { const ids = v.split(",").map((x) => x.trim().toLowerCase()).filter(Boolean); return ids.length > 20 ? "20개까지입니다." : new Set(ids).size !== ids.length ? "같은 대상을 두 번 적었습니다." : null; },
+  },
 };
 
 export function settingSpec(key: string): SettingSpec | null {
