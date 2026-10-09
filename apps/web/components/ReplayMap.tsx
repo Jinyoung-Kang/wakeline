@@ -26,8 +26,10 @@ export type ReplayPick = { kind: "aircraft"; hex: string } | { kind: "sigmet"; i
  * MapLibre 는 상황판과 같은 public 배포본(R-02 — lib/maplibre): 재생 화면이 이 컴포넌트를 불러올 때 loadMaplibre() 를 함께 기다린다(app/replay/page.tsx).
  * 전에는 maplibre-gl 을 번들해 공용 코드를 두 벌(번들 청크 286 KB + 워커가 받는 공용 청크 149 KB, gzip) 받고 해석했다(PERF §15).
  */
-export const ReplayMap = memo(function ReplayMap({ frame, onBbox, onPick, showRadar, onBasemapFailed }: {
+export const ReplayMap = memo(function ReplayMap({ frame, onBbox, onPick, showRadar, onBasemapFailed, initialBounds = null }: {
   frame: ReplayFrame | null; onBbox: (bbox: string, clamped: boolean) => void; onPick: (p: ReplayPick) => void; showRadar: boolean; onBasemapFailed?: (failed: boolean) => void;
+  /** 재생 링크의 영역(lib/replay-url — 검증한 값) — 처음 한 번만 그 영역에 맞춘다. 없으면 한반도 */
+  initialBounds?: [number, number, number, number] | null;
 }) {
   const el = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
@@ -38,7 +40,8 @@ export const ReplayMap = memo(function ReplayMap({ frame, onBbox, onPick, showRa
   useEffect(() => {
     if (!el.current) return;
     const ml = maplibre(); // 워커 경로는 loadMaplibre() 가 지정했다
-    const map = new ml.Map({ container: el.current, style: STYLE_URL, center: [127.8, 36.5], zoom: 6, minZoom: 2, maxZoom: 12, attributionControl: false });
+    const map = new ml.Map({ container: el.current, style: STYLE_URL, ...(initialBounds ? { bounds: initialBounds, fitBoundsOptions: { padding: 24 } } : { center: [127.8, 36.5], zoom: 6 }),
+      minZoom: 2, maxZoom: 12, attributionControl: false });
     map.addControl(new ml.NavigationControl({ showCompass: false }), "top-left");
     mapRef.current = map;
     // 배경지도 시인성(계약 v4 §E — 상황판 지도와 같은 색) · 스타일을 받지 못하면(오류 · 시간 제한) 로컬 대체 스타일로 한 번 바꾸고 알린다(R-01 — 상황판과 같은 규칙)

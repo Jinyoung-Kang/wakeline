@@ -8,6 +8,7 @@ import {
   replayReduce, ReplayLoader, replayZone, stepAt, toKstInput, type ReplayRange,
 } from "@/lib/replay";
 import { serverNowMs } from "@/lib/store";
+import { parseReplayUrl } from "@/lib/replay-url";
 import type { ReplayPick } from "@/components/ReplayMap";
 import { ReplayList } from "@/components/ReplayList";
 import { ReplayAircraftDetail, ReplaySigmetDetail } from "@/components/ReplayInspector";
@@ -40,9 +41,23 @@ export default function ReplayPage() {
   const [showList, setShowList] = useState(false);
   /** 배경지도 스타일을 받지 못해 로컬 대체 스타일로 그림(R-01 — ReplayMap 이 알린다) */
   const [basemapFailed, setBasemapFailed] = useState(false);
+  // 재생 링크(계약 v5 §G51 · lib/replay-url): 영역은 지도를 만들 때 한 번(그리는 값이 아니라 서버 HTML 과 어긋나지 않는다), 시각 · 항공기 · 안내는 마운트 뒤.
+  // useSearchParams 대신 location 을 읽는다 — 이 화면은 처음부터 끝까지 클라이언트에서 그리고, Suspense 경계를 새로 두지 않으려고(Next 문서 'useSearchParams' Prerendering)
+  const [initialBounds] = useState(() => (typeof window === "undefined" ? null : parseReplayUrl(new URLSearchParams(window.location.search), Date.now()).bbox));
+  const [urlNotes, setUrlNotes] = useState<string[]>([]);
   const { min, max } = range;
   // 기록 시각은 서버 시계 — 상황판에서 추정한 오프셋이 있으면 쓴다(없으면 브라우저 시계)
-  useEffect(() => { const h = setTimeout(() => { const now = serverNowMs(Date.now()); setRange(replayRange(now)); setAt(now - 10 * 60_000); }, 0); return () => clearTimeout(h); }, []);
+  useEffect(() => {
+    const h = setTimeout(() => {
+      const now = serverNowMs(Date.now());
+      const u = parseReplayUrl(new URLSearchParams(window.location.search), now);
+      setRange(replayRange(now));
+      setAt(u.at ?? now - 10 * 60_000);
+      if (u.hex) setPick({ kind: "aircraft", hex: u.hex });
+      setUrlNotes(u.notes);
+    }, 0);
+    return () => clearTimeout(h);
+  }, []);
 
   // 요청은 탭당 한 번에 하나(ReplayLoader — 서버에서도): 입력은 debounce 뒤 마지막 값만, 사용자가 옮기면 보내는 중인 요청의 응답은 버리고
   // 그것이 끝나면 곧바로 최신 값을 보낸다. 재생(▶) 중에는 응답을 그리고 끝나면 최신 틱을 보낸다(R-47). 시각 라벨은 입력마다 바로 바뀐다.
@@ -117,13 +132,14 @@ export default function ReplayPage() {
         </div>
       </div>
       <div className="relative min-h-0 flex-1">
-        <ReplayMap frame={frame} onBbox={onBbox} onPick={onPick} showRadar={showRadar} onBasemapFailed={setBasemapFailed} />
+        <ReplayMap frame={frame} onBbox={onBbox} onPick={onPick} showRadar={showRadar} onBasemapFailed={setBasemapFailed} initialBounds={initialBounds} />
         {/* 오고 가는 알림(조회 실패 · 면적 상한)은 지도 위에 띄운다 — 위 줄에 넣으면 줄이 접혀 지도 높이가 바뀌고, 바뀐 영역으로 다시 조회했다
             (E2E 2026-10-01: 503 알림이 뜨고 사라질 때마다 bbox 가 33.243 ↔ 33.234 로 흔들려 같은 시각을 새로 조회). 오른쪽 아래 출처 표시는 가리지 않는다. */}
-        {err || clamped || basemapFailed ? (
+        {err || clamped || basemapFailed || urlNotes.length ? (
           <div className="pointer-events-none absolute bottom-3 left-3 z-10 flex max-w-[min(560px,calc(100%-7rem))] flex-col items-start gap-1 leading-snug" data-testid="replay-notes">
             {/* 배경지도 실패(R-01 — 상황판과 같은 알림, QA-301): 누르기를 받지 않는다(그 밑의 지도를 끌 수 있게) */}
             {basemapFailed ? <span className="panel px-2 py-1 text-warn" role="status" data-testid="basemap-failed">배경지도를 불러오지 못함 — 그 시각의 기록은 그대로 그립니다(새로고침하면 다시 시도)</span> : null}
+            {urlNotes.map((n) => <span key={n} className="panel pointer-events-auto px-2 py-1 text-warn" role="status" data-testid="replay-url-note">{n}</span>)}
             {err ? <span className="panel pointer-events-auto px-2 py-1 text-bad" role="alert" data-testid="replay-error">{err}{rid ? <RequestIdCopy id={rid} /> : null}</span> : null}
             {clamped ? <span className="panel pointer-events-auto px-2 py-1 text-warn" data-testid="replay-clamped" title={`서버 조회 면적 상한 ${REPLAY_MAX_AREA_SQDEG.toLocaleString()} sq°`}>화면이 넓어 가운데 점선 상자만 조회 — 상자 밖 기록은 표시 안 함(확대하면 전체)</span> : null}
           </div>

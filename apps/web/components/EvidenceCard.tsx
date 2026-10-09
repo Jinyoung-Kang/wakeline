@@ -6,6 +6,9 @@ import { bandText } from "@/lib/airspace";
 import { useServerData } from "@/lib/store";
 import { useRxFresh, useServerNow } from "@/lib/clock";
 import { KstRange, KstTime } from "./KstTime";
+import { alertReplayLink } from "@/lib/alert-detail";
+import { gapsPart, lagPart, positionPart } from "@/lib/reliability";
+import { ReliabilityLine } from "./ReliabilityLine";
 
 const str = (v: unknown) => (typeof v === "string" && v.length > 0 ? v : null);
 const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
@@ -15,7 +18,7 @@ const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : n
  * 시각은 KST(계약 v5 §G20 · lib/time — "09-29 14:02:54 KST", title 에 연도 · ms 까지의 KST). 근거에 없는 값은 "—"(기본값으로 채우지 않는다). 판정에 쓴 가정(하한 SFC·상한 무제한·수직속도 0)은 가정이라고 밝힌다.
  * 예측 ETA 는 eta_at 에서 1 s 마다 카운트다운한다(추정). 알림 목록이 갱신되지 않는 동안(끊김·수신 대기·일시정지)은 "—"(DH-9).
  */
-export function EvidenceCard({ a }: { a: Alert }) {
+export function EvidenceCard({ a, standalone = false }: { a: Alert; standalone?: boolean }) {
   const now = useServerNow(1000);
   const rxFresh = useRxFresh();
   const live = useServerData((d) => alertListState(d.conn, d.alertsVersion, rxFresh) === "live");
@@ -77,6 +80,15 @@ export function EvidenceCard({ a }: { a: Alert }) {
         <div key={k} className="flex justify-between gap-2 border-t border-line py-0.5"><span className="shrink-0 text-fg-3">{k}</span><span className="text-right">{v}</span></div>
       ))}
       {assumptions.length ? <div className="border-t border-line pt-0.5 text-[10px] text-warn" data-testid="evidence-assumptions">판정 가정: {assumptions.join(" · ")}</div> : null}
+      {/* 신뢰도 한 줄(SPEC F6) — 판정 때의 값: 위치 나이는 근거에 있고, 공급자 지연 · 수신 공백은 근거에 남기지 않아 모름 */}
+      <div className="-mx-2 mt-0.5 border-t border-line [&>div]:border-b-0"><ReliabilityLine label="판정 때" parts={[positionPart("aircraft", posAge, a.estimated),
+        lagPart(null, "공급자 지연 기록 없음"), gapsPart(null, "수신 공백 기록 없음")]} /></div>
+      {/* 근거 공유(SPEC F5): 고정 링크(보존 기간 안) · 그 시각 재생 */}
+      <div className="flex flex-wrap gap-1 border-t border-line pt-1 print:hidden" data-testid="evidence-links">
+        {/* 보통 링크(next/link 아님): 새 화면으로 바로 간다 — 카드 조각에 라우터 코드를 더하지 않는다 */}
+        {standalone ? null : <a className="btn" href={`/alerts/${a.id}`} data-testid="evidence-permalink">근거 링크</a>}
+        <a className="btn" href={alertReplayLink(a)} data-testid="evidence-replay">그 시각 재생</a>
+      </div>
     </div>
   );
 }
