@@ -1467,6 +1467,20 @@
   k6 이미지의 libcrypto3 · Go stdlib. 모두 main 의 의존성 · 기반 이미지에도 그대로 있다. 고치는 방법(기반 이미지 다이제스트 · npm overrides · 캐시 없는 다시
   빌드 · 기한부 예외)은 사용자에게 묻는다.
 
+## #119 보안 게이트 — 새 공지 넷(2026-10-09 스캔)을 고침, 기한부 예외 없음(브랜치 `chore/security-2026-10`)
+- **무엇**: 단계 1(#118) 끝의 `make security` 가 이번 변경과 무관한 새 공지로 실패했다 — main 의 의존성 · 기반 이미지에도 있다. 사용자 결정(2026-10-09
+  "고칠 수 있는 것 먼저 고침").
+- **고친 것**
+  - web: `sharp` 0.35.4 → 0.35.5(GHSA-wq5f-xc86-pv6w — next 가 끌어옴) · `source-map-js` 1.2.1 → 1.2.2(GHSA-68fv-2mgg-jv7q — tailwind · postcss) — 범위 안이라
+    잠금 파일만(`npm audit fix`, 바뀐 패키지는 sharp · 그 libvips 바이너리 · source-map-js 뿐). 새 의존성 · overrides 없음.
+  - api: Temurin 25 jdk · jre 기반 이미지 다이제스트 갱신. 그래도 기반 이미지의 `/usr/bin/pebble`(패키지 밖에 놓인 Ubuntu 서비스 관리자 — Go 1.26.7 빌드,
+    CVE-2026-78667 · CVE-2026-97031)이 남아 지웠다 — api 는 쓰지 않는다(진입 java · PID 1 docker-init). `java -version` 정상.
+  - edge: 코드 변경 없음 — alpine `tiff` 4.7.1-r0(CVE-2026-4775)은 캐시 없이 다시 빌드하면(`apk upgrade`) 4.7.2-r0 이 들어온다. **배포 때 edge 를 캐시 없이
+    빌드한다.**
+  - k6(부하 시험 도구 — 보고만 하는 제3자 이미지)의 libcrypto3 · Go stdlib 는 게이트를 막지 않는다 — 두었다.
+- **확인**: 임시 태그(`:sec` — 운영 `:local` 은 그대로)로 빌드해 `SECURITY_OWN_IMAGES` 로 스캔 — api · web · edge · redis · gitleaks · npm audit · pip-audit 모두 PASS.
+  web 단위 시험 · 인프라 정책 시험 통과.
+
 ## 자동 검사 현황(2026-10-02 15:5x KST, QA 2026-10 브랜치 `qa/2026-10` — #103 뒤, 깨끗한 `git archive` 내보내기 · 격리 스택)
 | 층 | 도구 | 수 |
 |---|---|---|
