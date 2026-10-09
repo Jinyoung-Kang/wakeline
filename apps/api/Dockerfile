@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e
 # 기반·도구 이미지(FROM · COPY --from · syntax)는 태그@다이제스트로 고정(R-85). 올릴 때: docker buildx imagetools inspect <태그> --format '{{.Manifest.Digest}}'
 # Wakeline api — Spring Boot 4.1 (Java 25)
-FROM eclipse-temurin:25-jdk@sha256:119a3d18f160a3e7655a66034d0f43beee31cd7b3b9142d57a5de29772011de6 AS build
+FROM eclipse-temurin:25-jdk@sha256:8c0a84ea11c8f6ed52600fc19f1040121f2a162998e9f50a5faebbbad9172dcc AS build
 WORKDIR /src
 COPY gradlew settings.gradle.kts build.gradle.kts ./
 COPY gradle ./gradle
@@ -9,11 +9,14 @@ RUN --mount=type=cache,target=/root/.gradle ./gradlew --no-daemon -q dependencie
 COPY src ./src
 RUN --mount=type=cache,target=/root/.gradle ./gradlew --no-daemon -q bootJar -x test
 
-FROM eclipse-temurin:25-jre@sha256:8da0490fa9a3c26867012019565948eef0ee69438f5c75ac28146967bae984b5
+FROM eclipse-temurin:25-jre@sha256:fcd7fd7b387f94bb2ac461478a7436ad8e349924c374ea8313919624dceae636
 WORKDIR /app
 # apt-get upgrade: 기반 이미지(다이제스트 고정)가 나온 뒤 고쳐진 Ubuntu 보안 갱신까지 — db 이미지와 같은 방식, Trivy 게이트가 결과를 본다
-# (2026-10-01 최종 검증: libssl3t64 등 고칠 수 있는 HIGH 3 — 같은 기반의 새 다이제스트는 아직 없었다).
+# (2026-10-01 최종 검증: libssl3t64 등 고칠 수 있는 HIGH 3 — 같은 기반의 새 다이제스트는 아직 없었다. 2026-10-09 다이제스트 갱신).
+# rm /usr/bin/pebble(2026-10-09): 기반 이미지(Ubuntu 26.04)에 패키지 밖으로 놓인 서비스 관리자 — api 는 쓰지 않는다(진입 java · PID 1 docker-init).
+# 그 Go 1.26.7 빌드가 CVE-2026-78667 · CVE-2026-97031(HIGH, 고친 Go 1.26.9 · 1.27.2)로 Trivy 게이트를 막았고, 최신 다이제스트에도 그대로였다.
 RUN apt-get update && apt-get install -y --no-install-recommends curl && apt-get upgrade -y --no-install-recommends && rm -rf /var/lib/apt/lists/* \
+ && rm -f /usr/bin/pebble \
  && groupadd -r app && useradd -r -g app app
 COPY --from=build /src/build/libs/wakeline-api.jar /app/app.jar
 COPY --from=build /src/src/main/resources/schemas /app/schemas
