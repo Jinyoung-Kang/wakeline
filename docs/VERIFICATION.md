@@ -1573,6 +1573,14 @@
 - **배포 때**: 운영 edge 에는 라벨이 없어 첫 `make up` 에서 한 번 다시 만들어진다(게시 포트가 몇 초 끊긴다).
 - **배포(2026-10-09 20:4x KST, main `972433c0`)**: `make up` 이 edge 만 다시 만들었다(`48b9872a7847` → `e15c1839c4f8`, 라벨 `461d3621f8f4c459` = `make print-EDGE_CONFIG_SHA` — redis · api 등은 그대로). healthy 뒤 `/` · `/m` · `/api/v1/warnings` · `/api/v1/status` 200, 보안 머리(CSP · X-Frame-Options) 그대로, nginx 오류 로그 없음.
 
+## #127 main CI 의 collector 작업 실패 — 단계 5 의 계약 변경(§G52)을 수집기 쪽 시험이 몰랐다(브랜치 `fix/ci-track-resolution-2026-10`)
+- **증상**: 단계 2–5 배포 뒤 main 의 CI 두 번(37921288619 · 37922835254)이 collector 작업에서 실패 — `test_rest_contract_rules.py::test_aircraft_track_is_capped_and_says_so`
+  `'resolution' is a required property`. 다른 작업(api · web · infra · security)은 통과, e2e 는 앞 작업 실패로 건너뜀.
+- **원인**: 단계 5 가 `tools/rest_contract_check.py` 의 항적 스키마에 `resolution` 을 필수로 더했는데, 그 스키마를 손으로 만든 응답으로 시험하는 수집기 쪽 시험을 고치지
+  않았다. 단계 5 끝 점검에서 collector 전체 시험을 돌리지 않았다(api · web · REST 계약 표본 · e2e 는 돌렸다) — 점검 누락.
+- **고친 것**: 시험 응답에 `resolution: raw`, 1m_retained 는 통과 · 없음 · 모르는 값은 실패를 함께 고정. collector 1,974 통과 · ruff · ruff format 통과.
+- **앞으로**: `tools/` 의 계약 검사를 바꾸면 collector 시험도 돌린다(그 시험이 수집기 venv 에 있다).
+
 ## 자동 검사 현황(2026-10-02 15:5x KST, QA 2026-10 브랜치 `qa/2026-10` — #103 뒤, 깨끗한 `git archive` 내보내기 · 격리 스택)
 | 층 | 도구 | 수 |
 |---|---|---|
