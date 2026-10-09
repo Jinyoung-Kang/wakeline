@@ -264,6 +264,22 @@ class ComposePolicyTest(unittest.TestCase):
             self.assertTrue(r.get("read_only"))
             self.assertTrue([t for t in r.get("tmpfs", []) if t.split(":", 1)[0] == "/tmp"], "redis 에 tmpfs /tmp")
 
+    def test_redis_is_recreated_when_its_acl_script_or_config_changes(self):
+        """VERIFICATION #124: Redis 는 start.sh(ACL 사용자) · redis.conf 를 시작할 때만 읽는다. 마운트한 파일 내용만 바뀌면 compose 가 컨테이너를 다시 만들지 않아
+        새 스트림 권한이 빠진 채 돌았다(수집기 XADD NoPermissionError). 두 파일의 해시를 라벨로 붙여 내용이 바뀌면 compose 설정이 달라지게 한다 —
+        해시는 Makefile 이 계산해 모든 compose 호출에 넘긴다(export)."""
+        def label(sha: str | None) -> str | None:
+            cfg = self._config({} if sha is None else {"REDIS_CONFIG_SHA": sha})
+            return (self.svc("redis", cfg).get("labels") or {}).get("wakeline.redis-config-sha")
+        self.assertEqual(label("abc123"), "abc123")
+        self.assertEqual(label(None), "unset")  # make 밖의 compose 호출 — 한 번 다시 만들어질 뿐(AOF 유지)
+        make = subprocess.run(["make", "-s", "--no-print-directory", "print-REDIS_CONFIG_SHA"], cwd=ROOT, capture_output=True, text=True, check=True).stdout.strip()
+        import hashlib
+        want = hashlib.sha256((ROOT / "infra/redis/start.sh").read_bytes() + (ROOT / "infra/redis/redis.conf").read_bytes()).hexdigest()[:16]
+        self.assertEqual(make, want, "Makefile 의 해시 = start.sh + redis.conf 내용의 SHA-256 앞 16자")
+        mk = (ROOT / "Makefile").read_text(encoding="utf-8")
+        self.assertRegex(mk, r"(?m)^export REDIS_CONFIG_SHA\b", "모든 레시피의 compose 호출이 같은 값을 받게 export")
+
     # --- R-90 · R-06: api 설정값이 .env 에서 실제로 전달된다(application.yml 기본값만 있고 compose 가 넘기지 않으면 바꿀 방법이 없다) ---
     def test_api_cookie_secure_and_alert_retention_pass_through(self):
         env = self.svc("api")["environment"]

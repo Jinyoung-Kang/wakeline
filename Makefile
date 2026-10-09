@@ -6,6 +6,11 @@ COMPOSE := docker compose -f infra/compose.yml --env-file .env
 # 개발 전용 EXTRA_ALLOWED_ORIGINS(`next dev` opt-in)도 비운다 — 격리 스택의 허용 Origin 은 게시 포트(8701)뿐이다.
 ISO_ENV := WAKELINE_FIXTURE_MODE=1 WAKELINE_PORT=8701 WAKELINE_NET_PREFIX=10.78.0 aisstream_key= OPENSKY_CLIENT_ID= OPENSKY_CLIENT_SECRET= KMA_APIHUB_KEY= DATA_GO_KR_SERVICE_KEY= EXTRA_ALLOWED_ORIGINS=
 ISO := $(ISO_ENV) docker compose -p wakeline-e2e -f infra/compose.yml --env-file .env
+# Redis 는 ACL 사용자(start.sh) · 설정(redis.conf)을 시작할 때만 읽는다 — 마운트한 파일 내용만 바뀌면 compose 가 다시 만들지 않아 새 스트림 권한이 빠진 채
+# 돌았다(VERIFICATION #124). 두 파일 내용의 해시를 redis 서비스 라벨로 넘겨, 바뀌면 다음 up 이 redis 를 다시 만든다(AOF 유지 · 잠시 api 503).
+# export: 이 Makefile 의 모든 compose 호출(개발 · 격리)이 같은 값을 받는다 — 빠지면 라벨이 'unset' 이 되어 redis 가 다시 만들어진다. 비밀값이 아니다.
+REDIS_CONFIG_SHA := $(shell cat infra/redis/start.sh infra/redis/redis.conf | python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest()[:16])')
+export REDIS_CONFIG_SHA
 # 격리 스택은 합성 공역(가짜 자료 — 실제 AIP 도형이 아니다 · ADR-034)을 가져온다: E2E · 설명서 그림이 공역 레이어 · 판정을 보게
 # 가져온 뒤 api 가 새 차수를 읽을 때까지(60 s 주기 — 최대 90 s) 기다린다: 기다리지 않으면 먼저 도는 시험이 '공역 자료 없음'을 받는다(VERIFICATION #118)
 # (한 덩어리의 부속 셸 — e2e 레시피의 if/elif 안에서 쓰여 exit 가 레시피를 끝내지 않게)
@@ -177,7 +182,7 @@ rotate-db-passwords: init ## DB 서비스 계정(migrator·api·collector) 비�
 
 # 변수 값 출력(CI · 보안 게이트 · 정책 시험용, 예: make -s print-K6_IMAGE). 허용 목록의 고정 설정만 — make 는 환경변수도 변수로 읽으므로
 # 아무 이름이나 받으면 셸 · CI 에 export 된 비밀값까지 찍는다(I-8). 늘릴 때는 비밀값이 아닌지 확인하고 이름을 더한다(test_scripts_policy.py).
-PRINTABLE_VARS := K6_IMAGE ISO_ENV
+PRINTABLE_VARS := K6_IMAGE ISO_ENV REDIS_CONFIG_SHA
 .PHONY: $(addprefix print-,$(PRINTABLE_VARS))
 $(addprefix print-,$(PRINTABLE_VARS)): print-%:
 	@echo '$($*)'
