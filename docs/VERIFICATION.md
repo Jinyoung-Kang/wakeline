@@ -1551,6 +1551,17 @@
 - **배포 뒤 확인**: `/api/v1/watch`(공항 RKSI · RKPC VFR) · `/api/v1/alerts/{id}`(엔진 · SIGMET 사본) · 없는 알림 404 · 화면 `/` · `/m` · `/alerts/{id}` 200.
 - **앞으로**: Redis ACL(start.sh)을 바꾸는 배포는 redis 를 다시 시작한다 — compose 가 스스로 알도록 고치는 일은 따로 제안했다(start.sh 해시를 라벨로).
 
+## #125 Redis 설정 · ACL 이 바뀌면 배포가 Redis 를 다시 만든다(#124 의 후속, 브랜치 `fix/redis-acl-recreate-2026-10`)
+- **문제(#124)**: Redis 는 `infra/redis/start.sh`(ACL 사용자) · `redis.conf` 를 시작할 때만 읽는데, 마운트한 파일 내용만 바뀌면 `make up` 이 redis 를 다시 만들지 않았다.
+- **시험 먼저**: `infra/tests/test_compose_policy.py` `test_redis_is_recreated_when_its_acl_script_or_config_changes` — 고치기 전 실패 `AssertionError: None != 'abc123'`
+  (redis 에 라벨 없음).
+- **고친 것**: Makefile 이 두 파일 내용의 SHA-256 앞 16자를 `REDIS_CONFIG_SHA` 로 계산해 export(모든 compose 호출 — 개발 · 격리), compose 의 redis 에 라벨
+  `wakeline.redis-config-sha` 로 붙인다. 내용이 바뀌면 compose 설정이 달라져 다음 `make up` 이 redis 를 다시 만든다(AOF 유지 · 잠시 api 503). make 밖의 compose 호출은
+  'unset' 라벨 — 그때 한 번 다시 만들어질 뿐이다.
+- **확인**: 인프라 정책 시험 전부 통과. 격리 프로젝트(`wakeline-e2e`)의 redis 하나로 — 같은 해시로 두 번 up 하면 같은 컨테이너(`72be74c74aa2`), 해시를 바꾸면 새 컨테이너
+  (`c4432a0b3ec9`), 라벨 값 확인 뒤 정리.
+- **배포 때**: 지금 도는 운영 redis 에는 라벨이 없어 이 변경의 첫 `make up` 에서 한 번 다시 만들어진다.
+
 ## 자동 검사 현황(2026-10-02 15:5x KST, QA 2026-10 브랜치 `qa/2026-10` — #103 뒤, 깨끗한 `git archive` 내보내기 · 격리 스택)
 | 층 | 도구 | 수 |
 |---|---|---|
