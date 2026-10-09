@@ -203,6 +203,8 @@ describe("contract v5 amendment numbers are unique", () => {
     expect(amendment(50)).toContain("관심 대상 지금 상태 — `GET /api/v1/watch`");
     expect(heading(51)).toMatch(/^## G\. 31차 개정\(2026-10-09 · 근거 공유 /);
     expect(amendment(51)).toContain("알림 한 건 — `GET /api/v1/alerts/{id}` · `/alerts/{id}` · `/replay?at&bbox&hex`");
-    expect(amendment(52)).toBe("");
+    expect(heading(52)).toMatch(/^## G\. 32차 개정\(2026-10-09 · 지정 대상 기록 보존 /);
+    expect(amendment(52)).toContain("지정 대상 기록 보존 `retain_targets` · 항적 `properties.resolution` · `/m`");
+    expect(amendment(53)).toBe("");
   });
 });
