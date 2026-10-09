@@ -15,7 +15,7 @@
 |---|---|
 | **역할** | 1인 기획·설계·구현·검증(수집기 · API/WS/공간 엔진 · 화면 · 인프라 · 성능·장애 시험) |
 | **스택** | nginx · Next.js 16 / React 19 / MapLibre GL 6 · Spring Boot 4.1(Java 25, 가상 스레드, JTS) · Python 3.13(asyncio, httpx, websockets, shapely) · PostgreSQL 18 + PostGIS 3.6 · Redis 8 Streams · Docker Compose |
-| **구성** | 상시 컨테이너 7개(edge · web · api · collector · ais · redis · db) + 일회성 migrate(Flyway V1–V17) |
+| **구성** | 상시 컨테이너 7개(edge · web · api · collector · ais · redis · db) + 일회성 migrate(Flyway V1–V18) |
 | **데이터** | 항공기 adsb.lol · adsb.fi · OpenSky · 노선 adsbdb(선택 시만, 저장 안 함) / 선박 aisstream.io · 항구 UN/LOCODE · 한국 항만 입출항 해양수산부 PORT-MIS(공공데이터포털, 수집기가 항만청 10곳을 날짜별로 색인) · 연안 교통량 한국해양교통안전공단 실시간 해양교통정보 + 해양수산부 해양격자 4단계(공공데이터포털) / 기상 AviationWeather.gov · RainViewer · 기상청 API허브 레이더(HSR) / 지도 OpenFreeMap |
 | **검증** | 자동 시험 5,435건(pytest 1,923 · collector 실 Redis 16 · 실 PostgreSQL 7 · JUnit 1,135 · Vitest 1,698 · Playwright E2E 43 · 인프라 정책 157 · 버리는 컨테이너 시험 456 — 2026-10-02 QA 2026-10 브랜치에서 모두 실행) · **QA 2026-10**(출시 기준 검증 — 결함 32건 중 29건 수정, [보고](docs/qa/2026-10/REPORT.md)) · **CTO 리뷰 2026-10**(보안 · 데이터 손실 · 구조 · 측정한 성능 — [PLAN](docs/review/cto-2026-10/PLAN.md) · ADR-028–030 · 독립 리뷰 2회) · 적대적 리뷰 2회(97건 · 19건 수정) · **리뷰 v1**(기준선 측정 → 진단 98건(고유 97 + 3단계 추가 R-98) → 승인 85 · 보류 13 → 수정(R-63 은 2026-09-30 직접 빌드한 db 이미지로 해결(ADR-004 개정), 일부는 부분 처리 — review §5.2) · 2차 검토 35건 · 문서 사실 확인 2회 → 재측정, [review](docs/review/VERIFICATION.md)) · 장애 주입 6종 · 실측 문제 기록 104건([VERIFICATION](docs/VERIFICATION.md)) |
 | **성능(실측)** | 운영 규모 합성 자료(DB 8.8 GB · 전세계 항공기 1만 · 선박 1.5만 척)에서 REST 100 rps 경로 16개 p95 4.4–89 ms(목표 300) · WS 200 연결 지연 p95 230 ms(목표 500) · api 컨테이너 메모리 최대 750.5 MiB(NFR-03 ≤ 768 MiB — [ADR-031](docs/adr/ADR-031-api-memory-target.md)) · 첫 화면 JS 547,116 B(예산 550,000 B, gzip 본문 · 웹 이미지의 Node) · 화면 Core Web Vitals(실제 GPU): 데스크톱 4화면 모두 good, 모바일 지도 화면 TBT 196–233 ms(외부 호스트 차단) — [PERF](docs/PERF.md) §14 · §15 |
@@ -127,6 +127,13 @@ make ops-user u=admin     # 운영자 계정 생성·비밀번호 변경(프롬�
 | `make logs s=api` · `make down` · `make clean` | 로그 · 중지(데이터 보존) · 볼륨 포함 초기화 |
 | `make backup` · `make restore f=… confirm=wakeline` | PostgreSQL 백업(backups/, 0600) · 빈 새 볼륨에 복원(아래) |
 
+### 공역 자료 가져오기(선택)
+공역 레이어 · 공역 진입 판정은 국토교통부 '공역정보 지도자료'(AIP 차수 기준 KMZ — 국토교통부 누리집에서 받는다)를 씁니다. 국토교통부 저작물이라 이 저장소에는 없습니다 — 받은 파일을 운영자가 가져옵니다(ADR-034):
+```bash
+make airspace-import f="$HOME/Downloads/AIP 25년 5차 기준.kmz" edition="AIP 25년 5차"   # 파일은 표준 입력으로만 들어간다
+```
+새 차수를 다 넣은 뒤 한 번에 켜고 옛 차수는 끕니다(지우지 않음 — 같은 파일을 다시 가져오면 그 차수로 되돌아갑니다). api 는 60 s 안에 새 차수를 읽습니다. `make e2e` · `make demo` 는 합성(가짜) 공역을 가져옵니다.
+
 ### 업그레이드 — V16(일 집계를 KST 날짜로) 을 처음 싣는 배포
 `make up` 은 `migrate` 가 끝날 때까지 이전 api · collector 를 돌려 둡니다. V16 은 일 통계 · 격리 수 표를 KST 날짜 표로 바꾸므로, 그 사이 이전 api 의 집계가 UTC 날 통계와 완료 표식을, 이전 collector 가 UTC 날짜 격리 수를 새 표에 쓸 수 있습니다. 그래서 이번 한 번은 쓰는 쪽을 먼저 멈춥니다(계약 v5 §G20 '배포'):
 ```bash
@@ -174,7 +181,7 @@ make rotate-db-passwords P=wakeline-e2e sync=1   # 격리 스택(데모·E2E)의
 
 ## 6. 저장소 구조
 ```
-apps/api         Spring Boot — dev.wakeline.{platform.*,geo,aircraft·ships·weather.{core,data,web},ingest,ws,ops,settings,status,history,traffic,coverage,demand,route,portcalls,logs}(ADR-028) · Flyway V1–V17 · JUnit/Testcontainers
+apps/api         Spring Boot — dev.wakeline.{platform.*,geo,aircraft·ships·weather.{core,data,web},ingest,ws,ops,settings,status,history,traffic,coverage,demand,route,portcalls,logs}(ADR-028) · Flyway V1–V18 · JUnit/Testcontainers
 apps/collector   Python — providers · normalize · quality · sigmet_parse · budget · ratelimit · demand · jobs · ais/(수신·대기열·정리·발행·공백)
 apps/web         Next.js — app/(상황판·replay·stats·airports·ops·logs·about·guide) · lib(ws·store·ships·demand·viewport·interpolate) · e2e
 schemas/         aircraft_state · ship_state · ship_static · sigmet · stream_envelope · log_event · ws/(WS 메시지) · vectors/(가림 · 억제 · 선종 순서 — 언어 간 시험 벡터) (계약의 단일 원천)
@@ -219,4 +226,4 @@ cd ../.. && make readme-images                                                  
 ## 9. 데이터 출처·약관
 adsb.lol(ODbL 1.0) · adsb.fi(비상업, 초당 1회 이하) · OpenSky Network(연구·비상업) · aisstream.io(API 키, 재전송 없음) · AviationWeather.gov(미 정부 공개, 자체 상한 분당 20회) ·
 adsbdb.com(노선 — flight route data © David Taylor · Jim Mason, 저작자 허락 없이 복사·게시 금지) · UN/LOCODE(항구 코드 — UNECE, ODC-PDDL) ·
-RainViewer(개인·교육, 줌 ≤ 7) · 기상청 API허브 레이더 합성자료(활용신청) · 공공데이터포털 해양수산부 선박운항정보(PORT-MIS) · 한국해양교통안전공단 MTIS 실시간 해양교통정보 · 해양수산부 해양격자 4단계(활용신청, 서비스 키 하나 `DATA_GO_KR_SERVICE_KEY`) · OpenFreeMap / OpenMapTiles / OpenStreetMap contributors. 화면 하단과 `/about` 에 상시 표기합니다.
+RainViewer(개인·교육, 줌 ≤ 7) · 기상청 API허브 레이더 합성자료(활용신청) · 공공데이터포털 해양수산부 선박운항정보(PORT-MIS) · 한국해양교통안전공단 MTIS 실시간 해양교통정보 · 해양수산부 해양격자 4단계(활용신청, 서비스 키 하나 `DATA_GO_KR_SERVICE_KEY`) · 국토교통부 공역정보 지도자료(AIP 차수 기준 — 저작물: 비상업 표시 · 출처 · 차수 표기, 저장소에 넣지 않음) · OpenFreeMap / OpenMapTiles / OpenStreetMap contributors. 화면 하단과 `/about` 에 상시 표기합니다.

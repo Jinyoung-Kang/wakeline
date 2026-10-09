@@ -69,6 +69,7 @@ RULE_FEATURES: dict[str, str] = {
     "traffic_grid_plan": "marine",
     "portcalls": "portcalls",
     "route": "route",
+    "airspace": "airspace",
     "ais": "ais",
     "ais.parse": "ais",
     "ais.book": "ais",
@@ -90,6 +91,7 @@ LAYERS: dict[str, str] = {m: RULES for m in RULE_FEATURES} | {
     "ais.health": ENTRY,
     "tools": ENTRY,
     "tools.snapshot": ENTRY,
+    "tools.airspace_import": ENTRY,
     # adapters
     "config": ADAPTERS,
     "http": ADAPTERS,
@@ -103,6 +105,7 @@ LAYERS: dict[str, str] = {m: RULES for m in RULE_FEATURES} | {
     "raw_store": ADAPTERS,
     "db": ADAPTERS,
     "kma_store": ADAPTERS,
+    "airspace_store": ADAPTERS,
     "logsink": ADAPTERS,
     "redis_retry": ADAPTERS,
     "ais.client": ADAPTERS,

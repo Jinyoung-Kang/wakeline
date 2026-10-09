@@ -1,0 +1,1177 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2" xmlns:gx="http://www.google.com/kml/ext/2.2">
+<Document id="synthetic" xsi:schemaLocation="http://www.opengis.net/kml/2.2 http://schemas.opengis.net/kml/2.2.0/ogckml22.xsd">
+<name>합성 시험 공역 1차</name>
+<!-- 가짜 자료: 이름 · 좌표 · 고도는 시험용으로 만든 것이다(실제 공역 아님). 구조만 국토교통부 공역정보 지도자료(KML)를 흉내 낸다. -->
+<Folder>
+<name>1.Airspace_관제공역</name>
+<Folder>
+<name>관제권</name>
+<Placemark id="ID_10001">
+<name>시험 관제권</name>
+<description><![CDATA[<html><head><meta http-equiv="content-type" content="text/html; charset=UTF-8"></head><body><table><tr style="font-weight:bold"><td>시험 관제권</td></tr><tr><td><table>
+<tr>
+<td>GFID</td>
+<td>{00000000-0000-0000-0000-000000010000}</td>
+</tr>
+<tr>
+<td>Remarks_Txt</td>
+<td>합성 시험 자료</td>
+</tr>
+<tr>
+<td>Ident_Txt</td>
+<td>&lt;Null&gt;</td>
+</tr>
+<tr>
+<td>Name_Txt</td>
+<td>시험 관제권</td>
+</tr>
+<tr>
+<td>DistVertUpper_Val</td>
+<td>5000</td>
+</tr>
+<tr>
+<td>DistVertUpper_UOM</td>
+<td>Feet</td>
+</tr>
+<tr>
+<td>DistVertUpper_Code</td>
+<td>Height</td>
+</tr>
+<tr>
+<td>DistVertLower_Val</td>
+<td>&lt;Null&gt;</td>
+</tr>
+<tr>
+<td>DistVertLower_UOM</td>
+<td>&lt;Null&gt;</td>
+</tr>
+<tr>
+<td>DistVertLower_Code</td>
+<td>Surface</td>
+</tr>
+<tr>
+<td>Type_Code</td>
+<td>Control Zone</td>
+</tr>
+<tr>
+<td>Class_Code</td>
+<td>D</td>
+</tr>
+</table></td></tr></table></body></html>]]></description>
+<MultiGeometry><Polygon><outerBoundaryIs><LinearRing><coordinates>131.000000,36.000000,0 131.200000,36.000000,0 131.200000,36.200000,0 131.000000,36.200000,0 131.000000,36.000000,0</coordinates></LinearRing></outerBoundaryIs></Polygon></MultiGeometry>
+</Placemark>
+</Folder>
+<Folder>
+<name>관제구</name>
+<Folder>
+<name>지역관제구역</name>
+<Placemark id="ID_10002">
+<name>시험 접근관제구역</name>
+<description><![CDATA[<html><head><meta http-equiv="content-type" content="text/html; charset=UTF-8"></head><body><table><tr style="font-weight:bold"><td>시험 접근관제구역</td></tr><tr><td><table>
+<tr>
+<td>GFID</td>
+<td>{00000000-0000-0000-0000-000000010001}</td>
+</tr>
+<tr>
+<td>Remarks_Txt</td>
+<td>합성 시험 자료</td>
+</tr>
+<tr>
+<td>Ident_Txt</td>
+<td>&lt;Null&gt;</td>
+</tr>
+<tr>
+<td>Name_Txt</td>
+<td>시험 접근관제구역</td>
+</tr>
+<tr>
+<td>DistVertUpper_Val</td>
+<td>200</td>
+</tr>
+<tr>
+<td>DistVertUpper_UOM</td>
+<td>Flight Level</td>
+</tr>
+<tr>
+<td>DistVertUpper_Code</td>
+<td>Altitude</td>
+</tr>
+<tr>
+<td>DistVertLower_Val</td>
+<td>1000</td>
+</tr>
+<tr>
+<td>DistVertLower_UOM</td>
+<td>Feet</td>
+</tr>
+<tr>
+<td>DistVertLower_Code</td>
+<td>Height</td>
+</tr>
+<tr>
+<td>Type_Code</td>
+<td>Control Area</td>
+</tr>
+<tr>
+<td>Class_Code</td>
+<td>C</td>
+</tr>
+</table></td></tr></table></body></html>]]></description>
+<MultiGeometry><Polygon><outerBoundaryIs><LinearRing><coordinates>131.300000,36.000000,0 131.700000,36.000000,0 131.700000,36.300000,0 131.300000,36.300000,0 131.300000,36.000000,0</coordinates></LinearRing></outerBoundaryIs></Polygon></MultiGeometry>
+</Placemark>
+</Folder>
+<Folder>
+<name>항공로</name>
+<Folder>
+<name>CONV</name>
+<Placemark id="ID_10003">
+<name>Conventional Z999</name>
+<description><![CDATA[<html><head><meta http-equiv="content-type" content="text/html; charset=UTF-8"></head><body><table><tr style="font-weight:bold"><td>Conventional Z999</td></tr><tr><td><table>
+<tr>
+<td>GFID</td>
+<td>{L1}</td>
+</tr>
+<tr>
+<td>Ident_Txt</td>
+<td>Z999</td>
+</tr>
+<tr>
+<td>Name_Txt</td>
+<td>Z999</td>
+</tr>
+<tr>
+<td>DistVertUpper_Val</td>
+<td>600</td>
+</tr>
+<tr>
+<td>DistVertUpper_UOM</td>
+<td>Flight Level</td>
+</tr>
+<tr>
+<td>DistVertUpper_Code</td>
+<td>Altitude</td>
+</tr>
+<tr>
+<td>DistVertLower_Val</td>
+<td>8000</td>
+</tr>
+<tr>
+<td>DistVertLower_UOM</td>
+<td>Feet</td>
+</tr>
+<tr>
+<td>DistVertLower_Code</td>
+<td>Altitude</td>
+</tr>
+<tr>
+<td>RouteType_Code</td>
+<td>Conventional</td>
+</tr>
+</table></td></tr></table></body></html>]]></description>
+<MultiGeometry><LineString><tessellate>1</tessellate><coordinates>131.0,37.0,0 132.0,37.5,0 </coordinates></LineString></MultiGeometry>
+</Placemark>
+</Folder>
+</Folder>
+</Folder>
+<Folder>
+<name>비행장교통구역</name>
+<Placemark id="ID_10004">
+<name>시험 비행장교통구역</name>
+<description><![CDATA[<html><head><meta http-equiv="content-type" content="text/html; charset=UTF-8"></head><body><table><tr style="font-weight:bold"><td>시험 비행장교통구역</td></tr><tr><td><table>
+<tr>
+<td>GFID</td>
+<td>{00000000-0000-0000-0000-000000010003}</td>
+</tr>
+<tr>
+<td>Remarks_Txt</td>
+<td>합성 시험 자료</td>
+</tr>
+<tr>
+<td>Ident_Txt</td>
+<td>&lt;Null&gt;</td>
+</tr>
+<tr>
+<td>Name_Txt</td>
+<td>시험 비행장교통구역</td>
+</tr>
+<tr>
+<td>DistVertUpper_Val</td>
+<td>3000</td>
+</tr>
+<tr>
+<td>DistVertUpper_UOM</td>
+<td>FT</td>
+</tr>
+<tr>
+<td>DistVertUpper_Code</td>
+<td>SFC</td>
+</tr>
+<tr>
+<td>DistVertLower_Val</td>
+<td>&lt;Null&gt;</td>
+</tr>
+<tr>
+<td>DistVertLower_UOM</td>
+<td>&lt;Null&gt;</td>
+</tr>
+<tr>
+<td>DistVertLower_Code</td>
+<td>HEI</td>
+</tr>
+<tr>
+<td>Type_Code</td>
+<td>ATZ</td>
+</tr>
+<tr>
+<td>Class_Code</td>
+<td>&lt;Null&gt;</td>
+</tr>
+</table></td></tr></table></body></html>]]></description>
+<MultiGeometry><Polygon><outerBoundaryIs><LinearRing><coordinates>131.800000,36.000000,0 131.900000,36.000000,0 131.900000,36.100000,0 131.800000,36.100000,0 131.800000,36.000000,0</coordinates></LinearRing></outerBoundaryIs></Polygon></MultiGeometry>
+</Placemark>
+</Folder>
+</Folder>
+<Folder>
+<name>2.Airspace_비관제공역</name>
+<Folder>
+<name>저고도</name>
+<Folder>
+<name>공해</name>
+<Placemark id="ID_10005">
+<name>시험 공해</name>
+<description><![CDATA[<html><head><meta http-equiv="content-type" content="text/html; charset=UTF-8"></head><body><table><tr style="font-weight:bold"><td>시험 공해</td></tr><tr><td><table>
+<tr>
+<td>GFID</td>
+<td>{00000000-0000-0000-0000-000000010004}</td>
+</tr>
+<tr>
+<td>Remarks_Txt</td>
+<td>합성 시험 자료</td>
+</tr>
+<tr>
+<td>Ident_Txt</td>
+<td>&lt;Null&gt;</td>
+</tr>
+<tr>
+<td>Name_Txt</td>
+<td>시험 공해</td>
+</tr>
+<tr>
+<td>DistVertUpper_Val</td>
+<td>5000</td>
+</tr>
+<tr>
+<td>DistVertUpper_UOM</td>
+<td>Feet</td>
+</tr>
+<tr>
+<td>DistVertUpper_Code</td>
+<td>Altitude</td>
+</tr>
+<tr>
+<td>DistVertLower_Val</td>
+<td>&lt;Null&gt;</td>
+</tr>
+<tr>
+<td>DistVertLower_UOM</td>
+<td>&lt;Null&gt;</td>
+</tr>
+<tr>
+<td>DistVertLower_Code</td>
+<td>Surface</td>
+</tr>
+<tr>
+<td>Type_Code</td>
+<td>Other</td>
+</tr>
+<tr>
+<td>Class_Code</td>
+<td>&lt;Null&gt;</td>
+</tr>
+</table></td></tr></table></body></html>]]></description>
+<MultiGeometry><Polygon><outerBoundaryIs><LinearRing><coordinates>133.000000,38.000000,0 134.000000,38.000000,0 134.000000,39.000000,0 133.000000,39.000000,0 133.000000,38.000000,0</coordinates></LinearRing></outerBoundaryIs><innerBoundaryIs><LinearRing><coordinates>133.400000,38.400000,0 133.600000,38.400000,0 133.600000,38.600000,0 133.400000,38.600000,0 133.400000,38.400000,0</coordinates></LinearRing></innerBoundaryIs></Polygon></MultiGeometry>
+</Placemark>
+</Folder>
+</Folder>
+</Folder>
+<Folder>
+<name>3.Airspace_통제공역</name>
+<Folder>
+<name>비행금지구역</name>
+<Placemark id="ID_10006">
+<name>시험 금지구역 A</name>
+<description><![CDATA[<html><head><meta http-equiv="content-type" content="text/html; charset=UTF-8"></head><body><table><tr style="font-weight:bold"><td>시험 금지구역 A</td></tr><tr><td><table>
+<tr>
+<td>GFID</td>
+<td>{00000000-0000-0000-0000-000000010005}</td>
+</tr>
+<tr>
+<td>Remarks_Txt</td>
+<td>합성 시험 자료</td>
+</tr>
+<tr>
+<td>Ident_Txt</td>
+<td>RK P99</td>
+</tr>
+<tr>
+<td>Name_Txt</td>
+<td>시험 금지구역 A</td>
+</tr>
+<tr>
+<td>DistVertUpper_Val</td>
+<td>&lt;Null&gt;</td>
+</tr>
+<tr>
+<td>DistVertUpper_UOM</td>
+<td>&lt;Null&gt;</td>
+</tr>
+<tr>
+<td>DistVertUpper_Code</td>
+<td>Unlimited</td>
+</tr>
+<tr>
+<td>DistVertLower_Val</td>
+<td>&lt;Null&gt;</td>
+</tr>
+<tr>
+<td>DistVertLower_UOM</td>
+<td>&lt;Null&gt;</td>
+</tr>
+<tr>
+<td>DistVertLower_Code</td>
+<td>Ground</td>
+</tr>
+<tr>
+<td>Type_Code</td>
+<td>Prohibited Area</td>
+</tr>
+<tr>
+<td>Class_Code</td>
+<td>&lt;Null&gt;</td>
+</tr>
+</table></td></tr></table></body></html>]]></description>
+<MultiGeometry><Polygon><outerBoundaryIs><LinearRing><coordinates>132.000000,36.000000,0 132.200000,36.000000,0 132.200000,36.200000,0 132.000000,36.200000,0 132.000000,36.000000,0</coordinates></LinearRing></outerBoundaryIs></Polygon></MultiGeometry>
+</Placemark>
+</Folder>
+<Folder>
+<name>비행제한구역</name>
+<Placemark id="ID_10007">
+<name>시험 제한구역 B</name>
+<description><![CDATA[<html><head><meta http-equiv="content-type" content="text/html; charset=UTF-8"></head><body><table><tr style="font-weight:bold"><td>시험 제한구역 B</td></tr><tr><td><table>
+<tr>
+<td>GFID</td>
+<td>{00000000-0000-0000-0000-000000010006}</td>
+</tr>
+<tr>
+<td>Remarks_Txt</td>
+<td>합성 시험 자료</td>
+</tr>
+<tr>
+<td>Ident_Txt</td>
+<td>RK R991</td>
+</tr>
+<tr>
+<td>Name_Txt</td>
+<td>시험 제한구역 B</td>
+</tr>
+<tr>
+<td>DistVertUpper_Val</td>
+<td>180</td>
+</tr>
+<tr>
+<td>DistVertUpper_UOM</td>
+<td>Flight Level</td>
+</tr>
+<tr>
+<td>DistVertUpper_Code</td>
+<td>Altitude</td>
+</tr>
+<tr>
+<td>DistVertLower_Val</td>
+<td>&lt;Null&gt;</td>
+</tr>
+<tr>
+<td>DistVertLower_UOM</td>
+<td>&lt;Null&gt;</td>
+</tr>
+<tr>
+<td>DistVertLower_Code</td>
+<td>Surface</td>
+</tr>
+<tr>
+<td>Type_Code</td>
+<td>Restricted Area</td>
+</tr>
+<tr>
+<td>Class_Code</td>
+<td>&lt;Null&gt;</td>
+</tr>
+</table></td></tr></table></body></html>]]></description>
+<MultiGeometry><Polygon><outerBoundaryIs><LinearRing><coordinates>132.300000,36.000000,0 132.600000,36.000000,0 132.600000,36.300000,0 132.300000,36.300000,0 132.300000,36.000000,0</coordinates></LinearRing></outerBoundaryIs></Polygon></MultiGeometry>
+</Placemark>
+<Placemark id="ID_10008">
+<name>시험 제한구역 C</name>
+<description><![CDATA[<html><head><meta http-equiv="content-type" content="text/html; charset=UTF-8"></head><body><table><tr style="font-weight:bold"><td>시험 제한구역 C</td></tr><tr><td><table>
+<tr>
+<td>GFID</td>
+<td>{00000000-0000-0000-0000-000000010007}</td>
+</tr>
+<tr>
+<td>Remarks_Txt</td>
+<td>합성 시험 자료</td>
+</tr>
+<tr>
+<td>Ident_Txt</td>
+<td>RK R992</td>
+</tr>
+<tr>
+<td>Name_Txt</td>
+<td>시험 제한구역 C</td>
+</tr>
+<tr>
+<td>DistVertUpper_Val</td>
+<td>5000</td>
+</tr>
+<tr>
+<td>DistVertUpper_UOM</td>
+<td>Feet</td>
+</tr>
+<tr>
+<td>DistVertUpper_Code</td>
+<td>Altitude</td>
+</tr>
+<tr>
+<td>DistVertLower_Val</td>
+<td>&lt;Null&gt;</td>
+</tr>
+<tr>
+<td>DistVertLower_UOM</td>
+<td>&lt;Null&gt;</td>
+</tr>
+<tr>
+<td>DistVertLower_Code</td>
+<td>Ground</td>
+</tr>
+<tr>
+<td>Type_Code</td>
+<td>Restricted Area</td>
+</tr>
+<tr>
+<td>Class_Code</td>
+<td>&lt;Null&gt;</td>
+</tr>
+</table></td></tr></table></body></html>]]></description>
+<MultiGeometry><Polygon><outerBoundaryIs><LinearRing><coordinates>132.700000,36.000000,0 132.900000,36.000000,0 132.900000,36.200000,0 132.700000,36.200000,0 132.700000,36.000000,0</coordinates></LinearRing></outerBoundaryIs></Polygon></MultiGeometry>
+</Placemark>
+<Placemark id="ID_10009">
+<name>시험 제한구역 기준없음</name>
+<description><![CDATA[<html><head><meta http-equiv="content-type" content="text/html; charset=UTF-8"></head><body><table><tr style="font-weight:bold"><td>시험 제한구역 기준없음</td></tr><tr><td><table>
+<tr>
+<td>GFID</td>
+<td>{00000000-0000-0000-0000-000000010008}</td>
+</tr>
+<tr>
+<td>Remarks_Txt</td>
+<td>합성 시험 자료</td>
+</tr>
+<tr>
+<td>Ident_Txt</td>
+<td>RK R993</td>
+</tr>
+<tr>
+<td>Name_Txt</td>
+<td>시험 제한구역 기준없음</td>
+</tr>
+<tr>
+<td>DistVertUpper_Val</td>
+<td>&lt;Null&gt;</td>
+</tr>
+<tr>
+<td>DistVertUpper_UOM</td>
+<td>Feet</td>
+</tr>
+<tr>
+<td>DistVertUpper_Code</td>
+<td>&lt;Null&gt;</td>
+</tr>
+<tr>
+<td>DistVertLower_Val</td>
+<td>&lt;Null&gt;</td>
+</tr>
+<tr>
+<td>DistVertLower_UOM</td>
+<td>Feet</td>
+</tr>
+<tr>
+<td>DistVertLower_Code</td>
+<td>&lt;Null&gt;</td>
+</tr>
+<tr>
+<td>Type_Code</td>
+<td>Restricted Area</td>
+</tr>
+<tr>
+<td>Class_Code</td>
+<td>&lt;Null&gt;</td>
+</tr>
+</table></td></tr></table></body></html>]]></description>
+<MultiGeometry><Polygon><outerBoundaryIs><LinearRing><coordinates>133.000000,36.000000,0 133.100000,36.000000,0 133.100000,36.100000,0 133.000000,36.100000,0 133.000000,36.000000,0</coordinates></LinearRing></outerBoundaryIs></Polygon></MultiGeometry>
+</Placemark>
+</Folder>
+<Folder>
+<name>통제공역_초경량비행장치비행구역</name>
+<Placemark id="ID_10010">
+<name>시험 초경량</name>
+<description><![CDATA[<html><head><meta http-equiv="content-type" content="text/html; charset=UTF-8"></head><body><table><tr style="font-weight:bold"><td>시험 초경량</td></tr><tr><td><table>
+<tr>
+<td>GFID</td>
+<td>{00000000-0000-0000-0000-000000010009}</td>
+</tr>
+<tr>
+<td>Remarks_Txt</td>
+<td>합성 시험 자료</td>
+</tr>
+<tr>
+<td>Ident_Txt</td>
+<td>UA99</td>
+</tr>
+<tr>
+<td>Name_Txt</td>
+<td>시험 초경량</td>
+</tr>
+<tr>
+<td>DistVertUpper_Val</td>
+<td>500</td>
+</tr>
+<tr>
+<td>DistVertUpper_UOM</td>
+<td>Feet</td>
+</tr>
+<tr>
+<td>DistVertUpper_Code</td>
+<td>Height</td>
+</tr>
+<tr>
+<td>DistVertLower_Val</td>
+<td>&lt;Null&gt;</td>
+</tr>
+<tr>
+<td>DistVertLower_UOM</td>
+<td>&lt;Null&gt;</td>
+</tr>
+<tr>
+<td>DistVertLower_Code</td>
+<td>Surface</td>
+</tr>
+<tr>
+<td>Type_Code</td>
+<td>Other</td>
+</tr>
+<tr>
+<td>Class_Code</td>
+<td>&lt;Null&gt;</td>
+</tr>
+</table></td></tr></table></body></html>]]></description>
+<MultiGeometry><Polygon><outerBoundaryIs><LinearRing><coordinates>131.000000,38.000000,0 131.100000,38.000000,0 131.100000,38.100000,0 131.000000,38.100000,0 131.000000,38.000000,0</coordinates></LinearRing></outerBoundaryIs></Polygon></MultiGeometry>
+</Placemark>
+</Folder>
+</Folder>
+<Folder>
+<name>4.Airspace_주의공역</name>
+<Folder>
+<name>위험구역</name>
+<Placemark id="ID_10011">
+<name>시험 위험구역 D</name>
+<description><![CDATA[<html><head><meta http-equiv="content-type" content="text/html; charset=UTF-8"></head><body><table><tr style="font-weight:bold"><td>시험 위험구역 D</td></tr><tr><td><table>
+<tr>
+<td>GFID</td>
+<td>{00000000-0000-0000-0000-000000010010}</td>
+</tr>
+<tr>
+<td>Remarks_Txt</td>
+<td>합성 시험 자료</td>
+</tr>
+<tr>
+<td>Ident_Txt</td>
+<td>RK D999</td>
+</tr>
+<tr>
+<td>Name_Txt</td>
+<td>시험 위험구역 D</td>
+</tr>
+<tr>
+<td>DistVertUpper_Val</td>
+<td>2000</td>
+</tr>
+<tr>
+<td>DistVertUpper_UOM</td>
+<td>Feet</td>
+</tr>
+<tr>
+<td>DistVertUpper_Code</td>
+<td>Height</td>
+</tr>
+<tr>
+<td>DistVertLower_Val</td>
+<td>&lt;Null&gt;</td>
+</tr>
+<tr>
+<td>DistVertLower_UOM</td>
+<td>&lt;Null&gt;</td>
+</tr>
+<tr>
+<td>DistVertLower_Code</td>
+<td>Ground</td>
+</tr>
+<tr>
+<td>Type_Code</td>
+<td>Danger Area</td>
+</tr>
+<tr>
+<td>Class_Code</td>
+<td>&lt;Null&gt;</td>
+</tr>
+</table></td></tr></table></body></html>]]></description>
+<MultiGeometry><Polygon><outerBoundaryIs><LinearRing><coordinates>132.000000,36.500000,0 132.300000,36.500000,0 132.300000,36.800000,0 132.000000,36.800000,0 132.000000,36.500000,0</coordinates></LinearRing></outerBoundaryIs></Polygon></MultiGeometry>
+</Placemark>
+</Folder>
+<Folder>
+<name>군작전구역</name>
+<Placemark id="ID_10012">
+<name>시험 군작전구역</name>
+<description><![CDATA[<html><head><meta http-equiv="content-type" content="text/html; charset=UTF-8"></head><body><table><tr style="font-weight:bold"><td>시험 군작전구역</td></tr><tr><td><table>
+<tr>
+<td>GFID</td>
+<td>{00000000-0000-0000-0000-000000010011}</td>
+</tr>
+<tr>
+<td>Remarks_Txt</td>
+<td>합성 시험 자료</td>
+</tr>
+<tr>
+<td>Ident_Txt</td>
+<td>MOA 99</td>
+</tr>
+<tr>
+<td>Name_Txt</td>
+<td>시험 군작전구역</td>
+</tr>
+<tr>
+<td>DistVertUpper_Val</td>
+<td>150</td>
+</tr>
+<tr>
+<td>DistVertUpper_UOM</td>
+<td>Flight Level</td>
+</tr>
+<tr>
+<td>DistVertUpper_Code</td>
+<td>Altitude</td>
+</tr>
+<tr>
+<td>DistVertLower_Val</td>
+<td>3000</td>
+</tr>
+<tr>
+<td>DistVertLower_UOM</td>
+<td>Feet</td>
+</tr>
+<tr>
+<td>DistVertLower_Code</td>
+<td>Altitude</td>
+</tr>
+<tr>
+<td>Type_Code</td>
+<td>Other</td>
+</tr>
+<tr>
+<td>Class_Code</td>
+<td>&lt;Null&gt;</td>
+</tr>
+</table></td></tr></table></body></html>]]></description>
+<MultiGeometry><Polygon><outerBoundaryIs><LinearRing><coordinates>131.500000,37.600000,0 131.800000,37.600000,0 131.800000,37.900000,0 131.500000,37.900000,0 131.500000,37.600000,0</coordinates></LinearRing></outerBoundaryIs></Polygon></MultiGeometry>
+</Placemark>
+</Folder>
+<Folder>
+<name>훈련구역</name>
+<Placemark id="ID_10013">
+<name>시험 훈련구역</name>
+<description><![CDATA[<html><head><meta http-equiv="content-type" content="text/html; charset=UTF-8"></head><body><table><tr style="font-weight:bold"><td>시험 훈련구역</td></tr><tr><td><table>
+<tr>
+<td>GFID</td>
+<td>{00000000-0000-0000-0000-000000010012}</td>
+</tr>
+<tr>
+<td>Remarks_Txt</td>
+<td>합성 시험 자료</td>
+</tr>
+<tr>
+<td>Ident_Txt</td>
+<td>&lt;Null&gt;</td>
+</tr>
+<tr>
+<td>Name_Txt</td>
+<td>시험 훈련구역</td>
+</tr>
+<tr>
+<td>DistVertUpper_Val</td>
+<td>6000</td>
+</tr>
+<tr>
+<td>DistVertUpper_UOM</td>
+<td>Feet</td>
+</tr>
+<tr>
+<td>DistVertUpper_Code</td>
+<td>Altitude</td>
+</tr>
+<tr>
+<td>DistVertLower_Val</td>
+<td>1000</td>
+</tr>
+<tr>
+<td>DistVertLower_UOM</td>
+<td>Feet</td>
+</tr>
+<tr>
+<td>DistVertLower_Code</td>
+<td>Height</td>
+</tr>
+<tr>
+<td>Type_Code</td>
+<td>Other</td>
+</tr>
+<tr>
+<td>Class_Code</td>
+<td>&lt;Null&gt;</td>
+</tr>
+</table></td></tr></table></body></html>]]></description>
+<MultiGeometry><Polygon><outerBoundaryIs><LinearRing><coordinates>131.000000,38.500000,0 131.200000,38.500000,0 131.200000,38.700000,0 131.000000,38.700000,0 131.000000,38.500000,0</coordinates></LinearRing></outerBoundaryIs></Polygon></MultiGeometry>
+</Placemark>
+</Folder>
+<Folder>
+<name>경계구역</name>
+<Placemark id="ID_10014">
+<name>시험 경계구역</name>
+<description><![CDATA[<html><head><meta http-equiv="content-type" content="text/html; charset=UTF-8"></head><body><table><tr style="font-weight:bold"><td>시험 경계구역</td></tr><tr><td><table>
+<tr>
+<td>GFID</td>
+<td>{00000000-0000-0000-0000-000000010013}</td>
+</tr>
+<tr>
+<td>Remarks_Txt</td>
+<td>합성 시험 자료</td>
+</tr>
+<tr>
+<td>Ident_Txt</td>
+<td>RK A99</td>
+</tr>
+<tr>
+<td>Name_Txt</td>
+<td>시험 경계구역</td>
+</tr>
+<tr>
+<td>DistVertUpper_Val</td>
+<td>9000</td>
+</tr>
+<tr>
+<td>DistVertUpper_UOM</td>
+<td>Feet</td>
+</tr>
+<tr>
+<td>DistVertUpper_Code</td>
+<td>Altitude</td>
+</tr>
+<tr>
+<td>DistVertLower_Val</td>
+<td>&lt;Null&gt;</td>
+</tr>
+<tr>
+<td>DistVertLower_UOM</td>
+<td>&lt;Null&gt;</td>
+</tr>
+<tr>
+<td>DistVertLower_Code</td>
+<td>Surface</td>
+</tr>
+<tr>
+<td>Type_Code</td>
+<td>Alert Area</td>
+</tr>
+<tr>
+<td>Class_Code</td>
+<td>&lt;Null&gt;</td>
+</tr>
+</table></td></tr></table></body></html>]]></description>
+<MultiGeometry><Polygon><outerBoundaryIs><LinearRing><coordinates>131.300000,38.500000,0 131.500000,38.500000,0 131.500000,38.700000,0 131.300000,38.700000,0 131.300000,38.500000,0</coordinates></LinearRing></outerBoundaryIs></Polygon></MultiGeometry>
+</Placemark>
+</Folder>
+</Folder>
+<Folder>
+<name>5.Airspace_비행정보구역</name>
+<Placemark id="ID_10015">
+<name>시험 비행정보구역</name>
+<description><![CDATA[<html><head><meta http-equiv="content-type" content="text/html; charset=UTF-8"></head><body><table><tr style="font-weight:bold"><td>시험 비행정보구역</td></tr><tr><td><table>
+<tr>
+<td>GFID</td>
+<td>{00000000-0000-0000-0000-000000010014}</td>
+</tr>
+<tr>
+<td>Remarks_Txt</td>
+<td>합성 시험 자료</td>
+</tr>
+<tr>
+<td>Ident_Txt</td>
+<td>&lt;Null&gt;</td>
+</tr>
+<tr>
+<td>Name_Txt</td>
+<td>시험 비행정보구역</td>
+</tr>
+<tr>
+<td>DistVertUpper_Val</td>
+<td>&lt;Null&gt;</td>
+</tr>
+<tr>
+<td>DistVertUpper_UOM</td>
+<td>&lt;Null&gt;</td>
+</tr>
+<tr>
+<td>DistVertUpper_Code</td>
+<td>UNLTD</td>
+</tr>
+<tr>
+<td>DistVertLower_Val</td>
+<td>&lt;Null&gt;</td>
+</tr>
+<tr>
+<td>DistVertLower_UOM</td>
+<td>&lt;Null&gt;</td>
+</tr>
+<tr>
+<td>DistVertLower_Code</td>
+<td>GND</td>
+</tr>
+<tr>
+<td>Type_Code</td>
+<td>FIR</td>
+</tr>
+<tr>
+<td>Class_Code</td>
+<td>&lt;Null&gt;</td>
+</tr>
+</table></td></tr></table></body></html>]]></description>
+<MultiGeometry><Polygon><outerBoundaryIs><LinearRing><coordinates>130.500000,35.500000,0 134.500000,35.500000,0 134.500000,39.500000,0 130.500000,39.500000,0 130.500000,35.500000,0</coordinates></LinearRing></outerBoundaryIs></Polygon></MultiGeometry>
+</Placemark>
+</Folder>
+<Folder>
+<name>6.Airspace_방공식별구역</name>
+<Placemark id="ID_10016">
+<name>시험 방공식별구역</name>
+<description><![CDATA[<html><head><meta http-equiv="content-type" content="text/html; charset=UTF-8"></head><body><table><tr style="font-weight:bold"><td>시험 방공식별구역</td></tr><tr><td><table>
+<tr>
+<td>GFID</td>
+<td>{00000000-0000-0000-0000-000000010015}</td>
+</tr>
+<tr>
+<td>Remarks_Txt</td>
+<td>합성 시험 자료</td>
+</tr>
+<tr>
+<td>Ident_Txt</td>
+<td>&lt;Null&gt;</td>
+</tr>
+<tr>
+<td>Name_Txt</td>
+<td>시험 방공식별구역</td>
+</tr>
+<tr>
+<td>DistVertUpper_Val</td>
+<td>&lt;Null&gt;</td>
+</tr>
+<tr>
+<td>DistVertUpper_UOM</td>
+<td>&lt;Null&gt;</td>
+</tr>
+<tr>
+<td>DistVertUpper_Code</td>
+<td>UNLTD</td>
+</tr>
+<tr>
+<td>DistVertLower_Val</td>
+<td>&lt;Null&gt;</td>
+</tr>
+<tr>
+<td>DistVertLower_UOM</td>
+<td>&lt;Null&gt;</td>
+</tr>
+<tr>
+<td>DistVertLower_Code</td>
+<td>GND</td>
+</tr>
+<tr>
+<td>Type_Code</td>
+<td>ADIZ</td>
+</tr>
+<tr>
+<td>Class_Code</td>
+<td>&lt;Null&gt;</td>
+</tr>
+</table></td></tr></table></body></html>]]></description>
+<MultiGeometry><Polygon><outerBoundaryIs><LinearRing><coordinates>130.600000,35.600000,0 134.400000,35.600000,0 134.400000,39.400000,0 130.600000,39.400000,0 130.600000,35.600000,0</coordinates></LinearRing></outerBoundaryIs></Polygon></MultiGeometry>
+</Placemark>
+</Folder>
+<Folder>
+<name>7.Airspace_임시비행금지구역</name>
+<Folder>
+<name>원자력발전소</name>
+<Placemark id="ID_10017">
+<name>시험 원전 가</name>
+<description><![CDATA[<html><head><meta http-equiv="content-type" content="text/html; charset=UTF-8"></head><body><table><tr style="font-weight:bold"><td>시험 원전 가</td></tr><tr><td><table>
+<tr>
+<td>GFID</td>
+<td>{00000000-0000-0000-0000-000000010016}</td>
+</tr>
+<tr>
+<td>Remarks_Txt</td>
+<td>합성 시험 자료</td>
+</tr>
+<tr>
+<td>Ident_Txt</td>
+<td>P99A</td>
+</tr>
+<tr>
+<td>Name_Txt</td>
+<td>시험 원전 가</td>
+</tr>
+<tr>
+<td>DistVertUpper_Val</td>
+<td>100</td>
+</tr>
+<tr>
+<td>DistVertUpper_UOM</td>
+<td>FL</td>
+</tr>
+<tr>
+<td>DistVertUpper_Code</td>
+<td>ALT</td>
+</tr>
+<tr>
+<td>DistVertLower_Val</td>
+<td>&lt;Null&gt;</td>
+</tr>
+<tr>
+<td>DistVertLower_UOM</td>
+<td>&lt;Null&gt;</td>
+</tr>
+<tr>
+<td>DistVertLower_Code</td>
+<td>SFC</td>
+</tr>
+<tr>
+<td>Type_Code</td>
+<td>&lt;Null&gt;</td>
+</tr>
+<tr>
+<td>Class_Code</td>
+<td>&lt;Null&gt;</td>
+</tr>
+</table></td></tr></table></body></html>]]></description>
+<MultiGeometry><Polygon><outerBoundaryIs><LinearRing><coordinates>132.500000,37.000000,0 132.600000,37.000000,0 132.600000,37.100000,0 132.500000,37.100000,0 132.500000,37.000000,0</coordinates></LinearRing></outerBoundaryIs></Polygon></MultiGeometry>
+</Placemark>
+<Placemark id="ID_10018">
+<name>시험 원전 나</name>
+<description><![CDATA[<html><head><meta http-equiv="content-type" content="text/html; charset=UTF-8"></head><body><table><tr style="font-weight:bold"><td>시험 원전 나</td></tr><tr><td><table>
+<tr>
+<td>GFID</td>
+<td>{00000000-0000-0000-0000-000000010017}</td>
+</tr>
+<tr>
+<td>Remarks_Txt</td>
+<td>합성 시험 자료</td>
+</tr>
+<tr>
+<td>Ident_Txt</td>
+<td>P99B</td>
+</tr>
+<tr>
+<td>Name_Txt</td>
+<td>시험 원전 나</td>
+</tr>
+<tr>
+<td>DistVertUpper_Val</td>
+<td>2000</td>
+</tr>
+<tr>
+<td>DistVertUpper_UOM</td>
+<td>FT</td>
+</tr>
+<tr>
+<td>DistVertUpper_Code</td>
+<td>ALT</td>
+</tr>
+<tr>
+<td>DistVertLower_Val</td>
+<td>&lt;Null&gt;</td>
+</tr>
+<tr>
+<td>DistVertLower_UOM</td>
+<td>&lt;Null&gt;</td>
+</tr>
+<tr>
+<td>DistVertLower_Code</td>
+<td>SFC</td>
+</tr>
+<tr>
+<td>Type_Code</td>
+<td>&lt;Null&gt;</td>
+</tr>
+<tr>
+<td>Class_Code</td>
+<td>&lt;Null&gt;</td>
+</tr>
+</table></td></tr></table></body></html>]]></description>
+<MultiGeometry><Polygon><outerBoundaryIs><LinearRing><coordinates>132.700000,37.000000,0 132.800000,37.000000,0 132.800000,37.100000,0 132.700000,37.100000,0 132.700000,37.000000,0</coordinates></LinearRing></outerBoundaryIs></Polygon></MultiGeometry>
+</Placemark>
+</Folder>
+<Folder>
+<name>안보구역</name>
+<Placemark id="ID_10019">
+<name>시험 안보구역</name>
+<description><![CDATA[<html><head><meta http-equiv="content-type" content="text/html; charset=UTF-8"></head><body><table><tr style="font-weight:bold"><td>시험 안보구역</td></tr><tr><td><table>
+<tr>
+<td>GFID</td>
+<td>{00000000-0000-0000-0000-000000010018}</td>
+</tr>
+<tr>
+<td>Remarks_Txt</td>
+<td>합성 시험 자료</td>
+</tr>
+<tr>
+<td>Ident_Txt</td>
+<td>&lt;Null&gt;</td>
+</tr>
+<tr>
+<td>Name_Txt</td>
+<td>시험 안보구역</td>
+</tr>
+<tr>
+<td>DistVertUpper_Val</td>
+<td>5000</td>
+</tr>
+<tr>
+<td>DistVertUpper_UOM</td>
+<td>FT</td>
+</tr>
+<tr>
+<td>DistVertUpper_Code</td>
+<td>ALT</td>
+</tr>
+<tr>
+<td>DistVertLower_Val</td>
+<td>&lt;Null&gt;</td>
+</tr>
+<tr>
+<td>DistVertLower_UOM</td>
+<td>&lt;Null&gt;</td>
+</tr>
+<tr>
+<td>DistVertLower_Code</td>
+<td>GND</td>
+</tr>
+<tr>
+<td>Type_Code</td>
+<td>&lt;Null&gt;</td>
+</tr>
+<tr>
+<td>Class_Code</td>
+<td>&lt;Null&gt;</td>
+</tr>
+</table></td></tr></table></body></html>]]></description>
+<MultiGeometry><Polygon><outerBoundaryIs><LinearRing><coordinates>132.900000,37.000000,0 133.000000,37.000000,0 133.000000,37.100000,0 132.900000,37.100000,0 132.900000,37.000000,0</coordinates></LinearRing></outerBoundaryIs></Polygon></MultiGeometry>
+</Placemark>
+</Folder>
+<Folder>
+<name>시험_새폴더</name>
+<Placemark id="ID_10020">
+<name>시험 모르는 종류</name>
+<description><![CDATA[<html><head><meta http-equiv="content-type" content="text/html; charset=UTF-8"></head><body><table><tr style="font-weight:bold"><td>시험 모르는 종류</td></tr><tr><td><table>
+<tr>
+<td>GFID</td>
+<td>{00000000-0000-0000-0000-000000010019}</td>
+</tr>
+<tr>
+<td>Remarks_Txt</td>
+<td>합성 시험 자료</td>
+</tr>
+<tr>
+<td>Ident_Txt</td>
+<td>&lt;Null&gt;</td>
+</tr>
+<tr>
+<td>Name_Txt</td>
+<td>시험 모르는 종류</td>
+</tr>
+<tr>
+<td>DistVertUpper_Val</td>
+<td>1000</td>
+</tr>
+<tr>
+<td>DistVertUpper_UOM</td>
+<td>FT</td>
+</tr>
+<tr>
+<td>DistVertUpper_Code</td>
+<td>ALT</td>
+</tr>
+<tr>
+<td>DistVertLower_Val</td>
+<td>&lt;Null&gt;</td>
+</tr>
+<tr>
+<td>DistVertLower_UOM</td>
+<td>&lt;Null&gt;</td>
+</tr>
+<tr>
+<td>DistVertLower_Code</td>
+<td>SFC</td>
+</tr>
+<tr>
+<td>Type_Code</td>
+<td>&lt;Null&gt;</td>
+</tr>
+<tr>
+<td>Class_Code</td>
+<td>&lt;Null&gt;</td>
+</tr>
+</table></td></tr></table></body></html>]]></description>
+<MultiGeometry><Polygon><outerBoundaryIs><LinearRing><coordinates>133.100000,37.000000,0 133.200000,37.000000,0 133.200000,37.100000,0 133.100000,37.100000,0 133.100000,37.000000,0</coordinates></LinearRing></outerBoundaryIs></Polygon></MultiGeometry>
+</Placemark>
+</Folder>
+</Folder>
+<Folder>
+<name>8.Airspace_건너뜀</name>
+<Placemark id="ID_10021">
+<name>시험 도형없음</name>
+<description><![CDATA[<html><head><meta http-equiv="content-type" content="text/html; charset=UTF-8"></head><body><table><tr style="font-weight:bold"><td>시험 도형없음</td></tr><tr><td><table>
+<tr>
+<td>Name_Txt</td>
+<td>시험 도형없음</td>
+</tr>
+</table></td></tr></table></body></html>]]></description>
+<MultiGeometry></MultiGeometry>
+</Placemark>
+<Placemark id="ID_10022">
+<name>시험 범위밖</name>
+<description><![CDATA[<html><head><meta http-equiv="content-type" content="text/html; charset=UTF-8"></head><body><table><tr style="font-weight:bold"><td>시험 범위밖</td></tr><tr><td><table>
+<tr>
+<td>Name_Txt</td>
+<td>시험 범위밖</td>
+</tr>
+</table></td></tr></table></body></html>]]></description>
+<MultiGeometry><Polygon><outerBoundaryIs><LinearRing><coordinates>200.0,36.0,0 200.1,36.0,0 200.1,36.1,0 200.0,36.0,0</coordinates></LinearRing></outerBoundaryIs></Polygon></MultiGeometry>
+</Placemark>
+</Folder>
+</Document>
+</kml>

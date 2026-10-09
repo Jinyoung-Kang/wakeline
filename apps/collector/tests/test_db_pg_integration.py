@@ -522,3 +522,82 @@ async def test_a_frozen_database_does_not_hold_the_writer_past_its_time_limits(m
     finally:
         await db.close(drain_s=2)
         proxy.close()
+
+
+# ---- 공역 차수(V18 · ADR-034) — 합성 KML(가짜 자료)로 airspace_store.import_edition 의 SQL 을 수집기 계정에서 ----
+
+
+def _synthetic_airspace(tag: str) -> bytes:
+    from pathlib import Path
+
+    kml = (Path(__file__).parent / "fixtures" / "airspace" / "synthetic.kml").read_bytes()
+    return kml.replace(b"</Document>", f"<!-- {tag} --></Document>".encode())  # 시험마다 다른 원본(SHA) — 지우지 못하므로
+
+
+async def _import(pg: Any, data: bytes, label: str) -> Any:
+    import hashlib
+
+    from wakeline_collector import airspace, airspace_store
+
+    return await airspace_store.import_edition(pg, label=label, sha256=hashlib.sha256(data).hexdigest(), res=airspace.parse(data))
+
+
+async def test_an_airspace_edition_is_imported_activated_and_replaced_in_one_transaction_on_the_v18_schema(pg):
+    first, second = _synthetic_airspace(uuid.uuid4().hex), _synthetic_airspace(uuid.uuid4().hex)
+    a = await _import(pg, first, "합성 1차")
+    assert (a.status, a.inserted, a.fixed, a.dropped) == ("imported", 20, 0, 0)
+    async with pg.acquire() as con:
+        assert await con.fetchval("SELECT id FROM airspace_edition WHERE active") == a.edition_id
+        ed = await con.fetchrow("SELECT label, document_name, counts, skipped FROM airspace_edition WHERE id = $1", a.edition_id)
+        assert (ed["label"], ed["document_name"]) == ("합성 1차", "합성 시험 공역 1차")
+        assert '"restricted": 3' in ed["counts"] and '"coordinate out of range": 1' in ed["skipped"]
+        p = await con.fetchrow(
+            """SELECT category, lower_ft, lower_basis, upper_ft, upper_basis, upper_raw, ST_GeometryType(geom) AS g,
+                      ST_IsValid(geom_display) AS dv FROM airspace WHERE edition_id = $1 AND ident = 'RK R991'""",
+            a.edition_id,
+        )
+        assert tuple(p) == ("restricted", 0, "SFC", 18_000, "FL", "180 Flight Level Altitude", "ST_Polygon", True)
+        hole = await con.fetchval(
+            "SELECT ST_NumInteriorRings(geom) FROM airspace WHERE edition_id = $1 AND name = '시험 공해'", a.edition_id
+        )
+        assert hole == 1
+
+    assert (await _import(pg, first, "다시")).status == "already_active"  # 같은 원본 — 바꾼 것 없음
+    b = await _import(pg, second, "합성 2차")
+    assert (b.status, b.previous_active) == ("imported", a.edition_id)
+    c = await _import(pg, first, "되돌리기")
+    assert (c.status, c.edition_id, c.previous_active) == ("reactivated", a.edition_id, b.edition_id)
+    async with pg.acquire() as con:
+        assert await con.fetchval("SELECT array_agg(id ORDER BY id) FROM airspace_edition WHERE active") == [a.edition_id]
+        assert (
+            await con.fetchval("SELECT count(*) FROM airspace WHERE edition_id = $1", b.edition_id) == 20
+        )  # 끈 차수도 지우지 않는다
+
+
+async def test_a_self_intersecting_polygon_is_made_valid_and_an_edition_with_nothing_inserted_is_not_activated(pg):
+    from wakeline_collector import airspace_store
+
+    tag = uuid.uuid4().hex
+    bowtie = f"""<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>{tag}</name><Folder><name>위험구역</name>
+      <Placemark><name>나비넥타이</name><Polygon><outerBoundaryIs><LinearRing>
+      <coordinates>0,0 1,1 1,0 0,1 0,0</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark></Folder></Document></kml>"""
+    r = await _import(pg, bowtie.encode(), f"bowtie {tag[:8]}")
+    assert (r.status, r.inserted, r.fixed, r.dropped) == ("imported", 1, 1, 0)
+    async with pg.acquire() as con:
+        assert await con.fetchval("SELECT ST_IsValid(geom) FROM airspace WHERE edition_id = $1", r.edition_id) is True
+
+    before = await pg.fetchval("SELECT id FROM airspace_edition WHERE active")
+    line_only_point = f"""<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>{tag}-z</name><Folder><name>위험구역</name>
+      <Placemark><name>점 하나</name><Polygon><outerBoundaryIs><LinearRing>
+      <coordinates>0,0 0,0 0,0 0,0</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark></Folder></Document></kml>"""
+    with pytest.raises(airspace_store.AirspaceImportError, match="no geometry"):
+        await _import(pg, line_only_point.encode(), f"empty {tag[:8]}")
+    assert await pg.fetchval("SELECT id FROM airspace_edition WHERE active") == before  # 되돌려졌다 — 켜진 차수 그대로
+    assert await pg.fetchval("SELECT count(*) FROM airspace_edition WHERE document_name = $1", f"{tag}-z") == 0
+
+
+async def test_the_collector_account_cannot_delete_airspace_rows(pg):
+    with pytest.raises(asyncpg.InsufficientPrivilegeError):
+        await pg.execute("DELETE FROM airspace WHERE false")
+    with pytest.raises(asyncpg.InsufficientPrivilegeError):
+        await pg.execute("DELETE FROM airspace_edition WHERE false")

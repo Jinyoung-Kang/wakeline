@@ -270,6 +270,11 @@ async def _create_pool() -> _GuardedPool:
     )
 
 
+async def open_pool() -> _GuardedPool:
+    """운영 풀(감싼 것)을 따로 연다 — 1회성 명령(tools.airspace_import)이 쓴다. 닫는 것은 부르는 쪽."""
+    return await _create_pool()
+
+
 def _masked(v: Any) -> Any:
     """품질 사례 detail 의 글자 값을 모두(중첩 포함) masking.mask 로 가린다 — 키 · 숫자 · null 은 그대로, 넘긴 값은 바꾸지 않는다."""
     if isinstance(v, str):
