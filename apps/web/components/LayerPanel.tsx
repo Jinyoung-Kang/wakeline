@@ -7,15 +7,17 @@ import { useUi, type Layers } from "@/lib/ui-store";
 import { MapChipsView } from "./MapChips";
 import { MapLegend } from "./MapLegend";
 import { TrafficGridStatus } from "./TrafficGridStatus";
-import { ReceptionStatusPart } from "./DashboardParts";
+import { AirspaceStatusPart, ReceptionStatusPart } from "./DashboardParts";
 import { TRAFFIC_LAYER_LABEL } from "@/lib/traffic-grid";
 import { RECEPTION_LAYER_LABEL } from "@/lib/reception-meta";
+import { AIRSPACE_LAYER_LABEL } from "@/lib/airspace-meta";
 
 const ITEMS: { k: keyof Layers; label: string }[] = [
   { k: "radar", label: "레이더" }, { k: "sigmet", label: "SIGMET" }, { k: "aircraft", label: "항공기" }, { k: "ships", label: "선박" },
   { k: "reception", label: RECEPTION_LAYER_LABEL }, // ADR-027 — 이 서비스가 최근 24 h 에 실제로 선박 위치를 받은 0.5° 칸(기본 끔 · 켤 때 조각을 받는다)
   { k: "airports", label: "공항" }, { k: "tracks", label: "항적" }, { k: "prediction", label: "예측(추정)" },
   { k: "traffic", label: TRAFFIC_LAYER_LABEL }, // ADR-023 — 5분 집계 격자별 선박 척수(기본 끔)
+  { k: "airspace", label: AIRSPACE_LAYER_LABEL }, // ADR-034 — 국토교통부 공역(AIP 차수, 기본 끔 · 켤 때 조각을 받는다)
 ];
 const LEGEND_ID = "map-legend";
 
@@ -85,6 +87,7 @@ export function LayerPanelView({ layers, shipCats, legendOpen }: { layers: Layer
         <div className="flex min-h-0 min-w-0 flex-col items-end gap-1">
           {layers.traffic ? <TrafficGridStatus /> : null}
           {layers.reception ? <ReceptionStatusPart /> : null}
+          {layers.airspace ? <AirspaceStatusPart /> : null}
           {legendOpen ? <div className="pointer-events-auto min-h-0 max-w-full"><MapLegend id={LEGEND_ID} /></div> : null}
         </div>
       </div>

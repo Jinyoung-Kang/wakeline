@@ -4,6 +4,7 @@
  */
 import type * as GeoJSON from "geojson";
 import type * as maplibregl from "maplibre-gl";
+import { AIRSPACE_FILL_LAYER, AIRSPACE_LINE_LAYER } from "./airspace-meta";
 import { RECEPTION_FILL_LAYER } from "./reception-meta";
 import { isMmsi, selectedShipLabel, type ShipLite } from "./ships";
 import { aircraftTip, airportTip, shipGridTip, shipTip, shipTrackPointTip, sigmetTip, type AirportProps, type Tip } from "./tooltip";
@@ -12,10 +13,10 @@ import type { AircraftState, SelectedInfo, SigmetCollection } from "./types";
 
 /**
  * 호버·클릭 우선순위: 항공기 > 선박 > 선택 선박(격자 모드 아이콘) > 선택 선박 항적 점 > 선박 격자 > 공항 > SIGMET > 연안 교통량 격자(ADR-023) >
- * 관측 수신 칸(ADR-027 — 켤 때 받는 조각이 레이어 · 툴팁을 붙인다, lib/map-ready)
+ * 관측 수신 칸(ADR-027 — 켤 때 받는 조각이 레이어 · 툴팁을 붙인다, lib/map-ready) > 공역 선 · 채움(ADR-034 — 같은 방식, 가장 아래: 넓은 공역이 다른 것을 가리지 않게)
  */
 export const PICK_LAYERS = ["aircraft-symbol", "ship-symbol", "ship-selected-icon", "ship-track-point", "ship-grid-circle", "airport-circle", "sigmet-fill", "traffic-grid-fill",
-  RECEPTION_FILL_LAYER] as const;
+  RECEPTION_FILL_LAYER, AIRSPACE_LINE_LAYER, AIRSPACE_FILL_LAYER] as const;
 
 /** 지도에 물을 레이어: 있고 보이는 pick 레이어(우선순위 순서) */
 export function visiblePickLayers(map: Pick<maplibregl.Map, "getLayer" | "getLayoutProperty">): string[] {

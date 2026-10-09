@@ -694,6 +694,69 @@ SHIP_SEARCH_ITEM: Schema = {
         },
     ],
 }
+# 공역 레이어(계약 v5 §G47 · ADR-034) — 국토교통부 공역정보 지도자료(AIP 차수). 고도 한계는 정규화 값 + 기준 + 원문, 기준이 UNL · UNKNOWN 이면 ft 는 null
+AIRSPACE_BASES = ["MSL", "FL", "AGL", "SFC", "UNL", "UNKNOWN"]
+AIRSPACE_LIMIT: Schema = {
+    "type": "object",
+    "required": ["ft", "basis", "raw"],
+    "additionalProperties": False,
+    "properties": {"ft": nullable(INT), "basis": {"enum": AIRSPACE_BASES}, "raw": STR},
+    "if": {"properties": {"basis": {"enum": ["UNL", "UNKNOWN"]}}},
+    "then": {"properties": {"ft": {"type": "null"}}},
+    "else": {"properties": {"ft": INT}},
+}
+AIRSPACE_FEATURE: Schema = {
+    "type": "object",
+    "required": ["type", "id", "geometry", "properties"],
+    "properties": {
+        "type": {"const": "Feature"},
+        "id": {"type": "string", "pattern": "^[0-9]+$"},
+        "geometry": {
+            "type": "object",
+            "required": ["type", "coordinates"],
+            "properties": {"type": {"enum": ["Polygon", "MultiPolygon", "LineString", "MultiLineString"]}},
+        },
+        "properties": {
+            "type": "object",
+            "required": ["id", "category", "type_ko", "name", "label", "kind", "lower", "upper"],
+            "additionalProperties": False,
+            "properties": {
+                "id": INT,
+                "category": {"type": "string", "pattern": "^[a-z_]{1,32}$"},
+                "type_ko": STR,
+                "ident": STR,  # 모르면 키가 없다
+                "name": STR,
+                "label": STR,
+                "class_code": STR,
+                "kind": {"enum": ["polygon", "line"]},
+                "lower": AIRSPACE_LIMIT,
+                "upper": AIRSPACE_LIMIT,
+            },
+        },
+    },
+}
+AIRSPACE: Schema = {
+    "type": "object",
+    "required": ["type", "edition", "source", "features", "meta"],
+    "properties": {
+        "type": {"const": "FeatureCollection"},
+        # 자료가 없으면(운영자가 아직 가져오지 않음) null · 빈 목록 — 화면이 '공역 자료 없음'을 보인다
+        "edition": nullable(
+            {
+                "type": "object",
+                "required": ["id", "label", "imported_at", "currency_checked"],
+                "additionalProperties": False,
+                "properties": {"id": INT, "label": STR, "document_name": STR, "imported_at": TS, "currency_checked": {"const": False}},
+            }
+        ),
+        "source": STR,
+        "features": {"type": "array", "items": AIRSPACE_FEATURE},
+        "meta": META,
+    },
+    "if": {"properties": {"edition": {"type": "null"}}},
+    "then": {"properties": {"features": {"maxItems": 0}}},
+}
+
 SHIP_SEARCH_Q: Schema = {"type": "string", "pattern": "^[A-Z0-9 .\\-/]{2,40}$"}  # 정규화(trim · 대문자)한 검색어
 
 COVERAGE_CELL_DEG = 0.5  # api CoverageGrid.CELL_DEG
@@ -858,6 +921,7 @@ SCHEMAS: dict[str, dict[str, Any]] = {
         },
     },
     "sigmets": feature_collection(SIGMET_FEATURE, META),
+    "airspace": AIRSPACE,
     "sigmet_detail": {
         **SIGMET_FEATURE,
         "required": [*SIGMET_FEATURE["required"], "aircraft_inside", "meta"],
@@ -1430,6 +1494,7 @@ CHECKS = [
     Check("aircraft_track", "aircraft_track", 200, "application/geo+json", True),
     Check("sigmets", "sigmets", 200, "application/geo+json", True),
     Check("sigmet_detail", "sigmet_detail", 200, "application/json", True),
+    Check("airspace", "airspace", 200, "application/geo+json", True),
     Check("alerts", "alerts", 200, "application/json", True),
     Check("alerts_history", "alerts_history", 200, "application/json", True),
     Check("radar_frames", "radar_frames", 200, "application/json", True),
@@ -1501,6 +1566,7 @@ def live_paths(base: str) -> dict[str, str | None]:
         "aircraft": aircraft_path,
         "aircraft_full": f"/api/v1/aircraft?bbox={bbox}&detail=full",
         "sigmets": sigmets_path,
+        "airspace": "/api/v1/airspace",
         "alerts": "/api/v1/alerts",
         "alerts_history": "/api/v1/alerts/history",
         "radar_frames": "/api/v1/radar/frames",

@@ -1234,3 +1234,18 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
   - 영수증 표식 상한 계산(`tools/contract_check.py`)에 복구 뒤 엔트리를 더한다 — 보존 창의 선박 메시지 ≤ 9,045(`ShipWriter.MAX_MARKS` 10,000).
   - 웹 · 공개 API 의 모양은 그대로(항적에 장애 동안의 분이 채워진다).
   - 회귀 막기: collector `test_ais_backfill.py` · api `ShipsIT.positionsHeldDuringARedisOutageBecomeOneRowPerMinute_andTheMapKeepsTheLatest`.
+
+## G. 28차 개정(2026-10-09 · 공역 — 차별화 기능 단계 1 · ADR-034 · ADR-035, 사용자 승인 "권장안대로", 계획 docs/plans/features-2026-10)
+- G47(새 공개 자원) **공역 레이어 `GET /api/v1/airspace`**
+  - 켜진 공역 차수 하나(국토교통부 공역정보 지도자료 — AIP 차수 기준 KMZ, 운영자가 `make airspace-import` 로 가져온다)의 표시용 도형과 속성.
+    `application/geo+json` FeatureCollection + `edition`(`id` · `label` · `document_name` · `imported_at` · `currency_checked: false` — AIRAC 최신 여부는 확인하지 않는다) ·
+    `source`(출처 글) · `meta`(`provider` `molit_airspace` · `fetched_at` = 가져온 시각). 자료가 없으면 200 · `edition: null` · 빈 목록(빈 지도와 구분).
+  - Feature: `id`(문자열 숫자) · `geometry`(표시용 — 0.0005° 로 단순화, Polygon · MultiPolygon · LineString · MultiLineString) · `properties`: `id` · `category`(폴더에서 정한
+    종류 코드 — prohibited · nuclear · security · restricted · danger · alert · moa · training · ultralight · ctr · cta · atz · class · route · uncontrolled · fir · adiz ·
+    other) · `type_ko` · `ident`(없으면 키 없음) · `name` · `label`(식별자, 없으면 이름) · `class_code`(없으면 키 없음) · `kind`(polygon · line) ·
+    `lower` · `upper` = `{ft, basis, raw}` — basis MSL · FL(ft = FL×100) · AGL(지면 기준) · SFC(0) · UNL · UNKNOWN(UNL · UNKNOWN 이면 ft null), raw 는 원문.
+  - `?category=a,b`(쉼표 목록, `[a-z_]{1,32}` 32개까지 — 틀리면 400 `BAD_CATEGORY`)로 거른다. `Cache-Control: max-age=300, public` · `ETag`(차수 · 거르기) → 304.
+  - 메모리 스냅숏에서만 답한다(api 는 60 s 마다 켜진 차수를 확인하고 바뀌었을 때만 다시 읽는다 — 가져오기는 한 트랜잭션이라 반쯤 들어간 차수를 보지 않는다).
+  - 자료는 국토교통부 저작물이라 저장소에 없다 — 시험 · 격리 스택(`make e2e` · `make demo`)은 합성(가짜) 공역을 쓴다.
+  - 회귀 막기: api `AirspaceControllerTest` · `AirspaceRefresherDbTest` · `RestSamplesIT`(airspace) · `tools/rest_contract_check.py`(AIRSPACE) · OpenAPI 스냅샷 ·
+    `RolePrivilegesDbTest`(V18 — collector 가 쓰고 api 는 읽기만) · collector `test_airspace.py` · `test_db_pg_integration.py`(가져오기) · infra `test_airspace_policy.py`.

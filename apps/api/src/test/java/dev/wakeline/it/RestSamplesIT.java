@@ -48,6 +48,8 @@ class RestSamplesIT extends IntegrationTest {
     @Autowired dev.wakeline.coverage.ShipCoverage coverage;
     /** 일 통계 집계(계약 v5 §G20) — 끝난 KST 날짜를 실제로 집계해 통계 응답에 행이 있게 한다 */
     @Autowired dev.wakeline.history.MaintenanceJobs jobs;
+    /** 공역 읽기(ADR-034) — 60 s 주기 대신 직접 돌린다 */
+    @Autowired dev.wakeline.airspace.data.AirspaceRefresher airspaceRefresher;
 
     final Map<String, String> index = new LinkedHashMap<>();
     static final String ASIA_PACIFIC = "-90,45,90,180";
@@ -201,6 +203,11 @@ class RestSamplesIT extends IntegrationTest {
         } finally {
             ItStack.deleteKeys("wakeline:traffic_grid");
         }
+        // 공역(계약 v5 §G47 · ADR-034): 합성 차수(가짜 자료)를 수집기 계정으로 넣어 켜고, 읽기 빈을 한 번 돌린다(60 s 주기를 기다리지 않게)
+        dev.wakeline.airspace.AirspaceFixtures.insertEdition(sql -> adm.sql(sql).update(), "%064x".formatted(System.nanoTime()), "합성 시험 공역",
+                true, dev.wakeline.airspace.AirspaceFixtures.defaults());
+        airspaceRefresher.refresh();
+        record("airspace", "/api/v1/airspace", 200);
         record("airports", "/api/v1/airports", 200);
         record("airport_wx", "/api/v1/airports/RKSI/wx", 200);
         record("replay", "/api/v1/replay?at=" + Instant.now().minusSeconds(5).truncatedTo(ChronoUnit.SECONDS) + "&bbox=" + bbox, 200);

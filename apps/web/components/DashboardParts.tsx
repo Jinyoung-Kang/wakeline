@@ -28,10 +28,15 @@ export const ReceptionStatusPart = lazyPart("관측 수신 범위", () => import
   frameClassName: "pointer-events-auto panel max-w-full px-2 py-1 text-[11px] sm:max-w-[440px]",
 });
 
+/** 공역 레이어(ADR-034) — 레이어 단추를 켠 동안만 그린다(기본 끔). 상태 줄 자리에 진행 표시, 받은 뒤 조회 · 지도 · 종류 단추 · 툴팁(lib/airspace) */
+export const AirspaceStatusPart = lazyPart("공역", () => import("./AirspaceLayer").then((m) => m.AirspaceStatus), {
+  frameClassName: "pointer-events-auto panel max-w-full px-2 py-1 text-[11px] sm:max-w-[440px]",
+});
+
 /** 모든 조각(시험이 미리 받을 때 · 목록 점검) */
 export const DASHBOARD_PARTS = [
   AircraftCardPart, ShipPanelPart, SigmetCardPart, SigmetListPart, AirportCardPart, AirportListPart, EvidenceCardPart, KrRadarPanelPart, ShipTablePart,
-  ReceptionStatusPart,
+  ReceptionStatusPart, AirspaceStatusPart,
 ] as const;
 
 /**

@@ -6,7 +6,7 @@ import type { Layers } from "./ui-store";
 import { SHIP_CATEGORIES, type ShipCategory } from "./ships";
 
 export const LAYERS_KEY = "wakeline.layers";
-const LAYER_KEYS: readonly (keyof Layers)[] = ["radar", "sigmet", "aircraft", "ships", "airports", "tracks", "prediction", "traffic", "reception"];
+const LAYER_KEYS: readonly (keyof Layers)[] = ["radar", "sigmet", "aircraft", "ships", "airports", "tracks", "prediction", "traffic", "reception", "airspace"];
 
 export interface KV { getItem(k: string): string | null; setItem(k: string, v: string): void }
 

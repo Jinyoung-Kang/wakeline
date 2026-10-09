@@ -194,6 +194,8 @@ describe("contract v5 amendment numbers are unique", () => {
     // Redis 장애 중 AIS 위치(2026-10-03 · QA 2026-10 신뢰성 개선 제안 2 · ADR-033): 27차 · §G46
     expect(heading(46)).toMatch(/^## G\. 27차 개정\(2026-10-03 · Redis 장애 중 AIS 위치 /);
     expect(amendment(46)).toContain("Redis 장애 동안의 선박 위치를 분당으로 모아 복구 뒤 보낸다");
-    expect(amendment(47)).toBe("");
+    expect(heading(47)).toMatch(/^## G\. 28차 개정\(2026-10-09 · 공역 /);
+    expect(amendment(47)).toContain("공역 레이어 `GET /api/v1/airspace`");
+    expect(amendment(48)).toBe("");
   });
 });
