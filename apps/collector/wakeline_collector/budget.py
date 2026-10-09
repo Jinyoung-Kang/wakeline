@@ -54,7 +54,7 @@ return 1
 """
 
 # 공공데이터포털 세 서비스: 포털 하루 한도(ADR-023) · 입출항 색인(ADR-022 개정 — 기다리는 사람이 없는 배경 작업이라 셀 수 없으면 부르지 않는다)
-DEFAULT_STRICT = frozenset({"opensky", "kma_radar", "komsa_traffic", "mof_grid4", "portmis"})
+DEFAULT_STRICT = frozenset({"opensky", "kma_radar", "kma_warning", "komsa_traffic", "mof_grid4", "portmis"})
 
 
 # 이 태스크가 공급자마다 마지막으로 예약한 하루 키(F3) — release 가 그 키에 돌려준다. 예약과 돌려주기는 같은 태스크에서 짝을 이룬다(보내지 않은

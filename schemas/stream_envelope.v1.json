@@ -8,7 +8,7 @@
   "additionalProperties": true,
   "properties": {
     "schema_version": { "const": "1" },
-    "kind": { "enum": ["aircraft", "sigmet", "radar", "metar", "ships", "ais_gap"] },
+    "kind": { "enum": ["aircraft", "sigmet", "radar", "metar", "ships", "ais_gap", "wx_warnings"] },
     "scope": { "enum": ["region", "global", "hot", "focus", "ships", "-"], "description": "aircraft: region(고정 관심 지역) · global(전세계) · hot(뷰포트 핫 리전 셀) · focus(선택 항공기 집중 추적). ships·ais_gap: ships" },
     "provider": { "type": "string" },
     "fetched_at": { "type": "string", "format": "date-time" },
@@ -94,6 +94,46 @@
         "host": { "type": "string" },
         "generated": { "type": "integer" },
         "past": { "type": "array", "items": { "type": "object", "required": ["time", "path"], "properties": { "time": {"type": "integer"}, "path": {"type": "string"} } } }
+      }
+    },
+    "wx_warnings_payload": {
+      "description": "기상청 특보현황(API허브 wrn_now_data — ADR-036 · 계약 v5 §G49). 스트림 wakeline:wxwarn, scope '-'. 발효 중인 특보 전체(complete true — api 는 목록 전체를 바꾼다). 시각은 UTC(원문 KST 를 바꾼 것), 원문 줄은 raw.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["complete", "warnings"],
+      "properties": {
+        "complete": { "const": true },
+        "dropped": { "type": "integer", "minimum": 0, "description": "모양이 틀려 버린 줄 수(수집기가 품질 기록에 남긴다)" },
+        "warnings": {
+          "type": "array",
+          "maxItems": 2000,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["zone_code", "zone_name", "sea", "kind", "level", "command", "preliminary", "issued_at", "raw"],
+            "properties": {
+              "zone_code": { "type": "string", "pattern": "^[LS][0-9]{7}$" },
+              "zone_name": { "type": "string", "maxLength": 80 },
+              "parent_code": { "type": "string", "pattern": "^[LS][0-9]{7}$" },
+              "parent_name": { "type": "string", "maxLength": 80 },
+              "sea": { "type": "boolean", "description": "해상 구역(코드 S…)" },
+              "kind": { "type": "string", "minLength": 1, "maxLength": 16, "description": "특보 종류 원문(풍랑 · 폭풍해일 · 호우 …)" },
+              "level": { "type": "string", "minLength": 1, "maxLength": 16, "description": "특보 수준 원문(주의보 · 경보 · 예비)" },
+              "command": { "type": "string", "minLength": 1, "maxLength": 16, "description": "특보 명령 원문(발표 · 해제 · 연장 · 변경 …)" },
+              "preliminary": { "type": "boolean" },
+              "issued_at": { "type": "string", "format": "date-time" },
+              "effective_at": { "type": "string", "format": "date-time", "description": "발효 시각(예비특보에는 없다 — 때만 안다)" },
+              "effective_from": { "type": "string", "format": "date-time" },
+              "effective_to": { "type": "string", "format": "date-time" },
+              "effective_text": { "type": "string", "maxLength": 80, "description": "예비특보의 때(예: '10-10 오후(12–18시 KST)')" },
+              "end_notice": { "type": "string", "maxLength": 40, "description": "해제예고 시점 원문" },
+              "raw": { "type": "string", "minLength": 1, "maxLength": 400 }
+            },
+            "if": { "properties": { "preliminary": { "const": true } } },
+            "then": { "not": { "required": ["effective_at"] }, "required": ["effective_text"] },
+            "else": { "required": ["effective_at"] }
+          }
+        }
       }
     }
   }

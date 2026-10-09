@@ -43,7 +43,7 @@ from wakeline_collector.jobs.maintenance import MaintenanceJob
 from wakeline_collector.jobs.portcalls_index import STATE_FIXTURE, STATE_NO_KEY, PortCallIndexJob
 from wakeline_collector.jobs.route import RouteLookup
 from wakeline_collector.jobs.traffic_grid import TrafficGridJob
-from wakeline_collector.jobs.weather import MetarJob, RadarJob, SigmetJob
+from wakeline_collector.jobs.weather import KmaWarningJob, MetarJob, RadarJob, SigmetJob
 from wakeline_collector.logsink import LogSink, close_log_sink, sink_metrics, start_log_sink
 from wakeline_collector.masking import install_log_masking, register_secrets
 from wakeline_collector.providers import fixture as fx
@@ -52,6 +52,7 @@ from wakeline_collector.providers.awc import AwcProvider
 from wakeline_collector.providers.base import AircraftProvider
 from wakeline_collector.providers.data_go_kr import DATA_GO_KR_HOST, Grid4WfsProvider, KomsaTrafficProvider, service_key_forms
 from wakeline_collector.providers.kma_radar import KmaRadarProvider
+from wakeline_collector.providers.kma_warning import KmaWarningProvider
 from wakeline_collector.providers.opensky import OpenSkyProvider
 from wakeline_collector.providers.portmis import PortMisProvider
 from wakeline_collector.providers.rainviewer import RainViewerProvider
@@ -130,6 +131,7 @@ def build_limits(s: Settings) -> dict[str, int]:
         "awc": s.budget_awc,
         "rainviewer": s.budget_rainviewer,
         "kma_radar": s.budget_kma_radar,
+        "kma_warning": s.budget_kma_warning,
         "adsbdb": s.budget_adsbdb,
         "portmis": s.budget_portmis,
         "komsa_traffic": s.budget_komsa_traffic,
@@ -252,6 +254,10 @@ async def main(stop: asyncio.Event | None = None, redis: Any = None, db: Db | No
     sigmet, radar, metar = SigmetJob(awc, ctx), RadarJob(rv, ctx), MetarJob(awc, ctx)
     maint = MaintenanceJob(snapshot_providers(limits, fixture=fixture), ctx)
     kma = KmaRadarJob(KmaRadarProvider(http, "" if fixture else settings.kma_apihub_key, settings.kma_radar_cmp), ctx)
+    # 기상특보 현황(ADR-036): fixture 모드는 재생 공급자(2026-10-09 실제 응답의 시각을 지금으로) — 외부 호출 없음
+    warnings = KmaWarningJob(
+        fx.FixtureKmaWarningProvider() if fixture else KmaWarningProvider(http, settings.kma_apihub_key), ctx
+    )
     # 연안 교통량(ADR-023): fixture 모드는 외부 호출이 없으므로 키를 넘기지 않는다(작업이 state fixture 로 알린다)
     dgk = "" if fixture else settings.data_go_kr_service_key
     traffic = traffic_grid_job(http, dgk, ctx)
@@ -294,6 +300,9 @@ async def main(stop: asyncio.Event | None = None, redis: Any = None, db: Db | No
             "metar": run_periodic("metar", metar.run_once, lambda: ctx.rt.metar_poll_s, stop, initial_delay=3),
             "maintenance": run_periodic("maintenance", maint.run_once, lambda: 3600, stop, initial_delay=30),
             "radar_kr": run_periodic("radar_kr", kma.run_once, lambda: settings.kma_radar_poll_s, stop, initial_delay=8),
+            "kma_warning": run_periodic(
+                "kma_warning", warnings.run_once, lambda: settings.kma_warning_poll_s, stop, initial_delay=15
+            ),
             "portcalls_index": portcalls.run(stop),
             "traffic_grid": run_periodic(
                 "traffic_grid", traffic.run_once, lambda: settings.traffic_grid_tick_s, stop, initial_delay=12
