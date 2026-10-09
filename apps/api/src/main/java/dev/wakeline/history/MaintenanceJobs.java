@@ -122,6 +122,8 @@ public class MaintenanceJobs {
         retention("quality_event", () -> db.sql("DELETE FROM quality_event WHERE created_at < now() - interval '30 days'").update());
         retention("ingest_run", () -> db.sql("DELETE FROM ingest_run WHERE started_at < now() - interval '30 days'").update());
         retention("quality_rule_count", () -> db.sql("DELETE FROM quality_rule_count WHERE day < :d").param("d", todayKst().minusDays(90)).update());
+        // 기상특보 이력(V20 — ADR-036 · 계획 결정 D6): 끝난 지 90일 지난 행. 발효 중인 행(ended_at 없음)은 남긴다
+        retention("wx_warning (ended)", () -> db.sql("DELETE FROM wx_warning WHERE ended_at < now() - interval '90 days'").update());
     }
 
     /**

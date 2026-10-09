@@ -16,6 +16,7 @@ from typing import Any
 
 import orjson
 
+from wakeline_collector import kma_warning_rules
 from wakeline_collector.config import settings
 from wakeline_collector.geo import dead_reckon, haversine_nm
 from wakeline_collector.models import ProviderResult
@@ -182,6 +183,30 @@ class FixtureAwcProvider:
             0,
             data=items,
             extra={"raw_ref": "fixture:awc_metar_region.json"},
+        )
+
+
+class FixtureKmaWarningProvider:
+    """특보현황 재생(ADR-036): 2026-10-09 실제 응답(예비 풍랑 3건)의 시각을 지금으로 옮긴다 — 발표 = 이번 시(KST), 때(예비)는 내일 같은 시간대."""
+
+    name = "fixture"
+    configured = True
+
+    async def current(self) -> ProviderResult:
+        raw = (Path(settings.fixtures_dir) / "kma_wrn_now_data.txt").read_bytes().decode("euc-kr")
+        kst = datetime.now(kma_warning_rules.KST)
+        raw = raw.replace("202610091600", kst.strftime("%Y%m%d%H00")).replace(
+            "20261010", (kst + timedelta(days=1)).strftime("%Y%m%d")
+        )
+        body = raw.encode("euc-kr")
+        return ProviderResult(
+            self.name,
+            body,
+            datetime.now(UTC),
+            200,
+            0,
+            data=kma_warning_rules.parse(body),
+            extra={"raw_ref": "fixture:kma_wrn_now_data.txt"},
         )
 
 

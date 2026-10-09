@@ -33,10 +33,13 @@ export const AirspaceStatusPart = lazyPart("공역", () => import("./AirspaceLay
   frameClassName: "pointer-events-auto panel max-w-full px-2 py-1 text-[11px] sm:max-w-[440px]",
 });
 
+/** 기상특보 탭(ADR-036) — 탭을 열 때 받는다 */
+export const WarningPanelPart = lazyPart("기상특보", () => import("./WarningPanel").then((m) => m.WarningPanel));
+
 /** 모든 조각(시험이 미리 받을 때 · 목록 점검) */
 export const DASHBOARD_PARTS = [
   AircraftCardPart, ShipPanelPart, SigmetCardPart, SigmetListPart, AirportCardPart, AirportListPart, EvidenceCardPart, KrRadarPanelPart, ShipTablePart,
-  ReceptionStatusPart, AirspaceStatusPart,
+  ReceptionStatusPart, AirspaceStatusPart, WarningPanelPart,
 ] as const;
 
 /**

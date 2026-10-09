@@ -25,7 +25,7 @@ describe("prefetch after the first screen", () => {
     expect(log).toEqual(["idle scheduled", `mark ${AFTER_FIRST_SCREEN_MARK}`, "preload a", "preload b"]);
   });
   it("defaults cover every dashboard part", () => {
-    expect(DASHBOARD_PARTS.length).toBe(11); // 9 + 관측 수신 범위 레이어(ADR-027 — 계약 v5 §G27) + 공역 레이어(ADR-034 — §G47)
+    expect(DASHBOARD_PARTS.length).toBe(12); // 9 + 관측 수신 범위 레이어(ADR-027 — 계약 v5 §G27) + 공역 레이어(ADR-034 — §G47) + 기상특보 탭(ADR-036 — §G49)
     expect(AFTER_FIRST_SCREEN_MARK).toBe("wakeline:after-first-screen");
   });
   it("the dashboard starts it when the map has loaded for the first time (first screen complete), not earlier", () => {

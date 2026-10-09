@@ -81,7 +81,8 @@ describe("ship card re-reads the detail when the WS says the ship left the live 
     await settle();
     await React.act(async () => setData({ shipSelected: { mmsi: MMSI, received_at: 0, static: null, state: null } }));
     await settle();
-    expect(rec.calls.map((c) => c.path)).toEqual([`/api/v1/ships/${MMSI}`]);
+    // 상세 요청만 센다 — 카드의 해상특보 한 줄(ADR-036)은 /api/v1/warnings 를 따로 부른다
+    expect(rec.calls.map((c) => c.path).filter((p) => p.startsWith("/api/v1/ships/"))).toEqual([`/api/v1/ships/${MMSI}`]);
     expect(byTestId("ship-not-live")?.textContent).toMatch(/^실시간 아님 · 마지막 수신 (09-28 )?10:05 KST · 마지막 저장 (09-28 )?10:00 KST$/); // 01:05Z · 01:00Z 를 한국 표준시 먼저, UTC 함께
     expect(byTestId("ship-gone")).toBeNull();
   });
@@ -94,7 +95,7 @@ describe("ship card re-reads the detail when the WS says the ship left the live 
     rec.reply = () => Promise.resolve(detail({ last_position_at: "2026-09-28T02:40:00Z", last_seen_at: "2026-09-28T02:41:00Z" }));
     await React.act(async () => setData({ shipSelected: { mmsi: MMSI, received_at: 0, static: null, state: null } }));
     await settle();
-    expect(rec.calls.map((c) => c.path)).toEqual([`/api/v1/ships/${MMSI}`, `/api/v1/ships/${MMSI}`]);
+    expect(rec.calls.map((c) => c.path).filter((p) => p.startsWith("/api/v1/ships/"))).toEqual([`/api/v1/ships/${MMSI}`, `/api/v1/ships/${MMSI}`]);
     expect(byTestId("ship-not-live")?.textContent).toMatch(/마지막 수신 (09-28 )?11:41 KST · 마지막 저장 (09-28 )?11:40 KST$/);
     expect(byTestId("ship-gone")).toBeNull();
   });

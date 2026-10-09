@@ -125,6 +125,7 @@ def test_every_budgeted_provider_is_snapshotted():
         "awc",
         "rainviewer",
         "kma_radar",
+        "kma_warning",
         "adsbdb",
         "portmis",
         "komsa_traffic",

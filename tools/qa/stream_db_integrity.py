@@ -33,7 +33,7 @@ ALLOWED_PROJECTS = {"wakeline-qa", "wakeline-e2e"}  # 격리 스택 B · A 만(�
 WINDOW_S = 60
 KEEP_PAST_S = 24 * 3600
 KEEP_FUTURE_S = 5 * 60
-STREAMS = ["wakeline:aircraft", "wakeline:sigmet", "wakeline:radar", "wakeline:ships"]
+STREAMS = ["wakeline:aircraft", "wakeline:sigmet", "wakeline:radar", "wakeline:ships", "wakeline:wxwarn"]
 METRICS = (
     "wakeline_track_rows_total",
     "wakeline_ship_rows_total",

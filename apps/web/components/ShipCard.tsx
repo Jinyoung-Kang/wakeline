@@ -1,4 +1,7 @@
 "use client";
+import { warningsNow } from "@/lib/endpoints/warnings";
+import { useApiResource } from "@/lib/use-api-resource";
+import type { Warnings } from "@/lib/warnings";
 import { useEscapeClose } from "@/lib/use-escape-close";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { shipDetail } from "@/lib/endpoints/ship-detail";
@@ -142,6 +145,7 @@ export function ShipCardView({ mmsi, detail: d, error: err, now }: { mmsi: strin
         </div>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto px-2 py-1 text-[12px]">
+        <SeaWarningsLine />
         {err != null ? <div className="text-[11px] text-bad" data-testid="ship-detail-error">
           상세(REST) 조회 실패 — 실시간으로 받은 값만 표시 ({err instanceof Error ? err.message : String(err)}<RequestIdOf error={err} />)
         </div> : null}
@@ -290,6 +294,27 @@ function ShipList({ shipCats }: { shipCats: readonly ShipCategory[] }) {
         {total > rows.length ? <div className="px-2 py-1 text-[11px] text-fg-3" data-testid="ship-list-more">정렬 앞 {rows.length}척만 표시 · 외 {total - rows.length}척 — 이름·MMSI 로 거르세요</div> : null}
         {total === 0 ? <div className="px-2 py-1 text-[11px] text-fg-3" data-testid="ship-list-none">{shipStates.size ? "조건에 맞는 선박 없음" : zero?.text ?? "화면 안에 선박 없음"}</div> : null}
       </div>
+    </div>
+  );
+}
+
+/**
+ * 해상특보 한 줄(SPEC F3-4 · ADR-036): 지금 발효 중인 해상특보 수만 — 이 선박의 위치가 어느 특보 구역인지는 판정하지 않는다(특보 구역 경계 자료가 없다 —
+ * 구역을 짐작해 붙이지 않는다). 받지 못했으면 줄을 그리지 않는다. 60 s 마다(보이는 동안) 다시 받는다.
+ */
+export function SeaWarningsLine() {
+  const res = useApiResource("wx-now", (signal) => warningsNow({ signal }), { refreshMs: 60_000 });
+  return <SeaWarningsLineView w={res.data ?? null} />;
+}
+
+export function SeaWarningsLineView({ w }: { w: Warnings | null }) {
+  if (!w || !w.received) return null;
+  const sea = w.items.filter((x) => x.sea);
+  const kinds = [...new Set(sea.map((x) => `${x.kind} ${x.level}`))].join(" · ");
+  return (
+    <div className={`border-b border-line py-1 text-[11px] ${sea.length ? "text-warn" : "text-fg-3"}`} data-testid="ship-sea-warnings"
+      title="기상청 특보현황(구역 단위). 특보 구역 경계 자료가 없어 이 선박이 어느 구역에 있는지는 판정하지 않습니다 — 'wx' 탭에서 구역을 보세요">
+      해상특보: 지금 발효 중 {sea.length}건{kinds ? `(${kinds})` : ""} — 이 선박의 구역은 판정하지 않음(구역 경계 자료 없음){w.stale ? " · 오래된 목록" : ""}
     </div>
   );
 }

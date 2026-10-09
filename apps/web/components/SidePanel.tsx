@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useRef } from "react";
 import { AlertPanel } from "./AlertPanel";
-import { AircraftCardPart, AirportCardPart, AirportListPart, ShipPanelPart, SigmetCardPart, SigmetListPart } from "./DashboardParts";
+import { AircraftCardPart, AirportCardPart, AirportListPart, ShipPanelPart, SigmetCardPart, SigmetListPart, WarningPanelPart } from "./DashboardParts";
 import { isAttached, isShown, rescueFocus } from "@/lib/focus-rescue";
 import { useUi, type UiPanel } from "@/lib/ui-store";
 
@@ -16,7 +16,7 @@ export function SidePanel() {
   return <SidePanelView panel={panel} hex={hex} sigmet={sigmet} airport={airport} ship={ship} shipsOn={shipsOn} />;
 }
 
-const PANEL_NAME: Record<UiPanel, string> = { alerts: "알림", aircraft: "항공기", ship: "선박", sigmet: "SIGMET", airport: "공항" };
+const PANEL_NAME: Record<UiPanel, string> = { alerts: "알림", aircraft: "항공기", ship: "선박", sigmet: "SIGMET", airport: "공항", wx: "기상특보" };
 /** 카드를 닫은 뒤 돌아갈 목록 줄(그 탭의 목록에서 닫은 항목): [목록 줄의 data-testid, 항목 id 를 단 속성] */
 const LIST_ITEM: Partial<Record<UiPanel, readonly [string, string]>> = {
   sigmet: ["sigmet-list-item", "data-id"], airport: ["airport-list-item", "data-icao"], ship: ["ship-list-item", "data-mmsi"],
@@ -76,7 +76,7 @@ export function SidePanelView({ panel, hex, sigmet, airport, ship = null, shipsO
   return (
     <>
       <div className="flex border-b border-line">
-        {(["alerts", "aircraft", "ship", "sigmet", "airport"] as const).map((p) => (
+        {(["alerts", "aircraft", "ship", "sigmet", "airport", "wx"] as const).map((p) => (
           <button key={p} className="btn flex-1 border-0 border-r border-line" aria-pressed={panel === p} onClick={() => setPanel(p)} data-testid={`tab-${p}`}>{p}</button>
         ))}
       </div>
@@ -88,6 +88,7 @@ export function SidePanelView({ panel, hex, sigmet, airport, ship = null, shipsO
         {/* 선택이 없으면 목록 — 지도 클릭 없이 키보드로 고른다(R-40) */}
         {panel === "sigmet" ? (sigmet ? <SigmetCardPart id={sigmet} /> : <SigmetListPart />) : null}
         {panel === "airport" ? (airport ? <AirportCardPart icao={airport} /> : <AirportListPart />) : null}
+        {panel === "wx" ? <WarningPanelPart /> : null}
       </div>
     </>
   );

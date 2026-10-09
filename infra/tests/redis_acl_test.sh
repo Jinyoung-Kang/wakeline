@@ -135,7 +135,7 @@ ok "PING"                      PONG           "${K[@]}" ping
 ok "INFO"                      redis_version  "${K[@]}" info server
 ok "CLIENT SETINFO(redis-py)"  OK             "${K[@]}" client setinfo lib-name redis-py
 ok "HELLO 3 AUTH(redis-py 8 은 RESP3 로 접속)" "proto" "${K[@]}" hello 3 auth wakeline_collector "$COL_PW"
-for s in wakeline:aircraft wakeline:sigmet wakeline:radar wakeline:events; do
+for s in wakeline:aircraft wakeline:sigmet wakeline:wxwarn wakeline:radar wakeline:events; do
   ok "XADD $s MAXLEN ~ 200"    "^[0-9]+-[0-9]+$" "${K[@]}" xadd "$s" maxlen '~' 200 '*' payload x
 done
 ok "HSET wakeline:provider:*"     "^[0-9]+$"     "${K[@]}" hset wakeline:provider:adsb_fi disabled 0 ok 1
@@ -340,6 +340,7 @@ denied "설정 쓰기 wakeline:settings ais_bboxes" "${S[@]}" hset wakeline:sett
 denied "설정 삭제 wakeline:settings"     "${S[@]}" del wakeline:settings
 denied "항공기 스트림 wakeline:aircraft"   "${S[@]}" xadd wakeline:aircraft '*' payload x
 denied "SIGMET 스트림 wakeline:sigmet"     "${S[@]}" xadd wakeline:sigmet '*' payload x
+denied "기상특보 스트림 wakeline:wxwarn"    "${S[@]}" xadd wakeline:wxwarn '*' payload x
 denied "수집기 heartbeat wakeline:collector" "${S[@]}" hset wakeline:collector region_at x
 denied "공급자 상태 wakeline:provider:*"    "${S[@]}" hset wakeline:provider:adsb_fi disabled 1
 denied "예산 budget:*"                    "${S[@]}" hgetall budget:adsb_lol:20260101

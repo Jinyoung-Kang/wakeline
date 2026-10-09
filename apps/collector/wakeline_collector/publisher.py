@@ -49,6 +49,7 @@ STREAM_AIRCRAFT = "wakeline:aircraft"
 STREAM_SIGMET = "wakeline:sigmet"
 STREAM_RADAR = "wakeline:radar"
 STREAM_SHIPS = "wakeline:ships"
+STREAM_WXWARN = "wakeline:wxwarn"  # 기상특보 현황(ADR-036) — 목록 전체를 교체 발행, 개수 트리밍(MAXLEN)
 MAXLEN = 200  # 개수 트리밍(SIGMET·레이더)
 STREAM_RETENTION_S = 2.5 * 3600  # 시간 트리밍 보존 창(항공기·선박) — api 정지 2 h + 재기동·따라잡기 여유
 # 보존 창 안 발행 바이트 상한(메모리 상한, 선택값). 선박 32 MiB: 실측 약 25.4 MB/2.5 h 위 여유(위 설명 · ADR-011)

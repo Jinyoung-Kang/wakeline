@@ -61,7 +61,7 @@ set -f   # 키 패턴의 * 가 셸 글롭으로 펼쳐지지 않게
 COMMON='resetchannels +@all -@dangerous +info +ping +client|setinfo +client|setname +client|id -client|tracking -client|caching'
 
 API_KEYS='~wakeline:* ~rl:*'
-COLLECTOR_KEYS='~wakeline:aircraft ~wakeline:sigmet ~wakeline:radar ~wakeline:events ~wakeline:collector ~wakeline:active ~wakeline:provider:* ~wakeline:radar_kr:* %R~wakeline:settings ~budget:*'
+COLLECTOR_KEYS='~wakeline:aircraft ~wakeline:sigmet ~wakeline:wxwarn ~wakeline:radar ~wakeline:events ~wakeline:collector ~wakeline:active ~wakeline:provider:* ~wakeline:radar_kr:* %R~wakeline:settings ~budget:*'
 # 수요 임대는 읽기만(api 가 유일한 작성자), 조회 상태는 쓰기 — 계약 v2 §C 의 목록 그대로(와일드카드로 넓히지 않는다)
 COLLECTOR_KEYS="$COLLECTOR_KEYS %R~wakeline:demand:hot %R~wakeline:demand:focus %R~wakeline:demand:hot:meta %R~wakeline:demand:focus:meta ~wakeline:demand:status"
 # 노선 캐시(계약 v4 §A): 수집기가 유일한 작성자(adsbdb 조회 결과, TTL 만 — 약관상 다른 곳에 저장하지 않는다)

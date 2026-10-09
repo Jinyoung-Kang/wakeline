@@ -54,6 +54,10 @@ class Settings(BaseSettings):
     budget_awc: int = 2000
     budget_rainviewer: int = 2000
     budget_kma_radar: int = 1000
+    kma_warning_poll_s: int = 300  # 특보현황 주기(ADR-036 — 특보는 발표 때만 바뀐다, 5분)
+    budget_kma_warning: int = (
+        400  # 특보현황(ADR-036): 5분마다 1회 = 하루 288 + 다시 부르기 여유(API허브 — 레이더와 같은 호스트 버킷)
+    )
     budget_adsbdb: int = 2000  # 계약 v4 §A: 노선 조회(선택한 항공기의 콜사인만)
     # 공공데이터포털 하루 예산(UTC 날 — 포털 개발계정 한도는 API 하나당 하루 10,000 · 500, ADR-022 · ADR-023). UTC 날 예산만으로는 포털이 하루를
     # 다른 경계(KST 자정 · 지난 24시간)로 셀 때 두 UTC 날의 몫이 그 하루에 들어갈 수 있다 — 어느 경계로 세어도 지키는 것은 Redis 시간 창이다:

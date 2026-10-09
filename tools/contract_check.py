@@ -55,6 +55,7 @@ from wakeline_collector.jobs.demand import (  # noqa: E402
     focus_payload,
     hot_payload,
 )
+from wakeline_collector import kma_warning_rules  # noqa: E402
 from wakeline_collector.logsink import ENTRY_MAX_BYTES, LogSink  # noqa: E402
 from wakeline_collector.masking import _SECRETS, LOG_LIMIT, install_log_masking, mask, register_secrets  # noqa: E402
 from wakeline_collector.models import Sigmet  # noqa: E402
@@ -165,7 +166,7 @@ def main() -> int:
     # 2-3. 봉투 열거값(계약 v2 §B2)
     props = json.loads((SCHEMAS / "stream_envelope.v1.json").read_text())["properties"]
     need_kind, need_scope = (
-        {"aircraft", "sigmet", "radar", "ships", "ais_gap"},
+        {"aircraft", "sigmet", "radar", "ships", "ais_gap", "wx_warnings"},
         {"region", "global", "hot", "focus", "ships", "-"},
     )
     enum_bad = (need_kind - set(props["kind"]["enum"])) | (need_scope - set(props["scope"]["enum"]))
@@ -200,6 +201,20 @@ def main() -> int:
     errs = list(rd_v.iter_errors({"host": rv["host"], "generated": rv["generated"], "past": rv["radar"]["past"]}))
     print(f"{'FAIL' if errs else 'ok  '} radar payload: {len(rv['radar']['past'])} frames, {len(errs)} schema errors")
     failures += bool(errs)
+    # 4-1. 기상특보(계약 v5 §G49 · ADR-036): 실제 응답 fixture(예비 풍랑 3건 · 빈 목록)를 수집기 규칙으로 읽은 payload 와, 틀린 payload 둘
+    wx_v = validator("stream_envelope.v1.json", "/$defs/wx_warnings_payload")
+    wx_dir = ROOT / "apps" / "collector" / "tests" / "fixtures" / "kma_warning"
+    wx_errs: list[str] = []
+    for name in ("wrn_now_data_preliminary.txt", "wrn_now_data_empty.txt"):
+        parsed = kma_warning_rules.parse((wx_dir / name).read_bytes())
+        wx_errs += [f"{name}: {e.message[:100]}" for e in wx_v.iter_errors({"complete": True, "warnings": parsed.warnings, "dropped": 0})]
+    sample = kma_warning_rules.parse((wx_dir / "wrn_now_data_preliminary.txt").read_bytes()).warnings[0]
+    bad_pre = {"complete": True, "warnings": [{**sample, "effective_at": sample["issued_at"]}]}  # 예비특보에 시각을 지어 넣음
+    bad_reg = {"complete": True, "warnings": [{**{k: v for k, v in sample.items() if not k.startswith("effective")}, "preliminary": False}]}
+    if not list(wx_v.iter_errors(bad_pre)) or not list(wx_v.iter_errors(bad_reg)):
+        wx_errs.append("payload schema accepts an invented effective_at or a regular warning without effective_at")
+    print(f"{'FAIL' if wx_errs else 'ok  '} wx_warnings payload: real fixtures + 2 rejections" + (f": {wx_errs[:2]}" if wx_errs else ""))
+    failures += bool(wx_errs)
     # 5. 선박(AIS, 계약 v2 §B1·§B2): 실수신 fixture 484건 → 실제 발행 경로(worker → ShipBook → AisSink.flush) → 스키마
     failures += check_ships(env_v)
     # 6. 시스템 로그(계약 v5 §C): 로그 싱크가 만든 LogEvent · 언어 간 가림 벡터

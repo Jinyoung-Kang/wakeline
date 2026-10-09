@@ -27,6 +27,7 @@ public class SchemaValidator {
     private final Schema radarPayload;
     private final Schema shipsPayload;
     private final Schema aisGapPayload;
+    private final Schema wxWarningsPayload;
 
     public SchemaValidator() {
         // 스키마의 $id(https://wakeline.invalid/schemas/…)는 클래스패스 사본으로 푼다 — 네트워크에 묻지 않는다
@@ -38,6 +39,7 @@ public class SchemaValidator {
         radarPayload = registry.getSchema(SchemaLocation.of("classpath:schemas/stream_envelope.v1.json#/$defs/radar_payload"));
         shipsPayload = registry.getSchema(SchemaLocation.of("classpath:schemas/stream_envelope.v1.json#/$defs/ships_payload"));
         aisGapPayload = registry.getSchema(SchemaLocation.of("classpath:schemas/stream_envelope.v1.json#/$defs/ais_gap_payload"));
+        wxWarningsPayload = registry.getSchema(SchemaLocation.of("classpath:schemas/stream_envelope.v1.json#/$defs/wx_warnings_payload"));
     }
 
     public String validateEnvelope(String json) { return first(envelope.validate(json, InputFormat.JSON)); }
@@ -52,6 +54,7 @@ public class SchemaValidator {
             case "radar" -> first(radarPayload.validate(payload));
             case "ships" -> first(shipsPayload.validate(payload));
             case "ais_gap" -> first(aisGapPayload.validate(payload));
+            case "wx_warnings" -> first(wxWarningsPayload.validate(payload));
             default -> "unknown kind " + kind;
         };
     }

@@ -24,7 +24,7 @@ export interface Layers {
   airspace?: boolean;
 }
 
-export type UiPanel = "alerts" | "aircraft" | "ship" | "sigmet" | "airport";
+export type UiPanel = "alerts" | "aircraft" | "ship" | "sigmet" | "airport" | "wx";
 
 interface UiState {
   layers: Layers;

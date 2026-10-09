@@ -3,6 +3,7 @@ package dev.wakeline.ingest;
 import dev.wakeline.aircraft.core.AircraftState;
 import dev.wakeline.geo.GeoJson;
 import dev.wakeline.weather.core.SigmetRecord;
+import dev.wakeline.weather.core.WarningRecord;
 import tools.jackson.databind.JsonNode;
 
 import java.time.Instant;
@@ -36,6 +37,19 @@ public final class Codec {
                 text(n, "move_dir"), text(n, "move_spd"), text(n, "chng"), n.path("raw_text").asString(""),
                 n.path("provider").asString(), Instant.parse(n.path("fetched_at").asString()),
                 text(n, "base_source"), topSource);
+    }
+
+    /** wx_warnings 의 특보 하나(스키마 검증을 지난 것 — ADR-036). 시각은 UTC ISO, 없는 값은 null. */
+    public static WarningRecord warning(JsonNode n) {
+        return new WarningRecord(text(n, "zone_code"), text(n, "zone_name"), text(n, "parent_code"), text(n, "parent_name"),
+                n.path("sea").asBoolean(), text(n, "kind"), text(n, "level"), text(n, "command"), n.path("preliminary").asBoolean(),
+                instant(n, "issued_at"), instant(n, "effective_at"), instant(n, "effective_from"), instant(n, "effective_to"),
+                text(n, "effective_text"), text(n, "end_notice"), text(n, "raw"));
+    }
+
+    static Instant instant(JsonNode n, String f) {
+        String t = text(n, f);
+        return t == null ? null : Instant.parse(t);
     }
 
     static String text(JsonNode n, String f) {

@@ -47,6 +47,7 @@ class ListenerWiringIT extends IntegrationTest {
             entry(WeatherEvents.RadarUpdated.class, Set.of("WsHub#onRadar")),
             entry(AircraftEvents.AircraftBacklog.class, Set.of("TrackWriter#onBacklog")),
             entry(WeatherEvents.SigmetSetReceived.class, Set.of("SigmetRepository#onSigmetSet")),
+            entry(WeatherEvents.WarningsReceived.class, Set.of("WarningRepository#onWarnings")),
             entry(ShipEvents.ShipsUpdated.class, Set.of("ShipWriter#onShips", "ShipFanout#onShips")),
             entry(ShipEvents.ShipsSampled.class, Set.of("ShipCoverage#onSampled")),
             entry(ShipEvents.AisGapReceived.class, Set.of("ShipWriter#onGap")),

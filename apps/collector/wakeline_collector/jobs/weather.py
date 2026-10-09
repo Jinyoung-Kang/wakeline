@@ -28,7 +28,7 @@ from wakeline_collector.geo import boxes_around
 from wakeline_collector.http import ProviderHttpError
 from wakeline_collector.jobs.context import JobContext
 from wakeline_collector.models import Sigmet
-from wakeline_collector.publisher import STREAM_RADAR, STREAM_SIGMET, decode_payload
+from wakeline_collector.publisher import STREAM_RADAR, STREAM_SIGMET, STREAM_WXWARN, decode_payload
 from wakeline_collector.ratelimit import Throttled
 from wakeline_collector.raw_store import archive
 from wakeline_collector.retry import CallFailed, call_retry_once
@@ -450,3 +450,60 @@ class MetarJob:
         await _ok(ctx, "metar", started, self.awc.name, res, records=len(obs), quarantined=len(bad), raw_ref=raw_ref, quality=bad)
         await ctx.status.heartbeat("metar", lag_s=None, fixture=ctx.fixture)  # 자료 나이를 재지 않는다 — 0 이 아니라 모름(R-20)
         log.info("metar: %d stations", len(obs))
+
+
+class KmaWarningJob:
+    """기상청 특보현황(ADR-036 · SPEC F3): 5분마다 API허브 wrn_now_data 한 번 → 발효 중인 특보 전체를 wakeline:wxwarn 에 한 엔트리로(complete — api 는
+    목록 전체를 바꾼다). 호출이 실패하면 발행하지 않는다(api 는 마지막 목록과 그 나이를 보인다 — 빈 목록을 지어 내지 않는다). 키가 없거나 꺼졌으면
+    부르지 않고 heartbeat 상태로 알린다(fixture 모드는 재생 공급자). 모양이 틀린 줄은 버리고 품질 기록(kma_warning_bad_line)에 남긴다.
+    """
+
+    job_name = "kma_warning"
+
+    def __init__(self, provider: Any, ctx: JobContext):
+        self.p, self.ctx = provider, ctx
+        self._warned = False
+
+    async def run_once(self) -> None:
+        ctx, name = self.ctx, self.p.name
+        if not self.p.configured:
+            if not self._warned:
+                log.info("kma warnings: KMA_APIHUB_KEY not set — disabled")
+                self._warned = True
+            await ctx.status.heartbeat("kma_warning", lag_s=None, fixture=ctx.fixture, extra={"kma_warning_state": "no_key"})
+            return
+        if await ctx.status.is_disabled(name):  # 운영자가 /ops 에서 끔(공급자 스위치)
+            await ctx.status.heartbeat("kma_warning", lag_s=None, fixture=ctx.fixture, extra={"kma_warning_state": "disabled"})
+            return
+        started, res = await _guard(
+            ctx, "kma_warning", name, 1, lambda: _call(ctx, "kma_warning", name, "wrn_now_data", self.p.current)
+        )
+        if res is None:
+            return
+        parsed = res.data
+        raw_ref = res.extra.get("raw_ref") or await archive(ctx.raw, name, res.raw, res.fetched_at)
+        payload = {"complete": True, "warnings": parsed.warnings, "dropped": len(parsed.dropped)}
+        fields = ctx.publisher.envelope(
+            kind="wx_warnings",
+            scope="-",
+            provider=name,
+            fetched_at=res.fetched_at,
+            raw_ref=raw_ref,
+            count=len(parsed.warnings),
+            payload=payload,
+        )
+        await ctx.publisher.publish(STREAM_WXWARN, fields)
+        quality: list[tuple[str, str | None, dict[str, Any]]] = [("kma_warning_bad_line", None, d) for d in parsed.dropped]
+        await _ok(
+            ctx,
+            "kma_warning",
+            started,
+            name,
+            res,
+            records=len(parsed.warnings),
+            quarantined=len(parsed.dropped),
+            raw_ref=raw_ref,
+            quality=quality,
+        )
+        await ctx.status.heartbeat("kma_warning", lag_s=None, fixture=ctx.fixture, extra={"kma_warning_state": "ok"})
+        log.info("kma warnings: %d in force (dropped lines %d)", len(parsed.warnings), len(parsed.dropped))

@@ -26,6 +26,12 @@ public final class WeatherEvents {
     public record RadarUpdated(RadarStore.Frames frames) implements PipelineEvent {}
 
     /**
+     * 기상특보 목록 한 벌(ADR-036)을 <b>스트림 순서대로</b> 이력(DB)에 남기라는 이벤트 — SIGMET 세트와 같은 규칙(백로그도 저장, 같은 목록이 다시 오면
+     * 저장기가 수신 시각으로 건너뛴다). 저장기는 receipt 를 hold 하고 durable 해지면 release 한다.
+     */
+    public record WarningsReceived(Instant fetchedAt, String provider, java.util.List<WarningRecord> warnings, Receipt receipt) implements PipelineEvent {}
+
+    /**
      * SIGMET 세트 한 벌을 <b>스트림 순서대로</b> 이력(DB)에 남기라는 이벤트(API-CONC-1). 실시간 저장소(SigmetStore)에 반영됐는지와
      * 무관하다 — 재시작 뒤 밀린 세트(백로그)도 이것으로 저장된다. 이전에는 백로그 세트를 저장하지 않아 api 가 멈춘 동안 발표·만료·철회된
      * 경보가 재생·통계에서 사라졌다. 같은 세트가 다시 오면(재전달·부트스트랩) 저장기가 수신 시각 기준으로 건너뛴다.

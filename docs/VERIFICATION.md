@@ -1481,6 +1481,22 @@
 - **확인**: 임시 태그(`:sec` — 운영 `:local` 은 그대로)로 빌드해 `SECURITY_OWN_IMAGES` 로 스캔 — api · web · edge · redis · gitleaks · npm audit · pip-audit 모두 PASS.
   web 단위 시험 · 인프라 정책 시험 통과.
 
+## #120 차별화 기능 단계 2 — 기상특보(ADR-036 · 계약 v5 §G49 · V20, 브랜치 `feat/wx-warnings-2026-10`)
+- **무엇**: 기상청 API허브 특보현황(`wrn_now_data.php`)을 수집기가 5분마다 받아 `wakeline:wxwarn` 에 목록 전체로 발행 → api 가 메모리(실시간) · V20
+  `wx_warning`(이력, 목록에서 빠지면 끝) · REST `/api/v1/warnings` · `/warnings/history` → 웹 오른쪽 패널 'wx' 탭 · 선박 카드의 해상특보 수 한 줄.
+- **실제 응답으로 확인(2026-10-09)**: EUC-KR 글자 · 머리 주석 + 한 줄 한 특보(열 10개 + 끝 `=`) · 특보가 없으면 주석만. 그날 예비 풍랑 3건 — 예비특보의
+  발효 시각 자리(`hh:59` · `hh:58`)는 시각이 아니라 때를 뜻하는 부호였다(머리 주석의 표 13개). 시각으로 바꾸면 '내일 23:59 발효'처럼 틀린 값이 된다 →
+  예비에는 effective_at 을 만들지 않고 때(effective_from/to · 글)만 싣게 스키마가 강제한다. 응답(키 없음)을 시험 fixture 로 남겼다.
+- **겪은 문제와 고친 것**
+  - 전체 api 시험 2건 실패: CLI 프로필(`make ops-user`)에서 새 컨트롤러가 뜨며 저장소(그 프로필에서 빠짐)를 찾지 못했다 — 다른 컨트롤러처럼
+    `@Profile("!cli & !migrate")`. 리스너 배선 고정 시험(ListenerWiringIT)이 새 이벤트 `WarningsReceived` 를 몰랐다 — 의도된 변경이라 목록에 더했다.
+  - 선박 카드 시험이 카드가 보내는 요청 수를 셌다 — 해상특보 한 줄의 요청이 늘어 경로(`/api/v1/ships/`)로 거르게 고쳤다.
+  - 전체 api 시험을 두 번 겹쳐 돌려 gradle 결과 파일이 깨졌다(EOFException) — 다시 한 번만 돌려 확인했다.
+- **확인(단계 2 끝)**: collector 1,974 통과 · 27 건너뜀 · ruff · mypy 오류 0 · contract_check PASSED · api 1,191 통과(LINE 97.45 % · BRANCH 86.81 %) ·
+  REST 계약 40 · web 1,749 통과 · eslint · tsc 오류 0 · 첫 화면 JS 548,497 B(+87 B — PERF §17) · 인프라 정책 177 · `make e2e` 45 통과(새 기상특보 시험 포함) ·
+  `make infra-docker-test` 모두 통과(edge 42 · Redis ACL 301 · db 권한 36 · 백업 48 · 비밀번호 교체 27 · 이미지 교체 11 · 수집기 PG 11) ·
+  `make security` PASS(gitleaks 1,312 커밋 누출 0 · trivy 자체 6 · npm audit · pip-audit). 운영 `:local` 이미지는 `:mainsafe` 로 보관했다가 되돌렸다.
+
 ## 자동 검사 현황(2026-10-02 15:5x KST, QA 2026-10 브랜치 `qa/2026-10` — #103 뒤, 깨끗한 `git archive` 내보내기 · 격리 스택)
 | 층 | 도구 | 수 |
 |---|---|---|

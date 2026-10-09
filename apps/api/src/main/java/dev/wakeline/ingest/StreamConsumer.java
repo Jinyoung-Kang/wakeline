@@ -15,6 +15,8 @@ import dev.wakeline.ships.core.ShipStore;
 import dev.wakeline.weather.core.RadarStore;
 import dev.wakeline.weather.core.SigmetRecord;
 import dev.wakeline.weather.core.SigmetStore;
+import dev.wakeline.weather.core.WarningRecord;
+import dev.wakeline.weather.core.WarningStore;
 import dev.wakeline.weather.core.WeatherEvents;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -106,10 +108,12 @@ public class StreamConsumer implements SmartLifecycle {
     public static final String CONSUMER = "api-1";
     public static final String S_AIRCRAFT = "wakeline:aircraft";
     public static final String S_SIGMET = "wakeline:sigmet";
+    /** 기상특보 현황(ADR-036 — 수집기의 kma_warning 작업, 목록 전체 교체) */
+    public static final String S_WXWARN = "wakeline:wxwarn";
     public static final String S_RADAR = "wakeline:radar";
     public static final String S_SHIPS = "wakeline:ships";
     public static final String S_DLQ = "wakeline:dlq";
-    private static final List<String> STREAMS = List.of(S_AIRCRAFT, S_SIGMET, S_RADAR, S_SHIPS);
+    private static final List<String> STREAMS = List.of(S_AIRCRAFT, S_SIGMET, S_RADAR, S_SHIPS, S_WXWARN);
     /** wakeline:ships 에서만 받는 kind(ADR-014 신뢰 경계). */
     static final Set<String> SHIP_KINDS = Set.of("ships", "ais_gap");
     /** 선박 부트스트랩: 최근 이 창의 엔트리를 순서대로 읽는다(실시간 목록 30분 + 여유). 상한 엔트리 수·페이지 크기. */
@@ -135,6 +139,8 @@ public class StreamConsumer implements SmartLifecycle {
     private final SchemaValidator validator;
     private final SnapshotStore snapshots;
     private final SigmetStore sigmets;
+    /** 기상특보 현황(ADR-036) — 없으면(옛 시험 생성자) 새로 만든다 */
+    private WarningStore warningStore = new WarningStore();
     private final RadarStore radar;
     private final ShipStore shipStore;
     /** 선박 부트스트랩용(기본 연결 — 스트림 전용 연결은 소비 스레드의 BLOCK 이 쓴다). null 이면 부트스트랩하지 않는다. */
@@ -232,6 +238,10 @@ public class StreamConsumer implements SmartLifecycle {
                 .description("ais_gap 의 scope 가 구역 규칙(AisBboxes)에 맞지 않아 구역 없음(모든 곳에 적용)으로 받은 공백").register(meters);
         meters.gauge("wakeline_stream_unacked", inFlight, Set::size);
     }
+
+    /** 기상특보 저장소(스프링 빈 — 생성자 인자를 늘리지 않는다: 옛 시험 생성자 그대로). */
+    @Autowired(required = false)
+    void setWarningStore(WarningStore w) { if (w != null) this.warningStore = w; }
 
     /** ACK 대기열 항목. */
     record Ack(String stream, String id) {}
@@ -386,12 +396,12 @@ public class StreamConsumer implements SmartLifecycle {
             if (r == null) continue;
             try { apply(parse(r), Receipt.NONE, true); } catch (Exception e) { log.warn("bootstrap {}/{} failed: {}", S_AIRCRAFT, scope, e.toString()); }
         }
-        for (String s : List.of(S_SIGMET, S_RADAR)) {
+        for (String s : List.of(S_SIGMET, S_RADAR, S_WXWARN)) {
             List<MapRecord<String, String, String>> last = ops().reverseRange(s, Range.unbounded(), Limit.limit().count(1));
             if (last != null) for (MapRecord<String, String, String> r : last) {
                 // SIGMET 이력은 스트림 순서대로만 저장한다: 이 엔트리가 소비로 다시 전달될 예정이면(그룹이 아직 안 읽었거나 PEL 에 있음)
                 // 여기서 저장하지 않는다 — 그보다 오래된 백로그 세트가 뒤에 저장되며 이력을 과거로 되돌리지 않게(API-CONC-1)
-                boolean persistHistory = !(S_SIGMET.equals(s) && willBeRedelivered(s, r.getId().getValue()));
+                boolean persistHistory = !((S_SIGMET.equals(s) || S_WXWARN.equals(s)) && willBeRedelivered(s, r.getId().getValue()));
                 try { apply(parse(r), Receipt.NONE, persistHistory); } catch (Exception e) { log.warn("bootstrap {} failed: {}", s, e.toString()); }
             }
         }
@@ -666,12 +676,21 @@ public class StreamConsumer implements SmartLifecycle {
      * 해석은 부트스트랩도 하므로 여기서 세지 않고 실시간 반영({@link #apply})에서 한 번만 센다.
      */
     record Parsed(String kind, Map<String, String> fields, Instant fetchedAt, Map<String, AircraftState> aircraft, String cell,
-                  Map<String, SigmetRecord> sigmets, RadarStore.Frames radar, ShipsBatch ships, AisGap gap, boolean gapScopeInvalid) {
+                  Map<String, SigmetRecord> sigmets, RadarStore.Frames radar, ShipsBatch ships, AisGap gap, boolean gapScopeInvalid,
+                  WarningsBatch warnings) {
         Parsed(String kind, Map<String, String> fields, Instant fetchedAt, Map<String, AircraftState> aircraft, String cell,
                Map<String, SigmetRecord> sigmets, RadarStore.Frames radar) {
-            this(kind, fields, fetchedAt, aircraft, cell, sigmets, radar, null, null, false);
+            this(kind, fields, fetchedAt, aircraft, cell, sigmets, radar, null, null, false, null);
+        }
+
+        Parsed(String kind, Map<String, String> fields, Instant fetchedAt, Map<String, AircraftState> aircraft, String cell,
+               Map<String, SigmetRecord> sigmets, RadarStore.Frames radar, ShipsBatch ships, AisGap gap, boolean gapScopeInvalid) {
+            this(kind, fields, fetchedAt, aircraft, cell, sigmets, radar, ships, gap, gapScopeInvalid, null);
         }
     }
+
+    /** wx_warnings 메시지 한 건(목록 전체 · 버린 줄 수). */
+    record WarningsBatch(List<WarningRecord> warnings, int dropped) {}
 
     /** ships 메시지 한 건(한 발행의 part 하나): 위치 보고·정적 정보. */
     record ShipsBatch(List<ShipState> states, List<ShipStatic> statics) {}
@@ -747,6 +766,14 @@ public class StreamConsumer implements SmartLifecycle {
                 AisGap gap = ShipCodec.gap(payload, f.get("provider"), () -> invalidScope[0] = true);
                 yield new Parsed(kind, f, fetchedAt, null, null, null, null, null, gap, invalidScope[0]);
             }
+            case "wx_warnings" -> {
+                requireScope(f, "-");
+                if (!S_WXWARN.equals(r.getStream())) throw new IllegalArgumentException("envelope: kind wx_warnings is not accepted on stream " + r.getStream());
+                List<WarningRecord> ws = new java.util.ArrayList<>();
+                for (JsonNode n : payload.path("warnings")) ws.add(Codec.warning(n));
+                yield new Parsed(kind, f, fetchedAt, null, null, null, null, null, null, false,
+                        new WarningsBatch(List.copyOf(ws), payload.path("dropped").asInt(0)));
+            }
             case "radar" -> {
                 List<RadarStore.Frame> past = new java.util.ArrayList<>();
                 for (JsonNode n : payload.path("past")) past.add(new RadarStore.Frame(n.path("time").asLong(), n.path("path").asString()));
@@ -777,8 +804,16 @@ public class StreamConsumer implements SmartLifecycle {
             case "radar" -> radar(p.radar());
             case "ships" -> ships(p, receipt);
             case "ais_gap" -> aisGap(p, receipt);
+            case "wx_warnings" -> warnings(p, receipt, persistHistory);
             default -> throw new IllegalArgumentException("unknown kind " + p.kind());
         }
+    }
+
+    /** 특보: 이력은 스트림 순서대로(백로그 포함), 실시간 목록은 더 새 것만. */
+    private void warnings(Parsed p, Receipt receipt, boolean persistHistory) {
+        String provider = p.fields().get("provider");
+        if (persistHistory) events.publishEvent(new WeatherEvents.WarningsReceived(p.fetchedAt(), provider, p.warnings().warnings(), receipt));
+        if (warningStore.replaceIfNewer(p.fetchedAt(), provider, p.warnings().warnings(), p.warnings().dropped()) == null) staleSkipped.increment();
     }
 
     /** ships: 실시간 상태(MMSI 별 단조)에 반영하고, 메시지의 모든 보고를 저장·WS 로 넘긴다(저장기가 60 s 창으로 줄인다). */

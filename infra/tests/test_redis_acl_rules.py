@@ -265,7 +265,7 @@ class RedisAclRulesTest(unittest.TestCase):
     def test_producer_key_patterns_are_pinned(self):
         # 키 규칙 전체를 고정한다 — 넓히려면 이 목록과 redis_acl_test.sh 를 함께 바꾼다
         self.assertEqual(sorted(self.keys("wakeline_collector")), sorted([
-            "~wakeline:aircraft", "~wakeline:sigmet", "~wakeline:radar", "~wakeline:events", "~wakeline:collector", "~wakeline:active",
+            "~wakeline:aircraft", "~wakeline:sigmet", "~wakeline:wxwarn", "~wakeline:radar", "~wakeline:events", "~wakeline:collector", "~wakeline:active",
             "~wakeline:provider:*", "~wakeline:radar_kr:*", "%R~wakeline:settings", "~budget:*",
             "%R~wakeline:demand:hot", "%R~wakeline:demand:focus", "%R~wakeline:demand:hot:meta", "%R~wakeline:demand:focus:meta",
             "~wakeline:demand:status", "~wakeline:route:*", "%W~wakeline:logs"]))
