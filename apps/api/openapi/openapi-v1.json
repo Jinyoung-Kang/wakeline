@@ -242,6 +242,33 @@
         "tags" : [ "weather-controller" ]
       }
     },
+    "/api/v1/airspace" : {
+      "get" : {
+        "operationId" : "airspace",
+        "parameters" : [ {
+          "in" : "query",
+          "name" : "category",
+          "required" : false,
+          "schema" : {
+            "type" : "string"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "content" : {
+              "application/geo+json" : {
+                "schema" : {
+                  "additionalProperties" : { },
+                  "type" : "object"
+                }
+              }
+            },
+            "description" : "OK"
+          }
+        },
+        "tags" : [ "airspace-controller" ]
+      }
+    },
     "/api/v1/ais/gaps" : {
       "get" : {
         "operationId" : "aisGaps",

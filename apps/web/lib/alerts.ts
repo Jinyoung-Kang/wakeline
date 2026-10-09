@@ -1,5 +1,5 @@
 /** 알림 표시 규칙(순수 함수): ETA 카운트다운(GAP-21)·종료 사유·근거의 고도대 출처. */
-import type { BandSource } from "./format";
+import { hazardColor, type BandSource } from "./format";
 import { topAboveFromRaw } from "./sigmet";
 import type { Alert, AlertEventType, CloseReason, PublicStatus, SigmetProps } from "./types";
 
@@ -17,11 +17,23 @@ export function etaRemainingS(a: Pick<Alert, "eta_at" | "eta_s" | "evidence">, s
   return a.eta_s ?? null;
 }
 
+/**
+ * 알림 행 · 배너의 구역 글(계약 v5 §G48): SIGMET 은 위험기상 · FIR, 공역은 공역 이름표 · 종류(정보 수준이면 '정보'). 색: SIGMET 은 위험기상 색,
+ * 공역은 알림 빨강 · 정보 노랑(lib/airspace 의 금지 · 제한 색과 같은 값).
+ */
+export function alertZone(a: Alert): { kind: "SIGMET" | "공역"; label: string; sub: string; color: string } {
+  if (a.zone_type === "airspace" && a.airspace)
+    return { kind: "공역", label: a.airspace.label, sub: a.level === "info" ? "정보" : a.airspace.type_ko, color: a.level === "info" ? "#ffc53d" : "#e5484d" };
+  return { kind: "SIGMET", label: `${a.hazard ?? "—"}${a.qualifier ? ` ${a.qualifier}` : ""}`, sub: a.fir_id ?? "—", color: hazardColor(a.hazard) };
+}
+
 export const CLOSE_REASON_LABEL: Record<CloseReason, string> = {
   left: "이탈 확인(바깥 관측 3회)",
   signal_lost: "신호 끊김(이탈 미확인)",
   restart: "서버 재시작으로 종료",
   prediction_cleared: "예측 해제",
+  sigmet_ended: "경보 종료(SIGMET 만료·철회 — 이탈 아님)",
+  zone_ended: "구역 종료(공역 차수 교체·판정 끔 — 이탈 아님)",
 };
 export function closeReasonLabel(r: string | null | undefined): string {
   return r && r in CLOSE_REASON_LABEL ? CLOSE_REASON_LABEL[r as CloseReason] : "—";
@@ -41,6 +53,8 @@ export const EVENT_LABEL: Record<AlertEventType, string> = {
   PREDICTED: "진입 예상(추정)",
   PREDICTION_UPDATED: "예측 갱신(추정)",
   PREDICTION_CLEARED: "예측 해제",
+  SIGMET_ENDED: "경보 종료",
+  ZONE_ENDED: "구역 종료",
 };
 
 /** 근거의 고도대 [base, top]. top 이 null 또는 구버전의 -1 이면 미발표. */

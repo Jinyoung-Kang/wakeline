@@ -290,6 +290,24 @@ class WsSchemaContractTest {
                     new AlertStateMachine.Event(AlertStateMachine.EventType.PREDICTION_UPDATED, predicted),
                     new AlertStateMachine.Event(AlertStateMachine.EventType.SIGMET_ENDED, observed.closed(now, Alert.CLOSE_SIGMET_ENDED,
                             Map.of("end_cause", AlertStateMachine.END_EXPIRED))))));
+            // 공역 알림 배치(계약 v5 §G48 — 진입 · 차수 교체로 구역 종료). 키 순서가 정해진 맵만(표본은 바이트 비교)
+            Map<String, Object> lower = new java.util.LinkedHashMap<>();
+            lower.put("ft", 0); lower.put("basis", "SFC"); lower.put("raw", "Ground");
+            Map<String, Object> upper = new java.util.LinkedHashMap<>();
+            upper.put("basis", "UNL"); upper.put("raw", "Unlimited");
+            Map<String, Object> zone = new java.util.LinkedHashMap<>();
+            zone.put("id", 101L); zone.put("category", "prohibited"); zone.put("type_ko", "비행금지구역"); zone.put("ident", "RK P99");
+            zone.put("name", "시험 금지구역 A"); zone.put("label", "RK P99"); zone.put("edition", "합성 시험 공역 1차"); zone.put("lower", lower); zone.put("upper", upper);
+            Map<String, Object> zev = new java.util.LinkedHashMap<>();
+            zev.put("polygon_index", 0); zev.put("band_ft", java.util.Arrays.asList(0, null)); zev.put("lower", lower); zev.put("upper", upper);
+            zev.put("assumption", "pressure_altitude_as_msl"); zev.put("top_unlimited", true); zev.put("aircraft_alt_ft", 15000); zev.put("edition_id", 1);
+            zev.put("edition", "합성 시험 공역 1차"); zev.put("judged_at", now.minusSeconds(40).toString()); zev.put("method", "observed_point_in_polygon");
+            Alert inZone = Alert.of(3, "OBSERVED", "71c0a3", "SYN083", new Alert.Head(null, null, null, null, "airspace", "alert", zone),
+                    now.minusSeconds(40), null, null, 15000, zev, false);
+            k.hub.onAlerts(new EngineEvents.AlertsChanged(List.of(
+                    new AlertStateMachine.Event(AlertStateMachine.EventType.ENTERED, inZone),
+                    new AlertStateMachine.Event(AlertStateMachine.EventType.ZONE_ENDED, inZone.closed(now, Alert.CLOSE_ZONE_ENDED,
+                            Map.of("end_cause", "edition_replaced"))))));
             k.hub.heartbeat();                                                   // ping + status
             k.msg(p, "{\"type\":\"ping\"}");                                     // pong
             k.msg(p, "{\"type\":\"subscribe\",\"bbox\":[124,33,132],\"zoom\":7}"); // error BAD_BBOX(구독은 그대로)
@@ -330,6 +348,7 @@ class WsSchemaContractTest {
             samples.add(new Sample("diff", first(pm, "diff")));
             samples.add(new Sample("alerts", first(pm, "alerts")));
             samples.add(new Sample("alerts_batch", first(pm, "alerts_batch")));
+            samples.add(new Sample("alerts_batch.airspace", first(pm, "alerts_batch", n -> "airspace".equals(n.path("items").path(0).path("alert").path("zone_type").asString()))));
             samples.add(new Sample("selected.route_found", first(pm, "selected", n -> n.path("state").isObject() && n.path("route").isObject())));
             samples.add(new Sample("selected.gone", first(pm, "selected", n -> n.path("state").isNull())));
             samples.add(new Sample("error.bad_bbox", first(pm, "error")));
@@ -599,6 +618,12 @@ class WsSchemaContractTest {
                 n -> ((ObjectNode) ((ArrayNode) n.get("port_calls").get("items")).get(0)).put("ship_type_guess", "KTX")));
         bad.put("selected without route key", mutate(byName.get("selected.route_found"), n -> n.remove("route")));
         bad.put("alerts element without evidence", mutate(byName.get("alerts"), n -> ((ObjectNode) ((ArrayNode) n.get("alerts")).get(0)).remove("evidence")));
+        bad.put("airspace alert with a sigmet id", mutate(byName.get("alerts_batch.airspace"),
+                n -> ((ObjectNode) ((ArrayNode) n.get("items")).get(0).get("alert")).put("sigmet_id", "RKRR:X")));
+        bad.put("airspace alert without level", mutate(byName.get("alerts_batch.airspace"),
+                n -> ((ObjectNode) ((ArrayNode) n.get("items")).get(0).get("alert")).remove("level")));
+        bad.put("sigmet alert with an airspace", mutate(byName.get("alerts_batch"),
+                n -> ((ObjectNode) ((ArrayNode) n.get("items")).get(0).get("alert")).putObject("airspace").put("id", 1)));
         bad.put("alerts_batch unknown event", mutate(byName.get("alerts_batch"), n -> ((ObjectNode) ((ArrayNode) n.get("items")).get(0)).put("event", "MAYBE")));
         bad.put("demand unknown hot state", mutate(byName.get("demand.hot_active"), n -> ((ObjectNode) n.get("hot")).put("state", "guessing")));
         bad.put("status without engine", mutate(byName.get("status"), n -> ((ObjectNode) n.get("status")).remove("engine")));

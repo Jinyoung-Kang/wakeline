@@ -49,17 +49,25 @@ export interface RenderState {
   age_s: number | null;
 }
 
-export type CloseReason = "left" | "signal_lost" | "restart" | "prediction_cleared";
-export type AlertEventType = "ENTERED" | "LEFT" | "LOST" | "PREDICTED" | "PREDICTION_UPDATED" | "PREDICTION_CLEARED";
+export type CloseReason = "left" | "signal_lost" | "restart" | "prediction_cleared" | "sigmet_ended" | "zone_ended";
+export type AlertEventType = "ENTERED" | "LEFT" | "LOST" | "PREDICTED" | "PREDICTION_UPDATED" | "PREDICTION_CLEARED" | "SIGMET_ENDED" | "ZONE_ENDED";
+
+/** 공역 알림의 구역(계약 v5 §G48) — 국토교통부 공역 · 기준 차수 edition. 고도 한계는 {ft(UNL · UNKNOWN 이면 없음), basis, raw} */
+export interface AlertAirspaceLimit { ft?: number | null; basis: "MSL" | "FL" | "AGL" | "SFC" | "UNL" | "UNKNOWN"; raw: string }
+export interface AlertAirspace {
+  id: number; category: string; type_ko: string; ident?: string | null; name: string; label: string; edition: string;
+  lower?: AlertAirspaceLimit; upper?: AlertAirspaceLimit;
+}
 
 export interface Alert {
   id: number;
   kind: "OBSERVED" | "PREDICTED";
   hex: string;
   callsign?: string | null;
-  sigmet_id: string;
-  fir_id: string;
-  hazard: string;
+  /** SIGMET 알림만(공역 알림은 없음 — zone_type 'airspace') */
+  sigmet_id?: string;
+  fir_id?: string;
+  hazard?: string;
   qualifier?: string | null;
   entered_at: string;
   left_at?: string | null;
@@ -70,6 +78,11 @@ export interface Alert {
   alt_ft?: number | null;
   evidence: Record<string, unknown>;
   estimated: boolean;
+  /** 계약 v5 §G48: 없으면 SIGMET 알림 */
+  zone_type?: "airspace" | null;
+  /** 공역 알림의 수준 — alert(배너 대상) · info(목록 · 카드에만) */
+  level?: "alert" | "info" | null;
+  airspace?: AlertAirspace | null;
 }
 
 export interface RadarFrames {

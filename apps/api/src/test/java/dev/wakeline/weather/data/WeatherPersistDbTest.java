@@ -143,6 +143,57 @@ class WeatherPersistDbTest {
         assertThat(alertRow(mine).get("left_at")).isNull();                // 이 실행의 알림은 건드리지 않는다
     }
 
+    /**
+     * 공역 알림(V19 · ADR-035 · 계약 v5 §G48): sigmet_id 대신 airspace_id · zone_type · level 로 저장하고, 자연키(hex, airspace_id, kind)로 갱신 · 닫는다
+     * (ZONE_ENDED → zone_ended). 이력은 공역 행에만 zone_type · level · airspace(차수 이름 포함)를 싣고 SIGMET 행은 예전 모양 그대로.
+     */
+    @Test
+    void airspaceAlertsArePersistedWithTheirOwnNaturalKey_andHistoryShowsZoneFieldsOnlyForThem() {
+        String sha = "%064x".formatted(System.nanoTime());
+        dev.wakeline.airspace.AirspaceFixtures.insertEdition(sql -> admin.sql(sql).update(), sha, "합성 시험", true, dev.wakeline.airspace.AirspaceFixtures.defaults());
+        long aid = admin.sql("SELECT a.id FROM airspace a JOIN airspace_edition e ON e.id = a.edition_id WHERE e.source_sha256 = :s AND a.ident = 'RK P99'")
+                .param("s", sha).query(Long.class).single();
+        SigmetRecord s = sig("RKRR:F09", "awc_isigmet", "RAW9", T0.minusSeconds(3600), T0.plusSeconds(3600));
+        store.replace(T0, "awc", Map.of(s.id(), s));
+        AlertRepository repo = alerts();
+        long id = repo.idFloor() + 1;
+        Alert.Head head = new Alert.Head(null, null, null, null, "airspace", "alert",
+                Map.of("id", aid, "category", "prohibited", "type_ko", "비행금지구역", "name", "시험 금지구역 A", "label", "RK P99", "edition", "합성 시험"));
+        Map<String, Object> ev = new LinkedHashMap<>(Map.of("method", "observed_point_in_polygon", "edition", "합성 시험"));
+        Alert a = Alert.of(id, "OBSERVED", "abd001", "TST1", head, T0.minusSeconds(60), null, null, 15_000, ev, false);
+        Alert p = Alert.of(id + 1, "PREDICTED", "abd002", null, head, T0.minusSeconds(30), 300, T0.plusSeconds(300), 15_000,
+                Map.of("method", "dead_reckoning_10min", "entry", "lateral", "judged_at", T0.minusSeconds(30).toString()), true);
+        Alert pu = Alert.of(id + 1, "PREDICTED", "abd002", null, head, T0.minusSeconds(30), 240, T0.plusSeconds(240), 14_000,
+                Map.of("method", "dead_reckoning_10min", "entry", "lateral", "judged_at", T0.toString()), true);
+        events(repo, new Event(EventType.ENTERED, a), new Event(EventType.PREDICTED, p), new Event(EventType.PREDICTION_UPDATED, pu),
+                new Event(EventType.ZONE_ENDED, a.closed(T0, Alert.CLOSE_ZONE_ENDED, Map.of("end_cause", "edition_replaced"))),
+                new Event(EventType.ENTERED, observed(id + 2, "abd003", s.id(), T0.minusSeconds(10))));
+        assertThat(writer.drainNow()).isEqualTo(6); // 정리 1 + 5
+        Map<String, Object> r = admin.sql("SELECT zone_type, level, airspace_id, sigmet_id, close_reason, left_at FROM alert_event WHERE id = :id")
+                .param("id", id).query().singleRow();
+        assertThat(r).containsEntry("zone_type", "airspace").containsEntry("level", "alert").containsEntry("airspace_id", aid)
+                .containsEntry("sigmet_id", null).containsEntry("close_reason", "zone_ended");
+        assertThat(Sql.toInstant(r.get("left_at"))).isEqualTo(T0);
+        assertThat(alertRow(id + 1)).containsEntry("eta_s", 240);
+        assertThat(meters.find("wakeline_alert_persist_unmatched_total").counters()).isEmpty();
+
+        var page = repo.history(T0.minusSeconds(3600), T0.plusSeconds(60), null, null, 10);
+        Map<String, Object> ha = page.items().stream().filter(m -> ((Number) m.get("id")).longValue() == id).findFirst().orElseThrow();
+        assertThat(ha).containsEntry("zone_type", "airspace").containsEntry("level", "alert").containsEntry("close_reason", "zone_ended")
+                .doesNotContainKeys("airspace_id", "airspace_category", "airspace_edition");
+        assertThat(ha.get("sigmet_id")).isNull();
+        @SuppressWarnings("unchecked") Map<String, Object> as = (Map<String, Object>) ha.get("airspace");
+        assertThat(as).containsEntry("id", aid).containsEntry("label", "RK P99").containsEntry("ident", "RK P99").containsEntry("edition", "합성 시험")
+                .containsEntry("category", "prohibited");
+        Map<String, Object> hs = page.items().stream().filter(m -> ((Number) m.get("id")).longValue() == id + 2).findFirst().orElseThrow();
+        assertThat(hs).containsEntry("sigmet_id", s.id()).containsEntry("hazard", "ICE").doesNotContainKeys("zone_type", "level", "airspace");
+
+        // 공역 행의 자연키는 부분 유일 색인 — 같은 (hex, airspace_id, kind, entered_at) 는 두 번 들어가지 않는다(오류가 아니라 0행)
+        events(repo, new Event(EventType.ENTERED, Alert.of(id + 9, "OBSERVED", "abd001", "TST1", head, T0.minusSeconds(60), null, null, 15_000, ev, false)));
+        writer.drainNow();
+        assertThat(meters.counter("wakeline_alert_persist_unmatched_total", "event", "ENTERED").count()).isEqualTo(1.0);
+    }
+
     @Test
     void persistsEventsInOrderWithLostCloseReasonAndNaturalKeyGuard() {
         SigmetRecord s = sig("RKRR:F02", "awc_isigmet", "RAW2", T0.minusSeconds(3600), T0.plusSeconds(3600));

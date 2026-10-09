@@ -146,7 +146,8 @@ export function applyAlertsBatch(cur: AlertsState, version: unknown, items: { ev
     if (!it || !it.alert) continue;
     if (ACTIVE_EVENTS.has(it.event) && it.alert.left_at == null) map.set(it.alert.id, it.alert);
     else map.delete(it.alert.id);
-    if (BANNER_EVENTS.has(it.event)) last = { type: it.event as AlertEventType, alert: it.alert };
+    // 공역 '정보' 수준(비행제한 — 계약 v5 §G48 · SPEC F2)은 목록에만 — 배너로 알리지 않는다
+    if (BANNER_EVENTS.has(it.event) && it.alert.level !== "info") last = { type: it.event as AlertEventType, alert: it.alert };
   }
   return { alerts: map, version: next, last };
 }

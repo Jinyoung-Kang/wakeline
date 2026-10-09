@@ -26,6 +26,9 @@ data/
 !apps/api/src/main/java/**/data/
 !apps/api/src/test/java/**/data/
 raw/
+# 공역 자료(국토교통부 AIP 공역정보 지도자료 — 저작물, 저장소가 공개라 넣지 않는다 · ADR-034). 시험은 합성 KML 만(infra test_airspace_policy)
+*.kmz
+*.KMZ
 # misc
 .DS_Store
 *.log

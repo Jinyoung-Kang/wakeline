@@ -90,6 +90,10 @@ class RolePrivilegesDbTest {
                     "DELETE FROM port_call",
                     "UPDATE port_call_coverage SET refreshed_at = now()",
                     "INSERT INTO port_call_coverage (prt_ag_cd, covered_from, covered_to, updated_at) VALUES ('020', '2026-09-28', '2026-09-29', now())",
+                    // V18(ADR-034): 공역 차수 · 도형은 collector(가져오기 명령)가 쓰고 api 는 읽기만 — 켜고 끄기도 api 는 못 한다
+                    "INSERT INTO airspace_edition (label, source_sha256, counts, skipped) VALUES ('x', repeat('a', 64), '{}', '{}')",
+                    "UPDATE airspace_edition SET active = false",
+                    "DELETE FROM airspace",
             }) {
                 assertThat(state(c, ddl)).as(ddl).isEqualTo(INSUFFICIENT_PRIVILEGE);
             }
@@ -107,6 +111,8 @@ class RolePrivilegesDbTest {
             assertThat(state(c, "SELECT count(*) FROM marine_grid4")).isNull();
             assertThat(state(c, "SELECT count(*) FROM port_call WHERE clsgn = 'V7A3884'")).isNull();
             assertThat(state(c, "SELECT count(*) FROM port_call_coverage")).isNull();
+            assertThat(state(c, "SELECT count(*) FROM airspace_edition WHERE active")).isNull();
+            assertThat(state(c, "SELECT count(*) FROM airspace")).isNull();
         }
     }
 
@@ -136,6 +142,9 @@ class RolePrivilegesDbTest {
                     "TRUNCATE marine_grid4",
                     "DELETE FROM port_call_coverage",             // V15 색인 범위는 쓰기(INSERT · UPDATE)·읽기만 — 지우지 않는다
                     "TRUNCATE port_call",
+                    "DELETE FROM airspace",                       // V18 공역은 넣고(INSERT) 차수를 켜고 끄기(UPDATE)만 — 지우지 않는다
+                    "DELETE FROM airspace_edition",
+                    "UPDATE airspace SET name = 'x'",
                     "CREATE TABLE evil (id int)",
             }) {
                 assertThat(state(c, sql)).as(sql).isEqualTo(INSUFFICIENT_PRIVILEGE);
@@ -423,7 +432,10 @@ class RolePrivilegesDbTest {
                     java.util.Map.entry("stats_daily_utc_legacy", ""),
                     java.util.Map.entry("quality_rule_count_utc_legacy", ""),
                     // V16: 격리 수를 KST 날짜로 세기 시작한 순간 — api 는 읽기만(운영 화면의 '부분' 날짜)
-                    java.util.Map.entry("kst_day_cutover", "SELECT")));
+                    java.util.Map.entry("kst_day_cutover", "SELECT"),
+                    // V18(ADR-034): 공역 차수 · 도형 — collector(가져오기 명령)가 쓰고 api 는 읽기만
+                    java.util.Map.entry("airspace_edition", "SELECT"),
+                    java.util.Map.entry("airspace", "SELECT")));
             assertThat(actual).isEqualTo(expected);
             // 열 단위 UPDATE 스냅샷(표 단위 권한이 없는 표만): api 가 고칠 수 있는 열은 이것뿐이다
             java.util.Map<String, String> columns = new java.util.TreeMap<>();

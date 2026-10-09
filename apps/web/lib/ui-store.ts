@@ -20,6 +20,8 @@ export interface Layers {
    * 조각(components/ReceptionLayer)을 받는다. 선택 필드(없으면 끔 — traffic 과 같다).
    */
   reception?: boolean;
+  /** 공역(ADR-034 · 계약 v5 §G47) — 켤 때 조각(components/AirspaceLayer)을 받는다. 선택 필드(없으면 끔) */
+  airspace?: boolean;
 }
 
 export type UiPanel = "alerts" | "aircraft" | "ship" | "sigmet" | "airport";
@@ -67,7 +69,7 @@ interface UiState {
 }
 
 export const useUi = create<UiState>((set) => ({
-  layers: { radar: true, sigmet: true, aircraft: true, ships: false, airports: true, tracks: true, prediction: true, traffic: false, reception: false },
+  layers: { radar: true, sigmet: true, aircraft: true, ships: false, airports: true, tracks: true, prediction: true, traffic: false, reception: false, airspace: false },
   toggleLayer: (k) => set((s) => ({ layers: { ...s.layers, [k]: !s.layers[k] } })),
   setLayers: (l) => set((s) => ({ layers: { ...s.layers, ...l } })),
   radarOpacity: 0.6,

@@ -16,7 +16,7 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
- * 교차 판정(10.2절)과 진입 예측(10.3절). 순수 함수 — 상태는 AlertStateMachine 이 가진다.
+ * 교차 판정(10.2절)과 진입 예측(10.3절). 순수 함수 — 상태는 AlertStateMachine 이 가진다. 구역은 {@link Zone}(SIGMET · 공역 — ADR-035).
  * 판정 조건: 수평(폴리곤 안) ∧ 고도대(base ≤ alt ≤ top) ∧ 유효시간. 지상 항공기는 제외(VA·TC 는 base 0 인 경우가 많음).
  * 관측·예측 모두 '현재' 로 볼 수 있는 위치(AircraftState.fresh: opensky 300 s, 그 외 60 s 이내)만 쓴다.
  */
@@ -34,16 +34,19 @@ public final class IntersectionEngine {
 
     private IntersectionEngine() {}
 
-    public record Hit(String hex, SigmetRecord sigmet, int polygonIndex, int altFt) {}
+    public record Hit(String hex, Zone zone, int polygonIndex, int altFt) {
+        /** SIGMET 구역이면 그 경보, 아니면 null. */
+        public SigmetRecord sigmet() { return zone instanceof SigmetRecord s ? s : null; }
+    }
 
     /** 관측 교차: hex → hits. 병렬 스트림(인덱스 질의는 스레드 안전). 오래된 위치는 관측으로 쓰지 않는다. */
-    public static Map<String, List<Hit>> observe(Collection<AircraftState> states, SigmetIndex index, Instant now) {
+    public static Map<String, List<Hit>> observe(Collection<AircraftState> states, ZoneIndex index, Instant now) {
         if (index.size() == 0) return Map.of();
         return states.parallelStream()
                 .filter(a -> !a.onGround() && a.altFt() != null && a.fresh(now))
                 .flatMap(a -> index.queryPoint(a.lon(), a.lat()).stream()
-                        .filter(it -> it.sigmet().validAt(now) && it.sigmet().bandContains(a.altFt()))
-                        .map(it -> new Hit(a.hex(), it.sigmet(), it.polygonIndex(), a.altFt())))
+                        .filter(it -> it.zone().validAt(now) && it.zone().bandContains(a.altFt()))
+                        .map(it -> new Hit(a.hex(), it.zone(), it.polygonIndex(), a.altFt())))
                 .collect(Collectors.groupingByConcurrent(Hit::hex));
     }
 
@@ -51,8 +54,11 @@ public final class IntersectionEngine {
      * 예측 1건. etaS 는 판정 시각(now)부터, etaAt = now + etaS. altAtEntry 는 진입 시각의 추정 고도.
      * positionAgeS = now − seen_at(관측 위치를 now 로 먼저 전진시킨 시간). vrateAssumedZero = 수직속도 미보고 → 수평비행 가정.
      */
-    public record Prediction(String hex, SigmetRecord sigmet, int polygonIndex, int etaS, Instant etaAt, int altAtEntry, double distanceNm,
-                             String entry, double positionAgeS, boolean vrateAssumedZero) {}
+    public record Prediction(String hex, Zone zone, int polygonIndex, int etaS, Instant etaAt, int altAtEntry, double distanceNm,
+                             String entry, double positionAgeS, boolean vrateAssumedZero) {
+        /** SIGMET 구역이면 그 경보, 아니면 null. */
+        public SigmetRecord sigmet() { return zone instanceof SigmetRecord s ? s : null; }
+    }
 
     /** 이 항공기를 예측할 수 있는가. predict() 의 대상 선정과 WS "selected" 가 같은 규칙을 쓴다. */
     public static PredictionAvailability availability(AircraftState a, Instant now, boolean turning) {
@@ -69,10 +75,10 @@ public final class IntersectionEngine {
     /**
      * 관측 위치를 seen_at → now 로 먼저 전진시킨 뒤 10분 dead reckoning 궤적에서
      * 수평(폴리곤 안) ∧ 고도대 ∧ 유효시간 이 처음 모두 참이 되는 시각을 찾는다(수평 진입·수직 진입 모두).
-     * @param excluded 현재 이미 안에 있는 (hex → sigmet id 집합) — 관측 알림이 있는 조합은 예측하지 않는다.
+     * @param excluded 현재 이미 안에 있는 (hex → 구역 id 집합) — 관측 알림이 있는 조합은 예측하지 않는다.
      * @param turning  최근 관측에서 15° 넘게 선회 중인 hex — 예측 보류(문서화된 한계)
      */
-    public static List<Prediction> predict(Collection<AircraftState> states, SigmetIndex index, Instant now,
+    public static List<Prediction> predict(Collection<AircraftState> states, ZoneIndex index, Instant now,
                                            Map<String, Set<String>> excluded, Set<String> turning) {
         if (index.size() == 0) return List.of();
         return states.parallelStream()
@@ -81,7 +87,7 @@ public final class IntersectionEngine {
                 .toList();
     }
 
-    static List<Prediction> predictOne(AircraftState a, SigmetIndex index, Instant now, Set<String> excludedIds) {
+    static List<Prediction> predictOne(AircraftState a, ZoneIndex index, Instant now, Set<String> excludedIds) {
         double age = Math.max(0, a.ageSeconds(now));
         double lat0 = a.lat(), lon0 = a.lon();
         if (age > 0) {
@@ -102,18 +108,18 @@ public final class IntersectionEngine {
             if (Math.abs(path[i].x - path[i - 1].x) > 180) return List.of(); // 경도 ±180 을 넘는 궤적은 예측 생략
         }
         LineString line = GeoJson.GF.createLineString(path);
-        List<SigmetIndex.Item> items = index.queryGeometry(line);
+        List<ZoneIndex.Item> items = index.queryGeometry(line);
         if (items.isEmpty()) return List.of();
         List<Prediction> out = new ArrayList<>(1);
-        for (SigmetIndex.Item it : items) {
-            if (excludedIds.contains(it.sigmet().id())) continue;
+        for (ZoneIndex.Item it : items) {
+            if (excludedIds.contains(it.zone().zoneId())) continue;
             Entry e = firstEntry(it, path, alt0, vr, now);
             if (e == null) continue;
             int altAtEntry = (int) Math.round(alt0 + vr * e.t() / 60.0);
             double dist = a.gsKt() * e.t() / 3600.0;
             int etaS = (int) Math.round(e.t());
             Instant etaAt = now.plusSeconds(etaS); // 계약: eta_at = judged_at + eta_s
-            out.add(new Prediction(a.hex(), it.sigmet(), it.polygonIndex(), etaS, etaAt, altAtEntry,
+            out.add(new Prediction(a.hex(), it.zone(), it.polygonIndex(), etaS, etaAt, altAtEntry,
                     Math.round(dist * 10) / 10.0, e.kind(), Math.round(age * 10) / 10.0, vrUnknown));
         }
         return out;
@@ -125,8 +131,8 @@ public final class IntersectionEngine {
      * 3조건(수평 안 ∧ 고도대 ∧ 유효시간)이 처음 동시에 참이 되는 시각(초, now 기준). 이미 t=0 에 참이면(관측 영역) null.
      * 수평 구간은 60 s 선분별 교차로 구하고(선형 보간), 고도는 alt0 + vr·t 직선, 유효시간은 [valid_from, valid_to).
      */
-    static Entry firstEntry(SigmetIndex.Item it, Coordinate[] path, double alt0, double vrFpm, Instant now) {
-        SigmetRecord s = it.sigmet();
+    static Entry firstEntry(ZoneIndex.Item it, Coordinate[] path, double alt0, double vrFpm, Instant now) {
+        Zone s = it.zone();
         double horizon = (path.length - 1) * (double) PREDICT_STEP_S;
         double untilFrom = (s.validFrom().toEpochMilli() - now.toEpochMilli()) / 1000.0;
         double untilTo = (s.validTo().toEpochMilli() - now.toEpochMilli()) / 1000.0;
@@ -165,7 +171,7 @@ public final class IntersectionEngine {
     }
 
     /** 궤적이 폴리곤(수평) 안에 있는 시간 구간들(시작 시각 오름차순, 맞닿은 구간은 병합). 경계 위도 '안' 으로 본다. */
-    static List<double[]> insideIntervals(SigmetIndex.Item it, Coordinate[] path) {
+    static List<double[]> insideIntervals(ZoneIndex.Item it, Coordinate[] path) {
         List<double[]> raw = new ArrayList<>();
         for (int i = 1; i < path.length; i++) {
             double ta = (i - 1) * (double) PREDICT_STEP_S;

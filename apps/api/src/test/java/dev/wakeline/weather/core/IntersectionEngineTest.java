@@ -19,7 +19,7 @@ class IntersectionEngineTest {
     }
 
     private static Map<String, List<IntersectionEngine.Hit>> run(SigmetRecord s, AircraftState a, Instant at) {
-        SigmetIndex idx = new SigmetIndex(List.of(s), at);
+        ZoneIndex idx = new ZoneIndex(List.of(s), at);
         return IntersectionEngine.observe(List.of(a), idx, at);
     }
 
@@ -89,7 +89,7 @@ class IntersectionEngineTest {
 
     @Test void multiplePolygons_eachReported() {
         SigmetRecord a = sigmet("A", 0, null), b = sigmet("B", 0, null);
-        SigmetIndex idx = new SigmetIndex(List.of(a, b), NOW);
+        ZoneIndex idx = new ZoneIndex(List.of(a, b), NOW);
         var hits = IntersectionEngine.observe(List.of(ac("abc00d", 36, 127, 30000, false)), idx, NOW);
         assertThat(hits.get("abc00d")).extracting(h -> h.sigmet().id()).containsExactlyInAnyOrder("A", "B");
     }
@@ -101,7 +101,7 @@ class IntersectionEngineTest {
             sigs.add(new SigmetRecord("S" + i, "F", null, null, "1", "TS", null, 0, null, NOW.minusSeconds(60), NOW.plusSeconds(3600),
                     box(lon, lat, lon + 10, lat + 10), null, null, null, null, "", "awc_isigmet", NOW));
         }
-        SigmetIndex idx = new SigmetIndex(sigs, NOW);
+        ZoneIndex idx = new ZoneIndex(sigs, NOW);
         List<AircraftState> acs = new java.util.ArrayList<>();
         java.util.Random r = new java.util.Random(1);
         for (int i = 0; i < 10_000; i++) acs.add(ac(String.format("%06x", i), -80 + r.nextDouble() * 160, -180 + r.nextDouble() * 360, 30000, false));
@@ -114,7 +114,7 @@ class IntersectionEngineTest {
     }
 
     private static List<IntersectionEngine.Prediction> predict(SigmetRecord s, AircraftState a) {
-        return IntersectionEngine.predict(List.of(a), new SigmetIndex(List.of(s), NOW), NOW, Map.of(), Set.of());
+        return IntersectionEngine.predict(List.of(a), new ZoneIndex(List.of(s), NOW), NOW, Map.of(), Set.of());
     }
 
     @Test void performance_predict_10kAircraft_200Sigmets() {
@@ -124,7 +124,7 @@ class IntersectionEngineTest {
             sigs.add(new SigmetRecord("S" + i, "F", null, null, "1", "TS", null, i % 2 == 0 ? 25000 : 0, i % 3 == 0 ? null : 35000,
                     NOW.minusSeconds(60), NOW.plusSeconds(3600), box(lon, lat, lon + 10, lat + 10), null, null, null, null, "", "awc_isigmet", NOW));
         }
-        SigmetIndex idx = new SigmetIndex(sigs, NOW);
+        ZoneIndex idx = new ZoneIndex(sigs, NOW);
         List<AircraftState> acs = new java.util.ArrayList<>();
         java.util.Random r = new java.util.Random(2);
         for (int i = 0; i < 10_000; i++)
@@ -243,7 +243,7 @@ class IntersectionEngineTest {
     @Test void predict_altitudeBandAtEntryChecked() {
         double lonStart = westOfBox(30);
         AircraftState climbing = new AircraftState("abc011", null, null, null, null, 36, lonStart, 13000, 450.0, 90.0, 300.0, false, null, NOW, "adsb_lol", NOW, 0, false);
-        SigmetIndex idx = new SigmetIndex(List.of(sigmet("A", 14000, 21000)), NOW);
+        ZoneIndex idx = new ZoneIndex(List.of(sigmet("A", 14000, 21000)), NOW);
         var preds = IntersectionEngine.predict(List.of(climbing), idx, NOW, Map.of(), Set.of());
         assertThat(preds).hasSize(1); // 13,000 + 300 fpm × 4 min = 14,200 ≥ base
     }
@@ -251,7 +251,7 @@ class IntersectionEngineTest {
     @Test void predict_turningOrSlowSkipped() {
         double lonStart = 126 - 30.0 / (60.0 * Math.cos(Math.toRadians(36)));
         AircraftState a = ac("abc012", 36, lonStart, 17000, false, 450.0, 90.0);
-        SigmetIndex idx = new SigmetIndex(List.of(sigmet("A", 14000, 21000)), NOW);
+        ZoneIndex idx = new ZoneIndex(List.of(sigmet("A", 14000, 21000)), NOW);
         assertThat(IntersectionEngine.predict(List.of(a), idx, NOW, Map.of(), Set.of("abc012"))).isEmpty();
         assertThat(IntersectionEngine.predict(List.of(ac("abc013", 36, lonStart, 17000, false, 40.0, 90.0)), idx, NOW, Map.of(), Set.of())).isEmpty();
     }

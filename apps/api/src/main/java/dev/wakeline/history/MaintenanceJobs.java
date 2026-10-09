@@ -393,16 +393,17 @@ public class MaintenanceJobs {
                         .param("d", day).param("lat", r.lat()).param("lon", r.lon()).param("r", r.radiusNm()).update();
             }
         }
+        // 알림 통계는 SIGMET 알림만 센다(V19 — 공역 알림은 다른 뜻이라 섞지 않는다, 계약 v5 §G48)
         if (families.contains(FAMILY_ALERTS)) {
             db.sql("""
                     INSERT INTO stats_daily (day, metric, dim, value)
-                    SELECT :d, 'alerts_by_kind', kind, count(*) FROM alert_event WHERE entered_at >= :s AND entered_at < :e GROUP BY kind""")
+                    SELECT :d, 'alerts_by_kind', kind, count(*) FROM alert_event WHERE entered_at >= :s AND entered_at < :e AND zone_type = 'sigmet' GROUP BY kind""")
                     .param("d", day).param("s", Sql.ts(start)).param("e", Sql.ts(end)).update();
             db.sql("""
                     INSERT INTO stats_daily (day, metric, dim, value)
                     SELECT :d, 'alert_dwell_avg_s', 'OBSERVED', avg(extract(epoch FROM (left_at - entered_at)))
                     FROM alert_event
-                    WHERE kind = 'OBSERVED' AND left_at IS NOT NULL AND entered_at >= :s AND entered_at < :e
+                    WHERE kind = 'OBSERVED' AND left_at IS NOT NULL AND entered_at >= :s AND entered_at < :e AND zone_type = 'sigmet'
                       AND (%s)
                     HAVING count(*) > 0""".formatted(CONFIRMED_EXIT))
                     .param("d", day).param("s", Sql.ts(start)).param("e", Sql.ts(end)).update();

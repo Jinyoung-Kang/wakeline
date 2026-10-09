@@ -268,9 +268,31 @@ def point_feature(props: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+# 공역 알림의 구역(계약 v5 §G48) — 실시간(WS · REST)과 이력이 같은 이름. 실시간에는 고도 한계 lower · upper 도 싣는다(이력은 근거에)
+ALERT_AIRSPACE: Schema = {
+    "type": "object",
+    "required": ["id", "category", "type_ko", "name", "label", "edition"],
+    "properties": {
+        "id": INT,
+        "category": {"type": "string", "pattern": "^[a-z_]{1,32}$"},
+        "type_ko": STR,
+        "ident": STR,
+        "name": STR,
+        "label": STR,
+        "edition": STR,
+        "lower": {"type": "object", "required": ["basis", "raw"]},
+        "upper": {"type": "object", "required": ["basis", "raw"]},
+    },
+}
+# zone_type 이 없으면 SIGMET 알림(sigmet_id 필수, 구역 필드 없음), 'airspace' 면 공역 알림(airspace · level 필수, SIGMET 필드 없음)
+ALERT_ZONE_RULE: Schema = {
+    "if": {"required": ["zone_type"]},
+    "then": {"required": ["airspace", "level"], "not": {"anyOf": [{"required": ["sigmet_id"]}, {"required": ["hazard"]}]}},
+    "else": {"required": ["sigmet_id"], "not": {"anyOf": [{"required": ["airspace"]}, {"required": ["level"]}]}},
+}
 ALERT: Schema = {  # 계약 §1 Alert
     "type": "object",
-    "required": ["id", "kind", "hex", "sigmet_id", "entered_at", "evidence", "estimated"],
+    "required": ["id", "kind", "hex", "entered_at", "evidence", "estimated"],
     "properties": {
         "id": JS_SAFE_ID,
         "kind": {"enum": ["OBSERVED", "PREDICTED"]},
@@ -282,15 +304,19 @@ ALERT: Schema = {  # 계약 §1 Alert
         "qualifier": STR,
         "entered_at": TS,
         "left_at": TS,
-        # sigmet_ended(DH-6): SIGMET 만료·철회로 닫힘 — 이탈이 아니다(V4 CHECK 와 같은 목록)
-        "close_reason": {"enum": ["left", "signal_lost", "restart", "sigmet_ended", "prediction_cleared"]},
+        # sigmet_ended(DH-6): SIGMET 만료·철회로 닫힘 — 이탈이 아니다 · zone_ended(§G48): 공역 차수 교체 · 판정 끔(V19 CHECK 와 같은 목록)
+        "close_reason": {"enum": ["left", "signal_lost", "restart", "sigmet_ended", "prediction_cleared", "zone_ended"]},
         "eta_s": {"type": "integer", "minimum": 0},
         "eta_at": TS,
         "alt_ft": INT,
         "evidence": {"type": "object", "required": ["method"], "properties": {"method": STR}},
         "estimated": BOOL,
+        "zone_type": {"const": "airspace"},
+        "level": {"enum": ["alert", "info"]},
+        "airspace": ALERT_AIRSPACE,
     },
     "allOf": [
+        ALERT_ZONE_RULE,
         # 예측은 '추정' 으로 표시되고 절대 시각(eta_at)을 싣는다 — 관측은 추정이 아니다
         {"if": {"properties": {"kind": {"const": "PREDICTED"}}}, "then": {"properties": {"estimated": {"const": True}}}},
         {
@@ -303,8 +329,9 @@ ALERT: Schema = {  # 계약 §1 Alert
 }
 HISTORY_ALERT: Schema = {
     "type": "object",
-    "required": ["id", "kind", "hex", "sigmet_id", "entered_at", "evidence"],
+    "required": ["id", "kind", "hex", "entered_at", "evidence"],
     "properties": {**ALERT["properties"], "alt_ft_at_entry": INT},
+    "allOf": [ALERT_ZONE_RULE],
 }
 
 SIGMET_PROPS: Schema = {  # 계약 §1·§2 SIGMET feature properties
@@ -694,6 +721,69 @@ SHIP_SEARCH_ITEM: Schema = {
         },
     ],
 }
+# 공역 레이어(계약 v5 §G47 · ADR-034) — 국토교통부 공역정보 지도자료(AIP 차수). 고도 한계는 정규화 값 + 기준 + 원문, 기준이 UNL · UNKNOWN 이면 ft 는 null
+AIRSPACE_BASES = ["MSL", "FL", "AGL", "SFC", "UNL", "UNKNOWN"]
+AIRSPACE_LIMIT: Schema = {
+    "type": "object",
+    "required": ["ft", "basis", "raw"],
+    "additionalProperties": False,
+    "properties": {"ft": nullable(INT), "basis": {"enum": AIRSPACE_BASES}, "raw": STR},
+    "if": {"properties": {"basis": {"enum": ["UNL", "UNKNOWN"]}}},
+    "then": {"properties": {"ft": {"type": "null"}}},
+    "else": {"properties": {"ft": INT}},
+}
+AIRSPACE_FEATURE: Schema = {
+    "type": "object",
+    "required": ["type", "id", "geometry", "properties"],
+    "properties": {
+        "type": {"const": "Feature"},
+        "id": {"type": "string", "pattern": "^[0-9]+$"},
+        "geometry": {
+            "type": "object",
+            "required": ["type", "coordinates"],
+            "properties": {"type": {"enum": ["Polygon", "MultiPolygon", "LineString", "MultiLineString"]}},
+        },
+        "properties": {
+            "type": "object",
+            "required": ["id", "category", "type_ko", "name", "label", "kind", "lower", "upper"],
+            "additionalProperties": False,
+            "properties": {
+                "id": INT,
+                "category": {"type": "string", "pattern": "^[a-z_]{1,32}$"},
+                "type_ko": STR,
+                "ident": STR,  # 모르면 키가 없다
+                "name": STR,
+                "label": STR,
+                "class_code": STR,
+                "kind": {"enum": ["polygon", "line"]},
+                "lower": AIRSPACE_LIMIT,
+                "upper": AIRSPACE_LIMIT,
+            },
+        },
+    },
+}
+AIRSPACE: Schema = {
+    "type": "object",
+    "required": ["type", "edition", "source", "features", "meta"],
+    "properties": {
+        "type": {"const": "FeatureCollection"},
+        # 자료가 없으면(운영자가 아직 가져오지 않음) null · 빈 목록 — 화면이 '공역 자료 없음'을 보인다
+        "edition": nullable(
+            {
+                "type": "object",
+                "required": ["id", "label", "imported_at", "currency_checked"],
+                "additionalProperties": False,
+                "properties": {"id": INT, "label": STR, "document_name": STR, "imported_at": TS, "currency_checked": {"const": False}},
+            }
+        ),
+        "source": STR,
+        "features": {"type": "array", "items": AIRSPACE_FEATURE},
+        "meta": META,
+    },
+    "if": {"properties": {"edition": {"type": "null"}}},
+    "then": {"properties": {"features": {"maxItems": 0}}},
+}
+
 SHIP_SEARCH_Q: Schema = {"type": "string", "pattern": "^[A-Z0-9 .\\-/]{2,40}$"}  # 정규화(trim · 대문자)한 검색어
 
 COVERAGE_CELL_DEG = 0.5  # api CoverageGrid.CELL_DEG
@@ -783,6 +873,32 @@ SCHEMAS: dict[str, dict[str, Any]] = {
             "route": ROUTE,
             "active_alerts": {"type": "array", "items": ALERT},
             "inside_sigmets": {"type": "array", "items": STR},
+            # 들어 있는 공역(계약 v5 §G48 — 요청 때 계산): 공역 차수가 없거나 실시간 위치가 없으면 키 없음(모름)
+            "inside_airspace": {
+                "type": "object",
+                "required": ["edition", "items"],
+                "additionalProperties": False,
+                "properties": {
+                    "edition": STR,
+                    "items": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "required": ["id", "category", "type_ko", "label", "name", "vertical"],
+                            "additionalProperties": False,
+                            "properties": {
+                                "id": INT,
+                                "category": {"enum": ["prohibited", "nuclear", "security", "restricted", "danger"]},
+                                "type_ko": STR,
+                                "label": STR,
+                                "name": STR,
+                                "level": {"enum": ["alert", "info"]},
+                                "vertical": {"enum": ["inside", "not_judged", "unknown"]},
+                            },
+                        },
+                    },
+                },
+            },
             "emergency": BOOL,
             "meta": META,
         },
@@ -858,6 +974,7 @@ SCHEMAS: dict[str, dict[str, Any]] = {
         },
     },
     "sigmets": feature_collection(SIGMET_FEATURE, META),
+    "airspace": AIRSPACE,
     "sigmet_detail": {
         **SIGMET_FEATURE,
         "required": [*SIGMET_FEATURE["required"], "aircraft_inside", "meta"],
@@ -1430,6 +1547,9 @@ CHECKS = [
     Check("aircraft_track", "aircraft_track", 200, "application/geo+json", True),
     Check("sigmets", "sigmets", 200, "application/geo+json", True),
     Check("sigmet_detail", "sigmet_detail", 200, "application/json", True),
+    Check("airspace", "airspace", 200, "application/geo+json", True),
+    # 기록에만: 공역(합성 차수의 금지구역) 안의 항공기 상세 — inside_airspace · 공역 알림(계약 v5 §G48)
+    Check("aircraft_detail_airspace", "aircraft_detail", 200, "application/json", True, recorded_only=True),
     Check("alerts", "alerts", 200, "application/json", True),
     Check("alerts_history", "alerts_history", 200, "application/json", True),
     Check("radar_frames", "radar_frames", 200, "application/json", True),
@@ -1501,6 +1621,7 @@ def live_paths(base: str) -> dict[str, str | None]:
         "aircraft": aircraft_path,
         "aircraft_full": f"/api/v1/aircraft?bbox={bbox}&detail=full",
         "sigmets": sigmets_path,
+        "airspace": "/api/v1/airspace",
         "alerts": "/api/v1/alerts",
         "alerts_history": "/api/v1/alerts/history",
         "radar_frames": "/api/v1/radar/frames",

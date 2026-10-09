@@ -6,7 +6,6 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -18,8 +17,8 @@ import java.util.function.LongSupplier;
 import java.util.stream.Collectors;
 
 /**
- * 알림 상태 머신(FR-09). (hex, sigmet) 마다 ENTERED/INSIDE/LEFT·LOST. 예측(PREDICTED)은 관측과 별도 유형.
- * 단일 스레드(엔진 주기)에서만 호출된다.
+ * 알림 상태 머신(FR-09). (hex, 구역) 마다 ENTERED/INSIDE/LEFT·LOST. 예측(PREDICTED)은 관측과 별도 유형.
+ * 단일 스레드(엔진 주기)에서만 호출된다. 구역은 {@link Zone}(ADR-035) — 한 상태 머신은 한 종류의 구역만 다룬다(열쇠가 종류 안의 id).
  *
  * <p>히스테리시스는 엔진 실행 횟수가 아니라 <b>서로 다른 관측</b>(그 기체의 seen_at 이 바뀐 것)을 센다.
  * 엔진은 region 스냅샷(~10 s)·global 스냅샷(~120 s)·SIGMET 갱신마다 돌지만, 같은 위치를 다시 판정해도 세지 않는다.
@@ -48,7 +47,8 @@ public final class AlertStateMachine {
     public static final int LOST_CONFIRM = LEAVE_CONFIRM;
     public static final int ETA_UPDATE_THRESHOLD_S = 30;
 
-    public enum EventType { ENTERED, LEFT, LOST, SIGMET_ENDED, PREDICTED, PREDICTION_UPDATED, PREDICTION_CLEARED }
+    /** ZONE_ENDED(ADR-035): SIGMET 이 아닌 구역(공역)이 끝났다 — 차수 교체 · 판정 끔. SIGMET 은 예전처럼 SIGMET_ENDED. */
+    public enum EventType { ENTERED, LEFT, LOST, SIGMET_ENDED, PREDICTED, PREDICTION_UPDATED, PREDICTION_CLEARED, ZONE_ENDED }
 
     /** SIGMET_ENDED 근거의 end_cause 값. */
     public static final String END_EXPIRED = "expired";
@@ -86,7 +86,7 @@ public final class AlertStateMachine {
      * scopes 가 있으면(엔진) 스코프 판단·부재 표식은 그것을 따른다 — 병합 뷰는 신선도 우선이라 region 에 있어도 다른 스코프의 관측일 수 있다(DH-2).
      */
     public record Cycle(long regionVersion, long globalVersion, boolean regionFeedStale, boolean globalFeedStale, Set<String> regionHexes,
-                        SigmetSet sigmets, Scopes scopes) {
+                        ZoneSet zones, Scopes scopes) {
         /** SIGMET 세트 없이(경보 종료 판단 없음) — 이전 시그니처 호환. */
         public Cycle(long regionVersion, long globalVersion, boolean regionFeedStale, boolean globalFeedStale, Set<String> regionHexes) {
             this(regionVersion, globalVersion, regionFeedStale, globalFeedStale, regionHexes, null, null);
@@ -94,8 +94,8 @@ public final class AlertStateMachine {
 
         /** 스코프 정보 없이(region/global 만) — 이전 시그니처 호환. */
         public Cycle(long regionVersion, long globalVersion, boolean regionFeedStale, boolean globalFeedStale, Set<String> regionHexes,
-                     SigmetSet sigmets) {
-            this(regionVersion, globalVersion, regionFeedStale, globalFeedStale, regionHexes, sigmets, null);
+                     ZoneSet zones) {
+            this(regionVersion, globalVersion, regionFeedStale, globalFeedStale, regionHexes, zones, null);
         }
 
         String scopeOf(String hex) {
@@ -117,17 +117,11 @@ public final class AlertStateMachine {
         }
 
         /**
-         * 이 SIGMET 이 끝났는가(이 주기의 판정 기준 세트에서). null = 진행 중(또는 세트 정보 없음).
-         * @param known 추적 중 알고 있던 경보(공급자·유효시간 — 세트에서 빠졌을 때 원인 구분용), 없으면 null
+         * 이 구역이 끝났는가(이 주기의 판정 기준 세트에서). null = 진행 중(또는 세트 정보 없음).
+         * @param known 추적 중 알고 있던 구역(공급자·유효시간 — 세트에서 빠졌을 때 원인 구분용), 없으면 null
          */
-        Ended ended(String sigmetId, SigmetRecord known, Instant now) {
-            if (sigmets == null) return null;
-            SigmetRecord cur = sigmets.byId().get(sigmetId);
-            if (cur != null) return cur.validTo().isAfter(now) ? null : new Ended(END_EXPIRED, cur.validTo(), cur);
-            if (known != null && !known.validTo().isAfter(now)) return new Ended(END_EXPIRED, known.validTo(), known);
-            String provider = known == null ? null : known.provider();
-            String cause = provider != null && sigmets.providers().contains(provider) ? END_WITHDRAWN : END_PROVIDER_MISSING;
-            return new Ended(cause, sigmets.fetchedAt(), known);
+        Ended ended(String zoneId, Zone known, Instant now) {
+            return zones == null ? null : zones.ended(zoneId, known, now);
         }
 
         /** 부재를 셀 기준 표식: 스코프가 살아 있으면 그 스코프 버전, 끊겼으면 어느 스코프든 가장 최근 스냅샷 버전. */
@@ -145,20 +139,36 @@ public final class AlertStateMachine {
         }
     }
 
+    /** 판정 기준 구역 세트(엔진 인덱스를 만든 바로 그 세트) — 추적 중인 구역이 끝났는지(만료 · 빠짐)를 답한다. */
+    public interface ZoneSet {
+        /** 끝났으면 그 까닭과 시각, 진행 중이면 null. known = 추적 중 알고 있던 구역(없으면 null). */
+        Ended ended(String zoneId, Zone known, Instant now);
+    }
+
     /**
      * 판정 기준 SIGMET 세트(엔진 인덱스를 만든 바로 그 세트): id → 경보, 세트에 들어 있는 공급자, 세트 수신 시각.
      * 세트에서 빠진 경보가 철회인지(같은 공급자의 다른 경보는 있음) 피드 누락인지 구분하는 데 쓴다 — SigmetRepository 의 철회 판단과 같은 규칙.
      */
-    public record SigmetSet(Map<String, SigmetRecord> byId, Set<String> providers, Instant fetchedAt) {
+    public record SigmetSet(Map<String, SigmetRecord> byId, Set<String> providers, Instant fetchedAt) implements ZoneSet {
         public static SigmetSet of(Map<String, SigmetRecord> byId, Instant fetchedAt) {
             Set<String> providers = new HashSet<>();
             for (SigmetRecord s : byId.values()) if (s.provider() != null) providers.add(s.provider());
             return new SigmetSet(Map.copyOf(byId), Set.copyOf(providers), fetchedAt);
         }
+
+        @Override
+        public Ended ended(String sigmetId, Zone known, Instant now) {
+            SigmetRecord cur = byId.get(sigmetId);
+            if (cur != null) return cur.validTo().isAfter(now) ? null : new Ended(END_EXPIRED, cur.validTo(), cur);
+            if (known != null && !known.validTo().isAfter(now)) return new Ended(END_EXPIRED, known.validTo(), known);
+            String provider = known == null ? null : known.provider();
+            String cause = provider != null && providers.contains(provider) ? END_WITHDRAWN : END_PROVIDER_MISSING;
+            return new Ended(cause, fetchedAt, known);
+        }
     }
 
-    /** 경보 종료: 원인, 끝난 시각(만료 = valid_to, 빠짐 = 세트 수신 시각), 알고 있던 경보(없으면 null). */
-    record Ended(String cause, Instant at, SigmetRecord sigmet) {
+    /** 구역 종료: 원인, 끝난 시각(만료 = valid_to, 빠짐 = 세트 수신 시각), 알고 있던 구역(없으면 null). */
+    public record Ended(String cause, Instant at, Zone zone) {
         /** left_at: 끝난 시각을 [진입 시각, 판정 시각] 으로 자른다(수집기·api 시계 차로 앞뒤가 뒤집히지 않게). */
         Instant clamp(Instant enteredAt, Instant now) {
             Instant t = at == null ? now : at;
@@ -167,16 +177,16 @@ public final class AlertStateMachine {
         }
     }
 
-    record Key(String hex, String sigmetId) {}
+    record Key(String hex, String zoneId) {}
 
-    /** 활성 예측과 그 예측을 만든 경보(세트에서 빠졌을 때 원인 구분용). */
-    private record Pred(Alert alert, SigmetRecord sigmet) {}
+    /** 활성 예측과 그 예측을 만든 구역(세트에서 빠졌을 때 원인 구분용). */
+    private record Pred(Alert alert, Zone zone) {}
 
     static final class Track {
         int inside, outside, absent;
         boolean confirmed;
         Alert alert;
-        SigmetRecord sigmet;
+        Zone zone;
         /** 마지막으로 센 관측의 seen_at — 이보다 새 seen_at 이어야 다음 관측으로 센다. */
         Instant lastSeenAt;
         String scope;
@@ -198,7 +208,7 @@ public final class AlertStateMachine {
         List<Event> out = new ArrayList<>();
         Map<Key, IntersectionEngine.Hit> insideNow = new HashMap<>();
         for (List<IntersectionEngine.Hit> hs : hits.values())
-            for (IntersectionEngine.Hit h : hs) insideNow.putIfAbsent(new Key(h.hex(), h.sigmet().id()), h);
+            for (IntersectionEngine.Hit h : hs) insideNow.putIfAbsent(new Key(h.hex(), h.zone().zoneId()), h);
         for (Key k : insideNow.keySet()) observed.computeIfAbsent(k, x -> new Track());
 
         var it = observed.entrySet().iterator();
@@ -206,10 +216,9 @@ public final class AlertStateMachine {
             var e = it.next();
             Key k = e.getKey();
             Track t = e.getValue();
-            Ended end = cycle.ended(k.sigmetId(), t.sigmet, now);
-            if (end != null) { // 경보가 끝났다 — 항공기 관측과 무관하게 닫는다(이탈이 아니다)
-                if (t.confirmed && t.alert != null)
-                    out.add(new Event(EventType.SIGMET_ENDED, t.alert.closed(end.clamp(t.alert.enteredAt(), now), Alert.CLOSE_SIGMET_ENDED, endedEvidence(t, end, now))));
+            Ended end = cycle.ended(k.zoneId(), t.zone, now);
+            if (end != null) { // 경보(구역)가 끝났다 — 항공기 관측과 무관하게 닫는다(이탈이 아니다)
+                if (t.confirmed && t.alert != null) out.add(endedEvent(t, end, now));
                 it.remove();
                 continue;
             }
@@ -223,7 +232,7 @@ public final class AlertStateMachine {
                 IntersectionEngine.Hit h = insideNow.get(k);
                 if (h != null) {
                     t.lastSeenAt = a.seenAt();
-                    t.sigmet = h.sigmet();
+                    t.zone = h.zone();
                     t.inside++;
                     t.outside = 0;
                     t.outsideSeen.clear();
@@ -267,7 +276,7 @@ public final class AlertStateMachine {
         // 예측: 같은 (hex, sigmet) 의 여러 폴리곤은 가장 이른 진입 하나로
         Map<Key, IntersectionEngine.Prediction> best = new LinkedHashMap<>();
         for (IntersectionEngine.Prediction p : predictions) {
-            Key k = new Key(p.hex(), p.sigmet().id());
+            Key k = new Key(p.hex(), p.zone().zoneId());
             Track tr = observed.get(k);
             if (tr != null && tr.confirmed) continue;
             best.merge(k, p, (x, y) -> y.etaS() < x.etaS() ? y : x);
@@ -280,11 +289,11 @@ public final class AlertStateMachine {
             AircraftState a = states.get(p.hex());
             if (prev == null) {
                 Alert al = predictedAlert(ids.getAsLong(), p, a, now, now);
-                predicted.put(k, new Pred(al, p.sigmet()));
+                predicted.put(k, new Pred(al, p.zone()));
                 out.add(new Event(EventType.PREDICTED, al));
             } else if (prev.etaAt() == null || Math.abs(Duration.between(prev.etaAt(), p.etaAt()).toMillis()) >= ETA_UPDATE_THRESHOLD_S * 1000L) {
                 Alert al = predictedAlert(prev.id(), p, a, prev.enteredAt(), now);
-                predicted.put(k, new Pred(al, p.sigmet()));
+                predicted.put(k, new Pred(al, p.zone()));
                 out.add(new Event(EventType.PREDICTION_UPDATED, al));
             }
         }
@@ -293,13 +302,47 @@ public final class AlertStateMachine {
             var e = pit.next();
             if (!best.containsKey(e.getKey())) {
                 // 예측이 사라진 까닭이 경보 종료면 근거에 밝힌다(항공기 궤적이 바뀐 것이 아니다)
-                Ended end = cycle.ended(e.getKey().sigmetId(), e.getValue().sigmet(), now);
-                Map<String, Object> why = end == null ? null : Map.of("cleared_by", "sigmet_ended", "end_cause", end.cause());
+                Ended end = cycle.ended(e.getKey().zoneId(), e.getValue().zone(), now);
+                Map<String, Object> why = end == null ? null : Map.of("cleared_by", isSigmet(e.getValue().alert()) ? "sigmet_ended" : "zone_ended", "end_cause", end.cause());
                 out.add(new Event(EventType.PREDICTION_CLEARED, e.getValue().alert().closed(now, Alert.CLOSE_PREDICTION_CLEARED, why)));
                 pit.remove();
             }
         }
         return out;
+    }
+
+    /**
+     * 모두 닫는다(구역 판정을 끌 때 — ADR-035): 확정된 관측 알림은 ZONE_ENDED(close_reason zone_ended, 근거 end_cause = cause), 예측은 PREDICTION_CLEARED.
+     * 확정 전 트랙도 버린다. SIGMET 상태 머신에는 쓰지 않는다.
+     */
+    public List<Event> closeAll(Instant now, String cause) {
+        List<Event> out = new ArrayList<>();
+        for (Track t : observed.values()) {
+            if (!t.confirmed || t.alert == null) continue;
+            Map<String, Object> ev = new LinkedHashMap<>();
+            ev.put("end_cause", cause);
+            ev.put("last_seen_at", t.lastSeenAt == null ? null : t.lastSeenAt.toString());
+            ev.put("judged_at", now.toString());
+            out.add(new Event(EventType.ZONE_ENDED, t.alert.closed(now, Alert.CLOSE_ZONE_ENDED, ev)));
+        }
+        for (Pred p : predicted.values())
+            out.add(new Event(EventType.PREDICTION_CLEARED, p.alert().closed(now, Alert.CLOSE_PREDICTION_CLEARED, Map.of("cleared_by", "zone_ended", "end_cause", cause))));
+        observed.clear();
+        predicted.clear();
+        return out;
+    }
+
+    private static boolean isSigmet(Alert a) { return Zone.SIGMET.equals(a.zoneTypeOrSigmet()); }
+
+    /** 구역 종료 사건: SIGMET 은 SIGMET_ENDED(근거 그대로), 다른 구역은 ZONE_ENDED(근거: end_cause · 마지막 관측 · 판정 시각). */
+    private static Event endedEvent(Track t, Ended end, Instant now) {
+        Instant at = end.clamp(t.alert.enteredAt(), now);
+        if (isSigmet(t.alert)) return new Event(EventType.SIGMET_ENDED, t.alert.closed(at, Alert.CLOSE_SIGMET_ENDED, endedEvidence(t, end, now)));
+        Map<String, Object> ev = new LinkedHashMap<>();
+        ev.put("end_cause", end.cause());
+        ev.put("last_seen_at", t.lastSeenAt == null ? null : t.lastSeenAt.toString());
+        ev.put("judged_at", now.toString());
+        return new Event(EventType.ZONE_ENDED, t.alert.closed(at, Alert.CLOSE_ZONE_ENDED, ev));
     }
 
     public List<Alert> activeObserved() {
@@ -316,12 +359,12 @@ public final class AlertStateMachine {
 
     public Set<String> insideSigmetIds(String hex) {
         return observed.entrySet().stream().filter(e -> e.getKey().hex().equals(hex) && e.getValue().confirmed)
-                .map(e -> e.getKey().sigmetId()).collect(Collectors.toSet());
+                .map(e -> e.getKey().zoneId()).collect(Collectors.toSet());
     }
 
     public Map<String, Set<String>> confirmedByHex() {
         Map<String, Set<String>> m = new HashMap<>();
-        for (var e : observed.entrySet()) if (e.getValue().confirmed) m.computeIfAbsent(e.getKey().hex(), x -> new HashSet<>()).add(e.getKey().sigmetId());
+        for (var e : observed.entrySet()) if (e.getValue().confirmed) m.computeIfAbsent(e.getKey().hex(), x -> new HashSet<>()).add(e.getKey().zoneId());
         return m;
     }
 
@@ -332,29 +375,17 @@ public final class AlertStateMachine {
 
     private static List<String> iso(Deque<Instant> q) { return q.stream().map(Instant::toString).toList(); }
 
-    /**
-     * band_ft = [base, top] — 발표된 값 그대로(top 이 발표되지 않았으면 null). 판정 가정은 따로 밝힌다:
-     * top_assumed_unbounded(판정은 상한 무제한), top_is_lower_bound(발표값이 'FLnnn 이상' — band_ft 의 top 은 상한이 아니라 하한, DH-4).
-     */
-    private static void putBand(Map<String, Object> ev, SigmetRecord s) {
-        ev.put("band_ft", Arrays.asList(s.baseFt(), s.topFt()));
-        if (s.baseSource() != null) ev.put("base_source", s.baseSource());
-        if (s.topSource() != null) ev.put("top_source", s.topSource());
-        if (s.baseAssumedSurface()) ev.put("base_assumed_surface", true);
-        if (s.topIsLowerBound()) ev.put("top_is_lower_bound", true);
-        if (s.topAssumedUnbounded()) ev.put("top_assumed_unbounded", true);
-    }
-
     private static double round1(double v) { return Math.round(v * 10) / 10.0; }
 
+    /** 관측 알림. 고도대 · 유효 시간(또는 차수) · 머리는 구역이 적는다(Zone — SIGMET 근거의 키와 순서는 예전 그대로). */
     private static Alert observedAlert(long id, IntersectionEngine.Hit h, AircraftState a, Track t, Instant now) {
-        SigmetRecord s = h.sigmet();
+        Zone z = h.zone();
         Map<String, Object> ev = new LinkedHashMap<>();
         ev.put("polygon_index", h.polygonIndex());
-        putBand(ev, s);
+        z.putBand(ev);
         ev.put("aircraft_alt_ft", h.altFt());
-        ev.put("valid_from", s.validFrom().toString());
-        ev.put("valid_to", s.validTo().toString());
+        z.putJudgement(ev, h.altFt());
+        z.putValidity(ev);
         ev.put("judged_at", now.toString());
         ev.put("method", "observed_point_in_polygon");
         ev.put("confirmations", t.insideSeen.size());
@@ -363,8 +394,7 @@ public final class AlertStateMachine {
         ev.put("provider", a.provider());
         ev.put("seen_at", a.seenAt().toString());
         ev.put("position_age_s", round1(Math.max(0, a.ageSeconds(now))));
-        return new Alert(id, "OBSERVED", h.hex(), a.callsign(), s.id(), s.firId(), s.hazard(), s.qualifier(),
-                now, null, null, null, null, h.altFt(), ev, false);
+        return Alert.of(id, "OBSERVED", h.hex(), a.callsign(), z.head(), now, null, null, h.altFt(), ev, false);
     }
 
     /** 이탈 근거. 경보 만료·철회는 이탈 판정 전에 SIGMET_ENDED 로 닫히므로 여기에 오는 것은 실제 바깥 관측뿐이다. */
@@ -379,7 +409,7 @@ public final class AlertStateMachine {
     private static Map<String, Object> endedEvidence(Track t, Ended end, Instant now) {
         Map<String, Object> ev = new LinkedHashMap<>();
         ev.put("end_cause", end.cause());
-        SigmetRecord s = end.sigmet() != null ? end.sigmet() : t.sigmet;
+        Zone s = end.zone() != null ? end.zone() : t.zone;
         if (s != null) ev.put("sigmet_valid_to", s.validTo().toString());
         if (!END_EXPIRED.equals(end.cause()) && end.at() != null) ev.put("sigmet_set_fetched_at", end.at().toString());
         ev.put("last_seen_at", t.lastSeenAt == null ? null : t.lastSeenAt.toString());
@@ -398,13 +428,13 @@ public final class AlertStateMachine {
     }
 
     private static Alert predictedAlert(long id, IntersectionEngine.Prediction p, AircraftState a, Instant createdAt, Instant now) {
-        SigmetRecord s = p.sigmet();
+        Zone z = p.zone();
         Map<String, Object> ev = new LinkedHashMap<>();
         ev.put("polygon_index", p.polygonIndex());
-        putBand(ev, s);
+        z.putBand(ev);
         ev.put("alt_ft_at_entry", p.altAtEntry());
-        ev.put("valid_from", s.validFrom().toString());
-        ev.put("valid_to", s.validTo().toString());
+        z.putJudgement(ev, p.altAtEntry());
+        z.putValidity(ev);
         ev.put("method", "dead_reckoning_10min");
         ev.put("entry", p.entry());
         ev.put("distance_nm", p.distanceNm());
@@ -419,7 +449,6 @@ public final class AlertStateMachine {
         if (p.vrateAssumedZero()) ev.put("vrate_assumed_zero", true);
         ev.put("position_age_s", p.positionAgeS());
         ev.put("judged_at", now.toString());
-        return new Alert(id, "PREDICTED", p.hex(), a == null ? null : a.callsign(), s.id(), s.firId(), s.hazard(), s.qualifier(),
-                createdAt, null, null, p.etaS(), p.etaAt(), p.altAtEntry(), ev, true);
+        return Alert.of(id, "PREDICTED", p.hex(), a == null ? null : a.callsign(), z.head(), createdAt, p.etaS(), p.etaAt(), p.altAtEntry(), ev, true);
     }
 }

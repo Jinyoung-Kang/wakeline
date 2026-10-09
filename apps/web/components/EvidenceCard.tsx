@@ -1,7 +1,8 @@
 "use client";
 import type { Alert } from "@/lib/types";
 import { band, fmtAltDual, fmtEta, fmtGsDual, fmtNum, hazardColor } from "@/lib/format";
-import { alertListState, closeReasonLabel, etaRemainingS, evidenceBand, evidenceBandSource } from "@/lib/alerts";
+import { alertListState, alertZone, closeReasonLabel, etaRemainingS, evidenceBand, evidenceBandSource } from "@/lib/alerts";
+import { bandText } from "@/lib/airspace";
 import { useServerData } from "@/lib/store";
 import { useRxFresh, useServerNow } from "@/lib/clock";
 import { KstRange, KstTime } from "./KstTime";
@@ -26,7 +27,17 @@ export function EvidenceCard({ a }: { a: Alert }) {
   const distance = num(ev.distance_nm);
   const posAge = num(ev.position_age_s);
   const eta = !live ? null : now ? etaRemainingS(a, now) : a.eta_s ?? null;
-  const rows: [string, React.ReactNode][] = [
+  const as = a.zone_type === "airspace" ? a.airspace ?? null : null;
+  // 공역 알림(계약 v5 §G48): 구역 · 수준 · 고도 범위(기준 그대로) · 기준 차수. SIGMET 알림은 예전 행 그대로
+  const rows: [string, React.ReactNode][] = as ? [
+    ["공역", `${as.type_ko} · ${as.label}${as.name !== as.label ? ` ${as.name}` : ""}`],
+    ["수준", a.level === "info" ? "정보(목록 · 카드에만 — 배너 없음)" : "알림"],
+    ["고도 범위", as.lower && as.upper ? bandText({ ft: as.lower.ft ?? null, basis: as.lower.basis, raw: as.lower.raw }, { ft: as.upper.ft ?? null, basis: as.upper.basis, raw: as.upper.raw }).text : "—"],
+    [a.kind === "PREDICTED" ? "진입 시 고도(추정)" : "항공기 고도", <span key="alt" className="mono">{fmtAltDual(a.alt_ft)}</span>],
+    ["기준 차수", `${str(ev.edition) ?? as.edition} · 국토교통부`],
+    ["판정 시각", <KstTime key="j" v={str(ev.judged_at)} />],
+    ["방법", str(ev.method) ?? "—"],
+  ] : [
     ["경보", `${a.fir_id} · ${a.hazard}${a.qualifier ? ` ${a.qualifier}` : ""}`],
     ["SIGMET id", <span key="id" className="mono text-fg-2">{a.sigmet_id}</span>],
     ["고도대", bandFt ? band(bandFt.base, bandFt.top, src, { metric: true }) : "—"],
@@ -45,15 +56,21 @@ export function EvidenceCard({ a }: { a: Alert }) {
     rows.push(["출처 / 관측", <span key="seen">{str(ev.provider) ?? "—"} · <KstTime v={str(ev.seen_at)} /></span>]);
   }
   if (posAge != null) rows.push(["판정 시 위치 경과", `${fmtNum(posAge, " s", 0)}`]);
-  if (a.left_at) rows.push(["종료", <span key="left"><KstTime v={a.left_at} /> · {closeReasonLabel(a.close_reason)}</span>]);
+  if (a.left_at) rows.push(["종료", <span key="left"><KstTime v={a.left_at} /> · {closeReasonLabel(a.close_reason)}
+    {ev.end_cause === "edition_replaced" ? " · 새 차수에 없음" : ev.end_cause === "judging_off" ? " · 공역 판정을 끔" : ""}</span>]);
   const assumptions: string[] = [];
-  if (src?.base_source === "assumed_surface") assumptions.push("하한 미발표 → 지상(SFC)부터로 가정");
-  if (bandFt && (bandFt.top == null || src?.top_source === "unknown")) assumptions.push("상한 미발표 → 무제한으로 가정");
+  if (as) {
+    assumptions.push("기압고도(표준 기압)를 해면 고도로 봄 — QNH 보정 없음");
+    if (ev.altitude_uncertain === true) assumptions.push("고도 경계 근처(500 ft 안) — 판정 불확실");
+  } else {
+    if (src?.base_source === "assumed_surface") assumptions.push("하한 미발표 → 지상(SFC)부터로 가정");
+    if (bandFt && (bandFt.top == null || src?.top_source === "unknown")) assumptions.push("상한 미발표 → 무제한으로 가정");
+  }
   return (
     <div className="border border-line bg-bg px-2 py-1 text-[11px]" data-testid="evidence">
       <div className="mb-1 flex items-center gap-2">
-        <span className="inline-block h-2 w-2" style={{ background: hazardColor(a.hazard) }} />
-        <span className="label">{a.kind === "PREDICTED" ? "예상 진입 · 추정" : "관측 · 경보 안"}</span>
+        <span className="inline-block h-2 w-2" style={{ background: as ? alertZone(a).color : hazardColor(a.hazard) }} />
+        <span className="label">{a.kind === "PREDICTED" ? "예상 진입 · 추정" : as ? "관측 · 공역 안" : "관측 · 경보 안"}</span>
         {a.estimated ? <span className="badge est">추정</span> : <span className="badge ok">관측</span>}
       </div>
       {rows.map(([k, v]) => (

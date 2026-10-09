@@ -10,7 +10,7 @@ const ANNOTATIONS = new Set(["$schema", "$id", "title", "description", "$comment
 const KNOWN = new Set([
   "type", "required", "properties", "additionalProperties", "oneOf", "anyOf", "allOf", "$ref", "const", "enum",
   "minItems", "maxItems", "prefixItems", "items", "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum",
-  "pattern", "minLength", "maxLength", "minProperties", "format",
+  "pattern", "minLength", "maxLength", "minProperties", "format", "if", "then", "else", "not",
 ]);
 const RFC3339 = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(\.\d+)?(Z|[+-](\d{2}):(\d{2}))$/;
 /** RFC 3339 date-time + 달력에 있는 날짜 · 시각(Python datetime.fromisoformat 과 같게 — 2월 30일 · 24시 · 60초는 틀림). Date.parse 는 2월 30일을 받는다 */
@@ -61,6 +61,13 @@ export function validate(root: Record<string, unknown>, value: unknown, schema: 
   if (Array.isArray(s.enum) && !s.enum.some((e) => deepEqual(e, value))) errs.push(`${at}: ${JSON.stringify(value)} not in enum`);
   if (Array.isArray(s.allOf)) for (const sub of s.allOf as Schema[]) errs.push(...validate(root, value, sub, path));
   if (Array.isArray(s.anyOf) && !(s.anyOf as Schema[]).some((sub) => validate(root, value, sub, path).length === 0)) errs.push(`${at}: matches no anyOf branch`);
+  // if/then/else(계약 v5 §G48 — 알림의 구역 규칙) · not
+  if (s.if !== undefined) {
+    const ok = validate(root, value, s.if as Schema, path).length === 0;
+    const branch = ok ? s.then : s.else;
+    if (branch !== undefined) errs.push(...validate(root, value, branch as Schema, path));
+  }
+  if (s.not !== undefined && validate(root, value, s.not as Schema, path).length === 0) errs.push(`${at}: matches a forbidden (not) schema`);
   if (Array.isArray(s.oneOf)) {
     const ok = (s.oneOf as Schema[]).filter((sub) => validate(root, value, sub, path).length === 0).length;
     if (ok !== 1) errs.push(`${at}: matches ${ok} oneOf branches (exactly 1 required)`);

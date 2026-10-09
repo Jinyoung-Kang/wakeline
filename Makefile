@@ -6,6 +6,11 @@ COMPOSE := docker compose -f infra/compose.yml --env-file .env
 # 개발 전용 EXTRA_ALLOWED_ORIGINS(`next dev` opt-in)도 비운다 — 격리 스택의 허용 Origin 은 게시 포트(8701)뿐이다.
 ISO_ENV := WAKELINE_FIXTURE_MODE=1 WAKELINE_PORT=8701 WAKELINE_NET_PREFIX=10.78.0 aisstream_key= OPENSKY_CLIENT_ID= OPENSKY_CLIENT_SECRET= KMA_APIHUB_KEY= DATA_GO_KR_SERVICE_KEY= EXTRA_ALLOWED_ORIGINS=
 ISO := $(ISO_ENV) docker compose -p wakeline-e2e -f infra/compose.yml --env-file .env
+# 격리 스택은 합성 공역(가짜 자료 — 실제 AIP 도형이 아니다 · ADR-034)을 가져온다: E2E · 설명서 그림이 공역 레이어 · 판정을 보게
+# 가져온 뒤 api 가 새 차수를 읽을 때까지(60 s 주기 — 최대 90 s) 기다린다: 기다리지 않으면 먼저 도는 시험이 '공역 자료 없음'을 받는다(VERIFICATION #118)
+# (한 덩어리의 부속 셸 — e2e 레시피의 if/elif 안에서 쓰여 exit 가 레시피를 끝내지 않게)
+AIRSPACE_FIXTURE_IMPORT := ( $(ISO) exec -T collector python -m wakeline_collector.tools.airspace_import --edition "합성 시험 공역 1차" < apps/collector/tests/fixtures/airspace/synthetic.kml >/dev/null \
+  && for i in $$(seq 1 45); do curl -fsS -H 'Accept: application/geo+json' http://localhost:8701/api/v1/airspace | grep -q '"label":"합성 시험 공역 1차"' && exit 0; sleep 2; done; echo "api 가 합성 공역을 90 s 안에 읽지 않았다" >&2; exit 1 )
 # 부하 시험 도구 — 버전+다이제스트 고정(latest 가 바뀌어 내부망에 붙는 도구가 조용히 달라지지 않게). Dependabot 대상 아님: 올릴 때 여기서 함께 바꾼다.
 K6_IMAGE := grafana/k6:2.3.0@sha256:9c2dee7f8ed74d317e4027c06a10f169b625638189de8d4555d0b3486a5aeb34
 # 개발 스택의 api 주소·네트워크(compose 의 고정 IP) 와 WS Origin(api 의 허용 목록 WAKELINE_ALLOWED_ORIGINS 에 있는 값)
@@ -13,7 +18,7 @@ NET_PREFIX := $(or $(WAKELINE_NET_PREFIX),10.77.0)
 BENCH_API := http://$(NET_PREFIX).30:8000
 BENCH_ORIGIN ?= http://localhost:$(or $(WAKELINE_PORT),8700)
 
-.PHONY: help init up down ps logs build ops-user test test-api test-collector test-collector-db test-web test-infra infra-docker-test security contract contract-rest ws-samples readme-images e2e demo demo-down bench bench-edge measure-ais db-superuser-local-only backup restore rotate-db-passwords fixtures clean
+.PHONY: help init up down ps logs build airspace-import ops-user test test-api test-collector test-collector-db test-web test-infra infra-docker-test security contract contract-rest ws-samples readme-images e2e demo demo-down bench bench-edge measure-ais db-superuser-local-only backup restore rotate-db-passwords fixtures clean
 
 help: ## 명령 목록
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
@@ -42,6 +47,11 @@ build: init ## 이미지만 빌드
 
 # 비밀번호는 명령행(argv — ps 로 누구나 볼 수 있다)이나 환경변수로 넘기지 않고 stdin 한 줄로 넘긴다(계약 §7, SEC-13).
 # printf 는 bash 내장이라 별도 프로세스의 argv 에도 남지 않는다.
+airspace-import: init ## 공역 자료 가져오기(make airspace-import f=<KMZ·KML 경로> [edition="AIP 25년 5차"]) — 파일은 표준 입력으로만. 국토교통부 저작물: 저장소에 넣지 않는다(ADR-034)
+	@test -n "$(f)" || { echo 'f=<KMZ 또는 KML 경로> 가 필요하다 — 예: make airspace-import f=~/Downloads/공역.kmz edition="AIP 25년 5차"' >&2; exit 2; }
+	@test -f "$(f)" || { echo "파일이 없다: $(f)" >&2; exit 2; }
+	$(COMPOSE) exec -T collector python -m wakeline_collector.tools.airspace_import $(if $(edition),--edition "$(edition)") < "$(f)"
+
 ops-user: init ## 운영자 계정 생성/갱신 (make ops-user u=admin) — 비밀번호는 프롬프트(12자 이상, 화면에 표시 안 됨)
 	@u='$(or $(u),admin)'; \
 	if ! [[ "$$u" =~ ^[A-Za-z0-9_.-]{1,64}$$ ]]; then echo "사용자 이름은 영문·숫자·_ . - 1~64자여야 합니다"; exit 2; fi; \
@@ -107,6 +117,8 @@ e2e: init ## 격리된 fixture 스택(8701)에서 Playwright E2E → 끝나면 �
 	@rc=0; \
 	if ! $(ISO) up -d --build --wait; then \
 	  echo "격리 스택 기동 실패 — 상태·로그:"; $(ISO) ps -a; $(ISO) logs --no-color --tail=150; rc=1; \
+	elif ! $(AIRSPACE_FIXTURE_IMPORT); then \
+	  echo "합성 공역 가져오기 실패"; $(ISO) logs --no-color --tail=50 collector; rc=1; \
 	else \
 	  (cd apps/web && E2E_BASE_URL=http://localhost:8701 npx playwright test) || rc=$$?; \
 	  if [ $$rc -ne 0 ]; then $(ISO) ps -a; $(ISO) logs --no-color --tail=150; fi; \
@@ -116,6 +128,7 @@ e2e: init ## 격리된 fixture 스택(8701)에서 Playwright E2E → 끝나면 �
 
 demo: init ## 외부 호출 없는 fixture 데모 스택 → http://localhost:8701 (make demo-down 으로 삭제)
 	$(ISO) up -d --build --wait
+	$(AIRSPACE_FIXTURE_IMPORT)
 	@echo "demo (fixture) → http://localhost:8701"
 
 demo-down: init ## 데모 스택·볼륨 삭제

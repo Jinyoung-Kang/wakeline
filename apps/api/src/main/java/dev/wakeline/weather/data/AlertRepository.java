@@ -1,6 +1,7 @@
 package dev.wakeline.weather.data;
 
 import dev.wakeline.weather.core.Alert;
+import dev.wakeline.weather.core.Zone;
 import dev.wakeline.weather.core.AlertStateMachine;
 import dev.wakeline.weather.core.EngineEvents;
 import dev.wakeline.weather.core.SigmetStore;
@@ -26,6 +27,8 @@ import java.util.Map;
  *   <li>ENTERED/PREDICTED: SIGMET 행 존재만 보장(FK) 후 INSERT. PREDICTION_UPDATED: eta·진입 고도·근거 갱신.
  *       LEFT/LOST/SIGMET_ENDED/PREDICTION_CLEARED: left_at·close_reason·닫힘 근거 기록.</li>
  *   <li>id 로 찾는 UPDATE 는 자연키(hex, sigmet_id, kind)도 함께 맞춘다 — id 가 다른 행을 가리키면(이전 형식 id 충돌) 건드리지 않는다.</li>
+ *   <li>공역 알림(ADR-035 · V19): sigmet_id 대신 airspace_id · zone_type 'airspace' · level. 자연키는 (hex, airspace_id, kind[, entered_at]),
+ *       ZONE_ENDED 는 닫힘(zone_ended). SIGMET 알림의 문장은 그대로다.</li>
  * </ul>
  */
 @org.springframework.context.annotation.Profile("!cli & !migrate")
@@ -71,6 +74,10 @@ public class AlertRepository {
     long idFloor() { return idFloor; }
 
     void persist(AlertStateMachine.Event ev) {
+        if (ev.alert().zoneType() != null && !Zone.SIGMET.equals(ev.alert().zoneType())) {
+            persistZone(ev);
+            return;
+        }
         Alert a = ev.alert();
         int n;
         switch (ev.type()) {
@@ -98,11 +105,47 @@ public class AlertRepository {
                     .param("id", a.id()).param("hex", a.hex()).param("sig", a.sigmetId()).param("kind", a.kind()).update();
             default -> n = 1;
         }
+        unmatched(ev, n);
+    }
+
+    private void unmatched(AlertStateMachine.Event ev, int n) {
         if (n == 0) {
             // INSERT 충돌(같은 자연키·진입 시각) 또는 짝이 되는 INSERT 가 없음(버려짐·이전 실행) — 조용히 넘기지 않고 센다
             meters.counter("wakeline_alert_persist_unmatched_total", "event", ev.type().name()).increment();
-            log.debug("alert {} {} matched no row (id={})", ev.type(), a.hex(), a.id());
+            log.debug("alert {} {} matched no row (id={})", ev.type(), ev.alert().hex(), ev.alert().id());
         }
+    }
+
+    /** 공역 알림(V19): airspace_id 가 공역 행(V18)을 가리킨다 — 옛 차수의 행도 지우지 않으므로 FK 는 늘 맞는다. */
+    private void persistZone(AlertStateMachine.Event ev) {
+        Alert a = ev.alert();
+        Object aid = a.airspace() == null ? null : a.airspace().get("id");
+        if (!(aid instanceof Number id)) {
+            meters.counter("wakeline_alert_persist_unmatched_total", "event", ev.type().name()).increment();
+            log.warn("zone alert without airspace id — not stored (id={}, zone_type={})", a.id(), a.zoneType());
+            return;
+        }
+        int n = switch (ev.type()) {
+            case ENTERED, PREDICTED -> db.sql("""
+                    INSERT INTO alert_event (id, hex, callsign, sigmet_id, kind, entered_at, eta_s, alt_ft_at_entry, evidence, zone_type, level, airspace_id)
+                    VALUES (:id, :hex, :cs, NULL, :kind, :at, :eta, :alt, :ev::jsonb, :zt, :lv, :aid)
+                    ON CONFLICT (hex, airspace_id, kind, entered_at) WHERE airspace_id IS NOT NULL DO NOTHING""")
+                    .param("id", a.id()).param("hex", a.hex()).param("cs", a.callsign()).param("kind", a.kind()).param("at", Sql.ts(a.enteredAt()))
+                    .param("eta", a.etaS()).param("alt", a.altFt()).param("ev", json.writeValueAsString(a.evidence())).param("zt", a.zoneType())
+                    .param("lv", a.level() == null ? Zone.LEVEL_ALERT : a.level()).param("aid", id.longValue()).update();
+            case PREDICTION_UPDATED -> db.sql("""
+                    UPDATE alert_event SET eta_s = :eta, alt_ft_at_entry = :alt, evidence = :ev::jsonb
+                    WHERE id = :id AND hex = :hex AND airspace_id = :aid AND kind = :kind AND left_at IS NULL""")
+                    .param("eta", a.etaS()).param("alt", a.altFt()).param("ev", json.writeValueAsString(a.evidence()))
+                    .param("id", a.id()).param("hex", a.hex()).param("aid", id.longValue()).param("kind", a.kind()).update();
+            case LEFT, LOST, ZONE_ENDED, PREDICTION_CLEARED, SIGMET_ENDED -> db.sql("""
+                    UPDATE alert_event SET left_at = :left, close_reason = :reason, evidence = :ev::jsonb
+                    WHERE id = :id AND hex = :hex AND airspace_id = :aid AND kind = :kind AND left_at IS NULL""")
+                    .param("left", Sql.ts(a.leftAt() == null ? Instant.now() : a.leftAt())).param("reason", closeReason(ev))
+                    .param("ev", json.writeValueAsString(a.evidence()))
+                    .param("id", a.id()).param("hex", a.hex()).param("aid", id.longValue()).param("kind", a.kind()).update();
+        };
+        unmatched(ev, n);
     }
 
     /** 닫힘 이유: 엔진이 정한 값, 없으면 이벤트 종류로(LEFT→left, LOST→signal_lost, SIGMET_ENDED→sigmet_ended, CLEARED→prediction_cleared). */
@@ -111,6 +154,7 @@ public class AlertRepository {
         return switch (ev.type()) {
             case LOST -> Alert.CLOSE_SIGNAL_LOST;
             case SIGMET_ENDED -> Alert.CLOSE_SIGMET_ENDED;
+            case ZONE_ENDED -> Alert.CLOSE_ZONE_ENDED;
             case PREDICTION_CLEARED -> Alert.CLOSE_PREDICTION_CLEARED;
             default -> Alert.CLOSE_LEFT;
         };
@@ -131,13 +175,21 @@ public class AlertRepository {
      */
     public Page history(Instant from, Instant to, String hex, Long cursor, int limit) {
         var q = Sql.publicRead(db, "alerts.history", """
-                SELECT e.id, e.hex, e.callsign, e.sigmet_id, s.fir_id, s.hazard, s.qualifier, e.kind, e.entered_at, e.left_at, e.close_reason, e.eta_s,
-                       CASE WHEN e.kind = 'PREDICTED' AND e.eta_s IS NOT NULL AND e.evidence->>'entry' IS NOT NULL AND e.evidence->>'judged_at' IS NOT NULL
-                            THEN (e.evidence->>'judged_at')::timestamptz + make_interval(secs => e.eta_s) END eta_at,
-                       e.alt_ft_at_entry, e.evidence::text evidence
-                FROM alert_event e JOIN sigmet s ON s.id = e.sigmet_id
-                WHERE e.entered_at BETWEEN :from AND :to%s%s
-                ORDER BY e.entered_at DESC, e.id DESC LIMIT :n""".formatted(
+                SELECT p.id, p.hex, p.callsign, p.sigmet_id, p.fir_id, p.hazard, p.qualifier, p.kind, p.entered_at, p.left_at, p.close_reason, p.eta_s,
+                       p.eta_at, p.alt_ft_at_entry, p.evidence, p.zone_type, p.level,
+                       a.id airspace_id, a.category airspace_category, a.type_ko airspace_type_ko, a.ident airspace_ident, a.name airspace_name,
+                       ed.label airspace_edition
+                FROM (
+                  SELECT e.id, e.hex, e.callsign, e.sigmet_id, s.fir_id, s.hazard, s.qualifier, e.kind, e.entered_at, e.left_at, e.close_reason, e.eta_s,
+                         CASE WHEN e.kind = 'PREDICTED' AND e.eta_s IS NOT NULL AND e.evidence->>'entry' IS NOT NULL AND e.evidence->>'judged_at' IS NOT NULL
+                              THEN (e.evidence->>'judged_at')::timestamptz + make_interval(secs => e.eta_s) END eta_at,
+                         e.alt_ft_at_entry, e.evidence::text evidence, e.zone_type, e.level, e.airspace_id airspace_ref
+                  FROM alert_event e LEFT JOIN sigmet s ON s.id = e.sigmet_id
+                  WHERE e.entered_at BETWEEN :from AND :to%s%s
+                  ORDER BY e.entered_at DESC, e.id DESC LIMIT :n) p
+                -- 공역 속성은 쪽을 자른 뒤에 붙인다(V19): 바깥에서 함께 조인하면 플래너가 해시 조인 + 정렬을 골라 창의 행을 모두 읽었다(Qa401 — hex 창 94행)
+                LEFT JOIN airspace a ON a.id = p.airspace_ref LEFT JOIN airspace_edition ed ON ed.id = a.edition_id
+                ORDER BY p.entered_at DESC, p.id DESC""".formatted(
                         hex == null ? "" : " AND e.hex = :hex::bpchar",
                         cursor == null ? "" : " AND (e.entered_at, e.id) < ((SELECT c.entered_at FROM alert_event c WHERE c.id = :cursor), :cursor)"))
                 .param("from", Sql.ts(from)).param("to", Sql.ts(to)).param("n", limit + 1);
@@ -149,9 +201,37 @@ public class AlertRepository {
             m.put("evidence", ev == null ? null : json.readTree(ev.toString()));
             for (String k : List.of("entered_at", "left_at", "eta_at")) m.put(k, Sql.toInstant(m.get(k)));
             m.put("estimated", "PREDICTED".equals(m.get("kind")));
+            zoneFields(m);
             return (Map<String, Object>) m;
         }).toList();
         Long next = rows.size() > limit ? ((Number) rows.get(limit - 1).get("id")).longValue() : null;
         return new Page(rows.size() > limit ? rows.subList(0, limit) : rows, next);
+    }
+
+    /**
+     * 구역 필드(계약 v5 §G48): SIGMET 행은 예전 모양 그대로(구역 필드 없음). 공역 행은 zone_type · level · airspace{id, category, type_ko, ident, name,
+     * label, edition}(실시간 알림의 airspace 와 같은 이름 — 고도 한계는 근거 lower · upper 에 있다).
+     */
+    static void zoneFields(Map<String, Object> m) {
+        Object zt = m.remove("zone_type");
+        Object lv = m.remove("level");
+        Object aid = m.remove("airspace_id");
+        m.remove("airspace_ref");
+        Map<String, Object> as = new java.util.LinkedHashMap<>();
+        for (String k : List.of("category", "type_ko", "ident", "name")) {
+            Object v = m.remove("airspace_" + k);
+            if (v != null) as.put(k, v);
+        }
+        Object ed = m.remove("airspace_edition");
+        if (zt == null || Zone.SIGMET.equals(zt)) return;
+        m.put("zone_type", zt);
+        m.put("level", lv);
+        if (aid != null) {
+            as.put("id", ((Number) aid).longValue());
+            Object ident = as.get("ident");
+            as.put("label", ident != null ? ident : as.get("name"));
+            if (ed != null) as.put("edition", ed);
+            m.put("airspace", as);
+        }
     }
 }

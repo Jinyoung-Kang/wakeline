@@ -210,6 +210,7 @@ export function AircraftCard({ hex }: { hex: string }) {
           <div key={k} className="flex justify-between gap-2 border-b border-line py-1"><span className="shrink-0 text-fg-3">{k}</span><span className="text-right">{val}</span></div>
         ))}
         <RouteSection route={route} pos={s ? { lat: s.lat, lon: s.lon } : null} callsign={s?.callsign ?? null} pendingForS={routePendingForS} />
+        {d?.inside_airspace ? <AirspaceRow v={d.inside_airspace} /> : null}
         {activeAlerts.length ? (
           <div className="mt-2 space-y-1">
             <div className="label">Active alerts</div>
@@ -218,6 +219,26 @@ export function AircraftCard({ hex }: { hex: string }) {
         ) : <div className="mt-2 text-[11px] text-fg-3">활성 알림 없음</div>}
         <div className="mt-2 text-[10px] text-fg-3">항적 선은 DB 기록(최근 2 h)에 실시간 관측을 이어 붙인 것입니다. 선택한 동안은 서버 수집기가 이 항공기를 따로 조회하므로(집중 추적) 위 칩에 보이는 서버 보고 주기로 점이 촘촘해집니다. 점선 궤적은 서버가 예측 가능하다고 판단할 때만 그리는 10분 dead reckoning 추정입니다.</div>
       </div>
+    </div>
+  );
+}
+
+const VERTICAL_TEXT = { inside: "고도대 안", not_judged: "고도 판정 안 함(지면 기준 — 수평만)", unknown: "항공기 고도 모름 — 수평만" } as const;
+
+/**
+ * 들어 있는 공역(SPEC F2-4 · 계약 v5 §G48) — 서버가 상세 요청 때 위치로 계산한 것(알림 사건이 아니다 · 공역 판정 모드와 무관). 기준 차수를 함께 적는다.
+ * 위험구역(상한이 지면 기준)은 수평만 본 것이라 그렇다고 적는다. 공역 자료가 없으면(키 없음) 이 줄을 보이지 않는다.
+ */
+export function AirspaceRow({ v }: { v: NonNullable<import("@/lib/endpoints/aircraft").AircraftDetail["inside_airspace"]> }) {
+  return (
+    <div className="mt-2 text-[11px]" data-testid="aircraft-airspace">
+      <div className="label">Airspace <span className="normal-case text-fg-3">· {v.edition} 기준 · 국토교통부</span></div>
+      {v.items.length === 0 ? <div className="text-fg-3">들어 있는 금지 · 제한 · 위험구역 없음</div> : v.items.map((i) => (
+        <div key={i.id} className="flex justify-between gap-2 border-b border-line py-0.5" data-testid="aircraft-airspace-item">
+          <span className="shrink-0">{i.label} <span className="text-fg-3">{i.type_ko}{i.level === "info" ? " · 정보" : ""}</span></span>
+          <span className={`text-right ${i.vertical === "inside" ? "" : "text-warn"}`}>{VERTICAL_TEXT[i.vertical]}</span>
+        </div>
+      ))}
     </div>
   );
 }

@@ -15,17 +15,22 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 
-/** SIGMET 폴리곤 R-tree(JTS STRtree, 질의 전용). SIGMET 갱신 시에만 재구축하고 질의는 스레드 안전하다(10.2절). */
-public final class SigmetIndex {
-    public record Item(SigmetRecord sigmet, int polygonIndex, Polygon polygon, PreparedGeometry prepared) {}
+/**
+ * 판정 구역 다각형 R-tree(JTS STRtree, 질의 전용). 구역이 바뀔 때에만 재구축하고 질의는 스레드 안전하다(10.2절). 구역은 {@link Zone} — SIGMET · 공역(ADR-035).
+ */
+public final class ZoneIndex {
+    public record Item(Zone zone, int polygonIndex, Polygon polygon, PreparedGeometry prepared) {
+        /** SIGMET 구역이면 그 경보, 아니면 null. */
+        public SigmetRecord sigmet() { return zone instanceof SigmetRecord s ? s : null; }
+    }
 
     private final STRtree tree = new STRtree();
     private final int size;
     private final Instant builtAt;
 
-    public SigmetIndex(Collection<SigmetRecord> sigmets, Instant now) {
+    public ZoneIndex(Collection<? extends Zone> zones, Instant now) {
         int n = 0;
-        for (SigmetRecord s : sigmets) {
+        for (Zone s : zones) {
             if (s.geometry() == null || !s.validTo().isAfter(now)) continue;
             for (int i = 0; i < s.geometry().getNumGeometries(); i++) {
                 Polygon p = (Polygon) s.geometry().getGeometryN(i);

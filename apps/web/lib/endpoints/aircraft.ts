@@ -14,6 +14,11 @@ export interface AircraftDetail {
   static: { registration?: string | null; type_code?: string | null; category?: string | null; first_seen?: string | null; last_seen?: string | null } | null;
   active_alerts?: Alert[];
   inside_sigmets?: string[];
+  /** 들어 있는 공역(계약 v5 §G48 — 요청 때 계산). 공역 자료가 없거나 실시간 위치가 없으면 없음(모름) */
+  inside_airspace?: {
+    edition: string;
+    items: { id: number; category: string; type_ko: string; label: string; name: string; level?: "alert" | "info"; vertical: "inside" | "not_judged" | "unknown" }[];
+  };
   emergency?: boolean;
   meta?: { provider?: string | null; fetched_at?: string | null; lag_s?: number | null; stale?: boolean; db_unavailable?: boolean };
   /** 계약 v4 §A — 검증 전 값(parseRoute) */

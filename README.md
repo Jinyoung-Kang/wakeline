@@ -15,11 +15,11 @@
 |---|---|
 | **역할** | 1인 기획·설계·구현·검증(수집기 · API/WS/공간 엔진 · 화면 · 인프라 · 성능·장애 시험) |
 | **스택** | nginx · Next.js 16 / React 19 / MapLibre GL 6 · Spring Boot 4.1(Java 25, 가상 스레드, JTS) · Python 3.13(asyncio, httpx, websockets, shapely) · PostgreSQL 18 + PostGIS 3.6 · Redis 8 Streams · Docker Compose |
-| **구성** | 상시 컨테이너 7개(edge · web · api · collector · ais · redis · db) + 일회성 migrate(Flyway V1–V17) |
+| **구성** | 상시 컨테이너 7개(edge · web · api · collector · ais · redis · db) + 일회성 migrate(Flyway V1–V19) |
 | **데이터** | 항공기 adsb.lol · adsb.fi · OpenSky · 노선 adsbdb(선택 시만, 저장 안 함) / 선박 aisstream.io · 항구 UN/LOCODE · 한국 항만 입출항 해양수산부 PORT-MIS(공공데이터포털, 수집기가 항만청 10곳을 날짜별로 색인) · 연안 교통량 한국해양교통안전공단 실시간 해양교통정보 + 해양수산부 해양격자 4단계(공공데이터포털) / 기상 AviationWeather.gov · RainViewer · 기상청 API허브 레이더(HSR) / 지도 OpenFreeMap |
 | **검증** | 자동 시험 5,435건(pytest 1,923 · collector 실 Redis 16 · 실 PostgreSQL 7 · JUnit 1,135 · Vitest 1,698 · Playwright E2E 43 · 인프라 정책 157 · 버리는 컨테이너 시험 456 — 2026-10-02 QA 2026-10 브랜치에서 모두 실행) · **QA 2026-10**(출시 기준 검증 — 결함 32건 중 29건 수정, [보고](docs/qa/2026-10/REPORT.md)) · **CTO 리뷰 2026-10**(보안 · 데이터 손실 · 구조 · 측정한 성능 — [PLAN](docs/review/cto-2026-10/PLAN.md) · ADR-028–030 · 독립 리뷰 2회) · 적대적 리뷰 2회(97건 · 19건 수정) · **리뷰 v1**(기준선 측정 → 진단 98건(고유 97 + 3단계 추가 R-98) → 승인 85 · 보류 13 → 수정(R-63 은 2026-09-30 직접 빌드한 db 이미지로 해결(ADR-004 개정), 일부는 부분 처리 — review §5.2) · 2차 검토 35건 · 문서 사실 확인 2회 → 재측정, [review](docs/review/VERIFICATION.md)) · 장애 주입 6종 · 실측 문제 기록 104건([VERIFICATION](docs/VERIFICATION.md)) |
 | **성능(실측)** | 운영 규모 합성 자료(DB 8.8 GB · 전세계 항공기 1만 · 선박 1.5만 척)에서 REST 100 rps 경로 16개 p95 4.4–89 ms(목표 300) · WS 200 연결 지연 p95 230 ms(목표 500) · api 컨테이너 메모리 최대 750.5 MiB(NFR-03 ≤ 768 MiB — [ADR-031](docs/adr/ADR-031-api-memory-target.md)) · 첫 화면 JS 547,116 B(예산 550,000 B, gzip 본문 · 웹 이미지의 Node) · 화면 Core Web Vitals(실제 GPU): 데스크톱 4화면 모두 good, 모바일 지도 화면 TBT 196–233 ms(외부 호스트 차단) — [PERF](docs/PERF.md) §14 · §15 |
-| **설계 기록** | ADR 33건([docs/adr](docs/adr)) · 변경 계약 v1–v5([docs/audit](docs/audit)) |
+| **설계 기록** | ADR 35건([docs/adr](docs/adr)) · 변경 계약 v1–v5([docs/audit](docs/audit)) |
 
 ## 1. 무엇을 하나
 
@@ -28,6 +28,7 @@
 | 항공기 | 관심 지역(한반도 반경 250 NM, 10 s — adsb.fi 1순위 · adsb.lol 폴백, 계약 v5 §G25) · 전세계(OpenSky, 120 s) · **뷰포트 핫 리전**(줌 7 이상이고 관심 지역 밖이면 화면 중심 반경 ≤ 250 NM 을 30 s 마다, 줌 아웃·이동·보는 사람 없으면 60 s 안에 해제) · **선택 항공기 집중 추적**(ICAO 24-bit hex 로 전세계 어디서든 5 s, 세션당 30분 상한) · **출발·도착 공항**(선택한 항공기의 콜사인으로 adsbdb 등록 노선 조회 — 선택할 때만 호출, Redis 캐시 30분, DB 저장 없음, "등록 노선이며 실제 경로와 다를 수 있음" 표기) · 검색 · 항적(공급자별 수신 공백 표시) · 10분 예측(추정) |
 | 위험기상 | SIGMET 폴리곤 + 고도대 + 유효시간으로 구조화 → STRtree 교차 판정 → 히스테리시스 상태기계(진입 2회·이탈 3회) → 관측/예측 알림 근거 카드 · RainViewer / 기상청 HSR 레이더(LCC → 메르카토르 서버 재투영 · 프레임마다 합성 지점 수 "합성 12/15곳" — 일부 지점만 합성된 프레임은 경고와 함께 표시하고 기한까지 다시 받기 대상, '완전'이라고는 하지 않음, ADR-021) · METAR/TAF |
 | 선박 | AIS 실시간(구역별 연결 2개) · 선종별 색 · 선수방위 회전(없으면 침로 점선, 둘 다 없으면 원) · **적응형 표시**(줌 ≥ 7 은 5,000척, 줌 4–7 은 1,500척까지 개별 점 — 넘으면 격자 집계) · 카드(선명·선종·크기·흘수·목적지·ETA — 모두 "보고값") · **목적지 해석**(보고 문자열을 UN/LOCODE 표로 결정적으로 풀이 — `A>B`·`A<>B` 형식, 이름이 겹치면 "모호" 표시, 못 풀면 원문만) · **통합 검색**(상단 한 칸에서 항공기와 함께 — 선명·호출부호 앞부분 · MMSI · IMO, 실시간 + 저장된 선박, 실시간이 아니면 "마지막 수신" 시각) · **선종 필터**(격자 칸도 선종별 수로 다시 셈 — 고른 선박은 필터·표시 상한과 무관하게 항상 표시) · 정렬되는 선박 목록 · 항적 6/12/24 h(점마다 시각·속도) · **수신 공백 기록·표시**(구역 단위) · 수신 범위 경계 · **관측 수신 범위**(레이어 · 기본 끔 — 이 서비스가 최근 24 h 에 실제로 위치를 받은 0.5° 칸과 칸마다 선박 수 · 위치 수 · 마지막 수신, 구독 범위와 구분 · 기동 때 DB 에서 한 번 채우고 창을 다 세지 못했으면 그렇다고 적음, ADR-027) · 선박이 0척이면 이유(범위 밖·공급자 공백·수신 끊김)와, 레이어를 켰으면 이 화면의 관측 수신 칸 수를 표시 · **한국 항만 입출항**(수집기가 해양수산부 PORT-MIS 항만청 10곳의 입출항 신고를 KST 날짜별로 모두 받아 DB 에 색인(최근 30일 · 매시 최근 3일 다시 · 60일 보관) — 선택한 선박의 AIS 호출부호로 색인을 찾을 뿐 선택마다 외부에 묻지 않음, 입항·출항 KST(최종 신고 우선 · 판 표시 · 원천이 날짜인지 자정인지 구분하지 않는 00:00 신고는 날짜만) · 선석 · 목적 · 전출항지 → 차항지, "기록 없음"은 10곳 색인이 창 전체(오늘 목록까지 · 끝까지 색인하지 못한 날 없음) · 2시간 안 갱신일 때만(아니면 항만청별 빈 곳과 그 날짜), 두 선명이 모두 영문이고 다르면 경고, ADR-022 개정) |
+| 공역 | **레이어 "공역"**(기본 끔) — 국토교통부 공역정보 지도자료(AIP 차수 기준 — 운영자가 `make airspace-import` 로 가져옴, 저장소에는 없음): 금지 · 원전 · 안보 · 제한 · 위험구역 등 종류별 색 · 고도 범위와 그 기준(해면 · FL · 지면 기준) · 기준 차수 · 출처. **공역 진입 판정**(SIGMET 과 같은 엔진): 금지 · 원전 · 안보 = 알림, 비행제한 = 정보, 지면 기준(위험구역)은 고도 판정 안 함(카드에 수평만). 기압고도를 해면 고도로 보는 가정과 경계 근처(±500 ft)를 근거에 적는다. 운영 설정 off · shadow(건수만 — 기본) · on(ADR-034 · ADR-035) |
 | 연안 교통량 | **레이어 "연안 교통량(KOMSA)"**(기본 끔) — 한국해양교통안전공단이 5분마다 집계한 해양격자 칸(0.025°, 약 2.2×2.8 km)별 선박 척수를 색으로(개별 선박 위치 아님) · 칸 위치는 해양수산부 해양격자 4단계 WFS 에서 32 km 상자(bbox)째 받아(한 번에 그 안의 칸 모두 — 처음 보는 곳의 칸만 칸마다 한 번) EPSG:5179 를 순수 Python 으로 풀고 0.025° 격자에 맞는지 검사해 DB 에 저장(칸 번호로 짐작하지 않음 — 확인한 칸만 그리고 상태 줄에 "위치 확인 중 N칸", 거듭 실패한 칸은 "위치 조회 실패 N칸". 조회는 시간당 많아야 290번(상자 하나 = 한 번)이고 배가 있는 칸이 바뀌며 새 칸이 나타나 모든 칸이 보이는 때는 적지 않음 — 배포 뒤 첫 시간에 스냅샷 칸의 92 %, 세 시간 뒤 95.8 %가 그려졌다, ADR-023 2026-10-01 개정) · 툴팁(격자 번호 · 척수 · 밀집도 % · 기준 시각 KST) · 자료가 15분 넘게 멈추면(조회가 실패해도 이 브라우저 시계로) 칸을 지우고 "자료 멈춤" · 호출은 자료 시각(regDt) + 관측으로 배운 발행 지연 기준 · 시간당 15회(Redis 시간 창 — 재기동 포함) · 하루 예산 400 · 6,000 · 해양수산부 두 서비스(항만 입출항 · 격자)는 함께 세는 시간 창 시간당 390 — 포털이 하루를 어느 경계로 세어도 한도 안 · ETag 조회(ADR-023) |
 | 이력·운영 | 재생(과거 시각 프레임) · 통계 · 공항 · 운영 화면(공급자 on/off · 수집 이력 · 품질 격리 · 런타임 설정 · 감사 로그 · DLQ) · **시스템 로그**(`/logs` — api · collector · ais · 브라우저의 WARN/ERROR 를 한 화면에: 같은 오류 묶음 · 서비스·수준·기간 필터 · 스택까지 전체 내용 한 번에 복사 · 요청 id 로 화면 오류와 서버 로그 연결 · 비밀값은 싣기 전에 가림) · 운영 PIPELINE 에 스트림 보존 창(잰 값 · 목표 · 예산 트림 — 예산 트림은 손실이 아님) |
 | 시각 | 모든 화면(상황판 · 재생 · 통계 · 공항 · 운영 · 로그 · 출처 · 설명서)이 한국 표준시(KST, +09:00 고정)만 적는다 — 예 `09-29 14:02:54 KST`, 상태 바 · 지도 툴팁은 `14:02 KST`, 표는 머리글 "(KST)" 아래 `09-29 14:02:54`, 마우스를 올리면 연도 · ms 까지(`2026-09-29 14:02:54.000 KST`). 통계 · 격리 수의 날짜는 서버가 KST 날짜로 센다(응답 `day_zone: "Asia/Seoul"`), 공급자 예산은 매일 09:00 KST 에 새로 시작하는 창으로 적는다. 바꾸지 않는 것: METAR · TAF · SIGMET 원문(발표 그대로 — "(원문 · 발표 그대로)" 표기) · API · 저장 · 서버 로그 · 복사한 JSON(UTC ISO). 선박 ETA 는 선원 입력(연도 없음)을 KST 로 바꿔 적는다(계약 v5 §G20 — §G13 의 두 시간대 표시를 대신한다) |
@@ -84,6 +85,8 @@ flowchart LR
 | 한국 항만 입출항은 수집기가 미리 색인하고 선택은 색인을 호출부호로 찾기만 | 배포 뒤 확인: PORT-MIS Info5 의 clsgn(호출부호) 파라미터는 거르지 않는다(명세에는 있다) — 선택마다 호출부호로 묻던 설계는 거의 모든 선박에 틀린 "기록 없음"을 보였다. 이제 항만청 10곳 × KST 날짜 하루씩 모든 쪽을 받아 DB(V15 port_call · port_call_coverage)에 두고, 매시 최근 3일 · 하루 한 번 오래된 날을 다시 받는다(시간당 약 60회 — 해양수산부 시간 창 390 중 격자 조회가 남기는 100 안, 하루 3,000 안). "기록 없음"은 10곳이 모두 30일 창을 오늘까지 덮고, 끝까지 색인하지 못한 날(빈 곳)이 없고, 2시간 안에 갱신됐을 때만 — 한 날의 어긋난 응답은 그 날만 빈 곳으로 두고 색인을 멈추지 않는다. 선택은 외부 호출 · Redis 임대를 만들지 않는다 — 남용 한도가 필요 없다. 선명이 아니라 호출부호로만 찾는다(ADR-022 개정) |
 | 항적 선은 60 s 이상 수신 공백에서만 끊음 | 저장 간격이 60 s 라 더 짧은 공백은 저장점을 없애지 못한다. 그러지 않으면 1분마다 생기는 2–6 s 공백이 항적을 조각낸다 |
 | Redis 장애 동안 선박 위치를 분당 하나씩 모아 복구 뒤 보냄 | DB 는 선박마다 1분에 첫 보고 하나만 저장한다 — 예전에는 최신값 하나만 보내 장애 동안의 분이 빠졌다. 격리 스택 redis 150 s 멈춤: 장애 분의 선박 행 26 → 265 · 255 · 254 · 250(평소 249–284). 상한 100,000(≈ 37분)을 넘은 구간은 공백으로 남긴다(ADR-033) |
+| 공역 자료는 저장소에 넣지 않고 운영자가 가져옴 | 국토교통부 AIP 공역 KMZ 는 저작물이고 저장소는 공개다 — 표준 입력으로 가져와 한 트랜잭션으로 켜고(옛 차수는 남김), 시험 · 데모는 합성 공역만 쓴다. 실제 차수(AIP 25년 5차): 697개 중 건너뜀 0 · 0.9 s(ADR-034) |
+| 공역 진입은 SIGMET 엔진의 두 번째 상태 머신으로, 기본은 그림자 운전 | 같은 판정 규칙을 쓰되 SIGMET 동작은 그대로(동작 불변 리팩터링 · 표본 바이트 같음). 고도 기준이 확실한 금지 · 원전 구역만 알림, 비행제한은 정보, 지면 기준(위험구역)은 판정 안 함. 비행제한 사건 양을 몰라 배포 뒤 shadow(건수만)로 시작(ADR-035) |
 | seen_at 기준을 공급자 서버 시각으로 | 같은 관측이 세 작업에서 0.1 s 씩 다른 점으로 저장됐다(원천 응답 대조). 공급자 시각이 −10 ~ +2 s 밖이면 수신 시각으로 되돌린다 |
 | 컨테이너 PID 1 = docker-init | `docker kill` 은 수동 정지로 기록돼 재시작 정책이 동작하지 않았다(장애 주입에서 발견) |
 
@@ -126,6 +129,13 @@ make ops-user u=admin     # 운영자 계정 생성·비밀번호 변경(프롬�
 | `bash tools/chaos.sh` | 장애 주입 6종(api·collector·redis 강제 종료, db 정지, 공급자 차단, ais 네트워크 단절) |
 | `make logs s=api` · `make down` · `make clean` | 로그 · 중지(데이터 보존) · 볼륨 포함 초기화 |
 | `make backup` · `make restore f=… confirm=wakeline` | PostgreSQL 백업(backups/, 0600) · 빈 새 볼륨에 복원(아래) |
+
+### 공역 자료 가져오기(선택)
+공역 레이어 · 공역 진입 판정은 국토교통부 '공역정보 지도자료'(AIP 차수 기준 KMZ — 국토교통부 누리집에서 받는다)를 씁니다. 국토교통부 저작물이라 이 저장소에는 없습니다 — 받은 파일을 운영자가 가져옵니다(ADR-034):
+```bash
+make airspace-import f="$HOME/Downloads/AIP 25년 5차 기준.kmz" edition="AIP 25년 5차"   # 파일은 표준 입력으로만 들어간다
+```
+새 차수를 다 넣은 뒤 한 번에 켜고 옛 차수는 끕니다(지우지 않음 — 같은 파일을 다시 가져오면 그 차수로 되돌아갑니다). api 는 60 s 안에 새 차수를 읽습니다. `make e2e` · `make demo` 는 합성(가짜) 공역을 가져옵니다.
 
 ### 업그레이드 — V16(일 집계를 KST 날짜로) 을 처음 싣는 배포
 `make up` 은 `migrate` 가 끝날 때까지 이전 api · collector 를 돌려 둡니다. V16 은 일 통계 · 격리 수 표를 KST 날짜 표로 바꾸므로, 그 사이 이전 api 의 집계가 UTC 날 통계와 완료 표식을, 이전 collector 가 UTC 날짜 격리 수를 새 표에 쓸 수 있습니다. 그래서 이번 한 번은 쓰는 쪽을 먼저 멈춥니다(계약 v5 §G20 '배포'):
@@ -174,7 +184,7 @@ make rotate-db-passwords P=wakeline-e2e sync=1   # 격리 스택(데모·E2E)의
 
 ## 6. 저장소 구조
 ```
-apps/api         Spring Boot — dev.wakeline.{platform.*,geo,aircraft·ships·weather.{core,data,web},ingest,ws,ops,settings,status,history,traffic,coverage,demand,route,portcalls,logs}(ADR-028) · Flyway V1–V17 · JUnit/Testcontainers
+apps/api         Spring Boot — dev.wakeline.{platform.*,geo,aircraft·ships·weather·airspace.{core,data,web},ingest,ws,ops,settings,status,history,traffic,coverage,demand,route,portcalls,logs}(ADR-028) · Flyway V1–V19 · JUnit/Testcontainers
 apps/collector   Python — providers · normalize · quality · sigmet_parse · budget · ratelimit · demand · jobs · ais/(수신·대기열·정리·발행·공백)
 apps/web         Next.js — app/(상황판·replay·stats·airports·ops·logs·about·guide) · lib(ws·store·ships·demand·viewport·interpolate) · e2e
 schemas/         aircraft_state · ship_state · ship_static · sigmet · stream_envelope · log_event · ws/(WS 메시지) · vectors/(가림 · 억제 · 선종 순서 — 언어 간 시험 벡터) (계약의 단일 원천)
@@ -219,4 +229,4 @@ cd ../.. && make readme-images                                                  
 ## 9. 데이터 출처·약관
 adsb.lol(ODbL 1.0) · adsb.fi(비상업, 초당 1회 이하) · OpenSky Network(연구·비상업) · aisstream.io(API 키, 재전송 없음) · AviationWeather.gov(미 정부 공개, 자체 상한 분당 20회) ·
 adsbdb.com(노선 — flight route data © David Taylor · Jim Mason, 저작자 허락 없이 복사·게시 금지) · UN/LOCODE(항구 코드 — UNECE, ODC-PDDL) ·
-RainViewer(개인·교육, 줌 ≤ 7) · 기상청 API허브 레이더 합성자료(활용신청) · 공공데이터포털 해양수산부 선박운항정보(PORT-MIS) · 한국해양교통안전공단 MTIS 실시간 해양교통정보 · 해양수산부 해양격자 4단계(활용신청, 서비스 키 하나 `DATA_GO_KR_SERVICE_KEY`) · OpenFreeMap / OpenMapTiles / OpenStreetMap contributors. 화면 하단과 `/about` 에 상시 표기합니다.
+RainViewer(개인·교육, 줌 ≤ 7) · 기상청 API허브 레이더 합성자료(활용신청) · 공공데이터포털 해양수산부 선박운항정보(PORT-MIS) · 한국해양교통안전공단 MTIS 실시간 해양교통정보 · 해양수산부 해양격자 4단계(활용신청, 서비스 키 하나 `DATA_GO_KR_SERVICE_KEY`) · 국토교통부 공역정보 지도자료(AIP 차수 기준 — 저작물: 비상업 표시 · 출처 · 차수 표기, 저장소에 넣지 않음) · OpenFreeMap / OpenMapTiles / OpenStreetMap contributors. 화면 하단과 `/about` 에 상시 표기합니다.

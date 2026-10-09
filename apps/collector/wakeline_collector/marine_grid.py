@@ -23,9 +23,15 @@ from __future__ import annotations
 import functools
 import math
 import re
-import xml.etree.ElementTree as ET  # noqa: S405 — UTF-8 · DOCTYPE·ENTITY 를 먼저 거절하고, 크기 상한을 둔 뒤에만 해석한다(_collection)
+import xml.etree.ElementTree as ET  # noqa: S405 — 형 표기만. 해석은 xml_intake(거절 뒤에만)
 from dataclasses import dataclass
 from typing import Literal
+
+from wakeline_collector.xml_intake import checked_text, parse_text
+from wakeline_collector.xml_intake import child_local as _child_local
+from wakeline_collector.xml_intake import find_local as _find_local
+from wakeline_collector.xml_intake import local as _local
+from wakeline_collector.xml_intake import text_of as _text
 
 # ---- EPSG:5179 정의(EPSG 레지스트리 값) ----
 A = 6_378_137.0
@@ -228,22 +234,6 @@ class WfsResult:
     detail: str | None = None
 
 
-def _local(tag: object) -> str:
-    return tag.rsplit("}", 1)[-1] if isinstance(tag, str) else ""
-
-
-def _text(el: ET.Element | None) -> str:
-    return " ".join("".join(el.itertext()).split()) if el is not None else ""
-
-
-def _find_local(root: ET.Element, name: str) -> list[ET.Element]:
-    return [e for e in root.iter() if _local(e.tag) == name]
-
-
-def _child_local(el: ET.Element, name: str) -> ET.Element | None:
-    return next((c for c in el if _local(c.tag) == name), None)
-
-
 _WS = re.compile(r"\s+")
 
 
@@ -278,28 +268,9 @@ def _pos_list(text: str) -> list[tuple[float, float]]:
 
 
 def _collection(body: bytes, limit: int) -> ET.Element:
-    """본문 → FeatureCollection 뿌리. 크기 상한 · UTF-8 · DOCTYPE · ENTITY 는 해석 전에 거절하고, 오류 문서 · 다른 뿌리는 WfsError.
-
-    거절은 **해석할 글자 그대로** 본다(검토 지적 2026-10-01: 예전에는 원본 바이트를 훑어 UTF-16 본문의 DTD 가 expat 까지 갔고, DOCTYPE 은 앞
-    4 KiB 만 찾았다): 확인한 응답은 UTF-8 이므로 엄격한 UTF-8 로 풀리지 않거나 NUL 이 있으면 거절하고, 푼 글자 전체에서 DOCTYPE · ENTITY 를 찾은 뒤
-    그 글자(str)를 해석한다 — ElementTree 는 str 을 선언과 상관없이 UTF-8 로 넘기므로 훑은 것과 해석하는 것이 같다."""
-    if len(body) > limit:
-        raise WfsTooLarge(f"response too large ({len(body)} bytes > {limit})")
-    try:
-        text = body.decode("utf-8")
-    except UnicodeDecodeError as e:
-        raise WfsError(f"response is not UTF-8 (byte {e.start}) — refused before parsing") from None
-    if "\x00" in text:
-        raise WfsError("NUL in response (UTF-16?) — refused before parsing")
-    up = text.upper()
-    if "<!DOCTYPE" in up or "<!ENTITY" in up:
-        raise WfsError("DOCTYPE/ENTITY in response — refused")
-    if not text.strip():
-        raise WfsError("empty response")
-    try:
-        root = ET.fromstring(text)  # noqa: S314 — UTF-8 · DOCTYPE·ENTITY 거절 · 크기 상한 뒤(위)
-    except ET.ParseError as e:
-        raise WfsError(f"not XML (line {e.position[0]})") from None
+    """본문 → FeatureCollection 뿌리. 크기 상한 · UTF-8 · DOCTYPE · ENTITY 는 해석 전에 거절하고(xml_intake — 거절을 본 그 글자를 해석한다),
+    오류 문서 · 다른 뿌리는 WfsError."""
+    root = parse_text(checked_text(body, limit, WfsError, WfsTooLarge), WfsError)
     err = _error_document(root)
     if err is not None:
         raise WfsError(err[:300])
