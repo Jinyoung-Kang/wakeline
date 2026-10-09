@@ -53,9 +53,9 @@ public class EngineService {
     private final SigmetStore sigmets;
     private final ApplicationEventPublisher events;
     /** 인덱스와 그것을 만든 세트(한 벌로 바꾼다 — 판정과 종료 판단이 같은 세트를 본다). */
-    record IndexState(SigmetIndex index, AlertStateMachine.SigmetSet set) {}
+    record IndexState(ZoneIndex index, AlertStateMachine.SigmetSet set) {}
     private final AtomicReference<IndexState> index = new AtomicReference<>(
-            new IndexState(new SigmetIndex(List.of(), Instant.now()), AlertStateMachine.SigmetSet.of(Map.of(), Instant.EPOCH)));
+            new IndexState(new ZoneIndex(List.of(), Instant.now()), AlertStateMachine.SigmetSet.of(Map.of(), Instant.EPOCH)));
     /** 재시작해도 겹치지 않는 시간 기반 id(REL-1/COR-2). */
     private final AlertIds alertIds = new AlertIds(System::currentTimeMillis);
     private final AlertStateMachine fsm = new AlertStateMachine(alertIds::next);
@@ -97,7 +97,7 @@ public class EngineService {
     /** 인덱스(만료 제외)와 세트. 인덱스 구축 실패(잘못된 폴리곤)는 호출자에게 올리지 않는다 — 이전 인덱스를 유지하고 센다. */
     private IndexState build(SigmetStore.State st, Instant now) {
         try {
-            return new IndexState(new SigmetIndex(st.byId().values(), now), AlertStateMachine.SigmetSet.of(st.byId(), st.fetchedAt()));
+            return new IndexState(new ZoneIndex(st.byId().values(), now), AlertStateMachine.SigmetSet.of(st.byId(), st.fetchedAt()));
         } catch (RuntimeException ex) {
             cycleErrors.increment();
             log.error("sigmet index build failed — keeping the previous index: {}", ex.toString(), ex);

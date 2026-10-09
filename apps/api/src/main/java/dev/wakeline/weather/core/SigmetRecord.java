@@ -3,6 +3,8 @@ package dev.wakeline.weather.core;
 import org.locationtech.jts.geom.MultiPolygon;
 
 import java.time.Instant;
+import java.util.Arrays;
+import java.util.Map;
 
 /**
  * 구조화된 SIGMET(schemas/sigmet.v1.json). geometry 가 null 이면 판정 제외(excludedReason).
@@ -16,7 +18,7 @@ public record SigmetRecord(
         String hazard, String qualifier, int baseFt, Integer topFt,
         Instant validFrom, Instant validTo, MultiPolygon geometry, String excludedReason,
         String moveDir, String moveSpd, String chng, String rawText, String provider, Instant fetchedAt,
-        String baseSource, String topSource) {
+        String baseSource, String topSource) implements Zone {
 
     public static final String BASE_JSON = "json";
     public static final String BASE_ASSUMED_SURFACE = "assumed_surface";
@@ -53,4 +55,32 @@ public record SigmetRecord(
 
     /** 판정에서 하한을 지표(SFC)로 가정했는가(AWC 하한 null). */
     public boolean baseAssumedSurface() { return BASE_ASSUMED_SURFACE.equals(baseSource); }
+
+    @Override public String zoneType() { return SIGMET; }
+
+    @Override public String zoneId() { return id; }
+
+    /**
+     * band_ft = [base, top] — 발표된 값 그대로(top 이 발표되지 않았으면 null). 판정 가정은 따로 밝힌다:
+     * top_assumed_unbounded(판정은 상한 무제한), top_is_lower_bound(발표값이 'FLnnn 이상' — band_ft 의 top 은 상한이 아니라 하한, DH-4).
+     */
+    @Override
+    public void putBand(Map<String, Object> ev) {
+        ev.put("band_ft", Arrays.asList(baseFt, topFt));
+        if (baseSource != null) ev.put("base_source", baseSource);
+        if (topSource != null) ev.put("top_source", topSource);
+        if (baseAssumedSurface()) ev.put("base_assumed_surface", true);
+        if (topIsLowerBound()) ev.put("top_is_lower_bound", true);
+        if (topAssumedUnbounded()) ev.put("top_assumed_unbounded", true);
+    }
+
+    @Override
+    public void putValidity(Map<String, Object> ev) {
+        ev.put("valid_from", validFrom.toString());
+        ev.put("valid_to", validTo.toString());
+    }
+
+    /** SIGMET 알림의 머리: sigmet_id · fir_id · hazard · qualifier(구역 종류 · 수준 · 공역 필드는 없음 — 계약 그대로). */
+    @Override
+    public Alert.Head head() { return new Alert.Head(id, firId, hazard, qualifier, null, null, null); }
 }
