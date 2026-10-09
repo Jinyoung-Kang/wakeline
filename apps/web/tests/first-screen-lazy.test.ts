@@ -26,6 +26,7 @@ const LAZY_PARTS: Record<string, string> = {
   "components/KrRadarPanel.tsx": "레이더 줄의 '범례·정합' 단추",
   "components/ShipTable.tsx": "통합 검색 결과(선박) · 선박 카드 안",
   "components/ReceptionLayer.tsx": "레이어 단추 '관측 수신 범위(최근 24 h)'를 켠 뒤(기본 끔 — 이 브라우저에 켜 둔 선택이 남아 있으면 처음부터 받는다)",
+  "components/WarningPanel.tsx": "오른쪽 패널의 'wx'(기상특보) 탭을 연 뒤",
   "components/AirspaceLayer.tsx": "레이어 단추 '공역'을 켠 뒤(기본 끔 — 이 브라우저에 켜 둔 선택이 남아 있으면 처음부터 받는다)",
 };
 /** 조각과 함께만 오는 모듈(첫 화면의 정적 그래프에 없어야 한다) */
@@ -33,6 +34,8 @@ const CARRIED_BY_PARTS: Record<string, string> = {
   "components/PortCallsSection.tsx": "선박 카드 안",
   "lib/ship-card.ts": "선박 카드 · 선박 표의 표시 함수와 문구(저장 정적 보고 문구 · ETA · 크기 · 흘수 · 목적지 줄 · 공백 요약 · 선박 목록)",
   "lib/reception.ts": "관측 수신 범위 레이어 조각(응답 검증 · 조회 · 칸 그리기 · 화면 안 칸 수 · 툴팁 · 상태 줄)",
+  "lib/warnings.ts": "기상특보 탭 조각(응답 검증 · 조회 · 묶기 · 상태 줄)",
+  "lib/endpoints/warnings.ts": "선박 카드의 해상특보 한 줄(선박을 고른 뒤)",
   "lib/airspace.ts": "공역 레이어 조각(응답 검증 · 조회 · 그리기 · 종류 거르기 · 고도 글 · 툴팁 · 상태 줄)",
   "lib/airport-wx.ts": "공항 카드(공항을 고른 뒤) · 공항 기상 이력 화면의 응답 모양과 검사",
   "lib/endpoints/ship-detail.ts": "선박 카드의 REST 상세 조회(선박을 고른 뒤)",
