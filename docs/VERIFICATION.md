@@ -1525,6 +1525,21 @@
   `make e2e` 48 통과(인쇄 PDF A4 한 쪽 · JSON 내려받기 · 재생 링크 · 틀린 링크 안내) · `make security` PASS(gitleaks 1,320 커밋 · trivy 자체 6 · npm audit · pip-audit).
   DB · Redis 를 바꾸지 않아 `make infra-docker-test` 는 돌리지 않았다. 운영 `:local` 이미지는 `:mainsafe` 로 보관했다가 되돌렸다.
 
+## #123 차별화 기능 단계 5 — 지정 대상 기록 보존 · 모바일 화면(ADR-038 · 계약 v5 §G52 · V21, 브랜치 `feat/retention-mobile-2026-10`)
+- **무엇**: 운영 설정 `retain_targets`(20개) → 매시 1분 요약 작업이 이어서 지정 대상의 1분 첫 점을 V21 `retained_track` 에 옮김(365일) → 항적 조회가 원해상도가 없으면
+  그것을 읽고 `resolution: 1m_retained`. 지도 · WS 없는 모바일 화면 `/m`.
+- **겪은 문제와 고친 것**
+  - 복사를 따로 예약 작업(매시 :07)으로 두자 SchedulingIT 가 실패 — 예약 작업 수(16)가 스케줄러 풀 크기(16)에 닿았다. 풀을 키우지 않고 기존 매시 1분 요약 작업이
+    이어서 부르게 했다(실패는 따로 가둠).
+  - 선박 항적 컨트롤러 시험의 가짜 저장소가 새 조회(retainedTrack)를 몰라 실제 DB 를 부르려다 2건 실패 — 가짜에 더했다.
+  - DB 시험 준비가 옛 위치 출처 값('gnss' — V7 에서 'epfs' 로 바뀜)을 써서 CHECK 에 걸렸다(시험 쪽 잘못).
+  - 표본 기록(RestSamplesIT)의 `? + interval` 이 형을 몰라 실패 — `::timestamptz` 로.
+- **확인(단계 5 끝)**: api 1,204 통과(LINE 97.46 % · BRANCH 86.91 %) · REST 계약 46 · contract_check PASSED · web 1,788 통과 · eslint · tsc 오류 0 ·
+  첫 화면 JS 548,679 B(그대로) · `/m` 경로 JS 약 220,423 B(MapLibre 없음 — PERF §20) · 인프라 정책 177 · `make e2e` 50 통과(375 · 320 px 넘침 없음 · axe 0 포함) ·
+  `make infra-docker-test` 모두 통과(edge 42 · Redis ACL 301 · db 권한 36 · 백업 48 · 비밀번호 교체 27 · 이미지 교체 11 · 수집기 PG 11 — V21 까지) ·
+  `make security` PASS(gitleaks 1,323 커밋). 운영 `:local` 이미지는 `:mainsafe` 로 보관했다가 되돌렸다.
+- **남은 것**: 화면에서 1년 전 항적을 고르는 길(재생 30일 한계)은 이번 범위 밖(ADR-038 버린 대안). 실제 보존 크기는 배포 뒤 잰다.
+
 ## 자동 검사 현황(2026-10-02 15:5x KST, QA 2026-10 브랜치 `qa/2026-10` — #103 뒤, 깨끗한 `git archive` 내보내기 · 격리 스택)
 | 층 | 도구 | 수 |
 |---|---|---|

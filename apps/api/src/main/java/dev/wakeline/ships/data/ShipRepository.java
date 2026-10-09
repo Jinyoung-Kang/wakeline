@@ -333,6 +333,20 @@ public class ShipRepository {
                 .list();
     }
 
+    /**
+     * 지정 보존 항적(V21 retained_track — ADR-038 · 계약 v5 §G52): 원해상도(ship_position 72 h)가 지워진 뒤 운영자가 지정한 선박의 1분에 첫 점.
+     * 선수방위 · 항해 상태 · 위치 출처는 옮기지 않는다(null — 모름).
+     */
+    public List<TrackPoint> retainedTrack(String mmsi, Instant from, Instant to, int limit) {
+        return Sql.publicRead(db, "ship.track_retained", """
+                SELECT ts, ST_X(geom) lon, ST_Y(geom) lat, sog_kn, cog_deg, provider
+                FROM retained_track WHERE kind = 'ship' AND target_id = :m AND ts_minute BETWEEN :from AND :to ORDER BY ts_minute LIMIT :lim""")
+                .param("m", mmsi).param("from", Sql.ts(from)).param("to", Sql.ts(to)).param("lim", limit)
+                .query((rs, i) -> new TrackPoint(rs.getObject("ts", java.time.OffsetDateTime.class).toInstant(), rs.getDouble("lon"), rs.getDouble("lat"),
+                        realObj(rs.getObject("sog_kn")), realObj(rs.getObject("cog_deg")), null, null, null, rs.getString("provider")))
+                .list();
+    }
+
     // ---- 바인딩 도우미(null 은 타입 있는 NULL 로 — 모르는 값을 0 으로 쓰지 않는다) ----
 
     private static void setReal(PreparedStatement ps, int i, Double v) throws SQLException {

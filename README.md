@@ -15,11 +15,11 @@
 |---|---|
 | **역할** | 1인 기획·설계·구현·검증(수집기 · API/WS/공간 엔진 · 화면 · 인프라 · 성능·장애 시험) |
 | **스택** | nginx · Next.js 16 / React 19 / MapLibre GL 6 · Spring Boot 4.1(Java 25, 가상 스레드, JTS) · Python 3.13(asyncio, httpx, websockets, shapely) · PostgreSQL 18 + PostGIS 3.6 · Redis 8 Streams · Docker Compose |
-| **구성** | 상시 컨테이너 7개(edge · web · api · collector · ais · redis · db) + 일회성 migrate(Flyway V1–V20) |
+| **구성** | 상시 컨테이너 7개(edge · web · api · collector · ais · redis · db) + 일회성 migrate(Flyway V1–V21) |
 | **데이터** | 항공기 adsb.lol · adsb.fi · OpenSky · 노선 adsbdb(선택 시만, 저장 안 함) / 선박 aisstream.io · 항구 UN/LOCODE · 한국 항만 입출항 해양수산부 PORT-MIS(공공데이터포털, 수집기가 항만청 10곳을 날짜별로 색인) · 연안 교통량 한국해양교통안전공단 실시간 해양교통정보 + 해양수산부 해양격자 4단계(공공데이터포털) / 기상 AviationWeather.gov · RainViewer · 기상청 API허브 레이더(HSR) · 특보현황 / 지도 OpenFreeMap |
 | **검증** | 자동 시험 5,435건(pytest 1,923 · collector 실 Redis 16 · 실 PostgreSQL 7 · JUnit 1,135 · Vitest 1,698 · Playwright E2E 43 · 인프라 정책 157 · 버리는 컨테이너 시험 456 — 2026-10-02 QA 2026-10 브랜치에서 모두 실행) · **QA 2026-10**(출시 기준 검증 — 결함 32건 중 29건 수정, [보고](docs/qa/2026-10/REPORT.md)) · **CTO 리뷰 2026-10**(보안 · 데이터 손실 · 구조 · 측정한 성능 — [PLAN](docs/review/cto-2026-10/PLAN.md) · ADR-028–030 · 독립 리뷰 2회) · 적대적 리뷰 2회(97건 · 19건 수정) · **리뷰 v1**(기준선 측정 → 진단 98건(고유 97 + 3단계 추가 R-98) → 승인 85 · 보류 13 → 수정(R-63 은 2026-09-30 직접 빌드한 db 이미지로 해결(ADR-004 개정), 일부는 부분 처리 — review §5.2) · 2차 검토 35건 · 문서 사실 확인 2회 → 재측정, [review](docs/review/VERIFICATION.md)) · 장애 주입 6종 · 실측 문제 기록 104건([VERIFICATION](docs/VERIFICATION.md)) |
 | **성능(실측)** | 운영 규모 합성 자료(DB 8.8 GB · 전세계 항공기 1만 · 선박 1.5만 척)에서 REST 100 rps 경로 16개 p95 4.4–89 ms(목표 300) · WS 200 연결 지연 p95 230 ms(목표 500) · api 컨테이너 메모리 최대 750.5 MiB(NFR-03 ≤ 768 MiB — [ADR-031](docs/adr/ADR-031-api-memory-target.md)) · 첫 화면 JS 547,116 B(예산 550,000 B, gzip 본문 · 웹 이미지의 Node) · 화면 Core Web Vitals(실제 GPU): 데스크톱 4화면 모두 good, 모바일 지도 화면 TBT 196–233 ms(외부 호스트 차단) — [PERF](docs/PERF.md) §14 · §15 |
-| **설계 기록** | ADR 37건([docs/adr](docs/adr)) · 변경 계약 v1–v5([docs/audit](docs/audit)) |
+| **설계 기록** | ADR 38건([docs/adr](docs/adr)) · 변경 계약 v1–v5([docs/audit](docs/audit)) |
 
 ## 1. 무엇을 하나
 
@@ -29,6 +29,7 @@
 | 위험기상 | SIGMET 폴리곤 + 고도대 + 유효시간으로 구조화 → STRtree 교차 판정 → 히스테리시스 상태기계(진입 2회·이탈 3회) → 관측/예측 알림 근거 카드 · RainViewer / 기상청 HSR 레이더(LCC → 메르카토르 서버 재투영 · 프레임마다 합성 지점 수 "합성 12/15곳" — 일부 지점만 합성된 프레임은 경고와 함께 표시하고 기한까지 다시 받기 대상, '완전'이라고는 하지 않음, ADR-021) · METAR/TAF |
 | 선박 | AIS 실시간(구역별 연결 2개) · 선종별 색 · 선수방위 회전(없으면 침로 점선, 둘 다 없으면 원) · **적응형 표시**(줌 ≥ 7 은 5,000척, 줌 4–7 은 1,500척까지 개별 점 — 넘으면 격자 집계) · 카드(선명·선종·크기·흘수·목적지·ETA — 모두 "보고값") · **목적지 해석**(보고 문자열을 UN/LOCODE 표로 결정적으로 풀이 — `A>B`·`A<>B` 형식, 이름이 겹치면 "모호" 표시, 못 풀면 원문만) · **통합 검색**(상단 한 칸에서 항공기와 함께 — 선명·호출부호 앞부분 · MMSI · IMO, 실시간 + 저장된 선박, 실시간이 아니면 "마지막 수신" 시각) · **선종 필터**(격자 칸도 선종별 수로 다시 셈 — 고른 선박은 필터·표시 상한과 무관하게 항상 표시) · 정렬되는 선박 목록 · 항적 6/12/24 h(점마다 시각·속도) · **수신 공백 기록·표시**(구역 단위) · 수신 범위 경계 · **관측 수신 범위**(레이어 · 기본 끔 — 이 서비스가 최근 24 h 에 실제로 위치를 받은 0.5° 칸과 칸마다 선박 수 · 위치 수 · 마지막 수신, 구독 범위와 구분 · 기동 때 DB 에서 한 번 채우고 창을 다 세지 못했으면 그렇다고 적음, ADR-027) · 선박이 0척이면 이유(범위 밖·공급자 공백·수신 끊김)와, 레이어를 켰으면 이 화면의 관측 수신 칸 수를 표시 · **한국 항만 입출항**(수집기가 해양수산부 PORT-MIS 항만청 10곳의 입출항 신고를 KST 날짜별로 모두 받아 DB 에 색인(최근 30일 · 매시 최근 3일 다시 · 60일 보관) — 선택한 선박의 AIS 호출부호로 색인을 찾을 뿐 선택마다 외부에 묻지 않음, 입항·출항 KST(최종 신고 우선 · 판 표시 · 원천이 날짜인지 자정인지 구분하지 않는 00:00 신고는 날짜만) · 선석 · 목적 · 전출항지 → 차항지, "기록 없음"은 10곳 색인이 창 전체(오늘 목록까지 · 끝까지 색인하지 못한 날 없음) · 2시간 안 갱신일 때만(아니면 항만청별 빈 곳과 그 날짜), 두 선명이 모두 영문이고 다르면 경고, ADR-022 개정) |
 | 공역 | **레이어 "공역"**(기본 끔) — 국토교통부 공역정보 지도자료(AIP 차수 기준 — 운영자가 `make airspace-import` 로 가져옴, 저장소에는 없음): 금지 · 원전 · 안보 · 제한 · 위험구역 등 종류별 색 · 고도 범위와 그 기준(해면 · FL · 지면 기준) · 기준 차수 · 출처. **공역 진입 판정**(SIGMET 과 같은 엔진): 금지 · 원전 · 안보 = 알림, 비행제한 = 정보, 지면 기준(위험구역)은 고도 판정 안 함(카드에 수평만). 기압고도를 해면 고도로 보는 가정과 경계 근처(±500 ft)를 근거에 적는다. 운영 설정 off · shadow(건수만 — 기본) · on(ADR-034 · ADR-035) |
+| 기록 보존 연장 · 모바일 | 운영 설정 **`retain_targets`**(항공기 hex · 선박 MMSI 20개)의 항적을 1분 첫 점으로 1년 보존 — 원해상도(72 h)가 없는 창의 항적 조회가 그것을 읽고 `resolution: 1m_retained` 로 밝힌다. 휴대폰용 **`/m`**: 지도 · 실시간 연결 없이 열린 알림(15초) · 관심 대상 — 줄을 누르면 근거 화면(ADR-038) |
 | 근거 공유 · 신뢰도 | 알림마다 고정 링크 **`/alerts/{id}`**(근거 카드 · 판정 때 좌표 · SIGMET 원문/공역 고도 한계 사본 · JSON 내려받기 · 인쇄하면 A4 한 쪽, 닫힌 알림은 30일) · **'그 시각 재생'** 링크(`/replay?at&bbox&hex` — 틀린 값은 버리고 안내). 항공기 · 선박 카드와 근거 카드에 **신뢰도 한 줄**(위치 나이 · 공급자 지연 · 수신 공백 — 점수로 합치지 않고, 모르면 '모름') |
 | 관심 대상 · 알림 | 항공기 · 선박 · 공항 카드의 **'관심 대상'** 단추(이 브라우저에만 · 50개) → 진입 · 예측 진입 · 알림 닫힘 · 신호 끊김 / 선박 30분 끊김 · 다시 받음 / 공항 비행 등급 변화를 화면 배너와 브라우저 알림(허락 시)으로. 오른쪽 패널 'watch' 탭에서 목록 · 지우기 · 알림 켜기. 숨은 탭에서도 이 확인만 30초마다(관심 대상 + 허락일 때만 — ADR-037) |
 | 기상특보 | 기상청 API허브 특보현황을 5분마다 — 오른쪽 패널 **'wx' 탭**(해상을 상위 구역별로 먼저 · 육상 접음 · 예비특보는 시각이 아니라 때로 · 수신 전 · 0건 · 오래됨 구분), 선박 카드에 "지금 발효 중 해상특보 N건"(구역 경계 자료가 없어 선박의 구역은 판정하지 않는다). 이력 90일(ADR-036) |
@@ -189,7 +190,7 @@ make rotate-db-passwords P=wakeline-e2e sync=1   # 격리 스택(데모·E2E)의
 
 ## 6. 저장소 구조
 ```
-apps/api         Spring Boot — dev.wakeline.{platform.*,geo,aircraft·ships·weather·airspace.{core,data,web},ingest,ws,ops,settings,status,history,traffic,coverage,demand,route,portcalls,logs}(ADR-028) · Flyway V1–V20 · JUnit/Testcontainers
+apps/api         Spring Boot — dev.wakeline.{platform.*,geo,aircraft·ships·weather·airspace.{core,data,web},ingest,ws,ops,settings,status,history,traffic,coverage,demand,route,portcalls,logs,watch}(ADR-028) · Flyway V1–V21 · JUnit/Testcontainers
 apps/collector   Python — providers · normalize · quality · sigmet_parse · budget · ratelimit · demand · jobs · ais/(수신·대기열·정리·발행·공백)
 apps/web         Next.js — app/(상황판·replay·stats·airports·ops·logs·about·guide) · lib(ws·store·ships·demand·viewport·interpolate) · e2e
 schemas/         aircraft_state · ship_state · ship_static · sigmet · stream_envelope · log_event · ws/(WS 메시지) · vectors/(가림 · 억제 · 선종 순서 — 언어 간 시험 벡터) (계약의 단일 원천)

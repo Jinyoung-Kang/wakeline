@@ -72,6 +72,13 @@ class ShipControllerTest {
             return points.stream().filter(p -> !p.ts().isBefore(from) && !p.ts().isAfter(to)).limit(limit).toList();
         }
 
+        /** 지정 보존 항적(계약 v5 §G52) — 이 시험의 선박은 지정되지 않았다 */
+        List<TrackPoint> retained = List.of();
+        @Override public List<TrackPoint> retainedTrack(String mmsi, Instant from, Instant to, int limit) {
+            if (down) throw new CannotGetJdbcConnectionException("down");
+            return retained;
+        }
+
         /** 실제 저장소와 같은 규칙: 겹치는 것 중 최신 limit 건, 오래된 것부터. */
         @Override public List<AisGap> gaps(Instant from, Instant to, int limit) {
             if (down) throw new CannotGetJdbcConnectionException("down");

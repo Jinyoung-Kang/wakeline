@@ -23,6 +23,7 @@ const SCREENS: Record<string, string> = {
   [join("app", "stats", "page.tsx")]: "kst-pages.test.ts",
   [join("app", "airports", "[icao]", "page.tsx")]: "kst-pages.test.ts",
   [join("app", "alerts", "[id]", "page.tsx")]: "evidence-share.test.ts", // 알림 근거(계약 v5 §G51)
+  [join("app", "m", "page.tsx")]: "mobile-page.test.ts", // 모바일 알림(계약 v5 §G52)
   [join("app", "ops", "page.tsx")]: "ops-page.test.ts",
   [join("app", "logs", "page.tsx")]: "logs-page-v5.test.ts",
   [join("app", "about", "page.tsx")]: "kst-dashboard.test.ts",

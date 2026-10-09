@@ -316,6 +316,18 @@ class RestSamplesIT extends IntegrationTest {
         record("ships", "/api/v1/ships?bbox=128,34,130,36", 200);
         record("ship_detail", "/api/v1/ships/" + mmsi, 200);
         record("ship_track", "/api/v1/ships/" + mmsi + "/track", 200);
+        // 지정 보존 항적(계약 v5 §G52 · ADR-038): 원해상도가 없는 하루 전 창 — retained_track 의 1분 첫 점(항공기 · 선박)
+        Instant kept = Instant.now().minus(Duration.ofDays(5)).truncatedTo(ChronoUnit.MINUTES);
+        admin().sql("""
+                INSERT INTO retained_track (kind, target_id, ts_minute, ts, geom, alt_ft, gs_kt, track_deg, sog_kn, cog_deg, provider) VALUES
+                  ('aircraft', 'a5e7a1', :m::timestamptz, :m::timestamptz + interval '5 seconds', ST_SetSRID(ST_MakePoint(127.0, 37.5), 4326), 31000, 450, 90, NULL, NULL, 'adsb_lol'),
+                  ('aircraft', 'a5e7a1', :m::timestamptz + interval '1 minute', :m::timestamptz + interval '65 seconds', ST_SetSRID(ST_MakePoint(127.1, 37.5), 4326), 31000, 450, 90, NULL, NULL, 'adsb_lol'),
+                  ('ship', '440700199', :m::timestamptz, :m::timestamptz + interval '10 seconds', ST_SetSRID(ST_MakePoint(129.0, 35.0), 4326), NULL, NULL, NULL, 11.5, 200, 'aisstream'),
+                  ('ship', '440700199', :m::timestamptz + interval '1 minute', :m::timestamptz + interval '70 seconds', ST_SetSRID(ST_MakePoint(129.01, 35.0), 4326), NULL, NULL, NULL, 11.5, 200, 'aisstream')
+                ON CONFLICT DO NOTHING""").param("m", java.sql.Timestamp.from(kept)).update();
+        String keptRange = "?from=" + kept.minusSeconds(600) + "&to=" + kept.plusSeconds(600);
+        record("aircraft_track_retained", "/api/v1/aircraft/a5e7a1/track" + keptRange, 200);
+        record("ship_track_retained", "/api/v1/ships/440700199/track" + keptRange, 200);
         // 관심 대상(계약 v5 §G50 · ADR-037): 공역 알림이 열린 항공기 · 모르는 hex · 표본 선박 · 모르는 MMSI · 공항(METAR 있음) · 모르는 공항
         record("watch", "/api/v1/watch?aircraft=" + inAirspace + ",ffffff&ships=" + mmsi + ",440999999&airports=RKSI,ZZZZ", 200);
         record("ais_gaps", "/api/v1/ais/gaps", 200);

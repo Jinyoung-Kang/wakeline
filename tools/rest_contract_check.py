@@ -1105,13 +1105,15 @@ SCHEMAS: dict[str, dict[str, Any]] = {
             "properties": {
                 "type": "object",
                 # R-52: 점 수 상한 5,000(선박 항적과 같다) — 넘으면 앞에서부터(시간순) 자르고 truncated = true
-                "required": ["hex", "from", "to", "points", "truncated"],
+                # 계약 v5 §G52: resolution — raw(원해상도) | 1m_retained(지정 보존 1분 첫 점 — 원해상도가 없을 때만)
+                "required": ["hex", "from", "to", "points", "truncated", "resolution"],
                 "properties": {
                     "hex": HEX,
                     "from": TS,
                     "to": TS,
                     "points": {"type": "integer", "minimum": 0, "maximum": 5000},
                     "truncated": BOOL,
+                    "resolution": {"enum": ["raw", "1m_retained"]},
                 },
             },
             "points": {
@@ -1614,6 +1616,7 @@ SCHEMAS: dict[str, dict[str, Any]] = {
                     "gap_break_min_s",
                     "gaps_truncated",
                     "segments",
+                    "resolution",
                 ],
                 "properties": {
                     "mmsi": MMSI,
@@ -1622,6 +1625,7 @@ SCHEMAS: dict[str, dict[str, Any]] = {
                     "points": {"type": "integer", "minimum": 0, "maximum": 5000},
                     "truncated": BOOL,
                     "sampling": {"const": "first_fix_per_60s"},  # 저장은 60 s 창의 첫 보고 — 화면이 '표본' 임을 밝힌다
+                    "resolution": {"enum": ["raw", "1m_retained"]},  # 계약 v5 §G52
                     # 계약 v3 §D: 60 s 이상 끝난 공백·열린 공백만 선을 끊는다 · gaps 는 최신 200개(더 있으면 gaps_truncated)
                     "gap_break_min_s": {"const": 60},
                     "gaps_truncated": BOOL,
@@ -1711,6 +1715,9 @@ CHECKS = [
     Check("alert_detail", "alert_detail", 200, "application/json", True, recorded_only=True),
     Check("alert_detail_airspace", "alert_detail", 200, "application/json", True, recorded_only=True),
     Check("alert_detail_missing", "problem", 404, "application/problem+json", False, recorded_only=True),
+    # 기록에만: 원해상도가 없는 창의 지정 보존 항적(계약 v5 §G52 — resolution 1m_retained)
+    Check("aircraft_track_retained", "aircraft_track", 200, "application/geo+json", True, recorded_only=True),
+    Check("ship_track_retained", "ship_track", 200, "application/geo+json", True, recorded_only=True),
     # 기록에만: 공역(합성 차수의 금지구역) 안의 항공기 상세 — inside_airspace · 공역 알림(계약 v5 §G48)
     Check("aircraft_detail_airspace", "aircraft_detail", 200, "application/json", True, recorded_only=True),
     Check("alerts", "alerts", 200, "application/json", True),

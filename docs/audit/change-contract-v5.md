@@ -1316,3 +1316,15 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
   - 신뢰도 한 줄(SPEC F6 — 계약 변경 없음, 화면만): 항공기 · 선박 카드 머리 아래, 근거 카드 맨 아래(판정 때 값).
   - 회귀 막기: api `AlertByIdEndpointTest` · `WeatherPersistDbTest`(byId · 사본) · `RestSamplesIT`(alert_detail · airspace · 404) · `tools/rest_contract_check.py`(ALERT_DETAIL) ·
     web `evidence-share.test.ts` · e2e `evidence-share.spec.ts`(인쇄 A4 한 쪽 · 내려받기 · 재생 링크).
+
+## G. 32차 개정(2026-10-09 · 지정 대상 기록 보존 · 모바일 화면 — 차별화 기능 단계 5 · ADR-038, 사용자 승인 "권장안대로")
+- G52(설정 · 응답 필드 · 새 화면) **지정 대상 기록 보존 `retain_targets` · 항적 `properties.resolution` · `/m`**
+  - 운영 설정 `retain_targets`(`GET /api/v1/ops/settings` · `PUT /api/v1/ops/settings/retain_targets` — 다른 설정과 같은 If-Match · CSRF · 감사): 문자열, 항공기 hex(16진 6자리) · 선박 MMSI(9자리)를
+    쉼표로 합쳐 20개까지, 같은 값 두 번 금지(hex 는 대소문자 무관), 빈 문자열 = 지정 없음(기본). 틀리면 400 `BAD_VALUE`.
+  - V21 `retained_track` — 지정 대상의 1분 첫 점, 365일. api 만 읽고 쓴다(수집기 권한 없음).
+  - `GET /api/v1/aircraft/{hex}/track` · `GET /api/v1/ships/{mmsi}/track`: `properties.resolution` 을 늘 싣는다 — `raw`(원해상도) | `1m_retained`(원해상도가 없어 지정
+    보존 점을 읽었다). 1m_retained 의 선박 점에는 heading_deg · nav_status · position_source 가 없다(모름). 범위 상한 · 점 수 상한은 그대로.
+  - 웹: 운영 설정 화면에 retain_targets 입력 규칙. 모바일 알림 화면 `/m`(지도 · MapLibre · WS 없음 — 열린 알림 `GET /api/v1/alerts` 15 s, 줄 → `/alerts/{id}`,
+    관심 대상 목록).
+  - 회귀 막기: api `RetainTargetsTest` · `RetainedTrackDbTest` · `RolePrivilegesDbTest` · `RestSamplesIT`(track_retained) · `tools/rest_contract_check.py` ·
+    web `mobile-page.test.ts` · e2e `mobile.spec.ts`.

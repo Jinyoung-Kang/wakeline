@@ -807,6 +807,12 @@ B 몰림(300 → 400 rps 각 60 s) → I 쉼 300 s(마지막 60 s = 몰림 뒤 �
     링크 만들기를 `lib/replay-link`(의존 없음)로 나눠 되돌렸다(항공기 카드의 피드 지연 계산을 빼 보았지만 바이트가 같아 원인이 아니었다).
 - 근거 화면 `/alerts/[id]` 는 따로 받는 경로라 첫 화면과 무관하다.
 
+## 20. 기록 보존 연장 · 모바일 화면(ADR-038 — 2026-10-09)
+- 첫 화면 JS: **548,679 B** 그대로(단계 5 는 `/` 에 닿지 않는다 — 운영 설정 규칙은 `/ops`, `/m` 은 따로 받는 경로). 단계 2–5 합계 **+269 B**(목표 +300 B 안).
+- `/m` 경로 JS(빌드 결과 — 루트 레이아웃 · 오류 경계 포함 9파일): gzip 약 **220,423 B**, MapLibre 없음(파일 안에 'maplibre' 글자 없음). `/` 는 MapLibre 304,573 B 를 더해
+  548,679 B. 재는 법: `.next/server/app/m/page_client-reference-manifest.js` 의 entryJSFiles(`/m/page` · 레이아웃) + build-manifest 의 rootMainFiles · polyfill 을 gzip 6.
+- 지정 보존 크기(추정 — 운영에서 잰 값으로 바로잡는다): 대상 20개가 1년 내내 끊김 없이 보이면 약 1,050만 행. 실제는 `SELECT pg_total_relation_size('retained_track')`.
+
 ## 재현
 ```bash
 make bench SHIPS=1               # k6 REST + WS(선박 포함), api 층 직접
