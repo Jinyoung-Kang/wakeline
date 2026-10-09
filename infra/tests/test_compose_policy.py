@@ -280,6 +280,22 @@ class ComposePolicyTest(unittest.TestCase):
         mk = (ROOT / "Makefile").read_text(encoding="utf-8")
         self.assertRegex(mk, r"(?m)^export REDIS_CONFIG_SHA\b", "모든 레시피의 compose 호출이 같은 값을 받게 export")
 
+    def test_edge_is_recreated_when_a_mounted_nginx_file_changes(self):
+        """VERIFICATION #126(#124 · #125 와 같은 틈): nginx 는 마운트한 설정 파일을 시작할 때만 읽는다 — 내용만 바뀌면 compose 가 edge 를 다시 만들지 않아
+        옛 설정으로 돈다. 마운트한 ./edge 파일 전부(compose 의 마운트 목록 순서)의 해시를 라벨로 붙인다. 새 파일을 마운트하고 해시에 빼면 여기서 실패한다."""
+        def label(sha: str | None) -> str | None:
+            cfg = self._config({} if sha is None else {"EDGE_CONFIG_SHA": sha})
+            return (self.svc("edge", cfg).get("labels") or {}).get("wakeline.edge-config-sha")
+        self.assertEqual(label("abc123"), "abc123")
+        self.assertEqual(label(None), "unset")
+        mounted = [Path(v["source"]) for v in self.svc("edge", self.dev).get("volumes", []) if v.get("type") == "bind"]
+        self.assertTrue(mounted and all(p.parent == ROOT / "infra" / "edge" for p in mounted), mounted)
+        import hashlib
+        want = hashlib.sha256(b"".join(p.read_bytes() for p in mounted)).hexdigest()[:16]
+        make = subprocess.run(["make", "-s", "--no-print-directory", "print-EDGE_CONFIG_SHA"], cwd=ROOT, capture_output=True, text=True, check=True).stdout.strip()
+        self.assertEqual(make, want, "Makefile 의 해시 = 마운트한 edge 파일 전부(compose 순서)의 SHA-256 앞 16자")
+        self.assertRegex((ROOT / "Makefile").read_text(encoding="utf-8"), r"(?m)^export EDGE_CONFIG_SHA\b")
+
     # --- R-90 · R-06: api 설정값이 .env 에서 실제로 전달된다(application.yml 기본값만 있고 compose 가 넘기지 않으면 바꿀 방법이 없다) ---
     def test_api_cookie_secure_and_alert_retention_pass_through(self):
         env = self.svc("api")["environment"]
