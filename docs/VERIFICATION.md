@@ -1596,6 +1596,13 @@
   `getInitialState()` 를 쓴다 — 모듈을 불러올 때 브라우저 저장소를 첫 상태에 넣으면 서버 HTML 과 달라진다. 첫 상태는 서버와 같게, 저장소 값은 만든 직후 `setState`.
 - **앞으로**: 화면 점검은 콘솔 오류 전부를 본다(문구로 거르지 않는다). fixture 의 시각 바꾸기는 날짜 경계 시험(시계 고정)으로.
 
+## #130 AWS 데모 배포 로컬 리허설 — RDS 흉내 · 앞단 Caddy · 접근 코드 잠금([ADR-039](adr/ADR-039-aws-demo-deployment.md))
+- **구성**: RDS 흉내(PostgreSQL 18.6 + PostGIS 3.6 · superuser 아닌 마스터 · TLS 강제 · `max_connections=80`) + `infra/compose.aws.yml` 덧붙임 + 앞단 Caddy · 잠금(gate).
+  운영 스택(8700)과 겹치지 않게 프로젝트 `wakeline_aws_rehearsal` · 포트 18710 · 망 10.78.0 · 이미지는 그대로(`:local` 태그를 다시 빌드하지 않음).
+- **확인**: migrate V1–V21 이 superuser 아닌 migrator 로 통과 · TLS 연결 7(api 6 · collector 1 — 공유 풀 6 · 공개 조회 허가 3 이 기동 검사를 통과해 덧붙임 값이 적용됨) ·
+  화면 200 · `/ops` · `/logs` · `/api/v1/ops/*` 404 · WS 허용 Origin 101 · 다른 Origin 403 · edge 접근 로그의 클라이언트 IP = Caddy 가 넘긴 값 · 멈춤 → 시작 2회 41 s · 76 s.
+- **앞으로**: edge 의 덧붙임 include(`/etc/nginx/edge.d/*.conf`)는 비어 있으면 아무 일도 하지 않는다 — 로컬 · 격리 스택 동작은 같다(`nginx -t` 두 경우 모두 통과).
+
 ## 자동 검사 현황(2026-10-02 15:5x KST, QA 2026-10 브랜치 `qa/2026-10` — #103 뒤, 깨끗한 `git archive` 내보내기 · 격리 스택)
 | 층 | 도구 | 수 |
 |---|---|---|
