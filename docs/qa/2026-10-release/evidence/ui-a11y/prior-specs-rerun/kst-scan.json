@@ -1,0 +1,33 @@
+{
+  "browserTimeZone": "UTC",
+  "/": [],
+  "/replay": [],
+  "/stats": [
+    {
+      "text": "매일 03:30 KST 에 전날(KST 날짜) 집계 · 최근 7일 · 빈 칸은 집계 전·자료 없음을 구분해 표시",
+      "why": "UTC 시각으로 보임(03:30 · 지금 UTC 4:11)"
+    }
+  ],
+  "/airports/RKSI": [],
+  "/about": [],
+  "/guide": [
+    {
+      "text": "— KST 날짜로 고릅니다(오늘은 아직 집계 전 — 매일 03:30 KST 에 전날을 셉니다).",
+      "why": "UTC 시각으로 보임(03:30 · 지금 UTC 4:12)"
+    },
+    {
+      "text": "03:30 KST",
+      "why": "UTC 시각으로 보임(03:30 · 지금 UTC 4:12)"
+    }
+  ],
+  "/ (evidence + status details)": [],
+  "/ (aircraft card)": [],
+  "/ops providers": [],
+  "/ops runs": [],
+  "/ops quality": [],
+  "/ops settings": [],
+  "/ops audit": [],
+  "/ops dlq": [],
+  "/ops pipeline": [],
+  "/logs (list + detail)": []
+}

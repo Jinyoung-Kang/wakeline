@@ -61,7 +61,7 @@
    "overflow": null
   },
   {
-   "screen": "/alerts/1791606886126000 1440",
+   "screen": "/alerts/1791611128684000 1440",
    "axe": [],
    "console": [],
    "pageErrors": [],
@@ -76,7 +76,7 @@
    }
   },
   {
-   "screen": "/alerts/1791606886126000 print",
+   "screen": "/alerts/1791611128684000 print",
    "axe": [],
    "console": [],
    "pageErrors": [],
@@ -86,7 +86,7 @@
    "overflow": null
   },
   {
-   "screen": "/alerts/1791606886126000 375",
+   "screen": "/alerts/1791611128684000 375",
    "axe": [],
    "console": [],
    "pageErrors": [],
@@ -104,12 +104,7 @@
    "screen": "/m 375",
    "axe": [],
    "console": [],
-   "pageErrors": [
-    {
-     "t": 13254,
-     "text": "Error: Minified React error #418; visit https://react.dev/errors/418?args[]=HTML&args[]= for the full message or use the non-minified dev environment for full errors and additional helpful warnings."
-    }
-   ],
+   "pageErrors": [],
    "bad": [],
    "failed": [],
    "dup": [],
@@ -121,7 +116,7 @@
    }
   },
   {
-   "screen": "/alerts/1791606886126000 320",
+   "screen": "/alerts/1791611128684000 320",
    "axe": [],
    "console": [],
    "pageErrors": [],
@@ -139,12 +134,7 @@
    "screen": "/m 320",
    "axe": [],
    "console": [],
-   "pageErrors": [
-    {
-     "t": 15529,
-     "text": "Error: Minified React error #418; visit https://react.dev/errors/418?args[]=HTML&args[]= for the full message or use the non-minified dev environment for full errors and additional helpful warnings."
-    }
-   ],
+   "pageErrors": [],
    "bad": [],
    "failed": [],
    "dup": [],
@@ -166,16 +156,5 @@
    "overflow": null
   }
  ],
- "findings": [
-  {
-   "screen": "/m 375",
-   "kind": "pageerror",
-   "detail": "Error: Minified React error #418; visit https://react.dev/errors/418?args[]=HTML&args[]= for the full message or use the non-minified dev environment for full errors and additional helpful warnings."
-  },
-  {
-   "screen": "/m 320",
-   "kind": "pageerror",
-   "detail": "Error: Minified React error #418; visit https://react.dev/errors/418?args[]=HTML&args[]= for the full message or use the non-minified dev environment for full errors and additional helpful warnings."
-  }
- ]
+ "findings": []
 }

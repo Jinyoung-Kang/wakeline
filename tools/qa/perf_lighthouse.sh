@@ -11,7 +11,7 @@ set -euo pipefail
 reps=${1:-3}; shift || true
 pages=("$@"); [ ${#pages[@]} -eq 0 ] && pages=(/ /replay /stats /about)
 root=$(cd "$(dirname "$0")/../.." && pwd)
-out="$root/docs/qa/2026-10/evidence/performance/lighthouse"
+out="${QA_EVIDENCE:-$root/docs/qa/2026-10/evidence/performance}/lighthouse"   # 출시 QA 2차: QA_EVIDENCE=docs/qa/2026-10-release/evidence/performance
 mkdir -p "$out"
 export CHROME_PATH="$HOME/Library/Caches/ms-playwright/chromium-1243/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing"
 blocked=("*rainviewer.com*" "*adsbdb.com*" "*aviationweather.gov*" "*data.go.kr*" "*kma.go.kr*" "*opensky-network.org*" "*adsb.lol*" "*adsb.fi*" "*aisstream.io*")
