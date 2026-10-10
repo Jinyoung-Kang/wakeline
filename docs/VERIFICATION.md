@@ -1635,6 +1635,19 @@
 - **고정**: `OrderedWriterTest.oldestPendingIsTheTaskBeingHandedOverNotEmpty`(수정 전 `[넘겨받는 중인 작업] expected: 1791625044487L but was: -1L`) ·
   `StoredStaticReaderTest` 의 실행기에 afterExecute 쉼(수정 전 `expected: 1L but was: 0L`). 두 시험 클래스 3회 연속 통과 · `make test-api` 통과.
 
+## #134 e2e `statusbar-resize` 가 느린 CI 러너에서 기본 60 s 를 넘김 — 촘촘함은 두고 이 시험에만 시간 예산
+- **증상**: `715cd854` 의 CI e2e 가 두 번 연달아(실행 38042725685 1 · 2차) `statusbar-resize.spec.ts:39` 에서 `page.setViewportSize: Test timeout of 60000ms exceeded`.
+  웹 · edge 코드가 같은 바로 앞 실행(`c7e616f`)은 통과 — 그때도 56.4 s, 그 전(`3ba5ac4`) 54.9 s 로 한도에 붙어 있었다. 맥에서는 22 s.
+- **원인**: 시험이 창 크기를 약 270번 바꾸고(굵은 왕복 24 · 8 px 끌기 242 · 끝값 4) 그때마다 프레임을 기다린다. CI 러너는 GPU 가 없어 지도를 소프트웨어로 다시
+  그리므로 한 번에 0.2–0.5 s. 실패한 실행의 trace: 60 s 안에 112번째(752 px)까지 — 끌기 한 단계 516 ms(통과 실행의 약 1.6배) → 끝까지 약 143 s.
+  제품 회귀가 아니다(웹 코드 같음, 그 사이 바뀐 api 는 로컬에서 CPU 약 1 %).
+- **고침**: 시험이 보는 것(ResizeObserver 오류 · 끄는 동안 줄 높이 · '+N')은 속도와 무관하고, 8 px 촘촘함이 창 끌기를 흉내 내는 핵심이라 줄이지 않았다 —
+  이 시험에만 `test.setTimeout(300_000)`(느린 러너 추정 143 s 의 두 배쯤). 통과하는 실행의 시간은 늘지 않는다.
+- **확인**: 격리 fixture 스택(8701)에서 그대로 3회 통과(22 s 안팎). 맥 Chrome 의 CPU 를 12배 느리게 하면(`Emulation.setCPUThrottlingRate`, 임시 사본) 기본 60 s 는
+  `Test timeout of 60000ms exceeded` 로 실패, 새 예산은 166 s 로 통과. CI e2e 는 이 변경의 push 로 확인(커밋 메시지).
+- **덧붙임 — `make e2e` · `make demo` 를 막은 망**: AWS 리허설(#130)에 쓴 망 대역 10.78.0 이 격리 스택(`ISO_ENV` 의 `WAKELINE_NET_PREFIX=10.78.0`)과 같아,
+  멈춰 둔 리허설 망이 남아 있는 동안 `make demo` 가 `Pool overlaps` 로 실패했다. 리허설 스택을 내리고(망 삭제) 다음 리허설은 10.79.0 을 쓴다(ADR-039 고침).
+
 ## 자동 검사 현황(2026-10-02 15:5x KST, QA 2026-10 브랜치 `qa/2026-10` — #103 뒤, 깨끗한 `git archive` 내보내기 · 격리 스택)
 | 층 | 도구 | 수 |
 |---|---|---|
