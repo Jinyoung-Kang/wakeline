@@ -67,12 +67,20 @@ public class AirspaceController {
         if (raw == null || raw.isBlank()) return null;
         Set<String> out = new TreeSet<>();
         for (String c : raw.split(",", -1)) {
-            String t = c.trim();
+            String t = spaces(c);
             if (!CATEGORY.matcher(t).matches()) throw Problem.badRequest("BAD_CATEGORY", "category: comma-separated [a-z_]{1,32}");
             out.add(t);
         }
         if (out.size() > MAX_CATEGORIES) throw Problem.badRequest("BAD_CATEGORY", "category: at most " + MAX_CATEGORIES);
         return out;
+    }
+
+    /** 앞뒤의 ASCII 공백(U+0020)만 지운다 — trim() 은 NUL · 탭 · 줄바꿈 · 0x1F 도 지워 틀린 값이 지났다(QA-500 · §G43 과 같은 부류). */
+    static String spaces(String v) {
+        int a = 0, b = v.length();
+        while (a < b && v.charAt(a) == ' ') a++;
+        while (b > a && v.charAt(b - 1) == ' ') b--;
+        return v.substring(a, b);
     }
 
     private static Map<String, Object> edition(AirspaceStore.Snapshot snap) {
