@@ -1612,6 +1612,13 @@
   `third-party-images` · Dependabot — 소스 정적 분석(SAST)은 빠진다. 다시 공개하면 git 이력에서 job 을 되살린다.
 - **확인**: 이 변경을 올린 push 의 CI 가 남은 job 전부 통과(커밋 메시지 · Actions).
 
+## #132 braces 공지(GHSA-vfj7-8cjw-p6xm) Dependabot 알림 #1 — 비공개 전환 뒤 다시 열려 위험 수용으로 닫음
+- **상황**: #114 와 같은 공지. 2026-10-09 15:38 UTC 에 알림이 다시 열렸다(세 저장소가 같은 시각 — 비공개 전환과 맞물린 것으로 봄, 문서로는 확인 못함).
+- **판단**: 수정판 없음(`<= 3.0.3` 이 공개된 모든 판), 상류는 고칠 계획이 없다고 답함(micromatch/braces#70, 잠김). 경로는 `eslint-config-next → @next/eslint-plugin-next
+  (16.4.0 도 fast-glob 3.3.1 고정) → micromatch → braces` — ESLint 에만 쓰이고 `npm ls braces --omit=dev` 0건, 패턴은 저장소 설정에서만 온다.
+- **처리**: Dependabot 알림을 `tolerable_risk` 로 닫았다(사용자 결정 2026-10-10). CI 의 기한부 예외(`apps/web/npm-audit-allow.json`, 2026-11-02 만료)는 그대로 —
+  만료되면 CI 가 다시 알려 주므로 그때 상류를 다시 본다.
+
 ## 자동 검사 현황(2026-10-02 15:5x KST, QA 2026-10 브랜치 `qa/2026-10` — #103 뒤, 깨끗한 `git archive` 내보내기 · 격리 스택)
 | 층 | 도구 | 수 |
 |---|---|---|
