@@ -47,8 +47,23 @@ const ROUTES = [
   ["aircraft_search", 1, () => `/api/v1/aircraft/search?q=${pick(["HL", "JA1", "B-2", "N4", "F2", "F10", "QA"])}`],
   ["ships_search", 1, () => `/api/v1/ships/search?q=${encodeURIComponent(pick(["QA VESSEL 1", "QA VESSEL 2", "3000012", "Q00A", "9000123"]))}&limit=10`],
   ["airport_wx", 1, () => `/api/v1/airports/${pick(["RKSI", "RKSS", "RKPC", "RKPK", "RJFF"])}/wx`],
+  // 출시 QA 2차(docs/qa/2026-10-release §3.5): 앞선 QA 뒤 더한 공개 경로 — 관심 대상(상한 50: 항공기 20 · 선박 10 · 공항 20 — 공항은 DB) · 알림 한 건(DB) ·
+  // 특보 · 특보 이력(DB) · 공역(압축 전 수백 KB — 기본 거르기 없음)
+  ["watch_50", 1, () => `/api/v1/watch?aircraft=${LONG_HEX.concat(LONG_HEX.map((h) => h.replace("f1", "f2"))).join(",")}` +
+    `&ships=${Array.from({ length: 10 }, () => 300000000 + Math.floor(rnd(0, 12000))).join(",")}` +
+    `&airports=${["RKSI", "RKSS", "RKPC", "RKPK", "RJFF", "RJTT", "RJAA", "RCTP", "VHHH", "ZSPD", "RKTN", "RKTU", "RKJJ", "RKNY", "RKJB", "RKPU", "RKTH", "RJBB", "RJCC", "ZBAA"].join(",")}`],
+  ["alert_one", 1, () => `/api/v1/alerts/${ALERT_IDS.length ? pick(ALERT_IDS) : 1}`],
+  ["warnings", 1, () => `/api/v1/warnings`],
+  ["warnings_history", 1, () => `/api/v1/warnings/history?from=${iso(now - rnd(1, 29) * 86400e3)}`],
+  ["airspace", 1, () => `/api/v1/airspace`],
 ].filter((r) => ONLY.length === 0 || ONLY.includes(r[0]));
 const TOTAL = ROUTES.reduce((s, r) => s + r[1], 0);
+// 알림 한 건: 시험 자료의 닫힌 알림 id(setup 이 이력에서 읽는다 — 없으면 404 경로를 잰다)
+let ALERT_IDS = [];
+export function setup() {
+  const r = http.get(`${BASE}/api/v1/alerts/history?from=${iso(now - 29 * 86400e3)}&limit=200`, { headers: HDRS });
+  try { return { ids: JSON.parse(r.body).items.map((a) => a.id) }; } catch (e) { return { ids: [] }; }
+}
 
 const thresholds = {};
 for (const [n] of ROUTES) {
@@ -81,7 +96,8 @@ function choose() {
   return ROUTES[ROUTES.length - 1];
 }
 
-export default function () {
+export default function (data) {
+  if (data && data.ids && ALERT_IDS.length === 0) ALERT_IDS = data.ids;
   const [name, , path] = choose();
   const tags = { name };
   if (MODE === "step") tags.stage = `s${Math.min(STEPS.length - 1, Math.floor(exec.instance.currentTestRunDuration / 1000 / STEP_S))}`;

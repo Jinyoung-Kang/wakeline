@@ -1,0 +1,9 @@
+before: wx_warning=12 retained_track=2 airspace=20 airspace_edition=1 alert_event=664 sigmet=1320 audit_log=52 ops_user=2 app_setting=12 retain_targets="440999001" airspace_alerts="shadow"
+backup: /Users/jinyoung/Projects/wakeline/backups/wakeline-e2e-20261010T043418Z.dump (444K, 항목 295개, 72 h 원해상도 행 제외(track_point_YYYYMMDD · ship_position_YYYYMMDD — 구조는 포함))
+restore: make restore f=backups/wakeline-e2e-20261010T043418Z.dump confirm=wakeline-e2e   (빈 새 볼륨에만 — README '백업·복원')
+file: backups/wakeline-e2e-20261010T043418Z.dump (450665 B, mode -rw-------)
+restoring backups/wakeline-e2e-20261010T043418Z.dump → wakeline-e2e (한 트랜잭션)…
+restored: 표 42개, 마지막 마이그레이션 V21 — 다음: make up (migrate 가 이후 마이그레이션을 적용)
+after:  wx_warning=12 retained_track=2 airspace=20 airspace_edition=1 alert_event=664 sigmet=1320 audit_log=52 ops_user=2 app_setting=12 retain_targets="440999001" airspace_alerts="shadow"   (복원 직후 — api · collector · ais 기동 전)
+stack up again: ais=healthy api=healthy collector=healthy db=healthy edge=healthy redis=healthy web=healthy 
+RESULT ok — 모든 표의 행 수 · 설정 값이 같다
