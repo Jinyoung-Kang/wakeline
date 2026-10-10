@@ -1603,6 +1603,15 @@
   화면 200 · `/ops` · `/logs` · `/api/v1/ops/*` 404 · WS 허용 Origin 101 · 다른 Origin 403 · edge 접근 로그의 클라이언트 IP = Caddy 가 넘긴 값 · 멈춤 → 시작 2회 41 s · 76 s.
 - **앞으로**: edge 의 덧붙임 include(`/etc/nginx/edge.d/*.conf`)는 비어 있으면 아무 일도 하지 않는다 — 로컬 · 격리 스택 동작은 같다(`nginx -t` 두 경우 모두 통과).
 
+## #131 비공개 전환 뒤 CI 의 CodeQL 3종이 매번 실패 — CodeQL 을 CI 에서 뺌
+- **증상**: 저장소를 비공개로 돌린 뒤(2026-10-09 ~ 10-10) push 마다 `codeql (java-kotlin · javascript-typescript · python)` 이 분석을 끝내고
+  업로드에서 `Code scanning is not enabled for this repository` 로 실패 — 나머지 job 은 통과인데 CI 가 늘 빨갛다(`cbdf12b` · `c7e616f`).
+- **원인**: 비공개 저장소의 code scanning 은 GitHub Code Security 라이선스가 필요하고, 개인 계정(Free · Pro)은 살 수 없다(Team · Enterprise 전용 — GitHub 문서).
+  업로드만 끄고 분석을 돌리는 우회도 버렸다 — CodeQL 라이선스는 공개(오픈소스) 코드베이스 분석과 학술 연구만 허용하고, 그 밖의 CI 분석은 유료 Advanced Security 가 있어야 한다.
+- **해결**: `ci.yml` 에서 `codeql` job 을 지웠다(사용자 결정: 비공개 유지 · CodeQL 제거). 남는 자동 검사는 `security`(gitleaks · trivy 자체 이미지 · npm audit · pip-audit) ·
+  `third-party-images` · Dependabot — 소스 정적 분석(SAST)은 빠진다. 다시 공개하면 git 이력에서 job 을 되살린다.
+- **확인**: 이 변경을 올린 push 의 CI 가 남은 job 전부 통과(커밋 메시지 · Actions).
+
 ## 자동 검사 현황(2026-10-02 15:5x KST, QA 2026-10 브랜치 `qa/2026-10` — #103 뒤, 깨끗한 `git archive` 내보내기 · 격리 스택)
 | 층 | 도구 | 수 |
 |---|---|---|
