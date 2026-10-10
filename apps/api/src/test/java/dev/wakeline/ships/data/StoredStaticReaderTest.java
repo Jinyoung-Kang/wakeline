@@ -159,8 +159,14 @@ class StoredStaticReaderTest {
             }
             return st;
         }, () -> 0, meters);
+        // 끝난 작업 수는 run() 이 돌아온 뒤(afterExecute 다음)에야 는다 — future 는 그 전에(작업 안에서) 끝난다. 느린 CI 에서 그 틈에 읽어 0 이 나왔다
+        // (VERIFICATION #133). 그 틈을 일부러 넓혀(afterExecute 에서 쉼) 늘 재현되게 한다.
         java.util.concurrent.ThreadPoolExecutor one = new java.util.concurrent.ThreadPoolExecutor(1, 1, 60, TimeUnit.SECONDS,
-                new java.util.concurrent.ArrayBlockingQueue<>(4));
+                new java.util.concurrent.ArrayBlockingQueue<>(4)) {
+            @Override protected void afterExecute(Runnable task, Throwable t) {
+                try { Thread.sleep(300); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+            }
+        };
         try {
             java.util.concurrent.CompletableFuture<StoredStaticReader.Lookup> first = r.lookupAsync("440000042", one);
             List<java.util.concurrent.CompletableFuture<StoredStaticReader.Lookup>> others = new ArrayList<>();
@@ -170,6 +176,8 @@ class StoredStaticReaderTest {
             assertThat(r.inflight()).isEqualTo(1);
             release.countDown();
             assertThat(first.get(5, TimeUnit.SECONDS).status()).isEqualTo(StoredStaticReader.Status.STORED);
+            one.shutdown();                                                       // 끝난 작업 수는 일꾼이 run() 을 마친 뒤에 확정된다
+            assertThat(one.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
             assertThat(one.getCompletedTaskCount()).isEqualTo(1);
         } finally {
             one.shutdownNow();
