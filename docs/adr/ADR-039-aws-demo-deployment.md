@@ -54,7 +54,7 @@
 **로컬 리허설**(2026-10-10). 리허설 환경은 다음과 같다.
 - DB: RDS 흉내(PostgreSQL 18.6 + PostGIS 3.6, superuser 아닌 마스터, TLS 강제, `max_connections=80`)
 - 앞단: Caddy + 잠금
-- 운영 스택과 겹치지 않게: 프로젝트 `wakeline_aws_rehearsal`, 포트 18710, 망 10.78.0
+- 운영 스택과 겹치지 않게: 프로젝트 `wakeline_aws_rehearsal`, 포트 18710, 망 10.78.0 — 이 대역은 격리 E2E 스택(`make e2e` · `make demo`)과 같아 그 스택을 막았다. 다음 리허설은 10.79.0을 쓴다(VERIFICATION #134)
 
 확인한 것:
 - migrate(V1–V21)가 superuser가 아닌 migrator로 통과했다.

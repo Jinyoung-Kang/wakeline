@@ -37,6 +37,11 @@ test.describe("status bar resize", () => {
   test.use({ viewport: { width: 1440, height: 900 } });
 
   test("resizing across 1440/1280/1024/800 raises no 'ResizeObserver loop' error and the row still fits", async ({ page }) => {
+    // 시간 예산(VERIFICATION #134): 창 크기를 약 270번 바꾸고 바꿀 때마다 프레임을 기다린다(굵은 왕복 24 · 8 px 끌기 242 · 끝값 4). CI 러너는 GPU 가 없어
+    // 지도를 소프트웨어로 다시 그리므로 한 번에 0.2–0.5 s — 통과한 실행이 55 · 56 s, 느린 러너는 112번째(752 px)에서 기본 60 s 를 넘겼다(trace: 끌기 한 단계
+    // 516 ms → 끝까지 약 143 s). 동작(오류 · 줄 높이 · '+N')을 보는 시험이지 속도 시험이 아니므로 촘촘함은 그대로 두고 이 시험만 그 두 배쯤 준다
+    // (맥에서 CPU 12배 느리게 하면 166 s 로 통과, 기본 60 s 로는 실패).
+    test.setTimeout(300_000);
     await page.route(/^https?:\/\/(?!localhost[:/]|127\.0\.0\.1[:/])/, (r) => r.abort());
     await collectErrors(page);
     await page.goto("/");
