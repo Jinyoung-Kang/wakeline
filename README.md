@@ -19,7 +19,7 @@
 | **데이터** | 항공기 adsb.lol · adsb.fi · OpenSky · 노선 adsbdb(선택 시만, 저장 안 함) / 선박 aisstream.io · 항구 UN/LOCODE · 한국 항만 입출항 해양수산부 PORT-MIS(공공데이터포털, 수집기가 항만청 10곳을 날짜별로 색인) · 연안 교통량 한국해양교통안전공단 실시간 해양교통정보 + 해양수산부 해양격자 4단계(공공데이터포털) / 기상 AviationWeather.gov · RainViewer · 기상청 API허브 레이더(HSR) · 특보현황 / 지도 OpenFreeMap |
 | **검증** | 자동 시험 5,435건(pytest 1,923 · collector 실 Redis 16 · 실 PostgreSQL 7 · JUnit 1,135 · Vitest 1,698 · Playwright E2E 43 · 인프라 정책 157 · 버리는 컨테이너 시험 456 — 2026-10-02 QA 2026-10 브랜치에서 모두 실행) · **QA 2026-10**(출시 기준 검증 — 결함 32건 중 29건 수정, [보고](docs/qa/2026-10/REPORT.md)) · **CTO 리뷰 2026-10**(보안 · 데이터 손실 · 구조 · 측정한 성능 — [PLAN](docs/review/cto-2026-10/PLAN.md) · ADR-028–030 · 독립 리뷰 2회) · 적대적 리뷰 2회(97건 · 19건 수정) · **리뷰 v1**(기준선 측정 → 진단 98건(고유 97 + 3단계 추가 R-98) → 승인 85 · 보류 13 → 수정(R-63 은 2026-09-30 직접 빌드한 db 이미지로 해결(ADR-004 개정), 일부는 부분 처리 — review §5.2) · 2차 검토 35건 · 문서 사실 확인 2회 → 재측정, [review](docs/review/VERIFICATION.md)) · 장애 주입 6종 · 실측 문제 기록 104건([VERIFICATION](docs/VERIFICATION.md)) |
 | **성능(실측)** | 운영 규모 합성 자료(DB 8.8 GB · 전세계 항공기 1만 · 선박 1.5만 척)에서 REST 100 rps 경로 16개 p95 4.4–89 ms(목표 300) · WS 200 연결 지연 p95 230 ms(목표 500) · api 컨테이너 메모리 최대 750.5 MiB(NFR-03 ≤ 768 MiB — [ADR-031](docs/adr/ADR-031-api-memory-target.md)) · 첫 화면 JS 547,116 B(예산 550,000 B, gzip 본문 · 웹 이미지의 Node) · 화면 Core Web Vitals(실제 GPU): 데스크톱 4화면 모두 good, 모바일 지도 화면 TBT 196–233 ms(외부 호스트 차단) — [PERF](docs/PERF.md) §14 · §15 |
-| **설계 기록** | ADR 38건([docs/adr](docs/adr)) · 변경 계약 v1–v5([docs/audit](docs/audit)) |
+| **설계 기록** | ADR 39건([docs/adr](docs/adr)) · 변경 계약 v1–v5([docs/audit](docs/audit)) |
 
 ## 1. 무엇을 하나
 
@@ -135,6 +135,15 @@ make ops-user u=admin     # 운영자 계정 생성·비밀번호 변경(프롬�
 | `bash tools/chaos.sh` | 장애 주입 6종(api·collector·redis 강제 종료, db 정지, 공급자 차단, ais 네트워크 단절) |
 | `make logs s=api` · `make down` · `make clean` | 로그 · 중지(데이터 보존) · 볼륨 포함 초기화 |
 | `make backup` · `make restore f=… confirm=wakeline` | PostgreSQL 백업(backups/, 0600) · 빈 새 볼륨에 복원(아래) |
+
+### AWS 데모 배포
+포트폴리오 데모는 AWS(EC2 + RDS PostgreSQL 18 + PostGIS, 평일 09–18시, 앞단 접근 코드 잠금)에 올립니다. 로컬과 다른 점은 덧붙임 파일
+[infra/compose.aws.yml](infra/compose.aws.yml) 하나에 있고, 이유는 [ADR-039](docs/adr/ADR-039-aws-demo-deployment.md)에 있습니다.
+```bash
+docker compose -f infra/compose.yml -f infra/compose.aws.yml --env-file .env up -d --wait
+```
+DB 는 db 컨테이너 대신 RDS(`RDS_HOST`, TLS)이고 역할 · PostGIS 는 RDS 마스터가 미리 만듭니다. OpenSky 는 끄고, 운영 화면(`/ops` · `/logs`)은
+공개 주소에서 닫습니다(운영자는 SSM 포트 포워딩으로 `localhost:8700`). 추가로 필요한 값은 [.env.aws.example](.env.aws.example)에 이름만 있습니다.
 
 ### 공역 자료 가져오기(선택)
 공역 레이어 · 공역 진입 판정은 국토교통부 '공역정보 지도자료'(AIP 차수 기준 KMZ — 국토교통부 누리집에서 받는다)를 씁니다. 국토교통부 저작물이라 이 저장소에는 없습니다 — 받은 파일을 운영자가 가져옵니다(ADR-034):

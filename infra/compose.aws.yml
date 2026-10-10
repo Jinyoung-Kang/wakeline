@@ -1,0 +1,61 @@
+# AWS 데모 배포용 덧붙임 (ADR-039). 로컬 실행 · 시험에는 쓰지 않는다(정책 시험은 compose.yml 만 본다).
+#
+#   docker compose -f infra/compose.yml -f infra/compose.aws.yml --env-file .env up -d --wait
+#
+# 바뀌는 것
+#   · db 컨테이너 대신 RDS(PostgreSQL 18.6 + PostGIS 3.6, TLS 강제) — RDS_HOST. 역할 · DB · PostGIS 는 RDS 마스터가 미리 만든다
+#     (01-roles.sh 를 RDS 용으로 옮긴 aws-deploy rds/bootstrap.sql — 02-superuser-local-only.sh 는 RDS 에 해당 없음)
+#   · api · migrate 는 internal 망(wakeline)에만 있어 RDS 에 닿지 않는다 → DB 로 나가는 망(rds)을 더한다. collector 는 이미 egress 로 나간다
+#   · edge 가 앞단 Caddy 의 X-Forwarded-For 를 믿음(edge/realip.aws.conf) · 허용 Origin 에 공개 주소(PUBLIC_ORIGIN)를 더함
+#   · OpenSky(전세계)는 끔 — 공개 배포 기본값(ADR-009) · DB 증가의 대부분
+#   · DB 연결 수를 줄임(RDS db.t4g.micro 한 대를 세 프로젝트가 나눔): 공유 풀 12 → 6(공개 조회 허가 6 → 3), 선택 조회 풀 4 → 2
+# 필요한 값(.env, 이름은 .env.aws.example): RDS_HOST · PUBLIC_ORIGIN 외 기존 값. DB_ROOT_PASSWORD 는 db 를 띄우지 않아도 compose 가
+# 파일 전체를 해석하므로 아무 값이나 있어야 한다.
+x-rds-host: &rds-host
+  DB_HOST: ${RDS_HOST:?RDS_HOST 필요}
+  DB_PORT: ${RDS_PORT:-5432}
+
+services:
+  db:
+    profiles: ["local-db"]                       # RDS 를 쓰므로 띄우지 않는다
+
+  migrate:
+    depends_on: !reset {}
+    environment:
+      <<: *rds-host
+    networks:
+      rds: {}
+
+  api:
+    depends_on: !override
+      redis: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
+    environment:
+      <<: *rds-host
+      SPRING_DATASOURCE_URL: jdbc:postgresql://${RDS_HOST}:${RDS_PORT:-5432}/wakeline?sslmode=require
+      SPRING_DATASOURCE_HIKARI_MAXIMUMPOOLSIZE: "6"
+      WAKELINE_PUBLICREADS_PERMITS: "3"            # 공유 풀보다 작아야 한다(PublicReadGate 가 기동 때 검사)
+      WAKELINE_READPOOL_SIZE: "2"
+      # 공개 주소 + 관리자 터널(SSM 포트 포워딩으로 http://localhost:8700)
+      WAKELINE_ALLOWED_ORIGINS: ${PUBLIC_ORIGIN:?PUBLIC_ORIGIN 필요 (예 https://dxxxx.cloudfront.net)},http://localhost:${WAKELINE_PORT:-8700},http://127.0.0.1:${WAKELINE_PORT:-8700}
+      WAKELINE_COOKIE_SECURE: "${COOKIE_SECURE:-true}"
+    networks:
+      rds: {}
+
+  collector:
+    depends_on: !override
+      redis: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
+    environment:
+      <<: *rds-host
+      PGSSLMODE: require                           # asyncpg 는 ssl 인자가 없으면 PGSSLMODE 를 읽는다
+      OPENSKY_CLIENT_ID: ""
+      OPENSKY_CLIENT_SECRET: ""
+      AIRCRAFT_PROVIDERS: adsb_fi,adsb_lol
+
+  edge:
+    volumes:
+      - ./edge/realip.aws.conf:/etc/nginx/edge.d/realip.conf:ro
+
+networks:
+  rds: {}                                          # 일반 bridge — RDS(VPC 안의 다른 호스트)로 나가는 길
