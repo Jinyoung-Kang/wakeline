@@ -93,11 +93,28 @@ def aircraft_once() -> str:
                *envelope("aircraft", "region", p, len(states), region.get("raw_ref", "qa/xss-probe"))).strip()
 
 
+def warnings() -> str:
+    """출시 QA 2차(QA-PLAN §3.1 XSS): 특보 목록 하나 — 구역 이름 · 상위 구역 · 종류 · 수준 · 명령 · 때 · 해제예고 · 원문에 표식(스키마 길이 한도 안).
+    수집기와 같은 경로(wakeline_collector 사용자 · wakeline:wxwarn · kind wx_warnings)로 — 수집기의 다음 발행(5분)이 덮는다."""
+    t = now_iso()
+    mark = "<img src=x onerror=window.__qa_xss=1>"
+    sea = {"zone_code": "S1312020", "zone_name": "<i id=qaxw>Z</i>" + mark[:40], "parent_code": "S1310000", "parent_name": "<b id=qaxp>P</b>",
+           "sea": True, "kind": "<i>풍랑", "level": "\"><i>", "command": "<svg/onload=1>", "preliminary": True, "issued_at": t,
+           "effective_from": t, "effective_to": t, "effective_text": mark, "raw": "S1310000, " + mark + " javascript:alert(1),="}
+    land = {"zone_code": "L1100100", "zone_name": mark[:80], "sea": False, "kind": "호우", "level": "주의보", "command": "발표", "preliminary": False,
+            "issued_at": t, "effective_at": t, "end_notice": "<a href=javascript:alert(1)>x</a>", "raw": "L1000000, " + mark + ",="}
+    payload = {"complete": True, "dropped": 0, "warnings": [sea, land]}
+    return cli("wakeline_collector", "REDIS_COLLECTOR_PASSWORD", "XADD", "wakeline:wxwarn", "*", *envelope("wx_warnings", "-", payload, 2, "qa/xss-probe")).strip()
+
+
 def main() -> int:
     what = sys.argv[1] if len(sys.argv) > 1 else "ship"
     loop = int(sys.argv[sys.argv.index("--loop") + 1]) if "--loop" in sys.argv else 0
     if what == "ship":
         print("ship", MMSI, ship())
+        return 0
+    if what == "warnings":
+        print("warnings", warnings())
         return 0
     end = time.monotonic() + loop
     while True:

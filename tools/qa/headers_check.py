@@ -70,7 +70,7 @@ def common(label: str, hd: dict):
 
 def main() -> int:
     # 화면(HTML) — CSP nonce · strict-dynamic · script 에 unsafe-inline 없음
-    for path in ["/", "/logs", "/ops", "/replay", "/stats", "/about", "/guide", "/airports/RKSI"]:
+    for path in ["/", "/logs", "/ops", "/replay", "/stats", "/about", "/guide", "/airports/RKSI", "/m", "/alerts/1", "/replay?at=2026-10-10T00:00:00Z&hex=71be01"]:  # 출시 QA 2차: /m · /alerts/[id] · 재생 링크
         st, hd, _ = raw("GET", path)
         common(f"page {path}", hd)
         csp = one(hd, "content-security-policy") or ""
@@ -90,6 +90,17 @@ def main() -> int:
     sc = " ".join(hd.get("set-cookie", []))
     note("api /status: CSRF cookie SameSite=Strict", "WAKELINE_CSRF" in sc and "SameSite=Strict" in sc, set_cookie=sc[:120])
     note("api /status: rate-limit headers present", one(hd, "x-ratelimit-limit") is not None)
+
+    # 출시 QA 2차 — 새 공개 API 도 같은 머리(JSON · nosniff · CSP none)와 캐시 규칙: /watch 는 private(목록이 개인의 것 — ADR-037)
+    for path, cache in [("/api/v1/warnings", "public"), ("/api/v1/airspace", "public"), ("/api/v1/watch?airports=RKSI", "private"),
+                        ("/api/v1/alerts/1", None), ("/api/v1/warnings/history", "public")]:
+        st, hd, _ = raw("GET", path)
+        common(f"api {path}", hd)
+        note(f"api {path}: CSP default-src none", (one(hd, "content-security-policy") or "").startswith("default-src 'none'"), status=st)
+        if cache:
+            note(f"api {path}: Cache-Control {cache}", cache in (one(hd, "cache-control") or ""), cc=one(hd, "cache-control"))
+            if cache == "private":
+                note(f"api {path}: never public", "public" not in (one(hd, "cache-control") or ""), cc=one(hd, "cache-control"))
 
     # 정적 — 1년 immutable
     import urllib.request
