@@ -37,6 +37,9 @@ public class RecentClosedAlerts {
         if (add.isEmpty()) return;
         synchronized (closed) {
             closed.addAll(add);
+            // 창 밖은 버림이 아니다 — 먼저 지워야 상한이 창 안의 것만 센다(QA-710). 기준은 이번에 닫힌 것 중 가장 늦은 때(엔진 시각)
+            Instant latest = add.stream().map(Alert::leftAt).max(Instant::compareTo).orElseThrow();
+            prune(latest.minusSeconds(WINDOW_S));
             while (closed.size() > MAX) { closed.removeFirst(); dropped++; }
         }
     }
@@ -47,10 +50,15 @@ public class RecentClosedAlerts {
         if (hexes.isEmpty()) return out;
         Instant from = now.minusSeconds(WINDOW_S);
         synchronized (closed) {
-            while (!closed.isEmpty() && closed.peekFirst().leftAt().isBefore(from)) closed.removeFirst();
+            prune(from);
             for (Alert a : closed) if (!a.leftAt().isBefore(from) && hexes.contains(a.hex())) out.computeIfAbsent(a.hex(), k -> new ArrayList<>()).add(a);
         }
         return out;
+    }
+
+    /** 앞(먼저 닫힌 것)에서부터 from 보다 먼저 닫힌 것을 지운다. closed 를 잡고 부른다. */
+    private void prune(Instant from) {
+        while (!closed.isEmpty() && closed.peekFirst().leftAt().isBefore(from)) closed.removeFirst();
     }
 
     /** 상한 때문에 버린 수(창이 짧아졌는지 알 수 있게 — 지표 대신 응답에). */

@@ -5,12 +5,15 @@ import dev.wakeline.aircraft.core.SnapshotStore;
 import dev.wakeline.platform.web.Meta;
 import dev.wakeline.platform.web.Params;
 import dev.wakeline.platform.web.Problem;
+import dev.wakeline.platform.web.ProblemAdvice;
+import dev.wakeline.ships.core.AisStatus;
 import dev.wakeline.ships.core.AisGap;
 import dev.wakeline.ships.core.ShipStore;
 import dev.wakeline.weather.core.Alert;
 import dev.wakeline.weather.core.EngineService;
 import dev.wakeline.weather.data.AirportRepository;
 import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.dao.DataAccessException;
 import org.springframework.http.CacheControl;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -37,7 +40,8 @@ import java.util.regex.Pattern;
  * <ul>
  *   <li>입력: aircraft=hex,… · ships=mmsi,… · airports=icao,… — 합쳐 {@link #MAX_TARGETS}개(중복은 한 번), 하나라도 틀리면 400(BAD_HEX · BAD_MMSI · BAD_ICAO ·
  *       TOO_MANY_TARGETS).</li>
- *   <li>항공기 · 선박은 메모리, 공항은 DB(최신 METAR 는 메모리에 없다 — 공항마다 색인 한 번). 외부 호출 없음(ADR-006).</li>
+ *   <li>항공기 · 선박은 메모리, 공항은 DB(최신 METAR 는 메모리에 없다 — 공항마다 색인 한 번). 외부 호출 없음(ADR-006). DB 를 못 쓰면 공항 줄 없이
+ *       메모리 값만 200 + meta.db_unavailable(§G53 · QA-600 — 숨은 탭 알림이 이 응답 하나에 기댄다).</li>
  *   <li>요청 URL 에 목록이 실려 edge 접근 기록에 남는다 — 로컬 1인 운영이라 받아들였다(ADR-037). 캐시: private, max-age=5.</li>
  * </ul>
  */
@@ -52,13 +56,16 @@ public class WatchController {
     private final EngineService engine;
     private final RecentClosedAlerts closed;
     private final ShipStore ships;
+    private final AisStatus aisStatus;
     private final AirportRepository airports;
 
-    public WatchController(SnapshotStore aircraft, EngineService engine, RecentClosedAlerts closed, ShipStore ships, AirportRepository airports) {
+    public WatchController(SnapshotStore aircraft, EngineService engine, RecentClosedAlerts closed, ShipStore ships, AisStatus aisStatus,
+                           AirportRepository airports) {
         this.aircraft = aircraft;
         this.engine = engine;
         this.closed = closed;
         this.ships = ships;
+        this.aisStatus = aisStatus;
         this.airports = airports;
     }
 
@@ -74,11 +81,20 @@ public class WatchController {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("aircraft", aircraftRows(hexes, now));
         m.put("ships", shipRows(mmsis, now));
-        m.put("airports", airportRows(icaos));
-        m.put("ais_last_gap", gap(this.ships.lastGap()));
+        boolean dbUnavailable = false;
+        try {
+            m.put("airports", airportRows(icaos));
+        } catch (DataAccessException e) {
+            ProblemAdvice.answeredWithoutStore(e, req); // WARN 한 줄 — 결함(문법 · 권한)이면 그대로 던진다(500)
+            m.put("airports", List.of());              // 모름 — '없음(found=false)'으로 지어 보이지 않는다
+            dbUnavailable = true;
+        }
+        m.put("ais_last_gap", gap(aisStatus.openOrLastGap())); // 열린 공백 먼저(QA-701 — 전에는 끝난 공백만)
         m.put("closed_window_s", RecentClosedAlerts.WINDOW_S);
         m.put("closed_dropped", closed.dropped());
-        m.put("meta", Meta.of(req, "memory", now, 60));
+        Map<String, Object> meta = Meta.of(req, "memory", now, 60);
+        if (dbUnavailable) meta.put("db_unavailable", true);
+        m.put("meta", meta);
         return ResponseEntity.ok().cacheControl(CACHE).body(m);
     }
 

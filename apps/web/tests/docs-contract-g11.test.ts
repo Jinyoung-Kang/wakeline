@@ -205,6 +205,8 @@ describe("contract v5 amendment numbers are unique", () => {
     expect(amendment(51)).toContain("알림 한 건 — `GET /api/v1/alerts/{id}` · `/alerts/{id}` · `/replay?at&bbox&hex`");
     expect(heading(52)).toMatch(/^## G\. 32차 개정\(2026-10-09 · 지정 대상 기록 보존 /);
     expect(amendment(52)).toContain("지정 대상 기록 보존 `retain_targets` · 항적 `properties.resolution` · `/m`");
-    expect(amendment(53)).toBe("");
+    expect(heading(53)).toMatch(/^## G\. 33차 개정\(2026-10-10 · 출시 QA 2차 결함 수정 /);
+    expect(amendment(53)).toContain("관심 대상 조회는 DB 가 없어도 메모리 값으로 답한다");
+    expect(amendment(54)).toBe("");
   });
 });

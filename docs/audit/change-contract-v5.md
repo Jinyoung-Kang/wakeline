@@ -1328,3 +1328,14 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
     관심 대상 목록).
   - 회귀 막기: api `RetainTargetsTest` · `RetainedTrackDbTest` · `RolePrivilegesDbTest` · `RestSamplesIT`(track_retained) · `tools/rest_contract_check.py` ·
     web `mobile-page.test.ts` · e2e `mobile.spec.ts`.
+
+## G. 33차 개정(2026-10-10 · 출시 QA 2차 결함 수정 — `docs/qa/2026-10-release`)
+- G53(§G50 · §G47 · §G52 의 동작을 문서 그대로 맞춤 + `/watch` 의 DB 장애 응답) **관심 대상 조회는 DB 가 없어도 메모리 값으로 답한다**
+  - `GET /api/v1/watch`: 공항 줄(최신 METAR — DB)을 못 읽으면 503 이 아니라 200 · `airports: []` · `meta.db_unavailable: true`(다른 공개 조회의 관례 —
+    선박 검색 · 상세). 공항 줄을 `found: false` 로 지어 보이지 않는다(모름 — 화면은 "—"). 항공기 · 선박 · 알림 줄은 그대로(QA-600).
+  - `ais_last_gap`: 지금 열린 수신 공백이 있으면 그것(가장 먼저 열린 것 · `ended_at` 없음), 없으면 마지막 끝난 공백 — §G50 의 `{started_at, ended_at?, reason}`
+    그대로. 예전: 끝난 공백만 실어 열린 공백이 나오지 않았다(QA-701).
+  - `closed_dropped`: 15분 창 밖으로 지난 항목은 '버림'으로 세지 않는다(QA-710).
+  - `GET /api/v1/airspace?category=`: 값 앞뒤의 ASCII 공백만 지운다 — NUL · 탭 · 줄바꿈 · 제어 문자는 400 `BAD_CATEGORY`(QA-500 · §G43 과 같은 부류).
+  - 항적 `properties.resolution = 1m_retained`(§G52): 보존 점도 실제 시각 `ts` 로 [from, to] 를 거른다 — 원해상도와 같은 규칙(QA-702).
+  - 회귀 막기: api `Qa500…` · `Qa600…` · `Qa701…` · `Qa702…` · `Qa710…` · `WatchControllerTest` · `RecentClosedAlertsTest` · `tools/rest_contract_check.py`(WATCH 의 META).

@@ -4,6 +4,7 @@ import dev.wakeline.aircraft.core.AircraftState;
 import dev.wakeline.aircraft.core.Snapshot;
 import dev.wakeline.aircraft.core.SnapshotStore;
 import dev.wakeline.platform.web.ProblemAdvice;
+import dev.wakeline.ships.core.AisStatus;
 import dev.wakeline.ships.core.ShipStore;
 import dev.wakeline.watch.RecentClosedAlerts;
 import dev.wakeline.watch.WatchController;
@@ -42,7 +43,7 @@ class Qa600WatchDbDownTest {
         when(engine.activeAlerts(null)).thenReturn(List.of());
         AirportRepository airports = mock(AirportRepository.class);
         when(airports.latestFor(any())).thenThrow(new CannotGetJdbcConnectionException("db down"));
-        MockMvc mvc = MockMvcBuilders.standaloneSetup(new WatchController(snapshots, engine, new RecentClosedAlerts(), new ShipStore(), airports))
+        MockMvc mvc = MockMvcBuilders.standaloneSetup(new WatchController(snapshots, engine, new RecentClosedAlerts(), new ShipStore(), new AisStatus(new ShipStore()), airports))
                 .setControllerAdvice(new ProblemAdvice()).build();
         mvc.perform(get("/api/v1/watch").param("aircraft", "71be01").param("airports", "RKSI"))
                 .andExpect(status().isOk())
