@@ -1676,7 +1676,9 @@
   request-ids-ships-v5 · docs-contract-g11)은 고치지 않고 그대로 통과(값 없음 = 지금과 같음).
 - **확인**: web eslint 오류 0 · tsc · vitest 1,812 통과 · 3 건너뜀(154 파일) · `npm run build` · 첫 화면 JS `check:first-js -- --in-image` 548,678 → 548,968 B
   (+290 B, 여유 1,032 B — 이 호스트 Node 로는 546,352 → 546,635 B). infra/tests 179 통과. 가짜 env 파일로 `docker compose … config` — 덧붙임을 얹으면 web 에만
-  `WAKELINE_PUBLIC_DEMO=1`, `compose.yml` 만이면 없음. api · collector 는 바뀌지 않아 돌리지 않았다. AWS 화면은 배포 뒤에 본다(아직 배포 안 함).
+  `WAKELINE_PUBLIC_DEMO=1`, `compose.yml` 만이면 없음. 같은 운영 빌드(`.next/standalone/server.js`, 127.0.0.1:3917 에 잠깐)를 값 `1` · 없음으로 띄워 `/about` 의
+  주 메뉴가 `/ · /replay · /stats · /about · /guide` · 7개 그대로로 갈림 — 빌드에 굳지 않고 실행 때 읽는다. api · collector 는 바뀌지 않아 돌리지 않았다.
+  AWS 화면은 배포 뒤에 본다(아직 배포 안 함).
 - **남는 것**: `app/global-error.tsx`(루트 레이아웃까지 실패)는 context 밖이라 로컬 문구 · 링크를 쓴다. 설명서 스크린샷(로컬에서 찍음)에는 [운영] · [로그] 메뉴가 보인다.
 
 ## 자동 검사 현황(2026-10-02 15:5x KST, QA 2026-10 브랜치 `qa/2026-10` — #103 뒤, 깨끗한 `git archive` 내보내기 · 격리 스택)
