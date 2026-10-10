@@ -1,7 +1,9 @@
 import type { Metadata } from "next";
 import { connection } from "next/server";
 import "./globals.css";
+import { PublicDemoProvider } from "@/components/PublicDemo";
 import { Shell } from "@/components/Shell";
+import { isPublicDemo } from "@/lib/public-demo";
 
 // 화면마다 다른 제목(R-30): 하위 경로는 "%s — Wakeline", 상황판(/)은 기본 제목
 export const metadata: Metadata = {
@@ -13,10 +15,13 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   // CSP nonce(proxy.ts)는 요청마다 새로 만든다 — Next 는 요청의 CSP 헤더에서 nonce 를 읽어 자기 스크립트에 붙이므로 페이지는 요청마다 렌더해야 한다.
   // nonce 를 DOM(meta 태그)에 복제하지 않는다(R-82): 읽는 코드가 없고, CSS 속성 선택자로 읽힐 수 있는 불필요한 노출이다.
   await connection();
+  // 공개 데모(AWS — ADR-039)면 운영자 전용 화면(/ops · /logs)으로 가는 메뉴 · 링크를 감춘다. 실행 시 환경 변수라 요청 때 읽는다(빌드에 굳지 않게).
   return (
     <html lang="ko" suppressHydrationWarning>
       <body className="h-full overflow-hidden">
-        <Shell>{children}</Shell>
+        <PublicDemoProvider demo={isPublicDemo()}>
+          <Shell>{children}</Shell>
+        </PublicDemoProvider>
       </body>
     </html>
   );

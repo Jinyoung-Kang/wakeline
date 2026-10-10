@@ -417,7 +417,8 @@ export function GuideView({ manifest, dropped }: { manifest: GuideManifest; drop
 
           {/* ---------------- 6 ---------------- */}
           <Sec id="ops">
-            <P>운영(<span className="mono">/ops</span>) · 로그(<span className="mono">/logs</span>) 화면은 운영자 전용입니다. 로그인하지 않았으면 같은 자리에 로그인 폼이 나오고, 조회 API 도 로그인하지 않은 요청에는 없는 자원(404)으로 답합니다.</P>
+            <P>운영(<span className="mono">/ops</span>) · 로그(<span className="mono">/logs</span>) 화면은 운영자 전용입니다. 로그인하지 않았으면 같은 자리에 로그인 폼이 나오고, 조회 API 도 로그인하지 않은 요청에는 없는 자원(404)으로 답합니다.
+              공개 데모(AWS)에서는 두 화면을 공개 주소에서 닫아 상단 메뉴에도 없습니다(운영자는 서버에 직접 연결해 주소로 엽니다).</P>
             <Sec id="ops-login" sub>
               <UL>
                 <li>계정은 서버에서 <span className="mono">make ops-user</span> 로만 만듭니다(비밀번호 12자 이상). 로그인 폼은 보내기 전에 아이디 필수 · 비밀번호 8자 이상을 확인합니다.</li>

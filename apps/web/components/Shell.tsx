@@ -5,13 +5,15 @@ import { useEffect } from "react";
 import { installErrorReporter } from "@/lib/errorReport";
 import { AircraftSearch } from "./AircraftSearch";
 import { AttributionFooter } from "./AttributionFooter";
+import { usePublicDemo } from "./PublicDemo";
 
 const NAV = [
   { href: "/", label: "상황판" },
   { href: "/replay", label: "재생" },
   { href: "/stats", label: "통계" },
-  { href: "/ops", label: "운영" },
-  { href: "/logs", label: "로그" },
+  // 운영자 전용(operator): 공개 데모(AWS — ADR-039)에서는 앞단이 이 경로를 404 로 닫으므로 메뉴에서 뺀다(운영자는 터널로 주소를 직접 연다)
+  { href: "/ops", label: "운영", operator: true },
+  { href: "/logs", label: "로그", operator: true },
   { href: "/about", label: "출처·한계" },
   // 서비스 설명 + 사용 방법(스크린샷 · 번호 설명) — 출처·한계 바로 뒤(사용자 요청 2026-09-29)
   { href: "/guide", label: "설명서" },
@@ -19,6 +21,7 @@ const NAV = [
 
 export function Shell({ children }: { children: React.ReactNode }) {
   const path = usePathname() ?? "";
+  const nav = usePublicDemo() ? NAV.filter((n) => !n.operator) : NAV;
   // 처리되지 않은 브라우저 오류를 시스템 로그로(계약 v5 §C8) — 모든 화면이 이 셸 안에 있다
   useEffect(() => installErrorReporter(), []);
   // 건너뛰기 링크(R-30): Tab 첫 정지점. 상황판은 지도 조작·출처 링크를 건너 알림 패널로 바로 갈 수 있다.
@@ -37,7 +40,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
             <span className="label hidden lg:inline">Aircraft · Ships · Hazardous Weather</span>
           </Link>
           <nav className="flex min-w-0 gap-1 overflow-x-auto" aria-label="주 메뉴">
-            {NAV.map((n) => (
+            {nav.map((n) => (
               <Link key={n.href} href={n.href} prefetch={false} className="btn" aria-current={path === n.href || (n.href !== "/" && path.startsWith(n.href)) ? "page" : undefined}>
                 {n.label}
               </Link>
