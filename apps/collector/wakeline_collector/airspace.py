@@ -155,6 +155,8 @@ def limit(val: str | None, uom: str | None, code: str | None) -> Limit:
         return Limit(round(num * 100), "FL", raw) if ok else Limit(None, "UNKNOWN", raw)
     if uu in _FT_UOM or uu in _M_UOM:
         ft = round(num) if uu in _FT_UOM else round(num / 0.3048)
+        if abs(ft) > MAX_LIMIT_FT:  # 한도는 바꾼 ft 로(미터 값 — 독립 검토)
+            return Limit(None, "UNKNOWN", raw)
         if cc in _MSL_CODE:
             return Limit(ft, "MSL", raw)
         if cc in _AGL_CODE or cc in _SURFACE_CODE:  # 'n FT SFC' = 지면에서 n ft

@@ -277,6 +277,8 @@ def test_the_import_command_refuses_bad_input_and_arguments(monkeypatch, capsys)
         ("999", "FL", None, Limit(99_900, "FL", "999 FL")),
         ("1001", "FL", None, Limit(None, "UNKNOWN", "1001 FL")),
         ("9" * 400, "FT", "MSL", Limit(None, "UNKNOWN", "9" * 400 + " FT MSL")),  # float → inf
+        ("30480", "M", "MSL", Limit(100_000, "MSL", "30480 M MSL")),  # 한도는 바꾼 ft 로 — 30,480 m = 100,000 ft
+        ("31000", "M", "MSL", Limit(None, "UNKNOWN", "31000 M MSL")),  # 101,706 ft
     ],
 )
 def test_limit_out_of_range_is_unknown(val, uom, code, want):
