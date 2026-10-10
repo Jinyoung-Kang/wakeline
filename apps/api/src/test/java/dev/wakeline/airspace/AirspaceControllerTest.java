@@ -88,11 +88,13 @@ class AirspaceControllerTest {
                 .andExpect(header().string("ETag", "\"as3-abababababab-danger.restricted\""))
                 .andExpect(jsonPath("$.features", hasSize(1)))
                 .andExpect(jsonPath("$.features[0].properties.category").value("restricted"));
-        for (String bad : List.of("Restricted", "a,,b", "x".repeat(33), "a;b")) {
+        // 제어 문자만인 값도 '거르지 않음'이 아니라 400(QA-500 후속 — isBlank 는 탭 · 줄바꿈 · 0x1F 를 공백으로 본다). 빈 값 · ASCII 공백만은 거르지 않음
+        for (String bad : List.of("Restricted", "a,,b", "x".repeat(33), "a;b", "\t", "\n", "\u001F", " \t ")) {
             m.perform(get("/api/v1/airspace").param("category", bad))
                     .andExpect(status().isBadRequest())
                     .andExpect(jsonPath("$.code").value("BAD_CATEGORY"));
         }
+        for (String none : List.of("", "   ")) m.perform(get("/api/v1/airspace").param("category", none)).andExpect(status().isOk());
     }
 
     @Test

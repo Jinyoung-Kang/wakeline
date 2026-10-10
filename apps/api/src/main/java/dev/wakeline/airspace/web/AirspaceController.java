@@ -64,7 +64,7 @@ public class AirspaceController {
 
     /** null = 거르지 않음. 형식이 틀리면 400. */
     static Set<String> categories(String raw) {
-        if (raw == null || raw.isBlank()) return null;
+        if (raw == null || spaces(raw).isEmpty()) return null; // isBlank 는 탭 · 줄바꿈 · 0x1F 도 공백으로 본다(QA-500 후속)
         Set<String> out = new TreeSet<>();
         for (String c : raw.split(",", -1)) {
             String t = spaces(c);
