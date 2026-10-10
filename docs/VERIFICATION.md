@@ -1663,6 +1663,22 @@
   지도 · 항공기 117대를 GPU 없이 그리느라 메인 스레드가 바빠 판정이 한 번도 돌지 못하고 기본 5 s 가 끝났다. 어긋남이 아니다: 맥 Chrome 의 CPU 를 40배 느리게 하면
   evaluate 가 12–15 s 걸리고 그때 읽은 값은 매번 서로 맞았다(`hidden=[]` · `상세 ▾`), 기본 5 s 확인은 같은 글로 실패. 판정은 두고 기다림만 15 s(CI 관찰값의 약 3배).
 
+## #136 AWS 공개 데모의 상단 메뉴 [운영] · [로그]가 404 JSON 으로 — 앞단은 경로를 닫았는데 화면은 그리로 링크했다
+- **증상**: AWS 공개 데모([ADR-039](adr/ADR-039-aws-demo-deployment.md))에서 상단 메뉴 [운영] · [로그]를 누르면 화면 대신 404 JSON 이 나온다.
+  오류 문구의 요청 id 옆 '로그 보기'(`/logs#rid=…`)도 같다.
+- **원인**: 앞단 Caddy 가 `/ops*` · `/logs*` · `/api/v1/ops/*` 를 404 로 닫는다(ADR-039 결정 5 — 의도). 웹은 배포를 모르고 로컬과 같은 메뉴 · 링크 · 안내를
+  그렸다(`Shell` NAV · `ErrorNote` 의 `RequestIdCopy` · `ErrorScreen` 의 `/logs` 안내).
+- **고침**(사용자 결정 — AWS 에서만 감추고 로컬은 그대로): web 의 실행 시 환경 변수 `WAKELINE_PUBLIC_DEMO`(정확히 `"1"` 일 때만 — `infra/compose.aws.yml` 의 web 에만)를
+  루트 레이아웃이 요청 때 읽어 context(`components/PublicDemo`)로 넘긴다. 공개 데모면 메뉴에서 [운영] · [로그]를 빼고(나머지 순서 그대로), 요청 id 는 값 · 복사만 두고
+  링크를 빼며, 오류 화면의 `/logs` 안내는 '시스템 로그'로 적는다. 운영자 화면(`app/ops` · `app/logs` 레이아웃 — 터널로만 닿는다)은 링크를 둔다. 설명서 운영 절에 한 줄.
+- **고정**: `apps/web/tests/public-demo-nav.test.ts` 10건 — 수정 전 4건 실패(`expected [ '/', '/replay', '/stats', …(4) ] to deeply equal [ '/', '/replay', '/stats', …(2) ]`
+  — `/ops` · `/logs` 가 남음, `expected '<span data-testid="error-note">…' not to contain '로그 보기'` 등). 기존 시험(shell-prefetch · error-screens-v5 · guide-nav ·
+  request-ids-ships-v5 · docs-contract-g11)은 고치지 않고 그대로 통과(값 없음 = 지금과 같음).
+- **확인**: web eslint 오류 0 · tsc · vitest 1,812 통과 · 3 건너뜀(154 파일) · `npm run build` · 첫 화면 JS `check:first-js -- --in-image` 548,678 → 548,968 B
+  (+290 B, 여유 1,032 B — 이 호스트 Node 로는 546,352 → 546,635 B). infra/tests 179 통과. 가짜 env 파일로 `docker compose … config` — 덧붙임을 얹으면 web 에만
+  `WAKELINE_PUBLIC_DEMO=1`, `compose.yml` 만이면 없음. api · collector 는 바뀌지 않아 돌리지 않았다. AWS 화면은 배포 뒤에 본다(아직 배포 안 함).
+- **남는 것**: `app/global-error.tsx`(루트 레이아웃까지 실패)는 context 밖이라 로컬 문구 · 링크를 쓴다. 설명서 스크린샷(로컬에서 찍음)에는 [운영] · [로그] 메뉴가 보인다.
+
 ## 자동 검사 현황(2026-10-02 15:5x KST, QA 2026-10 브랜치 `qa/2026-10` — #103 뒤, 깨끗한 `git archive` 내보내기 · 격리 스택)
 | 층 | 도구 | 수 |
 |---|---|---|
