@@ -1619,6 +1619,22 @@
 - **처리**: Dependabot 알림을 `tolerable_risk` 로 닫았다(사용자 결정 2026-10-10). CI 의 기한부 예외(`apps/web/npm-audit-allow.json`, 2026-11-02 만료)는 그대로 —
   만료되면 CI 가 다시 알려 주므로 그때 상류를 다시 본다.
 
+## #133 CI 에서만 가끔 실패하던 api 시험 둘 — 순서 쓰기 큐의 넘겨받는 틈(실제 경합) · 실행기의 끝난 작업 수를 일찍 셈(시험 경합)
+- **증상**: 앱 코드가 같은데 GitHub Actions(2 vCPU)의 `api` 가 가끔 1/1215 로 실패 — `OrderedWriterTest.oldestPendingIsTheTaskBeingRetriedWhileTheDbIsDown`
+  (119줄, `cbdf12b` 실행 38032483812) · `StoredStaticReaderTest.lookupAsync_joinsTheRunningReadWithoutAThread`(173줄 `expected: 1L but was: 0L`,
+  `1480dd6` 실행 38040815369 — 다시 돌려도 같은 줄). 맥에서는 통과.
+- **원인 1(제품 코드)**: `OrderedWriter` 워커가 큐에서 꺼낸(poll) 뒤 `inflightAtMs` 를 적기 전 틈에는 작업이 큐에도 표시에도 없어 `oldestPendingAtMs()` 가 -1
+  ('남은 작업 없음')을 돌려줬다 — writer_backlog 지표가 그 순간 비어 보인다. 시험의 대기 함수는 조건이 참이 되면 나온 뒤 한 번 더 확인하는데, -1 을 본 직후
+  다음 작업이 쓰는 중으로 바뀌어 실패했다. 실패 시각이 세 번째 재시도 0.1 s 뒤(시험 보고서의 로그 — 5 s 대기 만료가 아님)라 이 틈임을 알았다.
+  틈이 명령 몇 개 길이라 CPU 를 다투게 해도 맥에서는 재현되지 않아, 넘겨받은 직후 워커를 세우는 시험 갈고리(`onTakenForTest`)로 결정적으로 재현했다.
+- **원인 2(시험)**: `ThreadPoolExecutor.getCompletedTaskCount()` 는 일꾼이 `run()`(과 afterExecute)을 마친 뒤에야 는다 — future 는 작업 안에서 끝나므로
+  `first.get()` 직후에 읽으면 0 일 수 있다. afterExecute 에서 300 ms 쉬게 하면 늘 재현된다.
+- **고침**: ① 워커는 큐가 비어 있지 않으면 쓰는 중 표시를 먼저 하고 큐에서 뺀다(빼는 것은 워커 하나뿐), 읽는 쪽은 큐가 비어 보이면 표시를 한 번 더 본다 —
+  기다리는 작업 뒤에서 넘겨받는 틈이 없다. 비어 있던 큐에 막 들어온 작업만 꺼냄과 표시 사이 틈이 남는다(그 작업의 나이는 0 에 가깝다 — 주석).
+  같은 지표를 내는 `TrackWriter` · `ReceiptBatchQueue` 는 꺼냄과 표시를 한 잠금 안에서 해 이 틈이 없다. ② 시험은 실행기를 끝내고(`awaitTermination`) 센다.
+- **고정**: `OrderedWriterTest.oldestPendingIsTheTaskBeingHandedOverNotEmpty`(수정 전 `[넘겨받는 중인 작업] expected: 1791625044487L but was: -1L`) ·
+  `StoredStaticReaderTest` 의 실행기에 afterExecute 쉼(수정 전 `expected: 1L but was: 0L`). 두 시험 클래스 3회 연속 통과 · `make test-api` 통과.
+
 ## 자동 검사 현황(2026-10-02 15:5x KST, QA 2026-10 브랜치 `qa/2026-10` — #103 뒤, 깨끗한 `git archive` 내보내기 · 격리 스택)
 | 층 | 도구 | 수 |
 |---|---|---|

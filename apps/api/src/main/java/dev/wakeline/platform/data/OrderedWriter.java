@@ -71,6 +71,8 @@ public class OrderedWriter implements StreamPrerequisite, WriteBacklog {
     private volatile boolean running;
     /** 종료 비우기의 마감(시험이 줄인다). */
     long drainDeadlineMs = DRAIN_DEADLINE_MS;
+    /** 시험용: 워커가 작업을 넘겨받은 직후(처리 전) 부른다 — 넘겨받는 순간의 oldestPendingAtMs 를 고정해 보려고. */
+    volatile Runnable onTakenForTest = () -> { };
     /** 종료 후 비우기까지 끝났다 — 이후 제출은 처리될 수 없으므로 받지 않고 센다. */
     private volatile boolean stopped;
     private Thread worker;
@@ -118,7 +120,10 @@ public class OrderedWriter implements StreamPrerequisite, WriteBacklog {
         long in = inflightAtMs;
         if (in >= 0) return in;
         Queued head = queue.peek();
-        return head == null ? -1 : head.atMs();
+        if (head != null) return head.atMs();
+        // 큐가 비어 보이면 표시를 다시 본다: 워커는 큐에서 빼기 전에 표시하므로(loop), 방금 빠진 작업은 여기서 보인다 —
+        // 첫 읽기와 peek 사이에 넘겨받은 작업을 '남은 작업 없음(-1)'으로 읽지 않는다(VERIFICATION #133)
+        return inflightAtMs;
     }
 
     /** 테스트용: 워커 없이 호출 스레드에서 큐를 순서대로 비운다(시작 전 상태에서 — 일시 장애는 재시도하지 않고 버린다). */
@@ -157,15 +162,24 @@ public class OrderedWriter implements StreamPrerequisite, WriteBacklog {
 
     private void loop() {
         while (running) {
-            Queued q;
-            try {
-                q = queue.poll(500, TimeUnit.MILLISECONDS);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                break;
+            Queued q = queue.peek();
+            if (q != null) {
+                // 쓰는 중 표시를 먼저 하고 큐에서 뺀다 — 빼는 순간 '쓰는 중'으로 넘어가 큐에도 표시에도 없는 틈이 없다(VERIFICATION #133).
+                // 큐에서 빼는 것은 이 스레드뿐이라 방금 본 그 작업이 빠진다(submit 은 뒤에 붙이기만 한다)
+                inflightAtMs = q.atMs();
+                queue.poll();
+            } else {
+                try {
+                    q = queue.poll(500, TimeUnit.MILLISECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+                if (q == null) continue;
+                // 비어 있던 큐에 막 들어온 작업 — 꺼냄과 표시 사이 틈이 남지만 그 작업의 나이는 0 에 가깝다(기다리는 작업 뒤에서는 위 길로 넘겨받는다)
+                inflightAtMs = q.atMs();
             }
-            if (q == null) continue;
-            inflightAtMs = q.atMs();
+            onTakenForTest.run();
             try {
                 runWithRetry(q.task());
             } finally {

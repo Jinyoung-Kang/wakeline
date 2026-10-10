@@ -121,6 +121,36 @@ class OrderedWriterTest {
         assertThat(count("alert", "ok")).isEqualTo(2.0);
     }
 
+    /**
+     * 작업을 넘겨받는 순간에도 '남은 작업 없음(-1)'으로 읽히지 않는다(VERIFICATION #133). 예전에는 워커가 큐에서 꺼낸(poll) 뒤 쓰는 중 표시를 하기 전 틈에
+     * 큐도 비고 표시도 없어 -1 이 나왔다 — 위 시험의 마지막 대기가 -1 을 본 뒤 다시 확인할 때 다음 작업이 쓰는 중으로 바뀌어 CI(2 vCPU)에서 가끔 실패했다.
+     * 그 틈은 명령 몇 개 길이라 부하로는 재현되지 않아, 넘겨받은 직후에 워커를 세워 두고 읽는다.
+     */
+    @Test
+    void oldestPendingIsTheTaskBeingHandedOverNotEmpty() throws Exception {
+        OrderedWriter w = new OrderedWriter(meters, 1, 2);
+        java.util.concurrent.CountDownLatch taken = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch go = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicBoolean first = new java.util.concurrent.atomic.AtomicBoolean(true);
+        w.onTakenForTest = () -> {
+            if (!first.getAndSet(false)) return;
+            taken.countDown();
+            try { go.await(5, java.util.concurrent.TimeUnit.SECONDS); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+        };
+        w.submit(OrderedWriter.task("alert", () -> { }));
+        long at = w.oldestPendingAtMs();
+        w.start();
+        assertThat(taken.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+        try {
+            assertThat(w.oldestPendingAtMs()).as("넘겨받는 중인 작업").isEqualTo(at);
+        } finally {
+            go.countDown();
+        }
+        await(() -> w.oldestPendingAtMs() == -1);
+        w.stop();
+        assertThat(count("alert", "ok")).isEqualTo(1.0);
+    }
+
     // ---------- 넘침 · 종료 비우기 · 종료 중 실패(QA 2026-10 보고 §7-5 '시험 공백 — 위험 경로') ----------
 
     /** 소비자 흉내: 메시지마다 영수증 하나(소비자 자신의 보유 1), 모두 풀리면 ACK 를 센다. */
