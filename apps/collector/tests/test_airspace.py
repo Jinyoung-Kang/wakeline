@@ -266,3 +266,37 @@ def test_the_import_command_refuses_bad_input_and_arguments(monkeypatch, capsys)
     monkeypatch.setattr(airspace, "MAX_INPUT_BYTES", 10)
     rc, _, err = _run(monkeypatch, capsys, _kml())
     assert rc == 1 and "too large" in err
+
+
+@pytest.mark.parametrize(
+    ("val", "uom", "code", "want"),
+    [
+        ("100000", "FT", "MSL", Limit(100_000, "MSL", "100000 FT MSL")),
+        ("100001", "FT", "MSL", Limit(None, "UNKNOWN", "100001 FT MSL")),
+        ("999", "FL", "STD", Limit(None, "UNKNOWN", "999 FL STD")),  # 기준이 STD 면 원래 UNKNOWN(표 그대로)
+        ("999", "FL", None, Limit(99_900, "FL", "999 FL")),
+        ("1001", "FL", None, Limit(None, "UNKNOWN", "1001 FL")),
+        ("9" * 400, "FT", "MSL", Limit(None, "UNKNOWN", "9" * 400 + " FT MSL")),  # float → inf
+    ],
+)
+def test_limit_out_of_range_is_unknown(val, uom, code, want):
+    """±100,000 ft(FL999) 밖의 값은 숫자가 아닌 것과 같이 UNKNOWN — int 열 · round(inf) 로 가져오기가 깨지지 않는다(QA-711)."""
+    assert limit(val, uom, code) == want
+
+
+def test_deep_nesting_and_broken_member_are_rejected():
+    deep = (
+        "<kml><Document>"
+        + "<Folder>" * (airspace.MAX_FOLDER_DEPTH + 1)
+        + "</Folder>" * (airspace.MAX_FOLDER_DEPTH + 1)
+        + "</Document></kml>"
+    )
+    with pytest.raises(AirspaceError, match="nested deeper"):
+        parse(deep.encode())
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("doc.kml", "<kml>" + "x" * 5000 + "</kml>")
+    data = bytearray(buf.getvalue())
+    data[data.find(b"PK\x03\x04") + 30 + len("doc.kml") + 5] ^= 0xFF
+    with pytest.raises(AirspaceError, match="unreadable"):
+        parse(bytes(data))

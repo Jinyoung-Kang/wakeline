@@ -12,10 +12,10 @@
 - 문서 요소에 `xsi:schemaLocation` 이 있는데 `xmlns:xsi` 선언이 없다 — 그대로는 XML 이 아니다(unbound prefix). 선언을 하나 더해 해석한다.
 - 고도 한계 = `DistVert{Upper,Lower}_Val · _UOM · _Code`. 같은 뜻을 여러 글자로 적는다(Feet/FT · Flight Level/FL · Altitude/ALT/MSL ·
   Height/HEI · Surface/SFC · Ground/GND · Unlimited/UNLTD). 값이 있는데 기준이 SFC 인 것(비행장교통구역 상한 'n FT SFC')은 지면 기준 높이다.
-  기준을 알 수 없으면 UNKNOWN — 판정에 쓰지 않는다(짐작하지 않는다).
+  기준을 알 수 없거나 값이 ±100,000 ft(FL999) 밖이면 UNKNOWN — 판정에 쓰지 않는다(짐작하지 않는다).
 
 거절(해석 전 · 중): 입력 20 MiB 초과 · zip 안 .kml 이 하나가 아님 · 풀린 크기 20 MiB 초과(머리말의 크기를 믿지 않고 읽으며 센다) ·
-엄격한 UTF-8 아님 · DOCTYPE/ENTITY(xml_intake) · 장소표 5,000개 · 전체 점 300,000개 초과. 장소표 하나의 문제(점 20,000개 초과 · 좌표가 위경도
+엄격한 UTF-8 아님 · DOCTYPE/ENTITY(xml_intake) · 장소표 5,000개 · 전체 점 300,000개 초과 · 깨진 zip 멤버(CRC · 압축) · 폴더 중첩 64단 초과. 장소표 하나의 문제(점 20,000개 초과 · 좌표가 위경도
 범위 밖 · 고리 점 부족 · 도형 없음 · 다각형과 선이 섞임)는 그 장소표만 건너뛰고 까닭을 센다.
 """
 
@@ -26,6 +26,7 @@ import io
 import math
 import re
 import zipfile
+import zlib
 from collections import Counter
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
@@ -38,6 +39,8 @@ MAX_ZIP_MEMBERS = 64
 MAX_PLACEMARKS = 5_000
 MAX_POINTS_TOTAL = 300_000
 MAX_POINTS_PER_FEATURE = 20_000
+MAX_FOLDER_DEPTH = 64  # 실제 파일은 2단 — 깊은 중첩은 재귀 한도(RecursionError)로 traceback 이 됐다(QA-711)
+MAX_LIMIT_FT = 100_000  # FL999 까지. 밖의 값(1e400 → inf · int 열을 넘는 값)은 숫자가 아닌 것과 같이 UNKNOWN(QA-711)
 
 XSI = 'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"'
 
@@ -137,6 +140,8 @@ def limit(val: str | None, uom: str | None, code: str | None) -> Limit:
     raw = " ".join(x for x in (v, u, c) if x)
     uu, cc = (u or "").upper(), (c or "").upper()
     num = float(v) if v is not None and _NUM.match(v) else None
+    if num is not None and not abs(num) <= MAX_LIMIT_FT:  # inf · 터무니없는 값 — FL 은 ×100 하므로 아래에서 한 번 더 본다
+        num = None
     if num is None:
         if v is not None:
             return Limit(None, "UNKNOWN", raw)
@@ -146,7 +151,8 @@ def limit(val: str | None, uom: str | None, code: str | None) -> Limit:
             return Limit(None, "UNL", raw)
         return Limit(None, "UNKNOWN", raw)
     if uu in _FL_UOM:
-        return Limit(round(num * 100), "FL", raw) if cc in _MSL_CODE or not cc else Limit(None, "UNKNOWN", raw)
+        ok = (cc in _MSL_CODE or not cc) and abs(num * 100) <= MAX_LIMIT_FT
+        return Limit(round(num * 100), "FL", raw) if ok else Limit(None, "UNKNOWN", raw)
     if uu in _FT_UOM or uu in _M_UOM:
         ft = round(num) if uu in _FT_UOM else round(num / 0.3048)
         if cc in _MSL_CODE:
@@ -286,11 +292,15 @@ def kml_bytes(data: bytes) -> bytes:
     if len(kmls) != 1:
         raise AirspaceError(f"KMZ must hold exactly one .kml (found {len(kmls)})")
     out = bytearray()
-    with z.open(kmls[0]) as f:
-        while chunk := f.read(1 << 16):
-            out += chunk
-            if len(out) > MAX_KML_BYTES:
-                raise AirspaceTooLarge(f"KML larger than {MAX_KML_BYTES} bytes when unpacked")
+    try:
+        with z.open(kmls[0]) as f:
+            while chunk := f.read(1 << 16):
+                out += chunk
+                if len(out) > MAX_KML_BYTES:
+                    raise AirspaceTooLarge(f"KML larger than {MAX_KML_BYTES} bytes when unpacked")
+    except (zipfile.BadZipFile, zlib.error, EOFError, OSError, RuntimeError, NotImplementedError) as e:
+        # CRC 가 틀림 · 깨진 deflate · 잘린 멤버 · 암호 · 모르는 압축 — 읽다가 나는 것(QA-711: 전에는 traceback)
+        raise AirspaceError(f"KMZ member unreadable: {type(e).__name__}: {str(e)[:120]}") from None
     return bytes(out)
 
 
@@ -306,12 +316,14 @@ def parse(data: bytes) -> ParseResult:
     res = ParseResult(document_name=_clean(text_of(child_local(doc, "name"))) if doc is not None else None)
     seen = 0
 
-    def walk(el: object, path: list[str]) -> None:
+    def walk(el: object, path: list[str], depth: int = 0) -> None:
         nonlocal seen
+        if depth > MAX_FOLDER_DEPTH:
+            raise AirspaceError(f"folders nested deeper than {MAX_FOLDER_DEPTH}")
         for ch in el:  # type: ignore[attr-defined]
             name = local(ch.tag)
             if name == "Folder":
-                walk(ch, [*path, text_of(child_local(ch, "name"))])
+                walk(ch, [*path, text_of(child_local(ch, "name"))], depth + 1)
             elif name == "Placemark":
                 seen += 1
                 if seen > MAX_PLACEMARKS:
@@ -320,7 +332,7 @@ def parse(data: bytes) -> ParseResult:
                 if res.points > MAX_POINTS_TOTAL:
                     raise AirspaceTooLarge(f"more than {MAX_POINTS_TOTAL} points in total")
             elif name in ("Document", "kml"):
-                walk(ch, path)
+                walk(ch, path, depth + 1)
 
     walk(root, [])
     return res
