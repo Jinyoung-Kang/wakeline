@@ -65,10 +65,16 @@ for (const size of SIZES) {
         expect(k.b, k.id).toBeLessThanOrEqual(m.b + 1);
         expect(k.sw, k.id).toBeLessThanOrEqual(k.cw + 1); // 칩 안의 글자도 잘리지 않는다
       }
-      // 줄에서 뺀 칩 수 = 단추의 +N, 이름은 단추 title 에 — 상세 표에는 모든 피드
+      // 줄에서 뺀 칩 수 = 단추의 +N, 이름은 단추 title 에 — 상세 표에는 모든 피드.
+      // 옮긴 칩 수와 '+N' 은 한 번에 읽어 견준다 — 칩 글자(radar age · lag 등)가 초마다 바뀌어 위에서 잰 뒤 칩이 옮겨지거나 돌아온다
+      // (CI 2026-10-10 1024×768: 잰 수 0 · 그 뒤 radar 칩이 상세로 — '상세 +1 ▾' 를 5 s 기다리다 실패, 제품은 서로 맞았다.
+      // statusbar-resize 와 같은 경합 — VERIFICATION #135)
       const toggle = page.getByTestId("statusbar-details-toggle");
-      if (m.hidden.length) await expect(toggle).toContainText(`+${m.hidden.length}`);
-      else await expect(toggle).not.toContainText("+");
+      await expect.poll(() => row.evaluate((el) => {
+        const hidden = el.querySelectorAll('[data-overflow="true"]').length;
+        const t = document.querySelector('[data-testid="statusbar-details-toggle"]')?.textContent ?? "";
+        return hidden ? t.includes(`+${hidden}`) : !t.includes("+");
+      }), { message: "'+N' = moved chips" }).toBe(true);
       await toggle.click();
       const details = page.getByTestId("statusbar-details");
       for (const k of ["conn", "region", "world", "ais", "sigmet", "radar", "kma", "engine", "version", "fixture"]) await expect(details.locator(`[data-row="${k}"]`)).toHaveCount(1);
