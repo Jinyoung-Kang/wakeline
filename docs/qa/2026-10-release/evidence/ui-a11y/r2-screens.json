@@ -1,0 +1,181 @@
+{
+ "screens": [
+  {
+   "screen": "/ wx tab",
+   "axe": [],
+   "console": [],
+   "pageErrors": [],
+   "bad": [],
+   "failed": [],
+   "dup": [],
+   "overflow": null
+  },
+  {
+   "screen": "/ watch tab",
+   "axe": [],
+   "console": [],
+   "pageErrors": [],
+   "bad": [],
+   "failed": [],
+   "dup": [],
+   "overflow": null
+  },
+  {
+   "screen": "/ ship card",
+   "axe": [],
+   "console": [],
+   "pageErrors": [],
+   "bad": [],
+   "failed": [],
+   "dup": [],
+   "overflow": null
+  },
+  {
+   "screen": "/ ship card after watch toggle",
+   "axe": [],
+   "console": [],
+   "pageErrors": [],
+   "bad": [],
+   "failed": [],
+   "dup": [],
+   "overflow": null
+  },
+  {
+   "screen": "/ aircraft card",
+   "axe": [],
+   "console": [],
+   "pageErrors": [],
+   "bad": [],
+   "failed": [],
+   "dup": [],
+   "overflow": null
+  },
+  {
+   "screen": "/ alert evidence",
+   "axe": [],
+   "console": [],
+   "pageErrors": [],
+   "bad": [],
+   "failed": [],
+   "dup": [],
+   "overflow": null
+  },
+  {
+   "screen": "/alerts/1791606886126000 1440",
+   "axe": [],
+   "console": [],
+   "pageErrors": [],
+   "bad": [],
+   "failed": [],
+   "dup": [],
+   "overflow": {
+    "innerWidth": 1440,
+    "scrollWidth": 1440,
+    "overflow": false,
+    "offenders": []
+   }
+  },
+  {
+   "screen": "/alerts/1791606886126000 print",
+   "axe": [],
+   "console": [],
+   "pageErrors": [],
+   "bad": [],
+   "failed": [],
+   "dup": [],
+   "overflow": null
+  },
+  {
+   "screen": "/alerts/1791606886126000 375",
+   "axe": [],
+   "console": [],
+   "pageErrors": [],
+   "bad": [],
+   "failed": [],
+   "dup": [],
+   "overflow": {
+    "innerWidth": 375,
+    "scrollWidth": 375,
+    "overflow": false,
+    "offenders": []
+   }
+  },
+  {
+   "screen": "/m 375",
+   "axe": [],
+   "console": [],
+   "pageErrors": [
+    {
+     "t": 13254,
+     "text": "Error: Minified React error #418; visit https://react.dev/errors/418?args[]=HTML&args[]= for the full message or use the non-minified dev environment for full errors and additional helpful warnings."
+    }
+   ],
+   "bad": [],
+   "failed": [],
+   "dup": [],
+   "overflow": {
+    "innerWidth": 375,
+    "scrollWidth": 375,
+    "overflow": false,
+    "offenders": []
+   }
+  },
+  {
+   "screen": "/alerts/1791606886126000 320",
+   "axe": [],
+   "console": [],
+   "pageErrors": [],
+   "bad": [],
+   "failed": [],
+   "dup": [],
+   "overflow": {
+    "innerWidth": 320,
+    "scrollWidth": 320,
+    "overflow": false,
+    "offenders": []
+   }
+  },
+  {
+   "screen": "/m 320",
+   "axe": [],
+   "console": [],
+   "pageErrors": [
+    {
+     "t": 15529,
+     "text": "Error: Minified React error #418; visit https://react.dev/errors/418?args[]=HTML&args[]= for the full message or use the non-minified dev environment for full errors and additional helpful warnings."
+    }
+   ],
+   "bad": [],
+   "failed": [],
+   "dup": [],
+   "overflow": {
+    "innerWidth": 320,
+    "scrollWidth": 320,
+    "overflow": false,
+    "offenders": []
+   }
+  },
+  {
+   "screen": "/replay bad link",
+   "axe": [],
+   "console": [],
+   "pageErrors": [],
+   "bad": [],
+   "failed": [],
+   "dup": [],
+   "overflow": null
+  }
+ ],
+ "findings": [
+  {
+   "screen": "/m 375",
+   "kind": "pageerror",
+   "detail": "Error: Minified React error #418; visit https://react.dev/errors/418?args[]=HTML&args[]= for the full message or use the non-minified dev environment for full errors and additional helpful warnings."
+  },
+  {
+   "screen": "/m 320",
+   "kind": "pageerror",
+   "detail": "Error: Minified React error #418; visit https://react.dev/errors/418?args[]=HTML&args[]= for the full message or use the non-minified dev environment for full errors and additional helpful warnings."
+  }
+ ]
+}
