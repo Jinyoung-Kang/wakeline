@@ -137,6 +137,12 @@ export function label(t: WatchTarget): string {
 
 const FLIGHT_CATS = new Set(["VFR", "MVFR", "IFR", "LIFR"]);
 
+/** 답에서 목록에 있는 대상의 줄만(이전 답으로 둘 때 — 지운 대상의 옛 줄이 다시 더한 뒤의 비교에 쓰이지 않게, QA-704) */
+export function onlyTargets(s: WatchState, targets: readonly WatchTarget[]): WatchState {
+  const has = (k: WatchKind, id: string) => targets.some((t) => t.kind === k && t.id === id);
+  return { ...s, aircraft: s.aircraft.filter((a) => has("aircraft", a.hex)), ships: s.ships.filter((x) => has("ship", x.mmsi)), airports: s.airports.filter((a) => has("airport", a.icao)) };
+}
+
 /**
  * 이전 답 → 새 답의 사건. prev 가 null 이면(첫 답) 사건 없음 — 기준만 잡는다. 목록에 없는 대상의 줄은 보지 않는다.
  * - 항공기: 새로 열린 알림(진입 · 예측 진입) · 새로 닫힌 알림(창 15분 안 — 이전 답에 없던 닫힘) · 받다가 못 받음(신호 끊김 — 받는 범위 밖일 수도).

@@ -28,6 +28,8 @@ export function MobileAlerts() {
   const router = useRouter();
   // 관심 대상 사건을 누르면: 알림 사건은 그 근거 화면, 그 밖은 이 화면에 남는다(지도 카드가 없다)
   const openOnMobile = (e: WatchEvent) => { if (e.alertId != null) router.push(`/alerts/${e.alertId}`); };
+  // 단추 이름은 하는 일(QA-803): 알림 사건은 '근거 보기', 그 밖은 열 것이 없어 '닫기'만
+  const openName = (e: WatchEvent) => (e.alertId != null ? "근거 보기" : null);
   return (
     <ScrollRegion label="모바일 알림" main className="h-full overflow-y-auto overflow-x-hidden p-3 text-[13px]" data-testid="mobile">
       <h1 className="label mb-1" lang="en">Alerts · mobile</h1>
@@ -52,7 +54,7 @@ export function MobileAlerts() {
           </ul>
         )}
       </section>
-      <WatchRunner open={openOnMobile} />
+      <WatchRunner open={openOnMobile} openName={openName} />
     </ScrollRegion>
   );
 }

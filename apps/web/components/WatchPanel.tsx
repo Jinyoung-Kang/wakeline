@@ -1,5 +1,7 @@
 "use client";
+import { useRef } from "react";
 import { requestNotify } from "@/lib/notify";
+import { useFocusRescue } from "@/lib/use-focus-rescue";
 import { fmtKstMinute } from "@/lib/time";
 import { label, SHIP_LOST_S, WATCH_MAX, type WatchState, type WatchTarget } from "@/lib/watch";
 import { useWatch } from "@/lib/watch-store";
@@ -26,8 +28,15 @@ export function WatchPanel() {
   const permission = useWatch((s) => s.permission);
   const remove = useWatch((s) => s.remove);
   const setPermission = useWatch((s) => s.setPermission);
+  // '지우기'는 누른 줄을 없앤다 — 초점을 같은 자리의 다음 줄 '지우기'(없으면 앞 줄) → 이 탭으로 옮긴다(QA-801 · lib/focus-rescue)
+  const root = useRef<HTMLDivElement>(null);
+  const rescue = useFocusRescue();
+  const removeAt = (t: WatchTarget, i: number) => {
+    rescue(() => { const b = root.current?.querySelectorAll<HTMLElement>("[data-watch-remove]") ?? []; return [b[i], b[i - 1], root.current]; });
+    remove(t);
+  };
   return (
-    <div className="flex h-full flex-col text-[11px]" data-testid="watch-panel">
+    <div ref={root} tabIndex={-1} className="flex h-full flex-col text-[11px] outline-none" data-testid="watch-panel">
       <div className="row"><span className="label">Watchlist</span><span className="text-fg-3">{targets.length}/{WATCH_MAX} · 이 브라우저에만</span></div>
       {storage === "unavailable" ? <div className="border-b border-line px-2.5 py-1 text-warn" role="status">이 브라우저에 저장할 수 없음 — 이번 접속 동안만 유지합니다</div> : null}
       {storage === "corrupt" ? <div className="border-b border-line px-2.5 py-1 text-warn" role="status">저장된 목록 일부가 깨져 버렸습니다</div> : null}
@@ -40,11 +49,11 @@ export function WatchPanel() {
           : error ? `조회 실패 — ${error}` : checkedAt ? `확인 ${fmtKstMinute(checkedAt)} · 30초마다` : "확인 중…"}
       </div>
       <ul className="min-h-0 flex-1 overflow-y-auto">
-        {targets.map((t) => (
+        {targets.map((t, i) => (
           <li key={`${t.kind}:${t.id}`} className="flex items-center gap-2 border-b border-line px-2 py-1" data-testid="watch-item" data-id={t.id}>
             <button className="min-w-0 flex-1 truncate text-left hover:underline" onClick={() => openTarget(t)}>{label(t)}</button>
             <span className="shrink-0 text-fg-3">{statusOf(t, state)}</span>
-            <button className="btn shrink-0" onClick={() => remove(t)} aria-label={`${label(t)} 관심 해제`}>지우기</button>
+            <button className="btn shrink-0" onClick={() => removeAt(t, i)} aria-label={`${label(t)} 관심 해제`} data-watch-remove>지우기</button>
           </li>
         ))}
       </ul>

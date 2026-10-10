@@ -98,12 +98,12 @@ describe("watch runner: events", () => {
     expect(shown).toHaveLength(1);
   });
   it("a WS alert for a watched aircraft notifies at once; alerts present at start are the baseline", async () => {
-    setData({ alerts: new Map([[1, wsAlert(1)]]) });
+    setData({ alerts: new Map([[1, wsAlert(1)]]), alertsVersion: 1 }); // 첫 전체 목록이 온 뒤(기준은 그때 잡는다 — QA-705)
     answers(() => []);
     const shown = notifications("default"); // 허락 안 함 — 배너만
     await start([AC], "default");
     expect(m.byTestId("watch-banner")).toBeNull();
-    await m.act(() => setData({ alerts: new Map([[1, wsAlert(1)], [2, wsAlert(2)], [3, { ...wsAlert(3), hex: "aaaaaa" }]]) }));
+    await m.act(() => setData({ alerts: new Map([[1, wsAlert(1)], [2, wsAlert(2)], [3, { ...wsAlert(3), hex: "aaaaaa" }]]), alertsVersion: 2 }));
     await m.settle();
     expect(m.allByTestId("watch-event")).toHaveLength(1);
     expect(shown).toEqual([]);
