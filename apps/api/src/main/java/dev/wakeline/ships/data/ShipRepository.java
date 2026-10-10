@@ -340,7 +340,9 @@ public class ShipRepository {
     public List<TrackPoint> retainedTrack(String mmsi, Instant from, Instant to, int limit) {
         return Sql.publicRead(db, "ship.track_retained", """
                 SELECT ts, ST_X(geom) lon, ST_Y(geom) lat, sog_kn, cog_deg, provider
-                FROM retained_track WHERE kind = 'ship' AND target_id = :m AND ts_minute BETWEEN :from AND :to ORDER BY ts_minute LIMIT :lim""")
+                FROM retained_track WHERE kind = 'ship' AND target_id = :m
+                  AND ts_minute BETWEEN date_trunc('minute', :from) AND :to AND ts BETWEEN :from AND :to
+                ORDER BY ts_minute LIMIT :lim""")
                 .param("m", mmsi).param("from", Sql.ts(from)).param("to", Sql.ts(to)).param("lim", limit)
                 .query((rs, i) -> new TrackPoint(rs.getObject("ts", java.time.OffsetDateTime.class).toInstant(), rs.getDouble("lon"), rs.getDouble("lat"),
                         realObj(rs.getObject("sog_kn")), realObj(rs.getObject("cog_deg")), null, null, null, rs.getString("provider")))

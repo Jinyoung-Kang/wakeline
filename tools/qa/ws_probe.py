@@ -277,8 +277,8 @@ SCENARIOS = [
     ("zoom_string", [("text", HELLO), ("text", sub(zoom="3")), ("wait", 2)], {"close": None, "reply": "snapshot"}),
     ("zoom_null_world", [("text", HELLO), ("text", raw_sub("[-180,-90,180,90]", "null")), ("wait", 2)],
      {"close": None, "error": "BBOX_TOO_LARGE"}),
-    ("zoom_bigint_400", [("text", HELLO), ("text", raw_sub("[124,33,132,39]", BIG_INT_400)), ("wait", 2)], {"close": 1002, "error": "BAD_MESSAGE",
-                                                                                                             "note": "알려진 한계(ADR-017 S4)"}),
+    # QA-203 수정(d90574fc · 리뷰 cto-2026-10 S4) 뒤 설계: double 밖의 zoom 은 0–24 로 자른다(연결 유지 · 초기 전송) — 앞선 QA 의 '알려진 한계(1002)'는 끝났다
+    ("zoom_bigint_400", [("text", HELLO), ("text", raw_sub("[124,33,132,39]", BIG_INT_400)), ("wait", 2)], {"close": None, "reply": "snapshot"}),
     ("detail_number", [("text", HELLO), ("text", sub(detail=5)), ("wait", 2)], {"close": None, "reply": "snapshot"}),
     # select · select_ship · layers · resync
     ("select_number", [("text", HELLO), ("text", '{"type":"select","hex":7454209}'), ("wait", 1)], {"close": None, "error": "BAD_HEX"}),

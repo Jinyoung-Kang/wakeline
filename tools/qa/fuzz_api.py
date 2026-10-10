@@ -457,7 +457,56 @@ def build_public(only: re.Pattern | None):
           (("fir", "fir", "ok"), ("hazard", "hazard", "ok"), ("HAZARD", "HAZARD", "any"), ("bogus", "bogus", "any"), ("empty", "", "any"))]
     C += date_cases("stats.alerts", A + "/stats/alerts", ["from", "to"])
     C += date_cases("stats.traffic", A + "/stats/traffic", ["day"])
+    C += build_release_round2(A)
     return [c for c in C if not only or only.search(c["route"])]
+
+
+ICAOS = [("valid", "RKSI", "ok"), ("lower", "rksi", "ok"), ("short", "RKS", "bad"), ("long", "RKSII", "bad"), ("unicode", "ＲＫＳＩ", "bad"),
+         ("turkish_i", "rksı", "bad"), ("nul", "RKS\x00", "bad"), ("sql", "R'--", "bad")]
+
+
+def build_release_round2(A):
+    """출시 QA 2차(2026-10-10 — docs/qa/2026-10-release): 앞선 QA 뒤 더한 공개 경로 — 공역 · 특보 · 특보 이력 · 관심 대상 · 알림 한 건 · 항적 resolution."""
+    C = []
+    # 공역(§G47)
+    C += [case("airspace", A + "/airspace", [("category", v)], e, "csv:category", n) for n, v, e in
+          (("none", None, "ok"), ("one", "prohibited", "ok"), ("two", "prohibited,restricted", "ok"), ("unknown", "bogus", "ok"), ("upper", "PROHIBITED", "bad"),
+           ("dash", "a-b", "bad"), ("empty", "", "any"), ("trailing_comma", "prohibited,", "any"), ("long_33", "a" * 33, "bad"),
+           ("many_33", ",".join(f"c{chr(97 + i // 26)}{chr(97 + i % 26)}" for i in range(33)), "bad"), ("nul", "a\x00", "bad"),
+           ("unicode", "가", "bad")) if v is not None] + [case("airspace", A + "/airspace")]
+    # 특보(§G49)
+    C += [case("warnings", A + "/warnings"), case("warnings", A + "/warnings", [("x", "1")], "ok", "extra", "unknown_param")]
+    C += instant_cases("warnings.history", A + "/warnings/history", ["from", "to"], extra={
+        "exactly_30d": (iso(NOW - dt.timedelta(days=30)), iso(NOW), "ok"), "30d_plus_1s": (iso(NOW - dt.timedelta(days=30, seconds=1)), iso(NOW), "bad"),
+        "y300000_1h": ("+300000-01-01T00:00:00Z", "+300000-01-01T01:00:00Z", "bad"),
+        "y_neg_5000_1h": ("-5000-01-01T00:00:00Z", "-5000-01-01T01:00:00Z", "bad"),
+        "y_max_both": ("+1000000000-12-31T00:00:00Z", "+1000000000-12-31T01:00:00Z", "bad"),
+    })
+    C += int_cases("warnings.history", A + "/warnings/history", "limit")
+    C += [case("warnings.history", A + "/warnings/history", [("zone", v)], e, "zone", n) for n, v, e in
+          (("sea", "S1312020", "ok"), ("land", "L1100100", "ok"), ("lower", "s1312020", "bad"), ("short", "S131202", "bad"), ("long", "S13120200", "bad"),
+           ("letter", "X1312020", "bad"), ("unicode", "S１312020", "bad"), ("nul", "S131202\x00", "bad"), ("sql", "S' OR 1", "bad"), ("empty", "", "any"))]
+    # 관심 대상(§G50)
+    W = A + "/watch"
+    C += [case("watch", W), case("watch", W, [("aircraft", "71be01"), ("ships", "440123450"), ("airports", "RKSI")])]
+    C += [case("watch", W, [("aircraft", v)], e, "csv:aircraft", n) for n, v, e in HEXES if n != "long_6000"]
+    C += [case("watch", W, [("ships", v)], e, "csv:ships", n) for n, v, e in MMSIS if n != "long_6000"]
+    C += [case("watch", W, [("airports", v)], e, "csv:airports", n) for n, v, e in ICAOS]
+    hexes = [f"a{i:05x}" for i in range(60)]
+    C += [case("watch", W, [("aircraft", ",".join(hexes[:50]))], "ok", "count", "aircraft_50"),
+          case("watch", W, [("aircraft", ",".join(hexes[:51]))], "bad", "count", "aircraft_51"),
+          case("watch", W, [("aircraft", ",".join(hexes[:30])), ("ships", ",".join(str(440000000 + i) for i in range(21)))], "bad", "count", "mixed_51"),
+          case("watch", W, [("airports", ",".join(["RKSI"] * 60))], "any", "count", "dup_60_same", "중복은 한 번 — 1개"),
+          case("watch", W, [("aircraft", "," * 200)], "bad", "count", "commas_200"),
+          case("watch", W, [("aircraft", ",,71be01,,")], "ok", "csv:aircraft", "blank_items"),
+          case("watch", W, [("aircraft", "71be01"), ("aircraft", "71be02")], "any", "csv:aircraft", "duplicate_param"),
+          case("watch", W, [("airports", ",".join(f"R{i:03d}" for i in range(50)))], "ok", "count", "airports_50_unknown")]
+    # 알림 한 건(§G51)
+    C += path_cases("alerts.one", A + "/alerts/{}", [("missing", "1", "bad"), ("zero", "0", "bad"), ("negative", "-1", "bad"), ("letters", "abc", "bad"),
+                                                    ("decimal", "1.5", "bad"), ("exponent", "1e3", "bad"), ("max_18", "9" * 18, "bad"), ("over_19", "9" * 19, "bad"),
+                                                    ("long_overflow", "9223372036854775808", "bad"), ("unicode", "١٢٣", "bad"), ("nul", "1\x00", "bad"),
+                                                    ("leading_zero", "0001", "bad"), ("space", " 1", "bad"), ("long_6000", "9" * 6000, "bad")])
+    return C
 
 
 def build_ops(only: re.Pattern | None):

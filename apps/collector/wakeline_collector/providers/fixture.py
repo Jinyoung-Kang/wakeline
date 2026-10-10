@@ -8,6 +8,7 @@ SIGMET 은 유효시간을 현재로 옮기고, 한반도 위에 합성 경보(f
 
 from __future__ import annotations
 
+import re
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
@@ -195,9 +196,9 @@ class FixtureKmaWarningProvider:
     async def current(self) -> ProviderResult:
         raw = (Path(settings.fixtures_dir) / "kma_wrn_now_data.txt").read_bytes().decode("euc-kr")
         kst = datetime.now(kma_warning_rules.KST)
-        raw = raw.replace("202610091600", kst.strftime("%Y%m%d%H00")).replace(
-            "20261010", (kst + timedelta(days=1)).strftime("%Y%m%d")
-        )
+        # 한 번에 바꾼다(QA-700): 두 번 이으면 첫 치환이 넣은 '이번 시'의 날짜가 20261010(오늘 = 2026-10-10)일 때 두 번째 치환이 그것까지 내일로 바꿨다
+        swap = {"202610091600": kst.strftime("%Y%m%d%H00"), "20261010": (kst + timedelta(days=1)).strftime("%Y%m%d")}
+        raw = re.sub("202610091600|20261010", lambda m: swap[m.group(0)], raw)
         body = raw.encode("euc-kr")
         return ProviderResult(
             self.name,

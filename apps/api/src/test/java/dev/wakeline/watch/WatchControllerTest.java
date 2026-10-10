@@ -6,6 +6,7 @@ import dev.wakeline.aircraft.core.SnapshotStore;
 import dev.wakeline.platform.web.ProblemAdvice;
 import dev.wakeline.ships.core.ShipState;
 import dev.wakeline.ships.core.ShipStatic;
+import dev.wakeline.ships.core.AisStatus;
 import dev.wakeline.ships.core.ShipStore;
 import dev.wakeline.weather.core.Alert;
 import dev.wakeline.weather.core.AlertStateMachine;
@@ -40,6 +41,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class WatchControllerTest {
     final SnapshotStore snapshots = new SnapshotStore();
     final ShipStore ships = new ShipStore();
+    final AisStatus aisStatus = new AisStatus(ships);
     final RecentClosedAlerts closed = new RecentClosedAlerts();
     final EngineService engine = mock(EngineService.class);
     final AirportRepository airports = mock(AirportRepository.class);
@@ -61,7 +63,7 @@ class WatchControllerTest {
         ships.apply(List.of(new ShipState("440123456", 35.0, 129.0, 10.0, 90.0, 90, 0, 0, "pos", now.minusSeconds(40), "aisstream", "1", "A")),
                 List.of(new ShipStatic("440123456", "HANBADA", null, null, 70, null, null, null, null, null, null, null, null, null, null, now, "aisstream")),
                 now, "aisstream", now.toEpochMilli());
-        mvc = MockMvcBuilders.standaloneSetup(new WatchController(snapshots, engine, closed, ships, airports)).setControllerAdvice(new ProblemAdvice()).build();
+        mvc = MockMvcBuilders.standaloneSetup(new WatchController(snapshots, engine, closed, ships, aisStatus, airports)).setControllerAdvice(new ProblemAdvice()).build();
     }
 
     @Test
@@ -109,5 +111,19 @@ class WatchControllerTest {
         mvc.perform(get("/api/v1/watch").param("aircraft", hex.toString()).param("ships", mmsi.toString()))
                 .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("TOO_MANY_TARGETS"));
         mvc.perform(get("/api/v1/watch").param("aircraft", ",".repeat(80))).andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").value("TOO_MANY_TARGETS"));
+    }
+
+    /** QA-701: 지금 열린 AIS 수신 공백을 ended_at 없이 싣는다(전에는 끝난 공백만 — 열린 공백은 나오지 않았다). 열린 것이 없으면 마지막 끝난 공백. */
+    @Test
+    void anOpenAisGapComesFirst() throws Exception {
+        Instant since = now.minusSeconds(600).truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
+        aisStatus.update(Map.of("provider", "aisstream", "connected", "0", "state", "reconnecting", "updated_at", now.toString(),
+                "gap_open_since", since.toString(), "gap_reason", "ws_closed"));
+        mvc.perform(get("/api/v1/watch").param("ships", "440123456"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.ais_last_gap.started_at").value(since.toString()))
+                .andExpect(jsonPath("$.ais_last_gap.ended_at").doesNotExist())
+                .andExpect(jsonPath("$.ais_last_gap.reason").value("ws_closed"))
+                .andExpect(jsonPath("$.meta.db_unavailable").doesNotExist());
     }
 }

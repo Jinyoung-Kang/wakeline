@@ -1,0 +1,89 @@
+{
+ "checks": [
+  {
+   "check": "B: W2 ended at list B's fetched time",
+   "ok": true,
+   "row": {
+    "dup": 1,
+    "first": "2026-10-10 04:32:18.964+00",
+    "last": "2026-10-10 04:32:18.964+00",
+    "ended": "2026-10-10 04:32:23.964+00"
+   }
+  },
+  {
+   "check": "B: W1 still open",
+   "ok": true,
+   "row": {
+    "dup": 1,
+    "first": "2026-10-10 04:32:18.964+00",
+    "last": "2026-10-10 04:32:23.964+00",
+    "ended": null
+   }
+  },
+  {
+   "check": "C after restart: W2 reopened (ended_at NULL)",
+   "ok": true,
+   "row": {
+    "dup": 1,
+    "first": "2026-10-10 04:32:18.964+00",
+    "last": "2026-10-10 04:32:28.964+00",
+    "ended": null
+   }
+  },
+  {
+   "check": "C after restart: one row per natural key",
+   "ok": true,
+   "rows": {
+    "L9000002": {
+     "dup": 1,
+     "first": "2026-10-10 04:32:18.964+00",
+     "last": "2026-10-10 04:32:28.964+00",
+     "ended": null
+    },
+    "S9000001": {
+     "dup": 1,
+     "first": "2026-10-10 04:32:18.964+00",
+     "last": "2026-10-10 04:32:28.964+00",
+     "ended": null
+    }
+   }
+  },
+  {
+   "check": "old list A': W2 stays open",
+   "ok": true,
+   "row": {
+    "dup": 1,
+    "first": "2026-10-10 04:32:18.964+00",
+    "last": "2026-10-10 04:32:28.964+00",
+    "ended": null
+   }
+  },
+  {
+   "check": "old list A': live list unchanged (C)",
+   "ok": true,
+   "live": [
+    "L9000002",
+    "S9000001"
+   ]
+  },
+  {
+   "check": "invariants: first_seen ≤ last_seen",
+   "ok": true,
+   "rows": {
+    "L9000002": {
+     "dup": 1,
+     "first": "2026-10-10 04:32:18.964+00",
+     "last": "2026-10-10 04:32:28.964+00",
+     "ended": null
+    },
+    "S9000001": {
+     "dup": 1,
+     "first": "2026-10-10 04:32:18.964+00",
+     "last": "2026-10-10 04:32:28.964+00",
+     "ended": null
+    }
+   }
+  }
+ ],
+ "failures": []
+}

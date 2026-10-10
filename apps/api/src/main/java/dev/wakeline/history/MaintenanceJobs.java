@@ -272,14 +272,19 @@ public class MaintenanceJobs {
             List<Instant> hours = catchUpSummaries(Instant.now());
             List<LocalDate> days = catchUpStats(todayKst());
             List<LocalDate> older = backfillStats(todayKst());
-            Instant hour = clock.instant().truncatedTo(ChronoUnit.HOURS);
-            int retained = copyRetained(hour.minus(RETAIN_CATCH_UP_HOURS, ChronoUnit.HOURS), hour); // 지정 대상 — 기동 · 놓친 시간(겹치면 무시)
-            if (retained > 0) log.info("catch-up: retained track {} new minute points", retained);
             if (!hours.isEmpty() || !days.isEmpty() || !older.isEmpty())
                 log.info("catch-up: summarized hours {}, aggregated days {}, backfilled {} older days {}", hours, days, older.size(),
                         older.isEmpty() ? "" : older.get(older.size() - 1) + ".." + older.get(0));
         } catch (RuntimeException e) {
             log.warn("catch-up failed (will retry): {}", e.toString());
+        }
+        // 지정 대상 보존 복사는 따로 가둔다(ADR-038 결정 3 · QA-601): 위가 실패해도 72 h 파티션 삭제 전에 옮길 기회를 잃지 않는다
+        try {
+            Instant hour = clock.instant().truncatedTo(ChronoUnit.HOURS);
+            int retained = copyRetained(hour.minus(RETAIN_CATCH_UP_HOURS, ChronoUnit.HOURS), hour); // 기동 · 놓친 시간(겹치면 무시)
+            if (retained > 0) log.info("catch-up: retained track {} new minute points", retained);
+        } catch (RuntimeException e) {
+            log.warn("catch-up of retained track failed (will retry): {}", e.toString());
         }
     }
 

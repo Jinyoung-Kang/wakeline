@@ -58,6 +58,9 @@ ROUTES: list[tuple[str, str, dict | None, dict | None]] = [
     ("GET", "/api/v1/ops/pipeline", None, None),
     ("GET", "/api/v1/ops/settings", None, None),
     ("PUT", "/api/v1/ops/settings/region_poll_s", {"value": 15}, {"If-Match": "0"}),
+    # 출시 QA 2차: 앞선 QA 뒤 더한 설정 키 둘(공역 판정 · 지정 보존) — 같은 탐침(맞지 않는 If-Match → 닿으면 409)
+    ("PUT", "/api/v1/ops/settings/airspace_alerts", {"value": "on"}, {"If-Match": "0"}),
+    ("PUT", "/api/v1/ops/settings/retain_targets", {"value": "71be01"}, {"If-Match": "0"}),
     ("GET", "/api/v1/ops/audit", None, None),
     ("POST", f"/api/v1/ops/stats/aggregate?day={date.today().isoformat()}", None, None),  # 오늘 = 400 BAD_DAY(닿으면) — 바뀌지 않음
     ("POST", "/api/v1/ops/resolutions", {"kind": "nope", "key": "x"}, None),  # 400 BAD_RESOLUTION(닿으면)

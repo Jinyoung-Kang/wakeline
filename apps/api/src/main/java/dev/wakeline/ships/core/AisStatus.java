@@ -289,6 +289,17 @@ public class AisStatus {
         return out;
     }
 
+    /**
+     * 지금의 AIS 수신 공백 한 줄(관심 대상 /watch — 계약 v5 §G50 · §G53): 열린 공백이 있으면 가장 먼저 열린 것(ended_at 없음), 없으면 마지막 끝난 공백
+     * ({@link #publicView} 의 last_gap 과 같다). 없으면 null.
+     */
+    public AisGap openOrLastGap() {
+        Feed f = feed;
+        AisGap open = null;
+        for (AisGap g : f.openGaps()) if (open == null || g.startedAt().isBefore(open.startedAt())) open = g;
+        return open != null ? open : later(f.lastGap(), ships.lastGap());
+    }
+
     static AisGap later(AisGap a, AisGap b) {
         if (a == null) return b;
         if (b == null) return a;

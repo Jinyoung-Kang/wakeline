@@ -11,7 +11,8 @@ test("wx tab: the replayed preliminary gale warnings grouped by sea area, with t
   await page.goto("/");
   await page.getByTestId("tab-wx").click();
   const status = page.getByTestId("warnings-status");
-  await expect(status).toContainText("발효 중 3건(해상 3 · 육상 0) · 기상청 API허브 특보현황", { timeout: 20_000 });
+  // 예비특보는 아직 발효가 아니다 — 따로 센다(QA-709)
+  await expect(status).toContainText("발효 중 0건(해상 0 · 육상 0) · 예비 3 · 기상청 API허브 특보현황", { timeout: 20_000 });
   await expect(status).toContainText(/받음 \d\d:\d\d KST/);
   await expect(page.getByTestId("warning-row")).toHaveCount(3);
   await expect(page.getByTestId("warnings-sea-group").first()).toContainText("해상 · 남해동부전해상");

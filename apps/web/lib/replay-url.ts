@@ -14,6 +14,12 @@ export interface ReplayUrl { at: number | null; bbox: Bounds | null; hex: string
 const ISO_Z = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,9})?)?Z$/;
 const HEX = /^[0-9a-f]{6}$/;
 
+/** 읽은 시각을 다시 적으면 같은 날짜 · 시각인가 — Date.parse 는 없는 날짜(09-31 · T24:00)를 다음 날로 넘긴다(QA-708) */
+function sameFields(s: string, t: number): boolean {
+  const n = s[16] === ":" ? 19 : 16;
+  return new Date(t).toISOString().slice(0, n) === s.slice(0, n);
+}
+
 export function parseReplayUrl(q: { get(k: string): string | null }, nowMs: number): ReplayUrl {
   const out: ReplayUrl = { at: null, bbox: null, hex: null, notes: [] };
   const at = q.get("at");
@@ -21,6 +27,7 @@ export function parseReplayUrl(q: { get(k: string): string | null }, nowMs: numb
     const t = ISO_Z.test(at) ? Date.parse(at) : NaN;
     const r = replayRange(nowMs);
     if (Number.isNaN(t)) out.notes.push("링크의 시각(at)을 읽을 수 없음 — …Z 로 끝나는 ISO 형식이 아님, 기본 시각(10분 전)으로 엽니다");
+    else if (!sameFields(at, t)) out.notes.push("링크의 시각(at)을 읽을 수 없음 — 없는 날짜 · 시각, 기본 시각(10분 전)으로 엽니다");
     else if (t < r.min || t > r.max) out.notes.push("링크의 시각이 재생할 수 있는 구간(최근 30일 ~ 1분 전) 밖 — 기본 시각(10분 전)으로 엽니다");
     else out.at = t;
   }

@@ -80,8 +80,9 @@ export function EvidenceCard({ a, standalone = false }: { a: Alert; standalone?:
         <div key={k} className="flex justify-between gap-2 border-t border-line py-0.5"><span className="shrink-0 text-fg-3">{k}</span><span className="text-right">{v}</span></div>
       ))}
       {assumptions.length ? <div className="border-t border-line pt-0.5 text-[10px] text-warn" data-testid="evidence-assumptions">판정 가정: {assumptions.join(" · ")}</div> : null}
-      {/* 신뢰도 한 줄(SPEC F6) — 판정 때의 값: 위치 나이는 근거에 있고, 공급자 지연 · 수신 공백은 근거에 남기지 않아 모름 */}
-      <div className="-mx-2 mt-0.5 border-t border-line [&>div]:border-b-0"><ReliabilityLine label="판정 때" parts={[positionPart("aircraft", posAge, a.estimated),
+      {/* 신뢰도 한 줄(SPEC F6) — 판정 때의 값: 위치 나이는 근거에 있고, 공급자 지연 · 수신 공백은 근거에 남기지 않아 모름. 판정 때 위치는 관측 위치다 —
+          a.estimated 는 '진입을 예측했다'(PREDICTED)는 뜻이라 '(추정 위치)'를 붙이지 않는다(QA-707) */}
+      <div className="-mx-2 mt-0.5 border-t border-line [&>div]:border-b-0"><ReliabilityLine label="판정 때" parts={[positionPart("aircraft", posAge),
         lagPart(null, "공급자 지연 기록 없음"), gapsPart(null, "수신 공백 기록 없음")]} /></div>
       {/* 근거 공유(SPEC F5): 고정 링크(보존 기간 안) · 그 시각 재생 */}
       <div className="flex flex-wrap gap-1 border-t border-line pt-1 print:hidden" data-testid="evidence-links">

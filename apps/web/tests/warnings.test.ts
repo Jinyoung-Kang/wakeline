@@ -49,7 +49,9 @@ describe("parse and group", () => {
 describe("status line", () => {
   it("not received, counts, stale and errors", () => {
     expect(warningsStatus(ws({ received: false, items: [] }), null, NOW).text).toMatch(/^특보 목록 수신 전/);
-    expect(warningsStatus(ws(), null, NOW)).toEqual({ text: "발효 중 3건(해상 2 · 육상 1) · 기상청 API허브 특보현황 · 받음 16:05 KST", tone: "ok" });
+    // 발효 중은 발효 시각이 지난 정규 특보만 — 예비 · 발효 예정(경보 08:00Z)은 따로(QA-709)
+    expect(warningsStatus(ws(), null, NOW)).toEqual({ text: "발효 중 1건(해상 0 · 육상 1) · 발효 예정 1 · 예비 1 · 기상청 API허브 특보현황 · 받음 16:05 KST", tone: "ok" });
+    expect(warningsStatus(ws(), null, NOW + 3600_000).text).toMatch(/^발효 중 2건\(해상 1 · 육상 1\) · 예비 1 · /);
     expect(warningsStatus(ws(), null, NOW + 20 * 60_000).text).toMatch(/오래됨 — 25분 전 목록$/);
     expect(warningsStatus(ws({ dropped: 2 }), "HTTP 503", NOW)).toMatchObject({ tone: "warn" });
     expect(warningsStatus(null, "HTTP 503", NOW)).toEqual({ text: "조회 실패(HTTP 503)", tone: "bad" });
@@ -70,7 +72,10 @@ describe("views", () => {
   });
   it("ship card line counts sea warnings without judging the ship's area", () => {
     const t = text(renderToStaticMarkup(createElement(SeaWarningsLineView, { w: ws() })));
-    expect(t).toContain("해상특보: 지금 발효 중 2건(풍랑 예비 · 풍랑 경보) — 이 선박의 구역은 판정하지 않음(구역 경계 자료 없음)");
+    // 시각을 주지 않으면 목록을 받은 때(07:05Z) 기준 — 경보(08:00Z 발효)는 발효 예정, 예비는 따로(QA-709)
+    expect(t).toContain("해상특보: 지금 발효 중 0건 · 발효 예정 1 · 예비 1 — 이 선박의 구역은 판정하지 않음(구역 경계 자료 없음)");
+    const later = text(renderToStaticMarkup(createElement(SeaWarningsLineView, { w: ws(), now: NOW + 3600_000 })));
+    expect(later).toContain("해상특보: 지금 발효 중 1건(풍랑 경보) · 예비 1 — ");
     expect(renderToStaticMarkup(createElement(SeaWarningsLineView, { w: null }))).toBe("");
     expect(renderToStaticMarkup(createElement(SeaWarningsLineView, { w: ws({ received: false, items: [] }) }))).toBe("");
   });

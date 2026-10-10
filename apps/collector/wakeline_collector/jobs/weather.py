@@ -22,6 +22,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from wakeline_collector.budget import UNKNOWN, regular_headroom
+from wakeline_collector.config import settings
 from wakeline_collector.errors import describe_error
 from wakeline_collector.flight_category import assess_ceiling, flight_category, parse_visibility_sm
 from wakeline_collector.geo import boxes_around
@@ -49,6 +50,11 @@ REGULAR_CALLS: dict[str, tuple[tuple[str, int], ...]] = {
     "awc": (("sigmet_poll_s", 2), ("metar_poll_s", 2)),
     "rainviewer": (("radar_poll_s", 1),),
 }
+# 주기가 운영 설정(rt)이 아니라 기동 설정(Settings)에 있는 작업: (설정 이름, 주기마다 최대 호출 수). 기상특보 = 특보현황 1(QA-604 — 빠져 있어 다시 부르기가
+# 남은 정규 주기 몫을 남기지 않았다).
+REGULAR_CALLS_SETTINGS: dict[str, tuple[tuple[str, int], ...]] = {
+    "kma_warning": (("kma_warning_poll_s", 1),),
+}
 
 
 def retry_headroom(rt: Any, provider: str, now: datetime) -> int:
@@ -57,7 +63,9 @@ def retry_headroom(rt: Any, provider: str, now: datetime) -> int:
     남은 초 // 주기 + 1(지금 돌거나 곧 시작할 주기 하나) 이하다. 다시 부르기는 사용량 + 1 ≤ 한도 − 이 값일 때만 예약하므로(budget
     headroom) 하루 내내 일시 오류여도 정규 주기가 예산 소진으로 막히지 않는다. 정규 주기만으로 한도를 넘는 설정이면 다시 부르지 않는다.
     계산은 budget.regular_headroom — KMA 부분 합성 다시 받기(jobs/kma_radar.py)도 같은 규칙이다."""
-    return regular_headroom(((getattr(rt, name), calls) for name, calls in REGULAR_CALLS.get(provider, ())), now)
+    schedule = [(getattr(rt, name), calls) for name, calls in REGULAR_CALLS.get(provider, ())]
+    schedule += [(getattr(settings, name), calls) for name, calls in REGULAR_CALLS_SETTINGS.get(provider, ())]
+    return regular_headroom(schedule, now)
 
 
 def _iso(dt: datetime) -> str:

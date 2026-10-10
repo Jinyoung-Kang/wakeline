@@ -37,12 +37,14 @@ public class TrackRepository {
 
     /**
      * 지정 보존 항적(V21 retained_track — ADR-038 · 계약 v5 §G52): 원해상도가 지워진 뒤 운영자가 지정한 항공기의 1분에 첫 점. [from, to] 시간순, 최대 limit 점.
-     * 행 모양은 {@link #track} 과 같다(그 분의 첫 실제 점 — 평균이 아니다).
+     * 행 모양은 {@link #track} 과 같다(그 분의 첫 실제 점 — 평균이 아니다). 창은 실제 시각 ts 로 — 원해상도와 같은 규칙(QA-702), ts_minute 범위는 색인용.
      */
     public List<Map<String, Object>> retained(String hex, Instant from, Instant to, int limit) {
         return Sql.publicRead(db, "aircraft.track_retained", """
                 SELECT target_id hex, ts, ST_X(geom) lon, ST_Y(geom) lat, alt_ft, gs_kt, track_deg, provider
-                FROM retained_track WHERE kind = 'aircraft' AND target_id = :hex AND ts_minute BETWEEN :from AND :to ORDER BY ts_minute LIMIT :lim""")
+                FROM retained_track WHERE kind = 'aircraft' AND target_id = :hex
+                  AND ts_minute BETWEEN date_trunc('minute', :from) AND :to AND ts BETWEEN :from AND :to
+                ORDER BY ts_minute LIMIT :lim""")
                 .param("hex", hex).param("from", Sql.ts(from)).param("to", Sql.ts(to)).param("lim", limit)
                 .query().listOfRows().stream().map(r -> {
                     var m = new java.util.LinkedHashMap<>(r);

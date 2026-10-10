@@ -23,6 +23,18 @@ KST = ZoneInfo("Asia/Seoul")
 ZONE = re.compile(r"^[LS][0-9]{7}$")
 TM = re.compile(r"^[0-9]{12}$")
 MAX_ROWS = 2_000  # 구역 414개 × 특보 종류 몇 — 넘으면 모양이 틀린 응답으로 본다
+# 스트림 계약(schemas/stream_envelope.v1.json wx_warnings_payload)의 글자 수 한도 — 넘는 줄은 그 줄만 버린다(QA-602: 그대로 실으면 api 의 스키마 검사가
+# 봉투 전체를 DLQ 로 보내 목록 전체를 잃었다). 계약과 같은 값이어야 한다(tests/test_kma_warning_rules.py 가 계약 파일과 대조한다).
+MAX_LEN = {
+    "zone_name": 80,
+    "parent_name": 80,
+    "kind": 16,
+    "level": 16,
+    "command": 16,
+    "effective_text": 80,
+    "end_notice": 40,
+    "raw": 400,
+}
 MAX_BYTES = 2 * 2**20
 
 # 예비특보 때 부호(머리 주석 그대로): "HH:MM" → (이름, 시작 시, 끝 시)
@@ -127,6 +139,10 @@ def parse_line(line: str) -> dict[str, Any]:
             w["parent_name"] = reg_up_ko
     if ed_tm:
         w["end_notice"] = ed_tm
+    for k, n in MAX_LEN.items():
+        v = w.get(k)
+        if isinstance(v, str) and len(v) > n:
+            raise ValueError(f"{k} longer than {n} characters")
     return w
 
 
@@ -143,6 +159,6 @@ def parse(body: bytes) -> ParsedWarnings:
     for line in rows:
         try:
             out.warnings.append(parse_line(line))
-        except ValueError as e:
+        except (ValueError, OverflowError) as e:  # OverflowError: 날짜 계산이 넘침(QA-603) — 그 줄만 버린다
             out.dropped.append({"reason": str(e), "line": line.strip()[:200]})
     return out

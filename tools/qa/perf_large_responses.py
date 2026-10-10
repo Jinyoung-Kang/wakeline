@@ -62,6 +62,12 @@ def routes() -> list[tuple[str, str]]:
         ("status", "/api/v1/status"),
         ("traffic grid", "/api/v1/traffic/grid"),
         ("healthz", "/healthz"),
+        # 출시 QA 2차(2026-10-10): 새 공개 자원 — 공역 전체 · 특보 · 특보 이력 30 일 × 500(상한) · 관심 대상 50(상한)
+        ("airspace all", "/api/v1/airspace"),
+        ("warnings now", "/api/v1/warnings"),
+        ("warnings history 30d x500", f"/api/v1/warnings/history?from={iso(now - timedelta(days=30) + timedelta(minutes=5))}&to={iso(now)}&limit=500"),
+        ("watch x50", "/api/v1/watch?aircraft=" + ",".join(f"f1{i:04x}" for i in range(30)) + "&ships=" + ",".join(f"3000000{i:02d}" for i in range(1, 16))
+         + "&airports=RKSI,RKSS,RKPC,RKPK,RKTU"),
     ]
 
 

@@ -100,3 +100,12 @@ def test_size_and_row_limits(monkeypatch):
     monkeypatch.setattr(r, "MAX_BYTES", 10)
     with pytest.raises(r.WarningResponseError, match="too large"):
         r.parse(body(row()))
+
+
+def test_max_len_matches_the_stream_contract() -> None:
+    """줄을 버리는 길이 한도(QA-602)는 api 가 검사하는 스트림 계약과 같아야 한다 — 어긋나면 한도 밖 줄이 다시 봉투 전체를 DLQ 로 보낸다."""
+    import json
+
+    schema = json.loads((Path(__file__).resolve().parents[3] / "schemas" / "stream_envelope.v1.json").read_text(encoding="utf-8"))
+    props = schema["$defs"]["wx_warnings_payload"]["properties"]["warnings"]["items"]["properties"]
+    assert {k: v["maxLength"] for k, v in props.items() if "maxLength" in v} == r.MAX_LEN

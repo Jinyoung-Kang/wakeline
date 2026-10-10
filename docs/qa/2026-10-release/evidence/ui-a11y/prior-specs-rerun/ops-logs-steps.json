@@ -1,0 +1,1244 @@
+{
+  "steps": [
+    {
+      "name": "ops: sign in (qa-b) through the login form",
+      "ok": true,
+      "focus": {
+        "tag": "button",
+        "name": "providers",
+        "visible": false,
+        "outline": "none 3px rgb(207, 224, 255)",
+        "testid": "ops-tab-providers",
+        "inViewport": true
+      },
+      "consoleErrors": [
+        "Failed to load resource: the server responded with a status of 404 ()"
+      ],
+      "pageErrors": [],
+      "bad": [
+        "404 GET /api/v1/ops/session"
+      ],
+      "failed": [],
+      "dup": [],
+      "api": [
+        "155 GET /api/v1/ops/session",
+        "262 POST /api/v1/ops/session",
+        "634 GET /api/v1/ops/providers",
+        "635 GET /api/v1/ops/runs?limit=50&resolved=hide",
+        "635 GET /api/v1/ops/quality",
+        "636 GET /api/v1/ops/settings",
+        "637 GET /api/v1/ops/audit",
+        "638 GET /api/v1/ops/dlq",
+        "639 GET /api/v1/ops/pipeline"
+      ]
+    },
+    {
+      "name": "ops tab ops-tab-providers",
+      "ok": true,
+      "note": "pressed=true",
+      "focus": {
+        "tag": "button",
+        "name": "providers",
+        "visible": false,
+        "outline": "none 3px rgb(207, 224, 255)",
+        "testid": "ops-tab-providers",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [],
+      "axe": []
+    },
+    {
+      "name": "ops tab ops-tab-runs",
+      "ok": true,
+      "note": "pressed=true",
+      "focus": {
+        "tag": "button",
+        "name": "runs",
+        "visible": false,
+        "outline": "none 3px rgb(207, 224, 255)",
+        "testid": "ops-tab-runs",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [],
+      "axe": []
+    },
+    {
+      "name": "ops tab ops-tab-quality",
+      "ok": true,
+      "note": "pressed=true",
+      "focus": {
+        "tag": "button",
+        "name": "quality",
+        "visible": false,
+        "outline": "none 3px rgb(207, 224, 255)",
+        "testid": "ops-tab-quality",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [],
+      "axe": []
+    },
+    {
+      "name": "ops tab ops-tab-settings",
+      "ok": true,
+      "note": "pressed=true",
+      "focus": {
+        "tag": "button",
+        "name": "settings",
+        "visible": false,
+        "outline": "none 3px rgb(207, 224, 255)",
+        "testid": "ops-tab-settings",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [],
+      "axe": []
+    },
+    {
+      "name": "ops tab ops-tab-audit",
+      "ok": true,
+      "note": "pressed=true",
+      "focus": {
+        "tag": "button",
+        "name": "audit",
+        "visible": false,
+        "outline": "none 3px rgb(207, 224, 255)",
+        "testid": "ops-tab-audit",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [
+        "15636 GET /api/v1/ops/providers",
+        "15638 GET /api/v1/ops/runs?limit=50&resolved=hide",
+        "15639 GET /api/v1/ops/quality",
+        "15640 GET /api/v1/ops/settings",
+        "15641 GET /api/v1/ops/audit",
+        "15641 GET /api/v1/ops/dlq",
+        "15642 GET /api/v1/ops/pipeline"
+      ],
+      "axe": []
+    },
+    {
+      "name": "ops tab ops-tab-dlq",
+      "ok": true,
+      "note": "pressed=true",
+      "focus": {
+        "tag": "button",
+        "name": "dlq",
+        "visible": false,
+        "outline": "none 3px rgb(207, 224, 255)",
+        "testid": "ops-tab-dlq",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [],
+      "axe": []
+    },
+    {
+      "name": "ops tab ops-tab-pipeline",
+      "ok": true,
+      "note": "pressed=true",
+      "focus": {
+        "tag": "button",
+        "name": "pipeline",
+        "visible": false,
+        "outline": "none 3px rgb(207, 224, 255)",
+        "testid": "ops-tab-pipeline",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [],
+      "axe": []
+    },
+    {
+      "name": "runs: 해결된 오류 포함 on",
+      "ok": true,
+      "note": "pressed=true",
+      "focus": {
+        "tag": "button",
+        "name": "해결된 오류 포함",
+        "visible": false,
+        "outline": "none 3px rgb(207, 224, 255)",
+        "testid": "runs-show-resolved",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [
+        "23074 GET /api/v1/ops/runs?limit=50&resolved=show"
+      ]
+    },
+    {
+      "name": "runs: 해결된 오류 포함 off",
+      "ok": true,
+      "note": "pressed=false",
+      "focus": {
+        "tag": "button",
+        "name": "해결된 오류 포함",
+        "visible": false,
+        "outline": "none 3px rgb(230, 232, 235)",
+        "testid": "runs-show-resolved",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [
+        "25608 GET /api/v1/ops/runs?limit=50&resolved=hide"
+      ]
+    },
+    {
+      "name": "runs: open first summary row (keyboard)",
+      "ok": true,
+      "note": "drill rows=0",
+      "focus": {
+        "tag": "button",
+        "name": "실행 목록 닫기: focus · fixture · ok",
+        "visible": true,
+        "outline": "solid 2px rgb(76, 144, 240)",
+        "testid": "runs-drill-open",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [
+        "28143 GET /api/v1/ops/runs?job=focus&provider=fixture&status=ok&since=2026-10-09T04%3A13%3A16.435768Z&limit=50",
+        "30636 GET /api/v1/ops/providers",
+        "30639 GET /api/v1/ops/runs?limit=50&resolved=hide",
+        "30640 GET /api/v1/ops/quality",
+        "30641 GET /api/v1/ops/settings",
+        "30642 GET /api/v1/ops/audit",
+        "30642 GET /api/v1/ops/dlq",
+        "30643 GET /api/v1/ops/pipeline"
+      ],
+      "axe": []
+    },
+    {
+      "name": "runs: drill 더 보기 (if any)",
+      "ok": true,
+      "note": "no more button",
+      "focus": {
+        "tag": "button",
+        "name": "실행 목록 닫기: focus · fixture · ok",
+        "visible": true,
+        "outline": "solid 2px rgb(76, 144, 240)",
+        "testid": "runs-drill-open",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": []
+    },
+    {
+      "name": "runs: close drill (Escape?)",
+      "ok": true,
+      "note": "drill visible after Esc=true",
+      "focus": {
+        "tag": "button",
+        "name": "실행 목록 닫기: focus · fixture · ok",
+        "visible": true,
+        "outline": "solid 2px rgb(76, 144, 240)",
+        "testid": "runs-drill-open",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": []
+    },
+    {
+      "name": "runs: close drill (button)",
+      "ok": true,
+      "note": "expanded=false",
+      "focus": {
+        "tag": "button",
+        "name": "실행 목록 열기: focus · fixture · ok",
+        "visible": true,
+        "outline": "solid 2px rgb(76, 144, 240)",
+        "testid": "runs-drill-open",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": []
+    },
+    {
+      "name": "settings: edit sigmet_poll_s (+1) and save",
+      "ok": true,
+      "note": "original=300 → 301: sigmet_poll_s 저장됨 — 다음 주기부터 적용",
+      "focus": {
+        "tag": "input",
+        "name": "sigmet_poll_s 값",
+        "visible": true,
+        "outline": "solid 2px rgb(76, 144, 240)",
+        "testid": "",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [
+        "36576 PUT /api/v1/ops/settings/sigmet_poll_s",
+        "36660 GET /api/v1/ops/providers",
+        "36661 GET /api/v1/ops/runs?limit=50&resolved=hide",
+        "36662 GET /api/v1/ops/quality",
+        "36664 GET /api/v1/ops/settings",
+        "36664 GET /api/v1/ops/audit",
+        "36666 GET /api/v1/ops/dlq",
+        "36667 GET /api/v1/ops/pipeline"
+      ],
+      "axe": []
+    },
+    {
+      "name": "settings: restore sigmet_poll_s",
+      "ok": true,
+      "note": "now=300 msg=sigmet_poll_s 저장됨 — 다음 주기부터 적용 err=",
+      "focus": {
+        "tag": "input",
+        "name": "sigmet_poll_s 값",
+        "visible": true,
+        "outline": "solid 2px rgb(76, 144, 240)",
+        "testid": "",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [
+        "39474 PUT /api/v1/ops/settings/sigmet_poll_s",
+        "39500 GET /api/v1/ops/providers",
+        "39500 GET /api/v1/ops/runs?limit=50&resolved=hide",
+        "39501 GET /api/v1/ops/quality",
+        "39501 GET /api/v1/ops/settings",
+        "39502 GET /api/v1/ops/audit",
+        "39503 GET /api/v1/ops/dlq",
+        "39503 GET /api/v1/ops/pipeline",
+        "45640 GET /api/v1/ops/providers",
+        "45655 GET /api/v1/ops/runs?limit=50&resolved=hide",
+        "45655 GET /api/v1/ops/quality",
+        "45658 GET /api/v1/ops/settings",
+        "45658 GET /api/v1/ops/audit",
+        "45659 GET /api/v1/ops/dlq",
+        "45659 GET /api/v1/ops/pipeline"
+      ]
+    },
+    {
+      "name": "settings: invalid value (client validation)",
+      "ok": true,
+      "note": "error=\"sigmet_poll_s: 저장하지 않음 — 60–3600 초 사이여야 합니다.알림 닫기\" aria-invalid=true describedby=setting-err-sigmet_poll_s",
+      "focus": {
+        "tag": "input",
+        "name": "sigmet_poll_s 값",
+        "visible": true,
+        "outline": "solid 2px rgb(76, 144, 240)",
+        "testid": "",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [],
+      "axe": []
+    },
+    {
+      "name": "providers: disable opensky",
+      "ok": false,
+      "note": "TimeoutError: locator.click: Timeout 10000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('tr').filter({ has: locator('td.mono').filter({ hasText: /^opensky/ }) }).first().getByRole('button', { name: 'disable' })\u001b[22m\n",
+      "focus": {
+        "tag": "button",
+        "name": "providers",
+        "visible": false,
+        "outline": "none 3px rgb(207, 224, 255)",
+        "testid": "ops-tab-providers",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [
+        "60639 GET /api/v1/ops/providers",
+        "60642 GET /api/v1/ops/runs?limit=50&resolved=hide",
+        "60643 GET /api/v1/ops/quality",
+        "60644 GET /api/v1/ops/settings",
+        "60645 GET /api/v1/ops/audit",
+        "60645 GET /api/v1/ops/dlq",
+        "60646 GET /api/v1/ops/pipeline"
+      ]
+    },
+    {
+      "name": "providers: enable opensky (restore)",
+      "ok": false,
+      "note": "TimeoutError: locator.click: Timeout 10000ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('tr').filter({ has: locator('td.mono').filter({ hasText: /^opensky/ }) }).first().getByRole('button', { name: 'enable' })\u001b[22m\n",
+      "focus": {
+        "tag": "button",
+        "name": "providers",
+        "visible": false,
+        "outline": "none 3px rgb(207, 224, 255)",
+        "testid": "ops-tab-providers",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [
+        "75642 GET /api/v1/ops/providers",
+        "75650 GET /api/v1/ops/runs?limit=50&resolved=hide",
+        "75650 GET /api/v1/ops/quality",
+        "75651 GET /api/v1/ops/settings",
+        "75651 GET /api/v1/ops/audit",
+        "75652 GET /api/v1/ops/dlq",
+        "75653 GET /api/v1/ops/pipeline"
+      ]
+    },
+    {
+      "name": "ops: 새로고침",
+      "ok": true,
+      "focus": {
+        "tag": "button",
+        "name": "새로고침",
+        "visible": false,
+        "outline": "none 3px rgb(230, 232, 235)",
+        "testid": "",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [
+        "79336 GET /api/v1/ops/providers",
+        "79337 GET /api/v1/ops/runs?limit=50&resolved=hide",
+        "79337 GET /api/v1/ops/quality",
+        "79338 GET /api/v1/ops/settings",
+        "79338 GET /api/v1/ops/audit",
+        "79339 GET /api/v1/ops/dlq",
+        "79339 GET /api/v1/ops/pipeline"
+      ]
+    },
+    {
+      "name": "ops: idle 35 s (15 s poll — duplicates?)",
+      "ok": true,
+      "focus": {
+        "tag": "button",
+        "name": "새로고침",
+        "visible": false,
+        "outline": "none 3px rgb(230, 232, 235)",
+        "testid": "",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [
+        "90638 GET /api/v1/ops/providers",
+        "90640 GET /api/v1/ops/runs?limit=50&resolved=hide",
+        "90641 GET /api/v1/ops/quality",
+        "90642 GET /api/v1/ops/settings",
+        "90643 GET /api/v1/ops/audit",
+        "90643 GET /api/v1/ops/dlq",
+        "90644 GET /api/v1/ops/pipeline",
+        "105650 GET /api/v1/ops/providers",
+        "105659 GET /api/v1/ops/runs?limit=50&resolved=hide",
+        "105660 GET /api/v1/ops/quality",
+        "105660 GET /api/v1/ops/settings",
+        "105661 GET /api/v1/ops/audit",
+        "105662 GET /api/v1/ops/dlq",
+        "105663 GET /api/v1/ops/pipeline"
+      ]
+    },
+    {
+      "name": "ops: audit after writes",
+      "ok": true,
+      "note": "10-10 13:13:30 KST qa-b SETTING_UPDATE sigmet_poll_s 301 300 172.25.0.1 07bae84424a543d7bc1746081a920ee5 || 10-10 13:13:27 KST qa-b SETTING_UPDATE sigmet_poll_s 300 301 172.25.0.1 05e16c9e4ec91fc2a2e13800fe6176a1 || 10-10 13:12:51 KST qa-b LOGIN qa-b 172.25.0.1 158c29e9d4e3583d56b8e443a150fd6f || 10-10 13:12:50 KST qa-b LOGOUT qa-b 172.25.0.1 6e22dfc015b0ea7a9607cad95e1a6a1f",
+      "focus": {
+        "tag": "button",
+        "name": "audit",
+        "visible": false,
+        "outline": "none 3px rgb(207, 224, 255)",
+        "testid": "ops-tab-audit",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": []
+    },
+    {
+      "name": "ops mobile 375: providers",
+      "ok": true,
+      "focus": {
+        "tag": "button",
+        "name": "providers",
+        "visible": false,
+        "outline": "none 3px rgb(207, 224, 255)",
+        "testid": "ops-tab-providers",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [
+        "120635 GET /api/v1/ops/providers",
+        "120636 GET /api/v1/ops/runs?limit=50&resolved=hide",
+        "120637 GET /api/v1/ops/quality",
+        "120638 GET /api/v1/ops/settings",
+        "120638 GET /api/v1/ops/audit",
+        "120640 GET /api/v1/ops/dlq",
+        "120641 GET /api/v1/ops/pipeline"
+      ],
+      "axe": [],
+      "overflow": {
+        "innerWidth": 375,
+        "scrollWidth": 768,
+        "overflow": true,
+        "offenders": []
+      }
+    },
+    {
+      "name": "logs: open /logs (list)",
+      "ok": true,
+      "focus": {
+        "tag": "body",
+        "name": "",
+        "visible": false,
+        "outline": "",
+        "testid": "",
+        "inViewport": false
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [
+        "122264 GET /api/v1/ops/session",
+        "122309 GET /api/v1/ops/logs?since=2026-10-10T03%3A14%3A53.122Z&limit=100&resolved=hide"
+      ],
+      "axe": []
+    },
+    {
+      "name": "logs: open first row (click) → detail",
+      "ok": true,
+      "note": "no rows",
+      "focus": {
+        "tag": "body",
+        "name": "",
+        "visible": false,
+        "outline": "",
+        "testid": "",
+        "inViewport": false
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [],
+      "axe": []
+    },
+    {
+      "name": "logs: detail Escape",
+      "ok": true,
+      "note": "detail visible=false",
+      "focus": {
+        "tag": "body",
+        "name": "",
+        "visible": false,
+        "outline": "",
+        "testid": "",
+        "inViewport": false
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": []
+    },
+    {
+      "name": "logs: detail 닫기",
+      "ok": true,
+      "note": "detail visible=false",
+      "focus": {
+        "tag": "body",
+        "name": "",
+        "visible": false,
+        "outline": "",
+        "testid": "",
+        "inViewport": false
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": []
+    },
+    {
+      "name": "logs: keyboard grid ↓ ↓ Enter",
+      "ok": false,
+      "note": "TimeoutError: locator.focus: Timeout 10000ms exceeded.\nCall log:\n\u001b[2m  - waiting for getByTestId('log-grid')\u001b[22m\n",
+      "focus": {
+        "tag": "body",
+        "name": "",
+        "visible": false,
+        "outline": "",
+        "testid": "",
+        "inViewport": false
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [
+        "137313 GET /api/v1/ops/logs?since=2026-10-10T03%3A15%3A08.122Z&limit=100&resolved=hide"
+      ]
+    },
+    {
+      "name": "logs: service api on",
+      "ok": true,
+      "note": "pressed=true",
+      "focus": {
+        "tag": "button",
+        "name": "api",
+        "visible": false,
+        "outline": "none 3px rgb(207, 224, 255)",
+        "testid": "",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [
+        "143713 GET /api/v1/ops/logs?service=api&since=2026-10-10T03%3A15%3A14.523Z&limit=100&resolved=hide"
+      ]
+    },
+    {
+      "name": "logs: service api off",
+      "ok": true,
+      "focus": {
+        "tag": "button",
+        "name": "api",
+        "visible": false,
+        "outline": "none 3px rgb(230, 232, 235)",
+        "testid": "",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [
+        "145741 GET /api/v1/ops/logs?since=2026-10-10T03%3A15%3A16.557Z&limit=100&resolved=hide"
+      ]
+    },
+    {
+      "name": "logs: service collector on",
+      "ok": true,
+      "note": "pressed=true",
+      "focus": {
+        "tag": "button",
+        "name": "collector",
+        "visible": false,
+        "outline": "none 3px rgb(207, 224, 255)",
+        "testid": "",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [
+        "147258 GET /api/v1/ops/logs?service=collector&since=2026-10-10T03%3A15%3A18.074Z&limit=100&resolved=hide"
+      ]
+    },
+    {
+      "name": "logs: service collector off",
+      "ok": true,
+      "focus": {
+        "tag": "button",
+        "name": "collector",
+        "visible": false,
+        "outline": "none 3px rgb(230, 232, 235)",
+        "testid": "",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [
+        "149291 GET /api/v1/ops/logs?since=2026-10-10T03%3A15%3A20.107Z&limit=100&resolved=hide"
+      ]
+    },
+    {
+      "name": "logs: service ais on",
+      "ok": true,
+      "note": "pressed=true",
+      "focus": {
+        "tag": "button",
+        "name": "ais",
+        "visible": false,
+        "outline": "none 3px rgb(207, 224, 255)",
+        "testid": "",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [
+        "150807 GET /api/v1/ops/logs?service=ais&since=2026-10-10T03%3A15%3A21.623Z&limit=100&resolved=hide",
+        "152305 GET /api/v1/ops/logs?service=ais&since=2026-10-10T03%3A15%3A23.120Z&limit=100&resolved=hide"
+      ]
+    },
+    {
+      "name": "logs: service ais off",
+      "ok": true,
+      "focus": {
+        "tag": "button",
+        "name": "ais",
+        "visible": false,
+        "outline": "none 3px rgb(230, 232, 235)",
+        "testid": "",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [
+        "152841 GET /api/v1/ops/logs?since=2026-10-10T03%3A15%3A23.657Z&limit=100&resolved=hide"
+      ]
+    },
+    {
+      "name": "logs: service web-client on",
+      "ok": true,
+      "note": "pressed=true",
+      "focus": {
+        "tag": "button",
+        "name": "web-client",
+        "visible": false,
+        "outline": "none 3px rgb(207, 224, 255)",
+        "testid": "",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [
+        "154358 GET /api/v1/ops/logs?service=web-client&since=2026-10-10T03%3A15%3A25.174Z&limit=100&resolved=hide"
+      ]
+    },
+    {
+      "name": "logs: service web-client off",
+      "ok": true,
+      "focus": {
+        "tag": "button",
+        "name": "web-client",
+        "visible": false,
+        "outline": "none 3px rgb(230, 232, 235)",
+        "testid": "",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [
+        "156391 GET /api/v1/ops/logs?since=2026-10-10T03%3A15%3A27.206Z&limit=100&resolved=hide"
+      ]
+    },
+    {
+      "name": "logs: level WARN",
+      "ok": true,
+      "note": "pressed=true",
+      "focus": {
+        "tag": "button",
+        "name": "WARN",
+        "visible": false,
+        "outline": "none 3px rgb(207, 224, 255)",
+        "testid": "",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [
+        "157907 GET /api/v1/ops/logs?level=WARN&since=2026-10-10T03%3A15%3A28.723Z&limit=100&resolved=hide"
+      ]
+    },
+    {
+      "name": "logs: level ERROR",
+      "ok": true,
+      "note": "pressed=true",
+      "focus": {
+        "tag": "button",
+        "name": "ERROR",
+        "visible": false,
+        "outline": "none 3px rgb(207, 224, 255)",
+        "testid": "",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [
+        "159923 GET /api/v1/ops/logs?level=ERROR&since=2026-10-10T03%3A15%3A30.739Z&limit=100&resolved=hide"
+      ]
+    },
+    {
+      "name": "logs: level 전체",
+      "ok": true,
+      "note": "pressed=true",
+      "focus": {
+        "tag": "button",
+        "name": "전체",
+        "visible": false,
+        "outline": "none 3px rgb(207, 224, 255)",
+        "testid": "",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [
+        "161958 GET /api/v1/ops/logs?since=2026-10-10T03%3A15%3A32.773Z&limit=100&resolved=hide"
+      ]
+    },
+    {
+      "name": "logs: period 1 h",
+      "ok": true,
+      "focus": {
+        "tag": "button",
+        "name": "1 h",
+        "visible": false,
+        "outline": "none 3px rgb(207, 224, 255)",
+        "testid": "",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [
+        "163989 GET /api/v1/ops/logs?since=2026-10-10T03%3A15%3A34.805Z&limit=100&resolved=hide"
+      ]
+    },
+    {
+      "name": "logs: period 6 h",
+      "ok": true,
+      "focus": {
+        "tag": "button",
+        "name": "6 h",
+        "visible": false,
+        "outline": "none 3px rgb(207, 224, 255)",
+        "testid": "",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [
+        "166007 GET /api/v1/ops/logs?since=2026-10-09T22%3A15%3A36.822Z&limit=100&resolved=hide",
+        "167305 GET /api/v1/ops/logs?since=2026-10-09T22%3A15%3A38.120Z&limit=100&resolved=hide"
+      ]
+    },
+    {
+      "name": "logs: period 24 h",
+      "ok": true,
+      "focus": {
+        "tag": "button",
+        "name": "24 h",
+        "visible": false,
+        "outline": "none 3px rgb(207, 224, 255)",
+        "testid": "",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [
+        "168022 GET /api/v1/ops/logs?since=2026-10-09T04%3A15%3A38.839Z&limit=100&resolved=hide"
+      ]
+    },
+    {
+      "name": "logs: period 7 d",
+      "ok": true,
+      "focus": {
+        "tag": "button",
+        "name": "7 d",
+        "visible": false,
+        "outline": "none 3px rgb(207, 224, 255)",
+        "testid": "",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [
+        "170040 GET /api/v1/ops/logs?since=2026-10-03T04%3A15%3A40.855Z&limit=100&resolved=hide"
+      ]
+    },
+    {
+      "name": "logs: 해결된 항목 보기 on/off",
+      "ok": true,
+      "focus": {
+        "tag": "button",
+        "name": "해결된 항목 보기",
+        "visible": false,
+        "outline": "none 3px rgb(230, 232, 235)",
+        "testid": "logs-show-resolved",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [
+        "172057 GET /api/v1/ops/logs?since=2026-10-03T04%3A15%3A42.872Z&limit=100&resolved=show",
+        "173573 GET /api/v1/ops/logs?since=2026-10-03T04%3A15%3A44.388Z&limit=100&resolved=hide"
+      ]
+    },
+    {
+      "name": "logs: text search 'QA' + Enter",
+      "ok": true,
+      "focus": {
+        "tag": "input",
+        "name": "글자 검색",
+        "visible": true,
+        "outline": "solid 2px rgb(76, 144, 240)",
+        "testid": "",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [
+        "175089 GET /api/v1/ops/logs?since=2026-10-03T04%3A15%3A45.905Z&q=QA&limit=100&resolved=hide"
+      ]
+    },
+    {
+      "name": "logs: invalid request id",
+      "ok": true,
+      "note": "rid error=요청 id 형식: 영문·숫자·- 8–64자 — 적용하지 않음 focus→button",
+      "focus": {
+        "tag": "button",
+        "name": "적용",
+        "visible": false,
+        "outline": "none 3px rgb(230, 232, 235)",
+        "testid": "",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [],
+      "axe": []
+    },
+    {
+      "name": "logs: 초기화",
+      "ok": true,
+      "focus": {
+        "tag": "button",
+        "name": "초기화",
+        "visible": false,
+        "outline": "none 3px rgb(230, 232, 235)",
+        "testid": "",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [
+        "179256 GET /api/v1/ops/logs?since=2026-10-10T03%3A15%3A50.072Z&limit=100&resolved=hide"
+      ]
+    },
+    {
+      "name": "logs: 이전 항목 더 보기",
+      "ok": true,
+      "note": "no more button",
+      "focus": {
+        "tag": "button",
+        "name": "초기화",
+        "visible": false,
+        "outline": "none 3px rgb(230, 232, 235)",
+        "testid": "",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [
+        "182307 GET /api/v1/ops/logs?since=2026-10-10T03%3A15%3A53.120Z&limit=100&resolved=hide"
+      ]
+    },
+    {
+      "name": "logs: groups view",
+      "ok": true,
+      "focus": {
+        "tag": "button",
+        "name": "묶음(fp)",
+        "visible": false,
+        "outline": "none 3px rgb(207, 224, 255)",
+        "testid": "",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [
+        "183289 GET /api/v1/ops/logs/groups?since=2026-10-10T03%3A15%3A54.105Z&resolved=hide"
+      ],
+      "axe": []
+    },
+    {
+      "name": "logs: group → filter by fp",
+      "ok": true,
+      "note": "no groups",
+      "focus": {
+        "tag": "button",
+        "name": "묶음(fp)",
+        "visible": false,
+        "outline": "none 3px rgb(207, 224, 255)",
+        "testid": "",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": []
+    },
+    {
+      "name": "logs: back to list view",
+      "ok": true,
+      "focus": {
+        "tag": "button",
+        "name": "목록",
+        "visible": false,
+        "outline": "none 3px rgb(207, 224, 255)",
+        "testid": "",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [
+        "188438 GET /api/v1/ops/logs?since=2026-10-10T03%3A15%3A59.253Z&limit=100&resolved=hide"
+      ]
+    },
+    {
+      "name": "logs: '새 항목' button after a new client error",
+      "ok": false,
+      "note": "TimeoutError: locator.waitFor: Timeout 40000ms exceeded.\nCall log:\n\u001b[2m  - waiting for getByTestId('logs-new') to be visible\u001b[22m\n",
+      "focus": {
+        "tag": "button",
+        "name": "초기화",
+        "visible": false,
+        "outline": "none 3px rgb(230, 232, 235)",
+        "testid": "",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [
+        "192445 POST /api/v1/client-errors",
+        "197305 GET /api/v1/ops/logs?since=2026-10-10T03%3A16%3A08.120Z&limit=100&resolved=hide",
+        "212307 GET /api/v1/ops/logs?since=2026-10-10T03%3A16%3A23.119Z&limit=100&resolved=hide",
+        "227315 GET /api/v1/ops/logs?since=2026-10-10T03%3A16%3A38.122Z&limit=100&resolved=hide"
+      ]
+    },
+    {
+      "name": "logs: AIS 수신 공백 tab",
+      "ok": true,
+      "focus": {
+        "tag": "button",
+        "name": "AIS 수신 공백",
+        "visible": false,
+        "outline": "none 3px rgb(207, 224, 255)",
+        "testid": "",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [
+        "234565 GET /api/v1/ais/gaps?from=2026-10-10T03%3A16%3A45.374Z"
+      ],
+      "axe": []
+    },
+    {
+      "name": "logs: back to 로그 tab",
+      "ok": true,
+      "focus": {
+        "tag": "button",
+        "name": "로그",
+        "visible": false,
+        "outline": "none 3px rgb(207, 224, 255)",
+        "testid": "",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [
+        "237720 GET /api/v1/ops/logs?since=2026-10-10T03%3A16%3A48.535Z&limit=100&resolved=hide"
+      ]
+    },
+    {
+      "name": "logs mobile 375: list",
+      "ok": true,
+      "focus": {
+        "tag": "button",
+        "name": "로그",
+        "visible": false,
+        "outline": "none 3px rgb(207, 224, 255)",
+        "testid": "",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [],
+      "axe": [],
+      "overflow": {
+        "innerWidth": 375,
+        "scrollWidth": 375,
+        "overflow": false,
+        "offenders": []
+      }
+    },
+    {
+      "name": "logs: sign out",
+      "ok": true,
+      "note": "focus after sign out=input#ops-user",
+      "focus": {
+        "tag": "input#ops-user",
+        "name": "",
+        "visible": true,
+        "outline": "solid 2px rgb(76, 144, 240)",
+        "testid": "",
+        "inViewport": true
+      },
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": [],
+      "dup": [],
+      "api": [
+        "241905 DELETE /api/v1/ops/session"
+      ]
+    }
+  ]
+}
