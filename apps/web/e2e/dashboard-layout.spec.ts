@@ -70,11 +70,13 @@ for (const size of SIZES) {
       // (CI 2026-10-10 1024×768: 잰 수 0 · 그 뒤 radar 칩이 상세로 — '상세 +1 ▾' 를 5 s 기다리다 실패, 제품은 서로 맞았다.
       // statusbar-resize 와 같은 경합 — VERIFICATION #135)
       const toggle = page.getByTestId("statusbar-details-toggle");
+      // 기다림 15 s: 느린 CI 러너는 페이지를 연 직후 지도 · 항공기를 소프트웨어로 그리느라 evaluate 한 번이 5 s 를 넘겼다(실행 38050145162 1차 trace —
+      // 1.4 → 2.5 → 5.1 s, 판정은 한 번도 돌지 못하고 기본 5 s 가 끝남). 판정은 그대로 · 기다림만 늘린다(VERIFICATION #135 덧붙임)
       await expect.poll(() => row.evaluate((el) => {
         const hidden = el.querySelectorAll('[data-overflow="true"]').length;
         const t = document.querySelector('[data-testid="statusbar-details-toggle"]')?.textContent ?? "";
         return hidden ? t.includes(`+${hidden}`) : !t.includes("+");
-      }), { message: "'+N' = moved chips" }).toBe(true);
+      }), { message: "'+N' = moved chips", timeout: 15_000 }).toBe(true);
       await toggle.click();
       const details = page.getByTestId("statusbar-details");
       for (const k of ["conn", "region", "world", "ais", "sigmet", "radar", "kma", "engine", "version", "fixture"]) await expect(details.locator(`[data-row="${k}"]`)).toHaveCount(1);
