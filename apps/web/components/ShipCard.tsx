@@ -6,6 +6,7 @@ import { WatchButton } from "./watch/WatchButton";
 import { warningsNow } from "@/lib/endpoints/warnings";
 import { useApiResource } from "@/lib/use-api-resource";
 import type { Warnings } from "@/lib/warnings";
+import { countPhases, notYetText } from "@/lib/warning-phase";
 import { useEscapeClose } from "@/lib/use-escape-close";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { shipDetail } from "@/lib/endpoints/ship-detail";
@@ -56,15 +57,16 @@ export function ShipCard({ mmsi }: { mmsi: string }) {
  * 표시 부분(REST 상세·오류·서버 기준 시각을 인자로 — 서버 렌더 시험용). error = 상세 조회 실패(문자열 또는 오류 — ApiError 면 요청 id 를 복사할 수 있게,
  * 계약 v5 §G5), 없으면 null.
  */
-/** AIS 지연 — 상태 바 칩(lib/ships aisBadge)과 같은 값. 꺼짐 · 끊김이면 경고, 모르면 null */
-function useAisLag(): { lag: number | null; stale: boolean } | null {
+/** AIS 지연 — 상태 바 칩(lib/ships aisBadge)과 같은 값 · 같은 등급. 끊김이면 지연 모름(down — 0 s 로 짓지 않는다, QA-703), 꺼짐 · 모르면 null */
+function useAisLag(): { lag: number | null; stale: boolean; warn: boolean; down: boolean } | null {
   const ais = useServerData((x) => x.ais);
   const conn = useServerData((x) => x.conn);
   const lastRxAt = useServerData((x) => x.lastRxAt);
   const wall = useNow(5_000);
   const b = wall ? aisBadge(ais, wall, isRxFresh(conn, lastRxAt, wall)) : null;
   if (!b || b.kind === "disabled") return null;
-  return { lag: b.kind === "live" ? b.lag : (b.lag ?? 0), stale: b.kind !== "live" || b.tone === "bad" };
+  if (b.kind === "down") return { lag: null, stale: true, warn: false, down: true };
+  return { lag: b.lag, stale: b.tone === "bad", warn: b.tone === "warn", down: false };
 }
 
 export function ShipCardView({ mmsi, detail: d, error: err, now }: { mmsi: string; detail: ShipDetail | null; error: unknown; now: number }) {
@@ -323,17 +325,22 @@ function ShipList({ shipCats }: { shipCats: readonly ShipCategory[] }) {
  */
 export function SeaWarningsLine() {
   const res = useApiResource("wx-now", (signal) => warningsNow({ signal }), { refreshMs: 60_000 });
-  return <SeaWarningsLineView w={res.data ?? null} />;
+  const wall = useNow(30_000);
+  return <SeaWarningsLineView w={res.data ?? null} now={wall || undefined} />;
 }
 
-export function SeaWarningsLineView({ w }: { w: Warnings | null }) {
+/** now 가 없으면 목록을 받은 때 기준(서버 렌더 · 시험 — 그리기 중에 시계를 읽지 않는다) — 발효 중은 발효 시각이 지난 정규 특보만, 예비 · 발효 예정은 따로 센다(QA-709) */
+export function SeaWarningsLineView({ w, now }: { w: Warnings | null; now?: number }) {
   if (!w || !w.received) return null;
-  const sea = w.items.filter((x) => x.sea);
+  const at = now ?? (w.fetchedAt ? Date.parse(w.fetchedAt) : NaN); // 시각을 모르면 정규 특보는 모두 발효 중(목록 = 특보현황)
+  const p = countPhases(w.items.filter((x) => x.sea), at);
+  const sea = p.in_force;
+  const later = notYetText(p);
   const kinds = [...new Set(sea.map((x) => `${x.kind} ${x.level}`))].join(" · ");
   return (
     <div className={`border-b border-line py-1 text-[11px] ${sea.length ? "text-warn" : "text-fg-3"}`} data-testid="ship-sea-warnings"
       title="기상청 특보현황(구역 단위). 특보 구역 경계 자료가 없어 이 선박이 어느 구역에 있는지는 판정하지 않습니다 — 'wx' 탭에서 구역을 보세요">
-      해상특보: 지금 발효 중 {sea.length}건{kinds ? `(${kinds})` : ""} — 이 선박의 구역은 판정하지 않음(구역 경계 자료 없음){w.stale ? " · 오래된 목록" : ""}
+      해상특보: 지금 발효 중 {sea.length}건{kinds ? `(${kinds})` : ""}{later ? ` · ${later}` : ""} — 이 선박의 구역은 판정하지 않음(구역 경계 자료 없음){w.stale ? " · 오래된 목록" : ""}
     </div>
   );
 }

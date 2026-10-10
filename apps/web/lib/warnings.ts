@@ -5,6 +5,7 @@
  */
 import { EtagPoller, POLL_NONE, watchVisible, type Fetcher, type PollState, type WatchVisible } from "./etag-poller";
 import { fmtKstMinute } from "./time";
+import { countPhases, notYetText } from "./warning-phase";
 
 export const WARNINGS_URL = "/api/v1/warnings";
 export const WARNINGS_POLL_MS = 60_000;
@@ -61,13 +62,15 @@ export function effectiveText(w: Warning): string {
   return "—";
 }
 
-/** 상태 줄: 수신 전 · N건 · 오래됨 · 조회 실패 */
+/** 상태 줄: 수신 전 · 발효 중 N건(발효 예정 · 예비는 따로) · 오래됨 · 조회 실패 */
 export function warningsStatus(w: Warnings | null, error: string | null, nowMs: number): { text: string; tone: "ok" | "warn" | "bad" | "muted" } {
   if (!w) return error ? { text: `조회 실패(${error})`, tone: "bad" } : { text: "받는 중…", tone: "muted" };
   if (!w.received) return { text: "특보 목록 수신 전 — 수집기가 아직 보내지 않았거나 꺼져 있음(운영 화면의 kma_warning)", tone: "warn" };
   const ageMin = w.fetchedAt ? Math.round((nowMs - Date.parse(w.fetchedAt)) / 60_000) : null;
-  const sea = w.items.filter((x) => x.sea).length;
-  const base = `발효 중 ${w.items.length}건(해상 ${sea} · 육상 ${w.items.length - sea}) · ${w.source} · 받음 ${w.fetchedAt ? fmtKstMinute(w.fetchedAt) : "—"}`;
+  const p = countPhases(w.items, nowMs);
+  const sea = p.in_force.filter((x) => x.sea).length;
+  const later = notYetText(p);
+  const base = `발효 중 ${p.in_force.length}건(해상 ${sea} · 육상 ${p.in_force.length - sea})${later ? ` · ${later}` : ""} · ${w.source} · 받음 ${w.fetchedAt ? fmtKstMinute(w.fetchedAt) : "—"}`;
   const notes = [w.stale || (ageMin != null && ageMin * 60 > WARNINGS_STALE_S) ? `오래됨 — ${ageMin ?? "—"}분 전 목록` : null,
     w.dropped + w.bad > 0 ? `형식 오류로 뺀 줄 ${w.dropped + w.bad}` : null, error ? `조회 실패(${error}) — 마지막 값` : null].filter(Boolean);
   return { text: [base, ...notes].join(" · "), tone: notes.length ? "warn" : "ok" };

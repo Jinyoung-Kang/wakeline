@@ -23,10 +23,14 @@ export function positionPart(kind: "aircraft" | "ship", ageS: number | null | un
   return { key: "position", grade, text: `위치 ${fmtAgeS(ageS)} 전${estimated ? "(추정 위치)" : ""}` };
 }
 
-/** 공급자 지연 — 상태 바와 같은 값(lib/ws-protocol feedLag · lib/ships aisBadge). stale 이면 경고. 모르면(피드 없음 · 기록 없음) 모름 */
-export function lagPart(lag: { lag: number | null; stale: boolean } | null | undefined, unknownText = "공급자 지연 모름"): RelPart {
+/**
+ * 공급자 지연 — 상태 바와 같은 값(lib/ws-protocol feedLag · lib/ships aisBadge). stale 이면 경고, warn 이면 주의(상태 바 칩이 주의일 때 — QA-703).
+ * down = 연결이 끊겨 지연을 모른다 — 값을 짓지 않고 "모름(끊김)" · 경고. 모르면(피드 없음 · 기록 없음) 모름
+ */
+export function lagPart(lag: { lag: number | null; stale: boolean; warn?: boolean; down?: boolean } | null | undefined, unknownText = "공급자 지연 모름"): RelPart {
+  if (lag?.down) return { key: "lag", grade: "bad", text: `${unknownText}(끊김)` };
   if (!lag || lag.lag == null) return { key: "lag", grade: "unknown", text: unknownText };
-  return { key: "lag", grade: lag.stale ? "bad" : "ok", text: `공급자 지연 ${fmtAgeS(lag.lag)}` };
+  return { key: "lag", grade: lag.stale ? "bad" : lag.warn ? "warn" : "ok", text: `공급자 지연 ${fmtAgeS(lag.lag)}` };
 }
 
 /** 수신 공백 — 항적(그 창)을 불러온 경우에만 안다. 0 회면 정상, 있으면 주의 */
