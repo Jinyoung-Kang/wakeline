@@ -6,6 +6,7 @@ import { copyText } from "@/lib/copy";
 import { describeThrown, reportClientError, type ReportResult } from "@/lib/errorReport";
 import { isoKst } from "@/lib/kst";
 import { logHeaderLine } from "@/lib/log-line";
+import { usePublicDemo } from "@/components/PublicDemo";
 import { RequestIdCopy } from "./ErrorNote";
 
 const REPORT_TEXT: Record<ReportResult, string> = {
@@ -14,6 +15,8 @@ const REPORT_TEXT: Record<ReportResult, string> = {
   rate_limited: "이 페이지의 보고 상한(분당 5건)에 걸려 보내지 않음",
   unavailable: "보낼 수 없음(브라우저 환경 아님)",
 };
+/** 공개 데모(ADR-039 — 공개 주소에서 /logs 가 404): 경로 대신 '운영자 시스템 로그'라고만 적는다 */
+const SENT_DEMO = "보냄 — 운영자 시스템 로그의 web-client 항목(수신 확인은 하지 않음)";
 
 /** 던져진 값에서 보일 것만 — Error 가 아니면 종류는 typeof, 스택 없음 */
 function facts(error: unknown) {
@@ -45,6 +48,7 @@ export function errorScreenText(error: unknown, component: string, atMs: number,
  */
 export function ErrorScreen({ error, retry, component }: { error: unknown; retry: () => void; component: string }) {
   const f = facts(error);
+  const demo = usePublicDemo();
   const [seen, setSeen] = useState<{ at: number; path: string } | null>(null);
   const [report, setReport] = useState<ReportResult | null>(null);
   const [wrap, setWrap] = useState(true);
@@ -70,7 +74,7 @@ export function ErrorScreen({ error, retry, component }: { error: unknown; retry
       <div className="panel max-w-4xl p-4">
         <div className="label mb-1">Client error · 화면 오류</div>
         <h1 className="mb-2 text-sm font-semibold">이 화면을 그리는 중 오류가 났습니다</h1>
-        <p className="mb-3 text-[12px] text-fg-2">“다시 시도”는 이 화면을 다시 불러와 그립니다. 계속되면 “오류 내용 복사”로 아래 전체를 복사해 전달하세요(운영자는 /logs 에서 같은 내용을 봅니다).</p>
+        <p className="mb-3 text-[12px] text-fg-2">“다시 시도”는 이 화면을 다시 불러와 그립니다. 계속되면 “오류 내용 복사”로 아래 전체를 복사해 전달하세요(운영자는 {demo ? "시스템 로그에서" : "/logs 에서"} 같은 내용을 봅니다).</p>
         <div className="mb-3 flex flex-wrap gap-2">
           <button type="button" className="btn" onClick={() => retry()} data-testid="error-retry">다시 시도</button>
           <button type="button" className="btn" onClick={copy} data-testid="error-copy">오류 내용 복사</button>
@@ -85,7 +89,7 @@ export function ErrorScreen({ error, retry, component }: { error: unknown; retry
             {row("digest", f.digest ? <span className="mono select-all">{f.digest}</span> : <span className="text-fg-3">—</span>)}
             {row("경로", <span className="mono">{seen?.path ?? "—"}</span>)}
             {row("시각(KST)", seen ? <span className="mono">{isoKst(seen.at) ?? "—"}</span> : <span className="mono">—</span>, "error-time")}
-            {row("보고", <span className={report === "sent" ? "text-fg-2" : "text-warn"}>{report ? REPORT_TEXT[report] : "…"}</span>, "error-report")}
+            {row("보고", <span className={report === "sent" ? "text-fg-2" : "text-warn"}>{report ? (demo && report === "sent" ? SENT_DEMO : REPORT_TEXT[report]) : "…"}</span>, "error-report")}
           </tbody>
         </table>
         <div className="mb-1 flex items-center gap-2">

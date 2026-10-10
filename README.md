@@ -143,7 +143,8 @@ make ops-user u=admin     # 운영자 계정 생성·비밀번호 변경(프롬�
 docker compose -f infra/compose.yml -f infra/compose.aws.yml --env-file .env up -d --wait
 ```
 DB 는 db 컨테이너 대신 RDS(`RDS_HOST`, TLS)이고 역할 · PostGIS 는 RDS 마스터가 미리 만듭니다. OpenSky 는 끄고, 운영 화면(`/ops` · `/logs`)은
-공개 주소에서 닫습니다(운영자는 SSM 포트 포워딩으로 `localhost:8700`). 추가로 필요한 값은 [.env.aws.example](.env.aws.example)에 이름만 있습니다.
+공개 주소에서 닫습니다(운영자는 SSM 포트 포워딩으로 `localhost:8700` 에 붙어 주소를 직접 엽니다). web 은 `WAKELINE_PUBLIC_DEMO=1` 이라 상단 메뉴의
+[운영] · [로그]와 오류 문구의 '로그 보기' 링크를 감춥니다(값이 없는 로컬은 그대로). 추가로 필요한 값은 [.env.aws.example](.env.aws.example)에 이름만 있습니다.
 
 ### 공역 자료 가져오기(선택)
 공역 레이어 · 공역 진입 판정은 국토교통부 '공역정보 지도자료'(AIP 차수 기준 KMZ — 국토교통부 누리집에서 받는다)를 씁니다. 국토교통부 저작물이라 이 저장소에는 없습니다 — 받은 파일을 운영자가 가져옵니다(ADR-034):
