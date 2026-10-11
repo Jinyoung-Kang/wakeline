@@ -1,7 +1,7 @@
 """AWS 데모 덧붙임(infra/compose.aws.yml — ADR-039) 정책: RDS 서버 인증서를 검증한다(AWS 리뷰 2026-10 C-1).
 
 require(api · collector) · prefer(migrate)는 암호화만 하고 상대가 RDS 인지 확인하지 않았다. 이제 셋 모두 verify-full + AWS RDS CA 묶음
-(infra/rds/global-bundle.pem — AWS 공식 truststore). 되돌리기는 .env 의 RDS_SSLMODE=require 하나(이 파일은 기본값만 정한다).
+(infra/rds/global-bundle.pem — AWS 공식 truststore). 되돌리기는 .env 의 RDS_SSLMODE=require 와 빈 RDS_SSLROOTCERT=(이 파일은 기본값만 정한다).
 로컬 compose.yml 은 그대로다(db 컨테이너 — 이 정책과 상관없다).
 """
 
@@ -51,7 +51,8 @@ class RdsTlsVerification(unittest.TestCase):
         self.assertIn(f"DB_SSLROOTCERT: {CA_IN_CONTAINER}", migrate)
         collector = service_block(self.text, "collector")
         self.assertIn(f"PGSSLMODE: {DEFAULT_MODE}", collector)
-        self.assertIn(f"PGSSLROOTCERT: {CA_IN_CONTAINER}", collector)
+        # 되돌리기(RDS_SSLMODE=require)에서 asyncpg 가 계속 검증하지 않게 루트 인증서를 빈 값으로 끌 수 있어야 한다(`-` — 비어 있으면 빈 값 그대로)
+        self.assertIn("PGSSLROOTCERT: ${RDS_SSLROOTCERT-" + CA_IN_CONTAINER + "}", collector)
         for name, block in (("api", api), ("migrate", migrate), ("collector", collector)):
             self.assertRegex(block, r"volumes:\n\s+- \*rds-ca\n", name)
         self.assertNotRegex(self.text, r"sslmode=require|PGSSLMODE: require", "no hard-coded require left")

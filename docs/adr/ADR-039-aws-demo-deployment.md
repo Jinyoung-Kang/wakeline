@@ -98,7 +98,7 @@
    그러면 브라우저 캐시가 어제 본문을 304 로 되살린다(#140). 시각 · 내용으로 만드는 ETag 는 그대로 둔다.
 3. **RDS 서버 인증서를 검증한다**(api · migrate · collector — `verify-full` + AWS 공식 truststore 의 `global-bundle.pem`).
    - 묶음은 공개 인증서라 저장소(`infra/rds/`)에 둔다. 2026-10-11 에 받았고, 111개 · sha256 `fe45bbeb…`이다. 이 RDS 의 CA `rds-ca-rsa2048-g1` 서울 루트가 들어 있다.
-   - 되돌리기는 `.env` 의 `RDS_SSLMODE=require` 하나다.
+   - 되돌리기는 `.env` 의 `RDS_SSLMODE=require` 와 빈 `RDS_SSLROOTCERT=` 다(collector 의 asyncpg 는 루트 인증서가 주어지면 require 에서도 검증한다 — libpq 와 같은 규칙, 독립 리뷰 M1).
    - 버린 대안: 이미지에 넣기(로컬 이미지와 갈라진다) · 리전 묶음(RDS 를 다른 리전에 다시 만들면 바꿔야 한다).
 4. **브라우저 오류 보고는 같은 출처 쿠키를 싣는다**(#139). 앞단 gate 는 쿠키로 통과를 확인한다. api 는 운영 경로 밖에서 CSRF 를 보지 않아 영향이 없다.
 5. **CloudFront(wakeline) IPv6 를 끈다**(AWS 설정).

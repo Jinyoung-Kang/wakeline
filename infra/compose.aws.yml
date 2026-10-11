@@ -11,7 +11,8 @@
 #   · web 은 공개 데모 화면(WAKELINE_PUBLIC_DEMO=1): 앞단 Caddy 가 404 로 닫는 운영자 전용 화면(/ops · /logs)으로 가는 메뉴 · 링크를 감춘다
 #   · DB 연결 수를 줄임(RDS db.t4g.micro 한 대를 세 프로젝트가 나눔): 공유 풀 12 → 6(공개 조회 허가 6 → 3), 선택 조회 풀 4 → 2
 #   · RDS 서버 인증서를 검증한다(api · migrate · collector — verify-full + AWS RDS CA 묶음 rds/global-bundle.pem, ADR-039 덧붙임 2): require 는 암호화만 하고
-#     상대가 RDS 인지 확인하지 않았다. 되돌리기: .env 에 RDS_SSLMODE=require(이미지 · 파일은 그대로)
+#     상대가 RDS 인지 확인하지 않았다. 되돌리기: .env 에 RDS_SSLMODE=require 와 RDS_SSLROOTCERT= (빈 값 — collector 의 asyncpg 는 루트 인증서가
+#     있으면 require 에서도 검증한다)
 # 필요한 값(.env, 이름은 .env.aws.example): RDS_HOST · PUBLIC_ORIGIN 외 기존 값. DB_ROOT_PASSWORD 는 db 를 띄우지 않아도 compose 가
 # 파일 전체를 해석하므로 아무 값이나 있어야 한다.
 x-rds-host: &rds-host
@@ -60,7 +61,8 @@ services:
     environment:
       <<: *rds-host
       PGSSLMODE: ${RDS_SSLMODE:-verify-full}       # asyncpg 는 ssl 인자가 없으면 PGSSLMODE · PGSSLROOTCERT 를 읽는다(verify-full = 호스트 이름까지)
-      PGSSLROOTCERT: /etc/wakeline/rds-ca.pem
+      # 루트 인증서가 있으면 asyncpg 는 require 에서도 검증한다(libpq 와 같다) — 되돌릴 때는 RDS_SSLROOTCERT= (빈 값)도 함께
+      PGSSLROOTCERT: ${RDS_SSLROOTCERT-/etc/wakeline/rds-ca.pem}
       OPENSKY_CLIENT_ID: ""
       OPENSKY_CLIENT_SECRET: ""
       AIRCRAFT_PROVIDERS: adsb_fi,adsb_lol
