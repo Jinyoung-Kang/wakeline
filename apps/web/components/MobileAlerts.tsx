@@ -35,7 +35,8 @@ export function MobileAlerts() {
       <h1 className="label mb-1" lang="en">Alerts · mobile</h1>
       <div className="mb-2 text-[11px] text-fg-3" role="status" aria-live="polite" data-testid="mobile-status">
         {res.status === "failed" ? <span className="text-bad">조회 실패 — {errorLine(res.error)}<RequestIdOf error={res.error} /></span>
-          : res.data ? `열린 알림 ${items.length}건 · 15초마다(보이는 동안) · 지도 · 실시간 연결 없음` : "알림 불러오는 중…"}
+          : res.data ? `열린 알림 ${items.length}건 · 15초마다(보이는 동안) · 지도 · 실시간 연결 없음`
+          : res.status === "loaded" ? <span className="text-warn">응답의 모양이 틀려 그리지 않음</span> : "알림 불러오는 중…"}
       </div>
       <ul className="mb-4 border-t border-line" data-testid="mobile-alerts">
         {res.data && !items.length ? <li className="py-3 text-fg-3">지금 열린 알림이 없습니다.</li> : null}

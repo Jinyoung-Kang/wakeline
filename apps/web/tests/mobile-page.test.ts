@@ -89,6 +89,17 @@ describe("/m renders the open alerts and the watchlist", () => {
     expect(asked.filter((u) => u === "/api/v1/alerts").length).toBe(n + 1); // 숨은 동안 쉰다
     expect(asked.some((u) => u.includes("/ws"))).toBe(false);
   });
+  it("an answer of the wrong shape says so instead of loading forever", async () => {
+    vi.stubGlobal("self", globalThis);
+    vi.stubGlobal("fetch", async () => json({ items: "not a list" }));
+    useWatch.setState({ targets: [], permission: "unsupported" });
+    vi.doMock("next/navigation", () => ({ useRouter: () => ({ push: () => {} }) }));
+    const { MobileAlerts } = await import("@/components/MobileAlerts");
+    await m.render(m.React.createElement(MobileAlerts));
+    await m.settle();
+    await m.settle();
+    expect(m.byTestId("mobile-status")?.textContent).toBe("응답의 모양이 틀려 그리지 않음");
+  });
   it("says so when the browser blocks page notifications (no enable button, banner only)", async () => {
     vi.stubGlobal("self", globalThis);
     vi.stubGlobal("fetch", async () => json(ALERTS));
