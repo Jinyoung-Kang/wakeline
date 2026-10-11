@@ -142,7 +142,9 @@ make ops-user u=admin     # 운영자 계정 생성·비밀번호 변경(프롬�
 ```bash
 docker compose -f infra/compose.yml -f infra/compose.aws.yml --env-file .env up -d --wait
 ```
-DB 는 db 컨테이너 대신 RDS(`RDS_HOST`, TLS)이고 역할 · PostGIS 는 RDS 마스터가 미리 만듭니다. OpenSky 는 끄고, 운영 화면(`/ops` · `/logs`)은
+DB 는 db 컨테이너 대신 RDS(`RDS_HOST`)이고 역할 · PostGIS 는 RDS 마스터가 미리 만듭니다. 연결은 TLS 이고 서버 인증서까지 검증합니다
+(`verify-full` + AWS RDS CA 묶음 [infra/rds/global-bundle.pem](infra/rds/global-bundle.pem) — 되돌릴 때만 `.env` 에 `RDS_SSLMODE=require`).
+외부 API 키(공공데이터포털 등)는 로컬과 따로 발급해 씁니다 — 같은 키를 두 배포가 함께 쓰면 포털의 하루 한도를 함께 써서 429 로 막힙니다. OpenSky 는 끄고, 운영 화면(`/ops` · `/logs`)은
 공개 주소에서 닫습니다(운영자는 SSM 포트 포워딩으로 `localhost:8700` 에 붙어 주소를 직접 엽니다). web 은 `WAKELINE_PUBLIC_DEMO=1` 이라 상단 메뉴의
 [운영] · [로그]와 오류 문구의 '로그 보기' 링크를 감춥니다(값이 없는 로컬은 그대로). 추가로 필요한 값은 [.env.aws.example](.env.aws.example)에 이름만 있습니다.
 
