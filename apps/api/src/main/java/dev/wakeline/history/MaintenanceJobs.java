@@ -13,6 +13,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
@@ -266,9 +267,41 @@ public class MaintenanceJobs {
         return total;
     }
 
-    /** 기동 1분 뒤, 그 뒤 3시간마다: 놓친 1분 요약·일 통계를 채운다(REL-18). */
-    @Scheduled(initialDelay = 60_000, fixedDelay = 3 * 3600_000)
-    public void catchUp() {
+    /** 성공한 따라잡기 뒤 다음 따라잡기까지(REL-18) */
+    static final Duration CATCH_UP_EVERY = Duration.ofHours(3);
+    /** 연달아 실패하는 동안 경고를 남기는 간격 — 1분마다 다시 시도하지만 같은 경고를 1분마다 남기지 않는다 */
+    static final Duration CATCH_UP_WARN_EVERY = Duration.ofMinutes(10);
+    /** 마지막으로 성공한 따라잡기(없으면 기동 뒤 아직 — 첫 틱에 돈다) */
+    private volatile Instant catchUpOkAt;
+    private volatile Instant catchUpWarnedAt;
+    private volatile int catchUpFailures;
+
+    /**
+     * 기동 1분 뒤부터 1분마다 보고, 마지막 성공 뒤 {@link #CATCH_UP_EVERY} 가 지났으면 놓친 1분 요약 · 일 통계를 채운다(REL-18) — 실패하면 다음 틱(1분 뒤)에 다시.
+     * 3 h 고정 주기였을 때는 기동 직후의 실패(RDS 준비 전 — AWS 데모는 매일 아침 EC2 · RDS 를 함께 켠다, ADR-039)를 3 h 뒤에야 다시 했다:
+     * 그 데모에서는 03:30 KST 정시 집계가 꺼진 시간이라 일 통계가 따라잡기에만 기대고, 금요일 교통량은 월요일 09:00 KST 뒤에는 다시 셀 수 없다(AWS 리뷰 B-2).
+     */
+    @Scheduled(initialDelay = 60_000, fixedDelay = 60_000)
+    public void catchUpTick() {
+        Instant now = clock.instant();
+        Instant ok = catchUpOkAt;
+        if (ok != null && now.isBefore(ok.plus(CATCH_UP_EVERY))) return;
+        if (runCatchUp()) {
+            if (catchUpFailures > 0) log.info("catch-up succeeded after {} failed attempt(s)", catchUpFailures);
+            catchUpOkAt = now;
+            catchUpFailures = 0;
+            catchUpWarnedAt = null;
+        } else {
+            catchUpFailures++;
+        }
+    }
+
+    /** 따라잡기 한 번(주기와 상관없이 — 시험 · 수동) */
+    public void catchUp() { runCatchUp(); }
+
+    /** @return 요약 · 일 통계 따라잡기가 끝까지 됐는가 — 지정 보존 복사의 실패는 따로 가두고 세지 않는다(매시 복사 {@link #copyRetained()} 가 다시 한다) */
+    boolean runCatchUp() {
+        boolean done = true;
         try {
             List<Instant> hours = catchUpSummaries(Instant.now());
             List<LocalDate> days = catchUpStats(todayKst());
@@ -277,7 +310,13 @@ public class MaintenanceJobs {
                 log.info("catch-up: summarized hours {}, aggregated days {}, backfilled {} older days {}", hours, days, older.size(),
                         older.isEmpty() ? "" : older.get(older.size() - 1) + ".." + older.get(0));
         } catch (RuntimeException e) {
-            log.warn("catch-up failed (will retry): {}", e.toString());
+            done = false;
+            Instant now = clock.instant();
+            Instant warned = catchUpWarnedAt;
+            if (warned == null || !now.isBefore(warned.plus(CATCH_UP_WARN_EVERY))) {
+                catchUpWarnedAt = now;
+                log.warn("catch-up failed (will retry): {}", e.toString());
+            }
         }
         // 지정 대상 보존 복사는 따로 가둔다(ADR-038 결정 3 · QA-601): 위가 실패해도 72 h 파티션 삭제 전에 옮길 기회를 잃지 않는다
         try {
@@ -287,6 +326,7 @@ public class MaintenanceJobs {
         } catch (RuntimeException e) {
             log.warn("catch-up of retained track failed (will retry): {}", e.toString());
         }
+        return done;
     }
 
     /**
