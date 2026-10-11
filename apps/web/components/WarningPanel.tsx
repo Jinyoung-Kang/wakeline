@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useNow } from "@/lib/clock";
 import { fmtKstMinute, fmtKstTitle } from "@/lib/time";
 import { effectiveText, groupWarnings, warningsPoller, warningsStatus, WARNINGS_POLL_NONE, type Warning, type WarningsPollState } from "@/lib/warnings";
+import { usePublicDemo } from "./PublicDemo";
 
 const TONE = { ok: "text-fg-2", warn: "text-warn", bad: "text-bad", muted: "text-fg-3" } as const;
 
@@ -24,7 +25,7 @@ export function WarningPanel() {
 export function WarningPanelView({ poll, nowMs }: { poll: WarningsPollState; nowMs: number }) {
   const w = poll.data;
   const groups = useMemo(() => groupWarnings(w?.items ?? []), [w]);
-  const line = warningsStatus(w, poll.error, nowMs);
+  const line = warningsStatus(w, poll.error, nowMs, usePublicDemo());
   return (
     <div className="flex h-full flex-col text-[11px]" data-testid="warning-panel">
       <div className="row"><span className="label">Weather warnings</span><span className="text-fg-3">기상청 · KST</span></div>

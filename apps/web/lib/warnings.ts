@@ -62,10 +62,10 @@ export function effectiveText(w: Warning): string {
   return "—";
 }
 
-/** 상태 줄: 수신 전 · 발효 중 N건(발효 예정 · 예비는 따로) · 오래됨 · 조회 실패 */
-export function warningsStatus(w: Warnings | null, error: string | null, nowMs: number): { text: string; tone: "ok" | "warn" | "bad" | "muted" } {
+/** 상태 줄: 수신 전 · 발효 중 N건(발효 예정 · 예비는 따로) · 오래됨 · 조회 실패. demo = 공개 데모(ADR-039 — 운영 화면을 가리키지 않는다) */
+export function warningsStatus(w: Warnings | null, error: string | null, nowMs: number, demo = false): { text: string; tone: "ok" | "warn" | "bad" | "muted" } {
   if (!w) return error ? { text: `조회 실패(${error})`, tone: "bad" } : { text: "받는 중…", tone: "muted" };
-  if (!w.received) return { text: "특보 목록 수신 전 — 수집기가 아직 보내지 않았거나 꺼져 있음(운영 화면의 kma_warning)", tone: "warn" };
+  if (!w.received) return { text: `특보 목록 수신 전 — 수집기가 아직 보내지 않았거나 꺼져 있음${demo ? "" : "(운영 화면의 kma_warning)"}`, tone: "warn" };
   const ageMin = w.fetchedAt ? Math.round((nowMs - Date.parse(w.fetchedAt)) / 60_000) : null;
   const p = countPhases(w.items, nowMs);
   const sea = p.in_force.filter((x) => x.sea).length;
