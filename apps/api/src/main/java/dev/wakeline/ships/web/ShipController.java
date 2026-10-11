@@ -126,7 +126,7 @@ public class ShipController {
      * lag_s·msgs_per_s 처럼 요청마다 달라지는 수치는 넣지 않는다(max-age 10 s 안의 차이).
      */
     static String etag(long version, Map<String, Object> meta, Map<String, Object> aisView) {
-        StringBuilder b = new StringBuilder("\"s").append(version).append('-').append(flag(meta.get("stale")));
+        StringBuilder b = new StringBuilder("\"s").append(Etags.BOOT).append('-').append(version).append('-').append(flag(meta.get("stale"))); // 프로세스 표식(AWS 리뷰 B-6)
         if (aisView != null) {
             b.append('-').append(flag(aisView.get("connected"))).append(flag(aisView.get("heartbeat_stale")));
             b.append('-').append(aisView.get("gap_open_since") instanceof Instant g ? Long.toString(g.toEpochMilli(), 36) : "n");

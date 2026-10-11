@@ -71,7 +71,7 @@ public class WeatherController {
                                                        @RequestParam(required = false) String hazard, HttpServletRequest req) {
         Instant now = Instant.now();
         SigmetStore.State st = sigmets.state();
-        String etag = "\"s" + st.version() + "-" + (active ? 1 : 0) + "\"";
+        String etag = "\"s" + Etags.BOOT + "-" + st.version() + "-" + (active ? 1 : 0) + "\""; // 프로세스 표식(Etags.BOOT — AWS 리뷰 B-6)
         if (bbox == null && hazard == null && Etags.notModified(etag, req.getHeader("If-None-Match")))
             return ResponseEntity.status(304).eTag(etag).cacheControl(CacheControl.maxAge(60, TimeUnit.SECONDS).cachePublic()).build();
         Bbox b = bbox == null ? null : BboxParam.parse(bbox, 0);

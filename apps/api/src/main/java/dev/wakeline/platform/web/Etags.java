@@ -8,6 +8,13 @@ package dev.wakeline.platform.web;
 public final class Etags {
     private Etags() {}
 
+    /**
+     * 이 프로세스의 표식(처음 쓴 때의 유닉스 ms, 36진수) — 프로세스 안 순번으로 만드는 ETag(특보 · SIGMET · 선박 목록)에 넣는다. 순번은 재기동마다 1부터
+     * 다시 세므로, 매일 같은 시각에 기동하는 AWS 데모(ADR-039)에서는 어제와 같은 순번이 나와 브라우저 캐시가 어제 본문을 304 로 되살렸다(AWS 리뷰 B-6).
+     * 시각 · 내용으로 만드는 ETag(항공기 · 레이더 · 공역 · 교통량 · 관측 수신)는 이미 재기동을 넘어 겹치지 않는다.
+     */
+    public static final String BOOT = Long.toString(System.currentTimeMillis(), 36);
+
     /** ifNoneMatch 가 etag 와 (약한 비교로) 맞는가 — 맞으면 304. 헤더가 없거나 비었으면 false. */
     public static boolean notModified(String etag, String ifNoneMatch) {
         if (etag == null || ifNoneMatch == null || ifNoneMatch.isBlank()) return false;
