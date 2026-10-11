@@ -72,3 +72,20 @@ describe("EtagPoller after stop()", () => {
     expect(published.map((s) => s.etag)).toEqual(['"v2"']);
   });
 });
+
+describe("EtagPoller and the AWS demo's front gate", () => {
+  it("an expired access code (401 locked) says what to do instead of 'HTTP 401' (AWS review L2)", async () => {
+    const locked = () => Promise.resolve(new Response(JSON.stringify({ error: "locked", message: "접근 코드가 필요합니다", unlock: "/__gate/" }), { status: 401, headers: { "Content-Type": "application/json" } }));
+    let store: PollState<unknown> | null = null;
+    const p = new EtagPoller<unknown>(spec, (s) => { store = s; }, undefined, locked, () => false, () => 1000, noWatch);
+    p.start();
+    await tick();
+    p.stop();
+    expect(store!.error).toBe("접근 코드가 만료됨 — 새로고침하면 접근 코드를 다시 묻습니다");
+    const other = new EtagPoller<unknown>(spec, (s) => { store = s; }, undefined, () => Promise.resolve(new Response("x", { status: 502 })), () => false, () => 1000, noWatch);
+    other.start();
+    await tick();
+    other.stop();
+    expect(store!.error).toBe("HTTP 502");
+  });
+});
