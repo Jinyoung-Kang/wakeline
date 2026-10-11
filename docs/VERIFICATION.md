@@ -1738,6 +1738,22 @@ AWS 리뷰 D-2 · D-3 · D-4 · D-5 · D-6 · D-7 · D-8 · B-4 · C-2. 모두 �
 - **입출항 다시 받기 순서**(C-2): 재기동 뒤 모두 '모름'인 비율이 같을 때 빈 곳을 먼저 고른다. 매일 새로 기동하면 18–30일 전 빈 곳의 차례가 오지 않았다.
 - 첫 화면 JS(이 호스트 Node): 546,628 → 546,874 B(예산 550,000 B).
 
+## #143 AWS 배포(main `935efcd0`) — RDS 인증서 검증 · CloudFront IPv6 끔 · 배포 뒤 확인
+- **배포 전**: EC2 의 일회용 컨테이너(그때의 collector 이미지 · asyncpg 0.31, 없는 사용자 `tls_probe`)로 `verify-full` 을 시험했다. 서울 RSA2048 G1 루트로는
+  인증서 · 호스트 이름 검증을 지나 비밀번호 단계에서 실패했다(`InvalidPasswordError`). 다른 리전 루트로는 `self-signed certificate in certificate chain` 으로 거절됐다.
+- **배포**(2026-10-11 22:12–22:16 KST, wakeline 만): 이미지 `wakeline-{api,collector,web,edge}:rollback` 태그 → `git merge --ff-only` 48c18826 → 935efcd0 →
+  `docker compose -f infra/compose.yml -f infra/compose.aws.yml --env-file .env build api collector web`(124 s) → `run --rm migrate` → `up -d --wait`.
+  - migrate 는 `verify-full` 로 RDS 에 붙어 0건(스키마 21)을 냈다 — 실제 경로(pgjdbc 42.7.13 + CA 묶음)의 검증이다.
+  - api · collector · ais · web 를 다시 만들었고 edge · redis 는 그대로다.
+- **CloudFront**(`E3MXSRG869P8QV` — wakeline 만): `IsIPV6Enabled` true → false, `Deployed`. AAAA 레코드가 사라졌고 공개 주소는 잠금 화면(401 HTML)이다.
+- **배포 뒤 10분**: api · ais · web ERROR · WARN 0 · TLS 관련 오류 0 · 재시작 0. collector WARN 1(OpenSky 설정 안 됨 — 기존).
+  - 수집 지연: 항공기 8.2 s · AIS 4.9 s.
+  - 특보 ETag 새 형식 `"wmv3un9o5-2"`, 공개 머리말 `demo`.
+  - `/traffic/grid` 다시 `available:true`(3,287칸 — 재기동으로 호스트 냉각이 풀렸다). 입출항 색인은 여전히 포털 429(#141 — 로컬 공급자를 꺼야 풀린다).
+  - RDS 연결 20–21(배포 전과 같음) · FreeableMemory 101–117 MB.
+  - 메모리: api 303 · collector 169 · web 56 · ais 38 MiB.
+- **되돌리기**: `:rollback` 이미지와 48c18826. TLS 만 되돌릴 때는 `.env` 에 `RDS_SSLMODE=require` 와 빈 `RDS_SSLROOTCERT=`.
+
 ## 자동 검사 현황(2026-10-02 15:5x KST, QA 2026-10 브랜치 `qa/2026-10` — #103 뒤, 깨끗한 `git archive` 내보내기 · 격리 스택)
 | 층 | 도구 | 수 |
 |---|---|---|
