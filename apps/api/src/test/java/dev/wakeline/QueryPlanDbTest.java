@@ -201,7 +201,9 @@ class QueryPlanDbTest {
         Instant lastInserted = admin.sql("SELECT max(ts) FROM ship_position WHERE mmsi = '440100001'").query(java.sql.Timestamp.class).single().toInstant();
         assertThat(known.get("440100001").lastPositionAt()).isEqualTo(lastInserted);
         assertThat(known.get("440100005").stat()).as("row made from positions only").isNull();
-        assertThat(known.get("440100005").lastPositionAt()).isEqualTo(Instant.now().truncatedTo(ChronoUnit.MINUTES).minus(3, ChronoUnit.HOURS));
+        // 이 줄도 넣을 때의 값으로 — 시험의 시계로 견주면 분이 바뀐 실행에서 틀렸다(전체 실행 2026-10-11: 09:54 를 기대 · 09:53 이 옳다)
+        Instant onlyPosition = admin.sql("SELECT max(ts) FROM ship_position WHERE mmsi = '440100005'").query(java.sql.Timestamp.class).single().toInstant();
+        assertThat(known.get("440100005").lastPositionAt()).isEqualTo(onlyPosition);
         String plan = plans.last();
         assertThat(plan).as("lookup plan: %s", plan).doesNotContain("\"Node Type\": \"Seq Scan\"").contains("ship_position_");
         assertThat(repo.lookup(java.util.List.of())).isEmpty();
