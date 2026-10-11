@@ -49,8 +49,7 @@
 - **공공데이터포털 키(O-1)**: 사용자 결정으로 로컬의 `portmis` · `mof_grid4` · `komsa_traffic` 공급자를 끈다(로컬 /ops). AWS 가 격자 기하를 다 채우면(평일 약 4–5일 추정) 다시 켤 수 있다.
   오래 함께 돌릴 거라면 AWS 용 키를 따로 받아 EC2 `.env` 에 넣는다(직접).
 - ~~공역 자료(O-2)~~ → 후속에서 가져옴(#144): AIP 25년 5차 · 도형 697.
-- **RDS 메모리(B-7)**: FreeableMemory 100–130 MB · Swap 150–250 MB(세 프로젝트 공유). wakeline 의 기여(공유 풀 6 상시 · 일 집계 work_mem 64 MB)는 재지 못했다.
-  다음 단계는 RDS 에서 `EXPLAIN (ANALYZE, BUFFERS)` 와 기동 전후 FreeableMemory · SwapUsage 를 비교하는 것이다.
+- **RDS 메모리(B-7)** → 후속에서 잼(#144): wakeline 연결 8/21 · 임시 파일 0 · ReadIOPS 4–7 로 스왑이 오가지 않는다. 바꿀 근거가 없어 설정은 그대로다.
 - ~~L1 · L2~~ → 후속에서 고침(#144). 특보 `ended_at` 은 밤 · 주말 정지 뒤 첫 수신 시각이다(B-3 — 화면에서 쓰지 않음).
 - **공유 호스트**(이번 범위 밖, aws-deploy): Redis `vm.overcommit_memory=0` 경고 · Docker 빌드 캐시 약 5.6 GB · 기동 스크립트가 Makefile 을 거치지 않아 설정 해시 라벨이 `unset`
   (edge 설정만 바뀐 배포는 `--force-recreate edge`).
