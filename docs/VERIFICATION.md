@@ -1765,6 +1765,12 @@ AWS 리뷰 D-2 · D-3 · D-4 · D-5 · D-6 · D-7 · D-8 · B-4 · C-2. 모두 �
   **초기화 뒤 확인**(2026-10-12 00:25 KST): 00:00 KST 를 지나자 풀렸다 — 입출항 색인이 00:03 KST 부터 항만청 10곳 꼬리를 갱신했고,
   연안 교통량이 00:10 · 00:15 · 00:20 KST 에 5분마다 받아져 `/api/v1/traffic/grid` 가 `available:true` · 3,402칸(기준 00:20 KST)이 됐다. 그 뒤 포털 429 0건.
   포털의 하루 경계가 00:00 KST 라는 것과, AWS 혼자서는 한도 안이라는 판단이 맞았다. 로컬을 다시 켤 때는 data.go.kr 공급자 셋을 끄거나 키를 따로 쓴다.
+- **RDS 메모리(B-7) 측정**(2026-10-12 00:3x KST — collector 역할로 읽기 전용, `default_transaction_read_only`):
+  - 클라이언트 연결: wakeline 8(api 6 · collector 2) · buildrisk 8 · macrodash 6.
+  - 설정: shared_buffers 179 MB · work_mem 4 MB · max_connections 78. wakeline DB 219 MB · 임시 파일 0(일 집계의 `work_mem 64MB` 정렬이 디스크로 넘친 적 없음).
+  - CloudWatch 지난 6 h: FreeableMemory 100–111 MB · SwapUsage 194–239 MB · ReadIOPS 평균 4–7.
+  - 판단: 스왑은 있지만 읽기 IO 가 낮게 고르다 — 스왑된 페이지가 오가지 않는다. wakeline 연결을 줄여 얻을 이득을 수치로 보일 수 없어 바꾸지 않았다(성능 변경은 잰 전후 수치로만).
+    다시 볼 신호: ReadIOPS · DiskQueueDepth 가 오르거나 api 의 공개 조회 503(허가 대기)이 생길 때.
 - **금요일 교통량(M3)** · **ETag 조회기의 잠금 안내(L2)** · **알림 막힘 기억(L1)**: 시험을 먼저 쓰고 고쳤다(각 커밋 메시지에 수정 전 실패 글).
   M3 는 처음에 파티션이 있는지만 보도록 바꿨다. 그랬더니 통합 시험 `JobsAndRadarIT` 가 회귀를 잡았다 — 꺼져 있던 날은 파티션이 처음부터 없어 그날 나머지 자료를 세지 못한다.
   그래서 시계 규칙을 두고 '파티션이 남아 있으면'을 더하는 쪽으로 고쳤다(#138).
