@@ -47,7 +47,8 @@ public class MaintenanceJobs {
 
     /** 오늘(KST 날짜) */
     public static LocalDate today() { return LocalDate.now(DAY_ZONE); }
-    static final int CATCH_UP_HOURS = 24;
+    /** 1분 요약 따라잡기 창이 원해상도 보존보다 짧은 만큼(지워지는 중인 파티션을 읽지 않게 — {@link #RETAIN_CATCH_UP_HOURS} 와 같은 규칙) */
+    static final int CATCH_UP_MARGIN_HOURS = 2;
     static final int CATCH_UP_DAYS = 7;
     /** 따라잡기 창 밖의 날을 한 번의 따라잡기에 채우는 최대 일수(backfillStats) — /stats 범위 상한(92일)과 같다 */
     static final int BACKFILL_MAX_DAYS = 92;
@@ -288,12 +289,16 @@ public class MaintenanceJobs {
         }
     }
 
-    /** 최근 24개의 닫힌 시간 중 원해상도 항적은 있는데 1분 요약이 하나도 없는 시간을 요약한다. @return 요약한 시간 */
+    /**
+     * 원본이 남아 있는 닫힌 시간(원해상도 보존 − {@value #CATCH_UP_MARGIN_HOURS} h) 중 원해상도 항적은 있는데 1분 요약이 하나도 없는 시간을 요약한다.
+     * 창을 보존에 묶는다: 24 h 이던 창은 하루 넘게 꺼져 있다 켠 기동(AWS 데모의 주말 정지 약 63 h — ADR-039)이 넘지 못해, 멈추기 직전 시간의
+     * 요약이 원본 삭제와 함께 영구히 빠졌다(재생은 보존 뒤 1분 요약만 읽는다). 시간마다 작은 EXISTS 두 번(ts BRIN · ts_minute 색인). @return 요약한 시간
+     */
     List<Instant> catchUpSummaries(Instant now) {
         Bbox b = region.current().bbox();
         Instant current = now.truncatedTo(ChronoUnit.HOURS);
         List<Instant> done = new ArrayList<>();
-        for (int i = CATCH_UP_HOURS; i >= 1; i--) {
+        for (int i = Math.max(1, props.trackRetentionHours() - CATCH_UP_MARGIN_HOURS); i >= 1; i--) {
             Instant h = current.minus(i, ChronoUnit.HOURS);
             Boolean missing = db.sql("""
                     SELECT NOT EXISTS (SELECT 1 FROM track_point_1m WHERE ts_minute >= :from AND ts_minute < :to)
