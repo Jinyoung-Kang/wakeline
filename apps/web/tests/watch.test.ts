@@ -9,7 +9,7 @@ import {
   diffWatch, loadTargets, normalizeTargets, parseWatch, pollWhileHidden, saveTargets, suppress, toggleTarget, watchQuery, WATCH_KEY, WATCH_MAX, WATCH_REPEAT_MS,
   type WatchState, type WatchTarget,
 } from "@/lib/watch";
-import { enableNotify, keepBlocked, notifyPermission, NOTIFY_ENABLED_TAG, requestNotify, showNotification, type NotificationApi } from "@/lib/notify";
+import { enableNotify, initialPermission, keepBlocked, NOTIFY_BLOCKED_KEY, notifyPermission, NOTIFY_ENABLED_TAG, rememberPermission, requestNotify, showNotification, type NotificationApi } from "@/lib/notify";
 
 const AC: WatchTarget = { kind: "aircraft", id: "71be01", label: "KAL081" };
 const SHIP: WatchTarget = { kind: "ship", id: "440123456" };
@@ -157,6 +157,23 @@ describe("browser notifications", () => {
     expect(await enableNotify(Blocked)).toBe("blocked");
     expect(showNotification("t", "b", "k", undefined, Blocked)).toBe("blocked");
     expect(pollWhileHidden(3, "blocked")).toBe(false);
+  });
+  it("'blocked' survives a reload while the browser still says granted, and is forgotten once it does not (AWS review L1)", () => {
+    const mem = new Map<string, string>();
+    const store = { getItem: (k: string) => mem.get(k) ?? null, setItem: (k: string, v: string) => { mem.set(k, v); }, removeItem: (k: string) => { mem.delete(k); } };
+    expect(initialPermission(store, "granted")).toBe("granted");
+    rememberPermission(store, "blocked");
+    expect(mem.get(NOTIFY_BLOCKED_KEY)).toBe("1");
+    expect(initialPermission(store, "granted")).toBe("blocked"); // 새로고침 — 생성자를 다시 부르지 않아도 '켜짐'이 아니다
+    expect(initialPermission(store, "denied")).toBe("denied");   // 브라우저 설정에서 거뒀다 — 기억도 지운다
+    expect(mem.has(NOTIFY_BLOCKED_KEY)).toBe(false);
+    rememberPermission(store, "blocked");
+    rememberPermission(store, "default");
+    expect(mem.has(NOTIFY_BLOCKED_KEY)).toBe(false);
+    const broken = { getItem: () => { throw new Error("denied"); }, setItem: () => { throw new Error("denied"); }, removeItem: () => { throw new Error("denied"); } };
+    expect(initialPermission(broken, "granted")).toBe("granted"); // 저장소를 못 쓰면 지금처럼(이번 접속 동안만)
+    expect(() => rememberPermission(broken, "blocked")).not.toThrow();
+    expect(initialPermission(null, "unsupported")).toBe("unsupported");
   });
   it("re-reading the browser permission keeps 'blocked' while it still says granted, and follows a withdrawal", () => {
     expect(keepBlocked("blocked", "granted")).toBe("blocked");

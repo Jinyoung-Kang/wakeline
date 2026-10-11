@@ -4,7 +4,7 @@
  */
 import { create } from "zustand";
 import { loadTargets, saveTargets, toggleTarget, WATCH_KEY, type StorageLike, type WatchEvent, type WatchState, type WatchStorageState, type WatchTarget } from "./watch";
-import { notifyPermission, type NotifyPermission } from "./notify";
+import { initialPermission, notifyPermission, rememberPermission, type NotifyPermission } from "./notify";
 
 /** 배너에 남기는 사건 수(오래된 것부터 버린다) */
 export const WATCH_BANNER_MAX = 5;
@@ -28,6 +28,11 @@ export interface WatchStore {
 }
 
 function storage(): StorageLike | null {
+  return local();
+}
+
+/** 브라우저 저장소(없거나 막혔으면 null) — 목록과 알림 막힘 기억(lib/notify)이 쓴다 */
+function local(): Storage | null {
   try { return typeof window !== "undefined" ? window.localStorage : null; } catch { return null; }
 }
 
@@ -57,7 +62,7 @@ export const useWatch = create<WatchStore>((set, get) => {
     permission: "unsupported",
     toggle: (t) => { const r = toggleTarget(latest(get().targets, get().storage), t); commit(r.list, r.full); },
     remove: (t) => commit(latest(get().targets, get().storage).filter((x) => !(x.kind === t.kind && x.id === t.id)), false),
-    setPermission: (permission) => set({ permission }),
+    setPermission: (permission) => { rememberPermission(local(), permission); set({ permission }); },
     pushEvents: (evs, at) => evs.length && set((s) => ({ banner: [...evs.map((e) => ({ ...e, at })), ...s.banner].slice(0, WATCH_BANNER_MAX) })),
     dismiss: (key) => set((s) => ({ banner: s.banner.filter((b) => b.key !== key) })),
     setResult: (state, error, at) => set((s) => ({ state: state ?? s.state, error, checkedAt: at })),
@@ -67,7 +72,7 @@ export const useWatch = create<WatchStore>((set, get) => {
 if (typeof window !== "undefined") {
   // 브라우저: 저장소 · 알림 허락을 읽어 넣는다 — 하이드레이션은 위의 첫 상태로 하고, 그 뒤 이 값으로 다시 그린다(서버가 그린 /m 과 첫 그리기가 같다)
   const first = loadTargets(storage());
-  useWatch.setState({ targets: first.targets, storage: first.state, permission: notifyPermission() });
+  useWatch.setState({ targets: first.targets, storage: first.state, permission: initialPermission(local(), notifyPermission()) });
   // 다른 탭에서 바꾼 목록을 따라간다(QA-712) — 화면에 보이는 목록 · 조회 대상이 저장소와 같게
   try {
     window.addEventListener("storage", (e: StorageEvent) => {
