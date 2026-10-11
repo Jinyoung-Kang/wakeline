@@ -30,8 +30,8 @@ import java.util.Map;
  * 1분 요약 30일, 알림은 끝난 것만 30일(열린 알림은 남긴다 · {@code wakeline.alert-retention-days}, 0 이면 지우지 않는다), SIGMET·통계 영구.
  * 선박(ADR-014): 위치 ship_position 72 h, 정적 정보·수신 공백 영구.
  * 관심 지역은 런타임 설정(collector 와 같은 값, {@link RegionSettings})에서 읽는다(COR-12).
- * 따라잡기(REL-18): cron 은 놓친 시각을 다시 돌리지 않는다 — 기동 1분 뒤와 그 뒤 3시간마다 최근 24시간 중 요약이 없는 시간과
- * 최근 7일 중 완료 표식이 없는 통계 계열이 있는 날을 채운다(둘 다 멱등, R-46). 그보다 오래된 날도 원본이 남은 계열(SIGMET · 알림)에 표식이 없으면
+ * 따라잡기(REL-18): cron 은 놓친 시각을 다시 돌리지 않는다 — 기동 1분 뒤 · 성공 뒤 3시간마다(실패하면 1분부터 두 배씩, 30분 상한) 원본이 남은
+ * 시간(보존 − 2 h) 중 요약이 없는 시간과 최근 7일 중 완료 표식이 없는 통계 계열이 있는 날을 채운다(둘 다 멱등, R-46 · AWS 리뷰 B-1 · B-2). 그보다 오래된 날도 원본이 남은 계열(SIGMET · 알림)에 표식이 없으면
  * 채운다({@link #backfillStats} — V16 뒤 KST 날짜로 다시 세기. 원해상도가 지워진 옛 날의 교통량은 V16 이 옛 UTC 시 행에서 옮겨 실었다).
  */
 @org.springframework.context.annotation.Profile("!cli & !migrate")  // CLI(ops-user)·마이그레이션 실행에서는 웹·소비자·잡을 띄우지 않는다
@@ -269,15 +269,22 @@ public class MaintenanceJobs {
 
     /** 성공한 따라잡기 뒤 다음 따라잡기까지(REL-18) */
     static final Duration CATCH_UP_EVERY = Duration.ofHours(3);
-    /** 연달아 실패하는 동안 경고를 남기는 간격 — 1분마다 다시 시도하지만 같은 경고를 1분마다 남기지 않는다 */
+    /** 실패 뒤 첫 재시도 간격 — 실패가 이어지면 두 배씩 {@link #CATCH_UP_RETRY_MAX} 까지(결정적으로 실패하는 집계를 공유 RDS 에 1분마다 되풀이하지 않게) */
+    static final Duration CATCH_UP_RETRY_FIRST = Duration.ofMinutes(1);
+    static final Duration CATCH_UP_RETRY_MAX = Duration.ofMinutes(30);
+    /** 연달아 실패하는 동안 경고를 남기는 간격 — 같은 경고를 재시도마다 남기지 않는다 */
     static final Duration CATCH_UP_WARN_EVERY = Duration.ofMinutes(10);
     /** 마지막으로 성공한 따라잡기(없으면 기동 뒤 아직 — 첫 틱에 돈다) */
     private volatile Instant catchUpOkAt;
     private volatile Instant catchUpWarnedAt;
+    private volatile Instant retainedWarnedAt;
+    /** 실패 뒤 다음 시도(없으면 곧바로) */
+    private volatile Instant catchUpRetryAt;
     private volatile int catchUpFailures;
 
     /**
-     * 기동 1분 뒤부터 1분마다 보고, 마지막 성공 뒤 {@link #CATCH_UP_EVERY} 가 지났으면 놓친 1분 요약 · 일 통계를 채운다(REL-18) — 실패하면 다음 틱(1분 뒤)에 다시.
+     * 기동 1분 뒤부터 1분마다 보고, 마지막 성공 뒤 {@link #CATCH_UP_EVERY} 가 지났으면 놓친 1분 요약 · 일 통계를 채운다(REL-18) — 실패하면 1분 뒤 다시,
+     * 이어서 실패하면 두 배씩 {@link #CATCH_UP_RETRY_MAX} 까지 늘린다(독립 리뷰 M2 — 결정적으로 실패하는 집계를 1분마다 되풀이하지 않게).
      * 3 h 고정 주기였을 때는 기동 직후의 실패(RDS 준비 전 — AWS 데모는 매일 아침 EC2 · RDS 를 함께 켠다, ADR-039)를 3 h 뒤에야 다시 했다:
      * 그 데모에서는 03:30 KST 정시 집계가 꺼진 시간이라 일 통계가 따라잡기에만 기대고, 금요일 교통량은 월요일 09:00 KST 뒤에는 다시 셀 수 없다(AWS 리뷰 B-2).
      */
@@ -286,13 +293,18 @@ public class MaintenanceJobs {
         Instant now = clock.instant();
         Instant ok = catchUpOkAt;
         if (ok != null && now.isBefore(ok.plus(CATCH_UP_EVERY))) return;
+        Instant retry = catchUpRetryAt;
+        if (retry != null && now.isBefore(retry)) return;
         if (runCatchUp()) {
             if (catchUpFailures > 0) log.info("catch-up succeeded after {} failed attempt(s)", catchUpFailures);
             catchUpOkAt = now;
             catchUpFailures = 0;
+            catchUpRetryAt = null;
             catchUpWarnedAt = null;
         } else {
             catchUpFailures++;
+            long minutes = CATCH_UP_RETRY_FIRST.toMinutes() << Math.min(catchUpFailures - 1, 10);
+            catchUpRetryAt = now.plus(Duration.ofMinutes(Math.min(minutes, CATCH_UP_RETRY_MAX.toMinutes())));
         }
     }
 
@@ -324,7 +336,12 @@ public class MaintenanceJobs {
             int retained = copyRetained(hour.minus(RETAIN_CATCH_UP_HOURS, ChronoUnit.HOURS), hour); // 기동 · 놓친 시간(겹치면 무시)
             if (retained > 0) log.info("catch-up: retained track {} new minute points", retained);
         } catch (RuntimeException e) {
-            log.warn("catch-up of retained track failed (will retry): {}", e.toString());
+            Instant now = clock.instant();
+            Instant warned = retainedWarnedAt;
+            if (warned == null || !now.isBefore(warned.plus(CATCH_UP_WARN_EVERY))) {
+                retainedWarnedAt = now;
+                log.warn("catch-up of retained track failed (will retry): {}", e.toString());
+            }
         }
         return done;
     }

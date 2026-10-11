@@ -66,14 +66,32 @@ class MaintenanceCatchUpScheduleTest {
         Jobs jobs = new Jobs(clock, false, false, true);
         jobs.catchUpTick();                      // 기동 1분 뒤 — RDS 준비 전이라 실패
         clock.advance(Duration.ofMinutes(1));
-        jobs.catchUpTick();                      // 1분 뒤 다시 — 또 실패
+        jobs.catchUpTick();                      // 1분 뒤 다시 — 또 실패(다음은 2분 뒤)
         clock.advance(Duration.ofMinutes(1));
-        jobs.catchUpTick();                      // 1분 뒤 다시 — 성공(아직 월 09:00 KST 전)
+        jobs.catchUpTick();
+        assertThat(jobs.runs).isEqualTo(2);
+        clock.advance(Duration.ofMinutes(1));
+        jobs.catchUpTick();                      // 2분 뒤 — 성공(아직 월 09:00 KST 전)
         assertThat(jobs.runs).isEqualTo(3);
         for (int i = 0; i < 179; i++) { clock.advance(Duration.ofMinutes(1)); jobs.catchUpTick(); }
         assertThat(jobs.runs).as("no run within 3 h of a success").isEqualTo(3);
         clock.advance(Duration.ofMinutes(1));
         jobs.catchUpTick();
         assertThat(jobs.runs).as("the 3-hour cycle after a success").isEqualTo(4);
+    }
+
+    @Test
+    void repeatedFailuresBackOffToThirtyMinutes() {
+        MutableClock clock = new MutableClock(T0);
+        Jobs jobs = new Jobs(clock, false, false, false, false, false, false, false, false);
+        List<Integer> gaps = new java.util.ArrayList<>();
+        int last = 0, minute = 0;
+        for (; minute <= 200 && jobs.runs < 8; minute++) {
+            int before = jobs.runs;
+            jobs.catchUpTick();
+            if (jobs.runs > before) { if (before > 0) gaps.add(minute - last); last = minute; }
+            clock.advance(Duration.ofMinutes(1));
+        }
+        assertThat(gaps).containsExactly(1, 2, 4, 8, 16, 30, 30); // 결정적으로 실패하는 집계를 1분마다 되풀이하지 않는다
     }
 }
