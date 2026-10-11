@@ -3,12 +3,14 @@ import { useId, useState } from "react";
 import { copyText } from "@/lib/copy";
 import { fmtKstClock } from "@/lib/time";
 import type { WsInvalid } from "@/lib/store";
+import { usePublicDemo } from "./PublicDemo";
 
 /**
  * 상세 문구(복사하는 글자 그대로) — 단위별 수 · 실제로 일어나는 다시 받기(lib/ws.ts recoverFrom) · 마지막 사유와 시각.
+ * demo = 공개 데모(ADR-039) — 방문자에게 없는 운영 메뉴를 가리키지 않는다.
  * 다시 받기를 부풀려 말하지 않는다: 알림 · SIGMET · 레이더는 목록 재요청, status 는 heartbeat, 선택 · 수요는 바뀔 때만 다시 온다.
  */
-export function wsInvalidText(inv: WsInvalid): string {
+export function wsInvalidText(inv: WsInvalid, demo = false): string {
   return [
     "WS 수신 형식 오류(schemas/ws/server.v1.json 과 맞지 않음 — 페이지를 연 뒤 누적, 재접속해도 유지)",
     `버린 원소·값 ${inv.elements} — 틀린 항공기 · 선박 · 알림 · SIGMET · 격자 칸 같은 원소나 참고 값만 버렸다(모름으로). 메시지의 나머지는 적용했다.`,
@@ -16,7 +18,7 @@ export function wsInvalidText(inv: WsInvalid): string {
     `처리 예외 ${inv.errors} — 적용하다 예외가 났다(반쯤 적용됐을 수 있다).`,
     "다시 받기: 항공기 · 선박은 스냅샷 재동기(resync). 알림 · SIGMET · 레이더는 그 목록 전체를 다시 요청한다(알림 수는 전체 목록을 받을 때까지 \"—\"). "
       + "status 는 30 s 안의 다음 heartbeat, 선택한 항공기 · 선박과 수요 표시는 그 값이 바뀔 때 다시 온다.",
-    "버린 메시지와 처리 예외는 브라우저 오류로 보고한다(같은 문구 60 s 에 1번 · 분당 5번 이하 — 운영 로그 메뉴).",
+    `버린 메시지와 처리 예외는 브라우저 오류로 보고한다(같은 문구 60 s 에 1번 · 분당 5번 이하 — ${demo ? "운영자 시스템 로그" : "운영 로그 메뉴"}).`,
     `마지막: ${inv.last ?? "—"}${inv.at != null ? ` · ${fmtKstClock(inv.at)}(브라우저 시계)` : ""}`,
   ].join("\n");
 }
@@ -30,7 +32,7 @@ export function WsInvalidBadge({ inv }: { inv: WsInvalid }) {
   const id = useId();
   const [copied, setCopied] = useState<"idle" | "ok" | "fail">("idle");
   const parts = ([["원소", inv.elements], ["메시지", inv.messages], ["예외", inv.errors]] as const).filter(([, n]) => n > 0);
-  const text = wsInvalidText(inv);
+  const text = wsInvalidText(inv, usePublicDemo());
   return (
     <>
       <button type="button" className="badge warn cursor-pointer" data-testid="ws-invalid" popoverTarget={id}

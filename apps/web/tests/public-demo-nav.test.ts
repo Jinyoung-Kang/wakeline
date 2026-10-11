@@ -166,3 +166,24 @@ describe("error boundary screen", () => {
     expect(text).toContain("로그 보기");
   });
 });
+
+describe("public demo copy does not point at operator screens or say 'local'", () => {
+  const INV = { elements: 1, messages: 1, errors: 0, last: "x", at: null };
+  it("WS format-error detail: the demo names the operator log, not a menu the visitor does not have", async () => {
+    const { wsInvalidText } = await import("@/components/WsInvalidBadge");
+    expect(wsInvalidText(INV)).toContain("운영 로그 메뉴");
+    expect(wsInvalidText(INV, true)).not.toContain("메뉴");
+    expect(wsInvalidText(INV, true)).toContain("운영자 시스템 로그");
+  });
+  it("warnings status before the first list: the demo does not send the visitor to the operator screen", async () => {
+    const { warningsStatus } = await import("@/lib/warnings");
+    const w = { received: false, items: [], dropped: 0, bad: 0, source: "s", fetchedAt: null, stale: false } as unknown as Parameters<typeof warningsStatus>[0];
+    expect(warningsStatus(w, null, 0).text).toContain("운영 화면의 kma_warning");
+    expect(warningsStatus(w, null, 0, true).text).not.toContain("운영 화면");
+  });
+  it("the header tag says demo on the public demo and local otherwise", async () => {
+    const { Shell } = await import("@/components/Shell");
+    expect(await render(createElement(Shell, null, createElement("p", null, "x")), true)).toContain("portfolio · non-commercial · demo");
+    expect(await render(createElement(Shell, null, createElement("p", null, "x")))).toContain("portfolio · non-commercial · local");
+  });
+});

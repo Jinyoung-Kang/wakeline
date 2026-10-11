@@ -18,7 +18,7 @@ vi.mock("@/components/DashboardParts", async () => {
     SigmetCardPart: ({ id }: { id: string }) => h("div", { "data-testid": "sigmet-card" }, h("button", { onClick: () => ui.getState().selectSigmet(null) }, `닫기 ${id}`)),
     AircraftCardPart: ({ hex }: { hex: string }) => h("div", { "data-testid": "aircraft-card" }, h("button", { onClick: () => ui.getState().select(null) }, `닫기 ${hex}`)),
     AirportCardPart: () => null, AirportListPart: () => null,
-    WatchRunnerPart: Object.assign(() => null, { useLoaded: () => false }), // 관심 대상 실행기(ADR-037) — 미리 받기 전
+    WatchRunnerPart: Object.assign(() => null, { useLoaded: () => false, preload: () => new Promise(() => {}) }), // 관심 대상 실행기(ADR-037) — 미리 받기 전
     ShipPanelPart: () => (ui((s) => s.layers.ships) ? h("div", { "data-testid": "ship-list" }) : h("button", { onClick: () => ui.getState().toggleLayer("ships") }, "선박 켜기")),
   };
 });

@@ -470,7 +470,7 @@ class ShipControllerTest {
                 ShipController.etag(7, fresh, ais.apply(java.util.Map.of("shards", List.of(java.util.Map.of("connected", false))))),
                 ShipController.etag(7, fresh, null));
         assertThat(new java.util.HashSet<>(tags)).hasSize(tags.size());
-        assertThat(tags.getFirst()).startsWith("\"s7-0-").endsWith("\"");
+        assertThat(tags.getFirst()).startsWith("\"s" + dev.wakeline.platform.web.Etags.BOOT + "-7-0-").endsWith("\"");
         assertThat(ShipController.etag(7, fresh, ais.apply(java.util.Map.of()))).isEqualTo(tags.getFirst()); // 같은 상태 → 같은 ETag
     }
 

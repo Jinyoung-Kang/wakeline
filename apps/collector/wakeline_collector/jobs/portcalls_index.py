@@ -20,8 +20,9 @@
    다시 받기가 하루에 한 번쯤 따라잡으므로, 그 날들을 마지막으로 받은 때는 이보다 이를 수 있다).
 2. 채우기(backfill): covered_from 이 창의 첫날보다 늦은 항만청의 covered_from − 1일(가장 덜 채운 항만청부터).
 3. 다시 받기(revisit): 꼬리보다 오래된 창 안의 날(출항 · 최종 신고가 늦게 붙는다) — 끝까지 색인한 날은 마지막으로 받은 지 REVISIT_S, 빈 곳은
-   마지막 시도에서 RETRY_S 가 지난 것을 기준을 넘긴 비율이 큰 것부터(모르면 먼저, 같으면 최근 날 먼저) 시간당 REVISIT_UNITS_PER_HOUR 개까지(실패 ·
-   빈 곳도 센다). 끝내지 못한 시도는 RETRY_S 안에 다시 고르지 않는다. 재기동 뒤에는 모두 '모름' 이라 같은 속도로 하루에 걸쳐 돈다.
+   마지막 시도에서 RETRY_S 가 지난 것을 기준을 넘긴 비율이 큰 것부터(모르면 먼저, 같으면 빈 곳 먼저, 그다음 최근 날 먼저) 시간당 REVISIT_UNITS_PER_HOUR 개까지(실패 ·
+   빈 곳도 센다). 끝내지 못한 시도는 RETRY_S 안에 다시 고르지 않는다. 재기동 뒤에는 모두 '모름' 이라 같은 속도로 하루에 걸쳐 돈다 — 빈 곳이 먼저다
+   (매일 새로 기동하면 오래된 빈 곳의 차례가 오지 않았다 — AWS 리뷰 2026-10 C-2).
 
 예산 · 우선순위(apis.data.go.kr 한도 하나를 나눈다 — providers/data_go_kr):
 - 호스트 버킷 data_go_kr_rps(1 req/s) · 우선순위 PRIORITY_PORTCALL: 교통 5분 폴링(PRIORITY_FIXED)보다 낮고 격자 기하 채우기(PRIORITY_BACKFILL)보다 높다.
@@ -335,13 +336,15 @@ class PortCallIndexJob:
 
     def _revisit_unit(self, today: date, floor: date, now: datetime, waiting: set[str]) -> Unit | None:
         """꼬리보다 오래된 창 안의 날 하나. 끝까지 색인한 날은 마지막으로 받은 때에서 REVISIT_S, 빈 곳(holes)은 마지막 시도에서 RETRY_S 가 지난 것 —
-        기준을 넘긴 비율이 큰 것부터(모르면 먼저, 같으면 최근 날 먼저). 끝내지 못한 시도(실패)가 RETRY_S 안인 날은 고르지 않는다(다른 단위의 성공이
-        물러남을 풀어도 그 날을 60 s 마다 되풀이하지 않게). 시간당 REVISIT_UNITS_PER_HOUR 개까지 — 실패 · 빈 곳도 센다."""
+        기준을 넘긴 비율이 큰 것부터(모르면 먼저, 같으면 빈 곳 먼저, 그다음 최근 날 먼저). 끝내지 못한 시도(실패)가 RETRY_S 안인 날은 고르지 않는다(다른 단위의 성공이
+        물러남을 풀어도 그 날을 60 s 마다 되풀이하지 않게). 시간당 REVISIT_UNITS_PER_HOUR 개까지 — 실패 · 빈 곳도 센다.
+        같은 비율에서 빈 곳이 먼저인 까닭: 재기동 뒤에는 모두 '모름'(inf)이라 최근 날부터 골랐고, 매일 아침 새로 기동하는 운영(AWS 데모 — 하루 약 9시간 ·
+        시간당 15 단위)에서는 18–30일 전 날의 빈 곳이 창 밖으로 밀려날 때까지 다시 시도되지 않았다(빈 곳이 하나라도 있으면 api 가 색인을 complete 로 보지 않는다)."""
         while self._revisits and (now - self._revisits[0]).total_seconds() >= 3600:
             self._revisits.popleft()
         if len(self._revisits) >= REVISIT_UNITS_PER_HOUR:
             return None
-        best: tuple[float, int, str, date] | None = None
+        best: tuple[float, bool, int, str, date] | None = None
         last_tail = today - timedelta(days=TAIL_DAYS)
         for pa, _name in PORT_AUTHORITIES:
             cov = self.coverage.get(pa)
@@ -359,11 +362,11 @@ class PortCallIndexJob:
                     ref, limit = self._fetched.get((pa, d)), REVISIT_S
                 age = math.inf if ref is None else (now - ref).total_seconds()
                 if age >= limit:
-                    cand = (age / limit, d.toordinal(), pa, d)
-                    if best is None or cand[:2] > best[:2]:
+                    cand = (age / limit, d in cov.holes, d.toordinal(), pa, d)
+                    if best is None or cand[:3] > best[:3]:
                         best = cand
                 d -= timedelta(days=1)
-        return None if best is None else Unit(best[2], best[3], "revisit")
+        return None if best is None else Unit(best[3], best[4], "revisit")
 
     def _forget(self, floor: date) -> None:
         cap = 2 * len(PORT_AUTHORITIES) * (WINDOW_DAYS + 1)

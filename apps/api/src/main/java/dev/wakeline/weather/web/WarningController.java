@@ -45,7 +45,7 @@ public class WarningController {
     @GetMapping("/warnings")
     public ResponseEntity<Map<String, Object>> warnings(HttpServletRequest req) {
         WarningStore.State st = store.state();
-        String etag = "\"w" + st.version() + "\"";
+        String etag = "\"w" + Etags.BOOT + "-" + st.version() + "\""; // 프로세스 표식 — 재기동 뒤 같은 순번이 어제 본문을 304 로 되살리지 않게(AWS 리뷰 B-6)
         CacheControl cc = CacheControl.maxAge(30, TimeUnit.SECONDS).cachePublic();
         if (Etags.notModified(etag, req.getHeader("If-None-Match"))) return ResponseEntity.status(304).eTag(etag).cacheControl(cc).build();
         List<Map<String, Object>> items = new ArrayList<>(st.warnings().size());

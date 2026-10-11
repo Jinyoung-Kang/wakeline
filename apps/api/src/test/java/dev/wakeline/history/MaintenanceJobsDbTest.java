@@ -152,6 +152,22 @@ class MaintenanceJobsDbTest {
         assertThat(admin.sql("SELECT value FROM stats_daily WHERE day = :d AND metric = 'alerts_by_kind'").param("d", today.minusDays(2)).query(Long.class).single()).isEqualTo(1L);
     }
 
+    /**
+     * AWS 데모는 평일 낮에만 켠다(ADR-039) — 금요일 마지막 시간의 정시 요약(:05)은 EC2 가 멈춘 뒤라 돌지 않고, 월요일 기동은 약 63 h 뒤다.
+     * 따라잡기가 원본이 남아 있는 동안(보존 72 h) 그 시간을 채워야 한다 — 원본이 지워지면 재생(72 h 이후는 1분 요약만)이 영구히 빈다.
+     */
+    @Test
+    void catchUpSummariesReachBackToRawRetentionAcrossAWeekendStop() {
+        Instant now = Instant.now();
+        Instant fridayLastHour = now.truncatedTo(ChronoUnit.HOURS).minus(63, ChronoUnit.HOURS);
+        DbTestSupport.ensureTrackPartitions(fridayLastHour, now);
+        trackPoint("e00001", fridayLastHour.plusSeconds(1800), 36.5, 127.8);
+        MaintenanceJobs jobs = new MaintenanceJobs(api, PROPS, region(), DbTestSupport.apiTx());
+
+        assertThat(jobs.catchUpSummaries(now)).containsExactly(fridayLastHour);
+        assertThat(admin.sql("SELECT count(*) FROM track_point_1m WHERE hex = 'e00001'").query(Long.class).single()).isEqualTo(1L);
+    }
+
     @Test
     void retentionCanDeleteCollectorTables() {
         admin.sql("INSERT INTO radar_frame (frame_time, host, path, fetched_at) VALUES (now() - interval '8 days', 'h', '/p', now())").update();

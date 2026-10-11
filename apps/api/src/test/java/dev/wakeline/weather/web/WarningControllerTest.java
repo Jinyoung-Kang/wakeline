@@ -10,6 +10,7 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import java.time.Instant;
 import java.util.List;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.hasSize;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
@@ -38,11 +39,26 @@ class WarningControllerTest {
                 "10-10 오후(12–18시 KST)", null, "raw")), 1);
         MockMvc m = mvc(s);
         m.perform(get("/api/v1/warnings")).andExpect(status().isOk())
-                .andExpect(header().string("ETag", "\"w1\"")).andExpect(header().string("Cache-Control", "max-age=30, public"))
+                .andExpect(header().string("ETag", "\"w" + dev.wakeline.platform.web.Etags.BOOT + "-1\"")).andExpect(header().string("Cache-Control", "max-age=30, public"))
                 .andExpect(jsonPath("$.received").value(true)).andExpect(jsonPath("$.dropped").value(1))
                 .andExpect(jsonPath("$.items[0].zone_code").value("S1312020")).andExpect(jsonPath("$.items[0].effective_text").value("10-10 오후(12–18시 KST)"))
                 .andExpect(jsonPath("$.meta.provider").value("kma_warning")).andExpect(jsonPath("$.meta.stale").value(false));
-        m.perform(get("/api/v1/warnings").header("If-None-Match", "\"w1\"")).andExpect(status().isNotModified());
+        m.perform(get("/api/v1/warnings").header("If-None-Match", "\"w" + dev.wakeline.platform.web.Etags.BOOT + "-1\"")).andExpect(status().isNotModified());
+    }
+
+    /**
+     * AWS 리뷰 2026-10 B-6: ETag 가 프로세스 안 순번("w" + version)뿐이라 재기동마다 1부터 다시 셌다. AWS 데모는 매일 같은 시각에 기동하므로(ADR-039)
+     * 오늘 version 이 어제와 같아질 수 있다 — 브라우저 HTTP 캐시가 어제 받은 ETag 로 다시 물으면 304 가 와서 어제 본문(지난 특보 목록)이 그대로 보였다.
+     */
+    @Test
+    void anEtagFromAnEarlierProcessWithTheSameVersionIsNotAnsweredWith304() throws Exception {
+        WarningStore s = new WarningStore();
+        s.replaceIfNewer(Instant.now().minusSeconds(60), "kma_warning", List.of(), 0);
+        MockMvc m = mvc(s);
+        String etag = m.perform(get("/api/v1/warnings")).andReturn().getResponse().getHeader("ETag");
+        assertThat(etag).isNotEqualTo("\"w1\"").contains(dev.wakeline.platform.web.Etags.BOOT);
+        m.perform(get("/api/v1/warnings").header("If-None-Match", "\"w1\"")).andExpect(status().isOk()); // 어제 프로세스의 version 1
+        m.perform(get("/api/v1/warnings").header("If-None-Match", etag)).andExpect(status().isNotModified());
     }
 
     @Test

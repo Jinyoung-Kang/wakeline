@@ -1,7 +1,8 @@
 /**
  * 재생 링크(SPEC F5-4 · 계약 v5 §G51): `/replay?at=<UTC ISO …Z>&bbox=w,s,e,n&hex=<6자리>` 를 만들고 읽는다. React 없음.
  * 읽을 때 값마다 검증한다 — 틀린 값은 버리고(기본값을 쓴다) 까닭을 안내 글로 돌려준다(조용히 다른 시각 · 영역을 보이지 않게).
- * - at: UTC ISO(…Z — 저장 · 전송 형식, 화면은 KST) · 재생할 수 있는 구간(최근 30일 ~ 1분 전 — lib/replay replayRange) 안.
+ * - at: UTC ISO(…Z — 저장 · 전송 형식, 화면은 KST) · 재생할 수 있는 구간(최근 30일 ~ 1분 전 — lib/replay replayRange) 안. 구간 끝을 조금
+ *   ({@link FRESH_GRACE_MS} 안) 넘는 시각은 끝으로 자르고 알린다 — 방금 열린 알림의 '그 시각 재생'(관측 1분 안 · 아직 기록 중)이 10분 전으로 열렸다.
  * - bbox: 위경도 범위 · w < e · s < n · 넓이 ≤ 재생 조회 상한(REPLAY_MAX_AREA_SQDEG).
  * - hex: 소문자 16진 6자리(대문자는 소문자로).
  */
@@ -12,6 +13,8 @@ export { boundsAround, replayLink, type Bounds } from "./replay-link";
 export interface ReplayUrl { at: number | null; bbox: Bounds | null; hex: string | null; notes: string[] }
 
 const ISO_Z = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,9})?)?Z$/;
+/** 재생 구간 끝(1분 전)을 넘어도 끝으로 자르는 폭 — 방금 관측(아직 기록 중)과 몇 분 느린 브라우저 시계 */
+export const FRESH_GRACE_MS = 5 * 60_000;
 const HEX = /^[0-9a-f]{6}$/;
 
 /** 읽은 시각을 다시 적으면 같은 날짜 · 시각인가 — Date.parse 는 없는 날짜(09-31 · T24:00)를 다음 날로 넘긴다(QA-708) */
@@ -28,7 +31,10 @@ export function parseReplayUrl(q: { get(k: string): string | null }, nowMs: numb
     const r = replayRange(nowMs);
     if (Number.isNaN(t)) out.notes.push("링크의 시각(at)을 읽을 수 없음 — …Z 로 끝나는 ISO 형식이 아님, 기본 시각(10분 전)으로 엽니다");
     else if (!sameFields(at, t)) out.notes.push("링크의 시각(at)을 읽을 수 없음 — 없는 날짜 · 시각, 기본 시각(10분 전)으로 엽니다");
-    else if (t < r.min || t > r.max) out.notes.push("링크의 시각이 재생할 수 있는 구간(최근 30일 ~ 1분 전) 밖 — 기본 시각(10분 전)으로 엽니다");
+    else if (t > r.max && t - r.max <= FRESH_GRACE_MS) {
+      out.at = r.max;
+      out.notes.push("링크의 시각이 아직 기록 중(1분 안) — 재생할 수 있는 마지막 시각(1분 전)으로 엽니다");
+    } else if (t < r.min || t > r.max) out.notes.push("링크의 시각이 재생할 수 있는 구간(최근 30일 ~ 1분 전) 밖 — 기본 시각(10분 전)으로 엽니다");
     else out.at = t;
   }
   const bb = q.get("bbox");

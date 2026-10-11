@@ -41,11 +41,12 @@ public class WarningRepository {
         Instant at = e.fetchedAt();
         String provider = e.provider();
         List<WarningRecord> ws = e.warnings();
-        writer.submit(OrderedWriter.task("wx_warning_set", () -> persist(at, provider, ws), e.receipt().hold()));
+        int dropped = e.dropped();
+        writer.submit(OrderedWriter.task("wx_warning_set", () -> persist(at, provider, ws, dropped), e.receipt().hold()));
     }
 
-    /** 목록 한 벌(순서 큐 스레드). @return 끝낸 행 수 */
-    int persist(Instant at, String provider, List<WarningRecord> ws) {
+    /** 목록 한 벌(순서 큐 스레드). dropped = 수집기가 버린 줄 수(0 보다 크면 빠진 특보를 끝내지 않는다). @return 끝낸 행 수 */
+    int persist(Instant at, String provider, List<WarningRecord> ws, int dropped) {
         for (WarningRecord w : ws) {
             db.sql("""
                     INSERT INTO wx_warning (zone_code, zone_name, parent_code, parent_name, sea, kind, level, command, preliminary, issued_at, effective_at,
@@ -60,6 +61,12 @@ public class WarningRepository {
                     .param("eff", Sql.ts(w.effectiveAt())).param("ef", Sql.ts(w.effectiveFrom())).param("et", Sql.ts(w.effectiveTo()))
                     .param("etx", w.effectiveText()).param("end", w.endNotice()).param("raw", w.raw()).param("prov", provider).param("at", Sql.ts(at))
                     .update();
+        }
+        // 줄을 버린 목록(수집기가 해석하지 못해 뺀 줄 — dropped)에서는 끝내지 않는다: 빠진 특보가 해제된 것인지 줄만 버려진 것인지 모른다
+        // (QA 2026-10-release §7-1 · AWS 리뷰 B-4 — 아직 발효 중인 특보가 그 시각에 끝난 것으로 이력에 남았다). 다음 온전한 목록이 닫는다.
+        if (dropped > 0) {
+            log.info("wx warnings {}: {} in force, end check skipped ({} line(s) dropped by the collector)", at, ws.size(), dropped);
+            return 0;
         }
         int ended = db.sql("UPDATE wx_warning SET ended_at = :at WHERE ended_at IS NULL AND last_seen < :at").param("at", Sql.ts(at)).update();
         if (ended > 0) log.info("wx warnings {}: {} in force, {} ended", at, ws.size(), ended);

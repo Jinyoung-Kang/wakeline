@@ -8,7 +8,7 @@ import { WatchRunner } from "./watch/WatchRunner";
 import { openAlerts } from "@/lib/endpoints/alerts";
 import { alertZone } from "@/lib/alerts";
 import { errorLine } from "@/lib/api";
-import { requestNotify } from "@/lib/notify";
+import { enableNotify } from "@/lib/notify";
 import { fmtKstClock } from "@/lib/time";
 import { useApiResource } from "@/lib/use-api-resource";
 import { label, type WatchEvent } from "@/lib/watch";
@@ -35,7 +35,8 @@ export function MobileAlerts() {
       <h1 className="label mb-1" lang="en">Alerts · mobile</h1>
       <div className="mb-2 text-[11px] text-fg-3" role="status" aria-live="polite" data-testid="mobile-status">
         {res.status === "failed" ? <span className="text-bad">조회 실패 — {errorLine(res.error)}<RequestIdOf error={res.error} /></span>
-          : res.data ? `열린 알림 ${items.length}건 · 15초마다(보이는 동안) · 지도 · 실시간 연결 없음` : "알림 불러오는 중…"}
+          : res.data ? `열린 알림 ${items.length}건 · 15초마다(보이는 동안) · 지도 · 실시간 연결 없음`
+          : res.status === "loaded" ? <span className="text-warn">응답의 모양이 틀려 그리지 않음</span> : "알림 불러오는 중…"}
       </div>
       <ul className="mb-4 border-t border-line" data-testid="mobile-alerts">
         {res.data && !items.length ? <li className="py-3 text-fg-3">지금 열린 알림이 없습니다.</li> : null}
@@ -43,7 +44,8 @@ export function MobileAlerts() {
       </ul>
       <section aria-labelledby="m-watch" data-testid="mobile-watch">
         <h2 id="m-watch" className="label mb-1">관심 대상 · 이 브라우저</h2>
-        {permission === "default" ? <button className="btn mb-2" onClick={() => void requestNotify().then(setPermission)}>브라우저 알림 켜기</button> : null}
+        {permission === "default" ? <button className="btn mb-2" onClick={() => void enableNotify().then(setPermission)}>브라우저 알림 켜기</button> : null}
+        {permission === "blocked" ? <div className="mb-2 text-[12px] text-fg-3" data-testid="mobile-notify">이 브라우저는 페이지 알림을 막음(안드로이드 크롬 등) — 이 화면의 배너만</div> : null}
         {!targets.length ? <div className="text-[12px] text-fg-3">관심 대상이 없습니다 — 상황판의 항공기 · 선박 · 공항 카드에서 더합니다(같은 브라우저).</div> : (
           <ul className="border-t border-line">
             {targets.map((t) => (

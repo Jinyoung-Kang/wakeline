@@ -412,6 +412,17 @@ async def test_a_refused_coverage_row_backs_off_only_that_authority():
     assert any("coverage refused too" in (x.get("error_text") or "") for x in db.runs)
 
 
+def test_after_a_restart_a_hole_goes_before_days_whose_last_fetch_is_unknown():
+    """AWS 데모는 매일 아침 새로 기동한다(ADR-039) — 재기동 뒤에는 끝까지 색인한 날도 빈 곳도 마지막 때를 몰라 모두 같은 비율(inf)이고,
+    최근 날부터 골랐다: 시간당 15 단위 · 하루 약 9시간 가동으로는 18–30일 전 날의 빈 곳이 창 밖으로 밀려날 때까지 차례가 오지 않았다(AWS 리뷰 C-2).
+    같은 비율이면 빈 곳을 먼저 — 비율이 다르면 그대로 비율 순서다(아래 시험)."""
+    job, _db, _r, _clock = _job()
+    hole = TODAY - timedelta(days=20)
+    job.coverage = {c: Coverage(FLOOR, TODAY, NOW) for c in CODES}
+    job.coverage["020"] = Coverage(FLOOR, TODAY, NOW, frozenset({hole}))
+    assert job.plan(NOW) == Unit("020", hole, "revisit")
+
+
 def test_revisits_prefer_overdue_holes_count_failures_and_never_retry_a_day_within_retry_s():
     job, _db, _r, clock = _job()
     hole = date(2026, 9, 20)

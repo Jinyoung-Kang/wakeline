@@ -1,6 +1,8 @@
 /**
  * 브라우저 오류 보고(계약 v5 §C8 → §C6 `POST /api/v1/client-errors`). api 가 받아 시스템 로그(service "web-client", untrusted)에 싣는다.
- * - 같은 메시지는 60 s 에 1번, 페이지(문서)당 분당 5번 이하. keepalive — 페이지를 떠나는 중에도 보낸다. 쿠키는 싣지 않는다(인증 불필요 · CSRF 대상 아님).
+ * - 같은 메시지는 60 s 에 1번, 페이지(문서)당 분당 5번 이하. keepalive — 페이지를 떠나는 중에도 보낸다. api 는 인증을 묻지 않고 CSRF 대상도 아니지만
+ *   같은 출처 쿠키는 싣는다(lib/api 와 같은 same-origin): 앱 앞의 잠금(AWS 데모의 접근 코드 gate — ADR-039)이 쿠키로 통과를 확인한다.
+ *   쿠키를 빼면 보고가 앱에 닿기 전에 401 로 막혀 방문자 오류가 하나도 쌓이지 않았다.
  * - 본문은 필드 상한(message 2000 · stack 8000 · path 300 · component 200 — 글자 = 코드 포인트, api 검사와 같은 단위)과 전체 8 KiB(UTF-8 바이트)
  *   안으로 자른다(넘으면 api 가 413) — 잘린 곳에 "…(잘림 N자)"(N = 원문에서 뺀 글자 수). 메시지는 비우지 않는다(빈 메시지는 api 가 400).
  * - 보고기 자신은 오류를 만들지 않는다: fetch 실패·예외는 삼킨다(보고의 보고로 되돌지 않는다).
@@ -125,7 +127,7 @@ export function createReporter(env: ReporterEnv): Reporter {
       try {
         body = buildClientErrorBody(input, env.pathname(), now);
         const p = env.fetch(CLIENT_ERRORS_PATH, {
-          method: "POST", keepalive: true, credentials: "omit",
+          method: "POST", keepalive: true, credentials: "same-origin",
           headers: { "Content-Type": "application/json", Accept: "application/problem+json" },
           body: JSON.stringify(body),
         });

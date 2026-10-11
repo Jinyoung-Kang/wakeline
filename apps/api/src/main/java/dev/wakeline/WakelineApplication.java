@@ -58,8 +58,13 @@ public class WakelineApplication {
             System.err.println("DB_MIGRATOR_PASSWORD is required for --migrate");
             return 2;
         }
-        String url = "jdbc:postgresql://" + env.getOrDefault("DB_HOST", "localhost") + ":" + env.getOrDefault("DB_PORT", "5432")
-                + "/" + env.getOrDefault("DB_NAME", "wakeline") + "?ApplicationName=wakeline-migrate";
+        String url;
+        try {
+            url = migrateUrl(env);
+        } catch (IllegalArgumentException e) {
+            System.err.println(e.getMessage());
+            return 2;
+        }
         try {
             MigrateResult r = Flyway.configure()
                     .dataSource(url, env.getOrDefault("DB_MIGRATOR_USER", "wakeline_migrator"), password)
@@ -74,6 +79,27 @@ public class WakelineApplication {
             System.err.println("migration failed: " + e.getMessage());
             return 1;
         }
+    }
+
+    /** libpq 의 sslmode 이름(pgjdbc 가 같은 이름을 받는다) */
+    static final java.util.Set<String> SSL_MODES = java.util.Set.of("disable", "allow", "prefer", "require", "verify-ca", "verify-full");
+
+    /**
+     * migrate 의 JDBC URL. TLS 는 DB_SSLMODE(위 이름만) · DB_SSLROOTCERT(루트 인증서 파일)가 있을 때만 싣는다 — 없으면 드라이버 기본(prefer)으로 로컬과 같다.
+     * AWS 는 RDS 인증서를 검증한다(verify-full + RDS CA 묶음 — infra/compose.aws.yml, AWS 리뷰 2026-10 C-1). 값은 URL 에 그대로 붙이지 않는다
+     * (모드는 허용 목록, 경로는 인코딩 — 다른 드라이버 설정을 끼워 넣지 못하게).
+     */
+    static String migrateUrl(Map<String, String> env) {
+        StringBuilder url = new StringBuilder("jdbc:postgresql://").append(env.getOrDefault("DB_HOST", "localhost")).append(':')
+                .append(env.getOrDefault("DB_PORT", "5432")).append('/').append(env.getOrDefault("DB_NAME", "wakeline")).append("?ApplicationName=wakeline-migrate");
+        String mode = env.get("DB_SSLMODE");
+        if (mode != null && !mode.isBlank()) {
+            if (!SSL_MODES.contains(mode)) throw new IllegalArgumentException("DB_SSLMODE must be one of " + new java.util.TreeSet<>(SSL_MODES));
+            url.append("&sslmode=").append(mode);
+        }
+        String root = env.get("DB_SSLROOTCERT");
+        if (root != null && !root.isBlank()) url.append("&sslrootcert=").append(java.net.URLEncoder.encode(root, java.nio.charset.StandardCharsets.UTF_8));
+        return url.toString();
     }
 
     /**

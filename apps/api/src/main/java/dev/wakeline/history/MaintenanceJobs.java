@@ -13,6 +13,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
@@ -29,8 +30,8 @@ import java.util.Map;
  * 1분 요약 30일, 알림은 끝난 것만 30일(열린 알림은 남긴다 · {@code wakeline.alert-retention-days}, 0 이면 지우지 않는다), SIGMET·통계 영구.
  * 선박(ADR-014): 위치 ship_position 72 h, 정적 정보·수신 공백 영구.
  * 관심 지역은 런타임 설정(collector 와 같은 값, {@link RegionSettings})에서 읽는다(COR-12).
- * 따라잡기(REL-18): cron 은 놓친 시각을 다시 돌리지 않는다 — 기동 1분 뒤와 그 뒤 3시간마다 최근 24시간 중 요약이 없는 시간과
- * 최근 7일 중 완료 표식이 없는 통계 계열이 있는 날을 채운다(둘 다 멱등, R-46). 그보다 오래된 날도 원본이 남은 계열(SIGMET · 알림)에 표식이 없으면
+ * 따라잡기(REL-18): cron 은 놓친 시각을 다시 돌리지 않는다 — 기동 1분 뒤 · 성공 뒤 3시간마다(실패하면 1분부터 두 배씩, 30분 상한) 원본이 남은
+ * 시간(보존 − 2 h) 중 요약이 없는 시간과 최근 7일 중 완료 표식이 없는 통계 계열이 있는 날을 채운다(둘 다 멱등, R-46 · AWS 리뷰 B-1 · B-2). 그보다 오래된 날도 원본이 남은 계열(SIGMET · 알림)에 표식이 없으면
  * 채운다({@link #backfillStats} — V16 뒤 KST 날짜로 다시 세기. 원해상도가 지워진 옛 날의 교통량은 V16 이 옛 UTC 시 행에서 옮겨 실었다).
  */
 @org.springframework.context.annotation.Profile("!cli & !migrate")  // CLI(ops-user)·마이그레이션 실행에서는 웹·소비자·잡을 띄우지 않는다
@@ -47,7 +48,8 @@ public class MaintenanceJobs {
 
     /** 오늘(KST 날짜) */
     public static LocalDate today() { return LocalDate.now(DAY_ZONE); }
-    static final int CATCH_UP_HOURS = 24;
+    /** 1분 요약 따라잡기 창이 원해상도 보존보다 짧은 만큼(지워지는 중인 파티션을 읽지 않게 — {@link #RETAIN_CATCH_UP_HOURS} 와 같은 규칙) */
+    static final int CATCH_UP_MARGIN_HOURS = 2;
     static final int CATCH_UP_DAYS = 7;
     /** 따라잡기 창 밖의 날을 한 번의 따라잡기에 채우는 최대 일수(backfillStats) — /stats 범위 상한(92일)과 같다 */
     static final int BACKFILL_MAX_DAYS = 92;
@@ -265,9 +267,53 @@ public class MaintenanceJobs {
         return total;
     }
 
-    /** 기동 1분 뒤, 그 뒤 3시간마다: 놓친 1분 요약·일 통계를 채운다(REL-18). */
-    @Scheduled(initialDelay = 60_000, fixedDelay = 3 * 3600_000)
-    public void catchUp() {
+    /** 성공한 따라잡기 뒤 다음 따라잡기까지(REL-18) */
+    static final Duration CATCH_UP_EVERY = Duration.ofHours(3);
+    /** 실패 뒤 첫 재시도 간격 — 실패가 이어지면 두 배씩 {@link #CATCH_UP_RETRY_MAX} 까지(결정적으로 실패하는 집계를 공유 RDS 에 1분마다 되풀이하지 않게) */
+    static final Duration CATCH_UP_RETRY_FIRST = Duration.ofMinutes(1);
+    static final Duration CATCH_UP_RETRY_MAX = Duration.ofMinutes(30);
+    /** 연달아 실패하는 동안 경고를 남기는 간격 — 같은 경고를 재시도마다 남기지 않는다 */
+    static final Duration CATCH_UP_WARN_EVERY = Duration.ofMinutes(10);
+    /** 마지막으로 성공한 따라잡기(없으면 기동 뒤 아직 — 첫 틱에 돈다) */
+    private volatile Instant catchUpOkAt;
+    private volatile Instant catchUpWarnedAt;
+    private volatile Instant retainedWarnedAt;
+    /** 실패 뒤 다음 시도(없으면 곧바로) */
+    private volatile Instant catchUpRetryAt;
+    private volatile int catchUpFailures;
+
+    /**
+     * 기동 1분 뒤부터 1분마다 보고, 마지막 성공 뒤 {@link #CATCH_UP_EVERY} 가 지났으면 놓친 1분 요약 · 일 통계를 채운다(REL-18) — 실패하면 1분 뒤 다시,
+     * 이어서 실패하면 두 배씩 {@link #CATCH_UP_RETRY_MAX} 까지 늘린다(독립 리뷰 M2 — 결정적으로 실패하는 집계를 1분마다 되풀이하지 않게).
+     * 3 h 고정 주기였을 때는 기동 직후의 실패(RDS 준비 전 — AWS 데모는 매일 아침 EC2 · RDS 를 함께 켠다, ADR-039)를 3 h 뒤에야 다시 했다:
+     * 그 데모에서는 03:30 KST 정시 집계가 꺼진 시간이라 일 통계가 따라잡기에만 기대고, 금요일 교통량은 월요일 09:00 KST 뒤에는 다시 셀 수 없다(AWS 리뷰 B-2).
+     */
+    @Scheduled(initialDelay = 60_000, fixedDelay = 60_000)
+    public void catchUpTick() {
+        Instant now = clock.instant();
+        Instant ok = catchUpOkAt;
+        if (ok != null && now.isBefore(ok.plus(CATCH_UP_EVERY))) return;
+        Instant retry = catchUpRetryAt;
+        if (retry != null && now.isBefore(retry)) return;
+        if (runCatchUp()) {
+            if (catchUpFailures > 0) log.info("catch-up succeeded after {} failed attempt(s)", catchUpFailures);
+            catchUpOkAt = now;
+            catchUpFailures = 0;
+            catchUpRetryAt = null;
+            catchUpWarnedAt = null;
+        } else {
+            catchUpFailures++;
+            long minutes = CATCH_UP_RETRY_FIRST.toMinutes() << Math.min(catchUpFailures - 1, 10);
+            catchUpRetryAt = now.plus(Duration.ofMinutes(Math.min(minutes, CATCH_UP_RETRY_MAX.toMinutes())));
+        }
+    }
+
+    /** 따라잡기 한 번(주기와 상관없이 — 시험 · 수동) */
+    public void catchUp() { runCatchUp(); }
+
+    /** @return 요약 · 일 통계 따라잡기가 끝까지 됐는가 — 지정 보존 복사의 실패는 따로 가두고 세지 않는다(매시 복사 {@link #copyRetained()} 가 다시 한다) */
+    boolean runCatchUp() {
+        boolean done = true;
         try {
             List<Instant> hours = catchUpSummaries(Instant.now());
             List<LocalDate> days = catchUpStats(todayKst());
@@ -276,7 +322,13 @@ public class MaintenanceJobs {
                 log.info("catch-up: summarized hours {}, aggregated days {}, backfilled {} older days {}", hours, days, older.size(),
                         older.isEmpty() ? "" : older.get(older.size() - 1) + ".." + older.get(0));
         } catch (RuntimeException e) {
-            log.warn("catch-up failed (will retry): {}", e.toString());
+            done = false;
+            Instant now = clock.instant();
+            Instant warned = catchUpWarnedAt;
+            if (warned == null || !now.isBefore(warned.plus(CATCH_UP_WARN_EVERY))) {
+                catchUpWarnedAt = now;
+                log.warn("catch-up failed (will retry): {}", e.toString());
+            }
         }
         // 지정 대상 보존 복사는 따로 가둔다(ADR-038 결정 3 · QA-601): 위가 실패해도 72 h 파티션 삭제 전에 옮길 기회를 잃지 않는다
         try {
@@ -284,16 +336,26 @@ public class MaintenanceJobs {
             int retained = copyRetained(hour.minus(RETAIN_CATCH_UP_HOURS, ChronoUnit.HOURS), hour); // 기동 · 놓친 시간(겹치면 무시)
             if (retained > 0) log.info("catch-up: retained track {} new minute points", retained);
         } catch (RuntimeException e) {
-            log.warn("catch-up of retained track failed (will retry): {}", e.toString());
+            Instant now = clock.instant();
+            Instant warned = retainedWarnedAt;
+            if (warned == null || !now.isBefore(warned.plus(CATCH_UP_WARN_EVERY))) {
+                retainedWarnedAt = now;
+                log.warn("catch-up of retained track failed (will retry): {}", e.toString());
+            }
         }
+        return done;
     }
 
-    /** 최근 24개의 닫힌 시간 중 원해상도 항적은 있는데 1분 요약이 하나도 없는 시간을 요약한다. @return 요약한 시간 */
+    /**
+     * 원본이 남아 있는 닫힌 시간(원해상도 보존 − {@value #CATCH_UP_MARGIN_HOURS} h) 중 원해상도 항적은 있는데 1분 요약이 하나도 없는 시간을 요약한다.
+     * 창을 보존에 묶는다: 24 h 이던 창은 하루 넘게 꺼져 있다 켠 기동(AWS 데모의 주말 정지 약 63 h — ADR-039)이 넘지 못해, 멈추기 직전 시간의
+     * 요약이 원본 삭제와 함께 영구히 빠졌다(재생은 보존 뒤 1분 요약만 읽는다). 시간마다 작은 EXISTS 두 번(ts BRIN · ts_minute 색인). @return 요약한 시간
+     */
     List<Instant> catchUpSummaries(Instant now) {
         Bbox b = region.current().bbox();
         Instant current = now.truncatedTo(ChronoUnit.HOURS);
         List<Instant> done = new ArrayList<>();
-        for (int i = CATCH_UP_HOURS; i >= 1; i--) {
+        for (int i = Math.max(1, props.trackRetentionHours() - CATCH_UP_MARGIN_HOURS); i >= 1; i--) {
             Instant h = current.minus(i, ChronoUnit.HOURS);
             Boolean missing = db.sql("""
                     SELECT NOT EXISTS (SELECT 1 FROM track_point_1m WHERE ts_minute >= :from AND ts_minute < :to)

@@ -33,7 +33,10 @@ describe("replay link (F5-4)", () => {
       "링크의 영역이 재생 조회 상한(2,500 sq°)보다 넓음 — 기본 영역으로 엽니다",
       "링크의 항공기(hex)가 6자리 16진수가 아님 — 고르지 않고 엽니다",
     ]);
-    expect(parseReplayUrl(q("at=2026-10-09T09:59:30Z"), NOW).at).toBeNull(); // 1분 전보다 늦다
+    // 방금 열린 알림의 '그 시각 재생'(관측 1분 안 — 아직 기록 중): 재생할 수 있는 마지막 시각(1분 전)으로 열고 알린다. 더 먼 미래는 그대로 버린다
+    expect(parseReplayUrl(q("at=2026-10-09T09:59:30Z"), NOW)).toMatchObject({ at: NOW - 60_000, notes: ["링크의 시각이 아직 기록 중(1분 안) — 재생할 수 있는 마지막 시각(1분 전)으로 엽니다"] });
+    expect(parseReplayUrl(q("at=2026-10-09T10:04:00Z"), NOW).at).toBe(NOW - 60_000); // 브라우저 시계가 몇 분 느려도
+    expect(parseReplayUrl(q("at=2026-10-09T10:05:01Z"), NOW).at).toBeNull();
     expect(parseReplayUrl(q("at=2026-10-09T18:30:00+09:00"), NOW).notes[0]).toContain("…Z 로 끝나는 ISO 형식이 아님");
     for (const bad of ["129,36,126,38", "126,36,129", "a,b,c,d", "126,36,129,95", "126,,129,38"])
       expect(parseReplayUrl(q(`bbox=${bad}`), NOW).notes[0], bad).toBe("링크의 영역(bbox)을 읽을 수 없음 — 기본 영역으로 엽니다");

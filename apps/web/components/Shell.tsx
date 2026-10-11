@@ -21,7 +21,8 @@ const NAV = [
 
 export function Shell({ children }: { children: React.ReactNode }) {
   const path = usePathname() ?? "";
-  const nav = usePublicDemo() ? NAV.filter((n) => !n.operator) : NAV;
+  const demo = usePublicDemo();
+  const nav = demo ? NAV.filter((n) => !n.operator) : NAV;
   // 처리되지 않은 브라우저 오류를 시스템 로그로(계약 v5 §C8) — 모든 화면이 이 셸 안에 있다
   useEffect(() => installErrorReporter(), []);
   // 건너뛰기 링크(R-30): Tab 첫 정지점. 상황판은 지도 조작·출처 링크를 건너 알림 패널로 바로 갈 수 있다.
@@ -50,7 +51,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
         <div className="flex items-center gap-4">
           {/* 검색 결과로 지도를 옮기므로 상황판에서만 */}
           {path === "/" ? <AircraftSearch /> : null}
-          <div className="label hidden xl:block">portfolio · non-commercial · local</div>
+          <div className="label hidden xl:block">portfolio · non-commercial · {demo ? "demo" : "local"}</div>
         </div>
       </header>
       {/* '본문으로 건너뛰기'(#main)로 온 초점은 그 화면의 본문 스크롤 상자로 넘긴다(components/ScrollRegion main) — main 은 스크롤하지 않아 PageDown 이 듣지 않았다(QA-305) */}

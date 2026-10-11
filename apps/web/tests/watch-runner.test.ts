@@ -80,6 +80,31 @@ describe("watch runner: hidden-tab requests", () => {
   });
 });
 
+describe("watch runner: leaving the screen", () => {
+  it("an answer that arrives after the runner is gone (another screen) shows no banner, no notification and no status", async () => {
+    let open: number[] = [];
+    let hold = false;
+    let release: () => void = () => {};
+    vi.stubGlobal("fetch", async () => {
+      if (hold) await new Promise<void>((r) => { release = r; });
+      return json({ aircraft: [{ hex: "71be01", found: true, open_alerts: open.map((id) => ({ id, kind: "OBSERVED", zone_type: "sigmet", hazard: "TS", entered_at: "2026-10-09T10:00:00Z" })), closed_alerts: [] }],
+        ships: [], airports: [], closed_window_s: 900, closed_dropped: 0 });
+    });
+    const shown = notifications("granted");
+    await start([AC], "granted");                       // 첫 답 = 기준
+    const checked = useWatch.getState().checkedAt;
+    open = [42];
+    hold = true;
+    await advance(30_000);                              // 다음 조회가 떠 있는 동안
+    await m.unmount();                                  // [통계] 등 다른 화면으로
+    release();
+    await m.settle();
+    expect(useWatch.getState().banner).toEqual([]);
+    expect(shown).toEqual([]);
+    expect(useWatch.getState().checkedAt).toBe(checked);
+  });
+});
+
 describe("watch runner: events", () => {
   it("a new alert from the poll shows a banner and one browser notification; the WS copy of it does not notify again", async () => {
     let open: number[] = [];
@@ -96,6 +121,21 @@ describe("watch runner: events", () => {
     await advance(30_000);
     await m.settle();
     expect(shown).toHaveLength(1);
+  });
+  it("a browser that blocks the notification constructor marks the permission 'blocked' and stops polling while hidden", async () => {
+    let open: number[] = [];
+    const asked = answers(() => open);
+    vi.stubGlobal("Notification", Object.assign(class { constructor() { throw new TypeError("Illegal constructor"); } }, { permission: "granted", requestPermission: async () => "granted" }));
+    await start([AC], "granted");
+    open = [42];
+    await advance(30_000);
+    await m.settle();
+    expect(m.allByTestId("watch-event")).toHaveLength(1); // 배너는 늘
+    expect(useWatch.getState().permission).toBe("blocked");
+    const before = asked();
+    await setHidden(true);
+    for (let i = 0; i < 3; i++) { await advance(30_000); await m.settle(); }
+    expect(asked()).toBe(before); // 띄울 수 없는 알림을 위해 숨은 탭에서 조회하지 않는다
   });
   it("a WS alert for a watched aircraft notifies at once; alerts present at start are the baseline", async () => {
     setData({ alerts: new Map([[1, wsAlert(1)]]), alertsVersion: 1 }); // 첫 전체 목록이 온 뒤(기준은 그때 잡는다 — QA-705)

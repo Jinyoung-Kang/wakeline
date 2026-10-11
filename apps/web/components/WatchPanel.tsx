@@ -1,6 +1,6 @@
 "use client";
 import { useRef } from "react";
-import { requestNotify } from "@/lib/notify";
+import { enableNotify } from "@/lib/notify";
 import { useFocusRescue } from "@/lib/use-focus-rescue";
 import { fmtKstMinute } from "@/lib/time";
 import { label, SHIP_LOST_S, WATCH_MAX, type WatchState, type WatchTarget } from "@/lib/watch";
@@ -14,6 +14,7 @@ const PERMISSION_TEXT = {
   denied: "브라우저 알림이 막혀 있음 — 화면 안 배너만(브라우저 설정에서 이 사이트 알림을 허용하면 켜집니다)",
   default: "브라우저 알림 꺼짐 — 화면 안 배너만",
   unsupported: "이 브라우저는 알림을 지원하지 않음 — 화면 안 배너만",
+  blocked: "이 브라우저는 페이지 알림을 막음(안드로이드 크롬 등) — 화면 안 배너만",
 } as const;
 
 /**
@@ -42,7 +43,7 @@ export function WatchPanel() {
       {storage === "corrupt" ? <div className="border-b border-line px-2.5 py-1 text-warn" role="status">저장된 목록 일부가 깨져 버렸습니다</div> : null}
       <div className="flex items-center gap-2 border-b border-line px-2.5 py-1">
         <span className={permission === "granted" ? "text-fg-2" : "text-fg-3"} data-testid="watch-permission">{PERMISSION_TEXT[permission]}</span>
-        {permission === "default" ? <button className="btn ml-auto shrink-0" onClick={() => void requestNotify().then(setPermission)}>알림 켜기</button> : null}
+        {permission === "default" ? <button className="btn ml-auto shrink-0" onClick={() => void enableNotify().then(setPermission)}>알림 켜기</button> : null}
       </div>
       <div className="border-b border-line px-2.5 py-1 text-fg-3" role="status" aria-live="polite" data-testid="watch-status">
         {!targets.length ? "관심 대상이 없습니다 — 항공기 · 선박 · 공항 카드의 '관심 대상' 단추로 더합니다."

@@ -44,6 +44,7 @@ const CARRIED_BY_PARTS: Record<string, string> = {
   "lib/airport-list.ts": "공항 탭 목록의 줄(카테고리 · 오래됨 · 색)",
   "lib/endpoints/weather.ts": "공항 카드 · 공항 탭 · SIGMET 카드의 REST 조회(고르거나 탭을 연 뒤)",
   "components/watch/WatchRunner.tsx": "관심 대상 실행기 — 관심 탭과 같은 조각, 첫 화면이 다 그려진 뒤(미리 받기) 받는다(ADR-037)",
+  "components/watch/useWatchRunner.ts": "관심 대상 실행기의 상태 · 부수효과(조회 · 사건 · 알림) — 실행기와 같은 조각",
   "components/watch/WatchButton.tsx": "항공기 · 선박 · 공항 카드의 '관심 대상' 단추",
   "lib/watch.ts": "관심 대상 규칙(목록 · 저장소 · 답 해석 · 사건 · 억제) — 실행기 · 관심 탭 · 카드 단추",
   "lib/watch-store.ts": "관심 대상 상태 — 실행기 · 관심 탭 · 카드 단추",
