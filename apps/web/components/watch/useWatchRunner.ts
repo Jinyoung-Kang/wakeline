@@ -27,6 +27,7 @@ export function wsAlert(a: Alert): WatchAlert {
  *   알림은 기준(QA-705 — 전체 목록 전에 잡으면 이미 열린 알림이 모두 '새 알림'이 됐다).
  * - 숨은 탭 예외는 주기마다 브라우저의 알림 허락을 다시 읽는다 — 브라우저 설정에서 거두면 곧바로 멈춘다(QA-706).
  * - 사건 → 억제(같은 열쇠 한 번 · 10분 반복 없음) → 화면 배너(늘) + 브라우저 알림(허락했을 때만). 누르면 open.
+ * - 화면을 떠나면(언마운트) 떠 있는 조회를 끊고 늦은 답은 버린다 — 전에는 다른 화면에서 배너 · 브라우저 알림이 났다(AWS 리뷰 D-6).
  */
 export function useWatchRunner(open: (e: WatchEvent) => void): void {
   const targets = useWatch((s) => s.targets);
@@ -35,6 +36,7 @@ export function useWatchRunner(open: (e: WatchEvent) => void): void {
   const fired = useRef(new Map<string, number>());
   const seenAlerts = useRef<Set<number> | null>(null);
   const busy = useRef(false);
+  const inflight = useRef<AbortController | null>(null);
   const openRef = useRef(open);
   useEffect(() => { openRef.current = open; });
   const [hidden, setHidden] = useState(false);
@@ -57,14 +59,19 @@ export function useWatchRunner(open: (e: WatchEvent) => void): void {
     const list = useWatch.getState().targets;
     if (!list.length || busy.current) return;
     busy.current = true;
-    watchNow(list).then((next) => {
+    const ctl = new AbortController();
+    inflight.current = ctl;
+    watchNow(list, { signal: ctl.signal }).then((next) => {
+      if (ctl.signal.aborted) return; // 화면을 떠났다 — 늦은 답으로 사건 · 상태를 바꾸지 않는다
       if (!next) { useWatch.getState().setResult(null, "답의 모양이 틀림", Date.now()); return; }
       const list = useWatch.getState().targets;
       fire(diffWatch(prev.current, next, list));
       prev.current = onlyTargets(next, list);
       useWatch.getState().setResult(next, null, Date.now());
-    }, (e: unknown) => useWatch.getState().setResult(null, errorLine(e), Date.now())).finally(() => { busy.current = false; });
+    }, (e: unknown) => { if (!ctl.signal.aborted) useWatch.getState().setResult(null, errorLine(e), Date.now()); })
+      .finally(() => { busy.current = false; if (inflight.current === ctl) inflight.current = null; });
   };
+  useEffect(() => () => inflight.current?.abort(), []);
 
   useVisibleInterval(poll, targets.length ? WATCH_POLL_MS : null);
   // 목록이 바뀌면 곧바로 한 번(새 대상의 기준) — 숨은 탭이면 다음에 보일 때

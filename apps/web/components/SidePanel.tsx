@@ -5,6 +5,32 @@ import { AircraftCardPart, AirportCardPart, AirportListPart, ShipPanelPart, Sigm
 import { isAttached, isShown, rescueFocus } from "@/lib/focus-rescue";
 import { useUi, type UiPanel } from "@/lib/ui-store";
 
+/** 실행기 조각을 다시 받기 시작하는 때 · 간격 상한(두 배씩) — 첫 화면 뒤 미리 받기(보통 지도가 그려진 뒤 몇 초)를 앞당기지 않게 1분 뒤부터 */
+export const WATCH_RUNNER_RETRY_MS = 60_000;
+const WATCH_RUNNER_RETRY_MAX_MS = 600_000;
+
+/**
+ * 관심 대상 실행기(ADR-037)는 첫 화면 뒤 미리 받기가 받은 뒤에만 그린다. 그 받기가 실패하거나(순단 · 새 배포 뒤 옛 청크) 지도 load 가 오지 않아
+ * 받기가 시작되지 않으면 다시 받는 곳이 없어 그 세션 내내 조회 · 배너 · 알림이 없었다(AWS 리뷰 D-3) — 아직 없으면 1분 뒤부터 다시 받는다.
+ */
+function useWatchRunnerRetry(loaded: boolean): void {
+  useEffect(() => {
+    if (loaded) return;
+    let stopped = false;
+    let delay = WATCH_RUNNER_RETRY_MS;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const tick = () => {
+      WatchRunnerPart.preload().catch(() => {
+        if (stopped) return;
+        delay = Math.min(delay * 2, WATCH_RUNNER_RETRY_MAX_MS);
+        timer = setTimeout(tick, delay);
+      });
+    };
+    timer = setTimeout(tick, delay);
+    return () => { stopped = true; clearTimeout(timer); };
+  }, [loaded]);
+}
+
 /** 상황판 오른쪽 패널(탭 + 내용) */
 export function SidePanel() {
   const panel = useUi((s) => s.panel);
@@ -13,8 +39,9 @@ export function SidePanel() {
   const airport = useUi((s) => s.selectedAirport);
   const ship = useUi((s) => s.selectedShip);
   const shipsOn = useUi((s) => s.layers.ships);
-  // 관심 대상 실행기(ADR-037): 첫 화면 뒤 미리 받기가 받은 뒤에만 — 여기서 받기를 시작하지 않는다
+  // 관심 대상 실행기(ADR-037): 첫 화면 뒤 미리 받기가 받은 뒤에만 — 그 받기가 1분 안에 되지 않았을 때만 여기서 다시 받는다
   const watch = WatchRunnerPart.useLoaded();
+  useWatchRunnerRetry(watch);
   return <><SidePanelView panel={panel} hex={hex} sigmet={sigmet} airport={airport} ship={ship} shipsOn={shipsOn} />{watch ? <WatchRunnerPart /> : null}</>;
 }
 
