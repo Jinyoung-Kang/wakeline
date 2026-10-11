@@ -16,6 +16,24 @@ import static org.assertj.core.api.Assertions.assertThat;
 class WakelineApplicationTest {
     static ByteArrayInputStream in(String s) { return new ByteArrayInputStream(s.getBytes(StandardCharsets.UTF_8)); }
 
+    /** AWS 리뷰 2026-10 C-1: migrate 는 URL 을 직접 만들어 드라이버 기본(sslmode=prefer — 서버 인증서를 검증하지 않음)이었다. AWS 에서는 RDS 인증서를 검증한다. */
+    @Test
+    void migrateUrlCarriesTheTlsSettingsOnlyWhenGiven() {
+        Map<String, String> base = Map.of("DB_HOST", "db.example", "DB_MIGRATOR_PASSWORD", "x");
+        assertThat(WakelineApplication.migrateUrl(base)).isEqualTo("jdbc:postgresql://db.example:5432/wakeline?ApplicationName=wakeline-migrate"); // 로컬과 같다
+        Map<String, String> aws = new java.util.HashMap<>(base);
+        aws.put("DB_SSLMODE", "verify-full");
+        aws.put("DB_SSLROOTCERT", "/etc/wakeline/rds-ca.pem");
+        assertThat(WakelineApplication.migrateUrl(aws))
+                .isEqualTo("jdbc:postgresql://db.example:5432/wakeline?ApplicationName=wakeline-migrate&sslmode=verify-full&sslrootcert=%2Fetc%2Fwakeline%2Frds-ca.pem");
+    }
+
+    @Test
+    void migrateRefusesAnUnknownSslMode(CapturedOutput out) {
+        assertThat(WakelineApplication.migrate(Map.of("DB_MIGRATOR_PASSWORD", "x", "DB_SSLMODE", "verify-full&sslfactory=x"))).isEqualTo(2);
+        assertThat(out.getErr()).contains("DB_SSLMODE");
+    }
+
     @Test
     void readsExactlyOneLineWithoutTrimming() throws Exception {
         assertThat(WakelineApplication.readPasswordLine(in("  spaced secret  \r\nsecond line\n"))).isEqualTo("  spaced secret  ");

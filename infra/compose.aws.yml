@@ -10,11 +10,15 @@
 #   · OpenSky(전세계)는 끔 — 공개 배포 기본값(ADR-009) · DB 증가의 대부분
 #   · web 은 공개 데모 화면(WAKELINE_PUBLIC_DEMO=1): 앞단 Caddy 가 404 로 닫는 운영자 전용 화면(/ops · /logs)으로 가는 메뉴 · 링크를 감춘다
 #   · DB 연결 수를 줄임(RDS db.t4g.micro 한 대를 세 프로젝트가 나눔): 공유 풀 12 → 6(공개 조회 허가 6 → 3), 선택 조회 풀 4 → 2
+#   · RDS 서버 인증서를 검증한다(api · migrate · collector — verify-full + AWS RDS CA 묶음 rds/global-bundle.pem, ADR-039 덧붙임 2): require 는 암호화만 하고
+#     상대가 RDS 인지 확인하지 않았다. 되돌리기: .env 에 RDS_SSLMODE=require(이미지 · 파일은 그대로)
 # 필요한 값(.env, 이름은 .env.aws.example): RDS_HOST · PUBLIC_ORIGIN 외 기존 값. DB_ROOT_PASSWORD 는 db 를 띄우지 않아도 compose 가
 # 파일 전체를 해석하므로 아무 값이나 있어야 한다.
 x-rds-host: &rds-host
   DB_HOST: ${RDS_HOST:?RDS_HOST 필요}
   DB_PORT: ${RDS_PORT:-5432}
+# RDS CA 묶음(AWS 공식 truststore 의 global-bundle.pem — 모든 리전의 RDS 루트) — 읽기 전용으로 같은 자리에
+x-rds-ca: &rds-ca ./rds/global-bundle.pem:/etc/wakeline/rds-ca.pem:ro
 
 services:
   db:
@@ -24,6 +28,10 @@ services:
     depends_on: !reset {}
     environment:
       <<: *rds-host
+      DB_SSLMODE: ${RDS_SSLMODE:-verify-full}
+      DB_SSLROOTCERT: /etc/wakeline/rds-ca.pem
+    volumes:
+      - *rds-ca
     networks:
       rds: {}
 
@@ -33,13 +41,15 @@ services:
       migrate: { condition: service_completed_successfully }
     environment:
       <<: *rds-host
-      SPRING_DATASOURCE_URL: jdbc:postgresql://${RDS_HOST}:${RDS_PORT:-5432}/wakeline?sslmode=require
+      SPRING_DATASOURCE_URL: jdbc:postgresql://${RDS_HOST}:${RDS_PORT:-5432}/wakeline?sslmode=${RDS_SSLMODE:-verify-full}&sslrootcert=/etc/wakeline/rds-ca.pem
       SPRING_DATASOURCE_HIKARI_MAXIMUMPOOLSIZE: "6"
       WAKELINE_PUBLICREADS_PERMITS: "3"            # 공유 풀보다 작아야 한다(PublicReadGate 가 기동 때 검사)
       WAKELINE_READPOOL_SIZE: "2"
       # 공개 주소 + 관리자 터널(SSM 포트 포워딩으로 http://localhost:8700)
       WAKELINE_ALLOWED_ORIGINS: ${PUBLIC_ORIGIN:?PUBLIC_ORIGIN 필요 (예 https://dxxxx.cloudfront.net)},http://localhost:${WAKELINE_PORT:-8700},http://127.0.0.1:${WAKELINE_PORT:-8700}
       WAKELINE_COOKIE_SECURE: "${COOKIE_SECURE:-true}"
+    volumes:
+      - *rds-ca
     networks:
       rds: {}
 
@@ -49,10 +59,13 @@ services:
       migrate: { condition: service_completed_successfully }
     environment:
       <<: *rds-host
-      PGSSLMODE: require                           # asyncpg 는 ssl 인자가 없으면 PGSSLMODE 를 읽는다
+      PGSSLMODE: ${RDS_SSLMODE:-verify-full}       # asyncpg 는 ssl 인자가 없으면 PGSSLMODE · PGSSLROOTCERT 를 읽는다(verify-full = 호스트 이름까지)
+      PGSSLROOTCERT: /etc/wakeline/rds-ca.pem
       OPENSKY_CLIENT_ID: ""
       OPENSKY_CLIENT_SECRET: ""
       AIRCRAFT_PROVIDERS: adsb_fi,adsb_lol
+    volumes:
+      - *rds-ca
 
   web:
     environment:
