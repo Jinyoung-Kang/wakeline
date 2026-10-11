@@ -812,7 +812,7 @@ public class StreamConsumer implements SmartLifecycle {
     /** 특보: 이력은 스트림 순서대로(백로그 포함), 실시간 목록은 더 새 것만. */
     private void warnings(Parsed p, Receipt receipt, boolean persistHistory) {
         String provider = p.fields().get("provider");
-        if (persistHistory) events.publishEvent(new WeatherEvents.WarningsReceived(p.fetchedAt(), provider, p.warnings().warnings(), receipt));
+        if (persistHistory) events.publishEvent(new WeatherEvents.WarningsReceived(p.fetchedAt(), provider, p.warnings().warnings(), p.warnings().dropped(), receipt));
         if (warningStore.replaceIfNewer(p.fetchedAt(), provider, p.warnings().warnings(), p.warnings().dropped()) == null) staleSkipped.increment();
     }
 
