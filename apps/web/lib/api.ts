@@ -35,6 +35,8 @@ async function apiError(res: Response): Promise<ApiError> {
     detail = p.detail ?? p.title ?? detail;
     code = pick(p.code, CODE_RE);
     rid = pick(p.request_id, REQUEST_ID_RE);
+    // AWS 데모의 앞단 잠금(ADR-039 — 앱 밖의 gate): 접근 코드 쿠키가 만료되면 모든 요청이 401 {"error":"locked"} — 무엇을 할지 알린다
+    if (res.status === 401 && p.error === "locked") [detail, code] = ["접근 코드가 만료됨 — 새로고침하면 접근 코드를 다시 묻습니다", "ACCESS_LOCKED"];
   } catch { /* ignore */ }
   const ra = res.headers?.get?.("Retry-After") ?? null;
   const secs = ra != null && /^\d{1,6}$/.test(ra.trim()) ? Number(ra.trim()) : null;

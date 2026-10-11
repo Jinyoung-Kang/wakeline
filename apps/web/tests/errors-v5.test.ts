@@ -35,6 +35,14 @@ describe("v5-C8 ApiError keeps code and request_id", () => {
     const c = (await apiGet("/api/v1/x").catch((x: unknown) => x)) as ApiError;
     expect([c.message, c.code, c.requestId]).toEqual(["500", null, null]);
   });
+  it("the AWS demo's front gate (401 locked — the access-code cookie expired) says what to do instead of a bare 401", async () => {
+    vi.stubGlobal("fetch", async () => problem(401, { error: "locked", message: "접근 코드가 필요합니다", unlock: "/__gate/" }, { "Content-Type": "application/json" }));
+    const a = (await apiGet("/api/v1/aircraft").catch((x: unknown) => x)) as ApiError;
+    expect([a.status, a.code, a.message]).toEqual([401, "ACCESS_LOCKED", "접근 코드가 만료됨 — 새로고침하면 접근 코드를 다시 묻습니다"]);
+    vi.stubGlobal("fetch", async () => problem(401, { detail: "login required" })); // 앱의 401(problem+json)은 그대로
+    const b = (await apiGet("/api/v1/ops/session").catch((x: unknown) => x)) as ApiError;
+    expect([b.code, b.message]).toEqual([null, "login required"]);
+  });
   it("apiSend keeps them too, and old call sites (status, message[, retryAfter]) still construct", async () => {
     vi.stubGlobal("document", { cookie: "WAKELINE_CSRF=t0k" });
     vi.stubGlobal("fetch", async () => problem(409, { detail: "version mismatch", code: "VERSION_CONFLICT", request_id: "req-0001-abcd" }, { "Retry-After": "7" }));
