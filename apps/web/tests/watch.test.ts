@@ -124,7 +124,7 @@ describe("hidden-tab exception (ADR-037 — the only one to ADR-029 §5-2)", () 
     const walk = (d: string) => { for (const n of readdirSync(d)) { const p = join(d, n); if (statSync(p).isDirectory()) walk(p); else if (/\.(ts|tsx)$/.test(n)) files.push(p); } };
     for (const d of ["app", "components", "lib"]) walk(join(root, d));
     const users = files.filter((f) => readFileSync(f, "utf8").includes("pollWhileHidden(")).map((f) => relative(root, f));
-    expect(users.sort()).toEqual(["components/watch/WatchRunner.tsx", "lib/watch.ts"]);
+    expect(users.sort()).toEqual(["components/watch/useWatchRunner.ts", "lib/watch.ts"]);
   });
 });
 
