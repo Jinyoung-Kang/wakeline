@@ -221,7 +221,7 @@ describe("v5-C8 client error reporter", () => {
     expect(cutText("abc", 5)).toBe("abc");
   });
 
-  it("POSTs JSON with keepalive and no cookies; the same message is sent once per 60 s", async () => {
+  it("POSTs JSON with keepalive and same-origin cookies; the same message is sent once per 60 s", async () => {
     const now = { t: 1_000_000 };
     const { r, sent } = await reporter(now);
     expect(r.report({ message: "TypeError: x is undefined", stack: "at a (b.js:1:2)" })).toBe("sent");
@@ -229,7 +229,8 @@ describe("v5-C8 client error reporter", () => {
     await Promise.resolve();
     expect(sent).toHaveLength(1);
     expect(sent[0].url).toBe("/api/v1/client-errors");
-    expect(sent[0].init).toMatchObject({ method: "POST", keepalive: true, credentials: "omit" });
+    // same-origin: AWS 데모의 앞단 잠금(gate)은 쿠키로 통과를 확인한다 — 쿠키를 빼면 보고가 앱에 닿기 전에 401 로 막혔다(ADR-039 덧붙임 2)
+    expect(sent[0].init).toMatchObject({ method: "POST", keepalive: true, credentials: "same-origin" });
     expect((sent[0].init.headers as Record<string, string>)["Content-Type"]).toBe("application/json");
     expect(sent[0].body).toEqual({ message: "TypeError: x is undefined", stack: "at a (b.js:1:2)", path: "/stats", component: null, ts: new Date(1_000_000).toISOString() });
     now.t += 59_999;
