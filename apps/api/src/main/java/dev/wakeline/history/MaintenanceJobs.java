@@ -318,8 +318,14 @@ public class MaintenanceJobs {
         }
     }
 
-    /** 따라잡기 한 번(주기와 상관없이 — 시험 · 수동) */
-    public void catchUp() { runCatchUp(); }
+    /** 따라잡기 한 번(주기와 상관없이 — 시험 · 수동). 성공하면 틱과 같이 기록한다(항적 파티션 삭제 보류가 풀린다) */
+    public void catchUp() {
+        if (runCatchUp()) {
+            catchUpOkAt = clock.instant();
+            catchUpFailures = 0;
+            catchUpRetryAt = null;
+        }
+    }
 
     /** @return 요약 · 일 통계 따라잡기가 끝까지 됐는가 — 지정 보존 복사의 실패는 따로 가두고 세지 않는다(매시 복사 {@link #copyRetained()} 가 다시 한다) */
     boolean runCatchUp() {
@@ -456,13 +462,14 @@ public class MaintenanceJobs {
      * 그 파티션이 아직 있으면(삭제를 미룬 동안 — {@link #dropExpiredPartitions}). 항적은 UTC 날 파티션째 오래된 것부터 지워지므로 그 파티션이 있으면 그날
      * 원본이 모두 있다. 시계만 보던 때는 금요일 교통량을 월 09:00 KST 부터 다시 세지 않아, RDS 가 늦게 준비된 월요일에는 영구히 빠졌다(독립 리뷰 M3).
      * 파티션이 있는지만 보지는 않는다 — 꺼져 있던 동안은 파티션이 처음부터 없고(자료도 없다), 그날의 나머지 자료는 세야 한다.
-     * 보존보다 하루 넘게 지난 날은 묻지 않는다(보류 상한 DROP_HOLD_MAX 보다 길어 이미 지워졌다).
+     * 보존보다 따라잡기 창({@value #CATCH_UP_DAYS}일) 넘게 지난 날은 묻지 않는다 — 꺼져 있던 동안은 삭제도 돌지 않아 긴 정지(연휴) 뒤에는 보존을 하루 넘게
+     * 지난 파티션도 남아 있다(후속 리뷰 L1). 질의는 따라잡기 한 번에 많아야 그 일수만큼.
      */
     boolean trafficRecountable(LocalDate day) {
         Instant start = day.atStartOfDay(DAY_ZONE).toInstant();
         Instant end = trackPartitionEnd(start);
         if (end.isAfter(clock.instant().minus(props.trackRetentionHours(), ChronoUnit.HOURS))) return true;
-        if (!end.isAfter(clock.instant().minus(props.trackRetentionHours() + 24L, ChronoUnit.HOURS))) return false;
+        if (!end.isAfter(clock.instant().minus(props.trackRetentionHours() + 24L * CATCH_UP_DAYS, ChronoUnit.HOURS))) return false;
         String partition = "track_point_" + LocalDate.ofInstant(start, ZoneOffset.UTC).format(java.time.format.DateTimeFormatter.BASIC_ISO_DATE);
         return Boolean.TRUE.equals(db.sql("SELECT to_regclass(:p) IS NOT NULL").param("p", partition).query(Boolean.class).single());
     }

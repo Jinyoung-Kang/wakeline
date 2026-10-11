@@ -85,7 +85,7 @@ class RetentionDbTest {
         asMigrator("CREATE TABLE IF NOT EXISTS " + partition("track_point", old) + " PARTITION OF track_point FOR VALUES FROM ('" + old + "') TO ('" + old.plusDays(1) + "')");
         admin.sql("INSERT INTO radar_frame (frame_time, host, path, fetched_at) VALUES (now() - interval '8 days', 'h', '/p', now())").update();
         MaintenanceJobs jobs = jobs();
-        jobs.catchUpTick(); // 기동 뒤 첫 따라잡기가 끝난 뒤(그 전에는 항적 파티션 삭제를 미룬다 — StatsAggregationDbTest.trackPartitionsAreKeptUntilTheFirstCatchUpAfterStart)
+        jobs.catchUp(); // 기동 뒤 첫 따라잡기가 끝난 뒤(그 전에는 항적 파티션 삭제를 미룬다 — StatsAggregationDbTest.trackPartitionsAreKeptUntilTheFirstCatchUpAfterStart)
         jobs.dropExpiredPartitions();
         assertThat(exists(partition("track_point", old))).isZero();
         assertThat(admin.sql("SELECT count(*) FROM radar_frame").query(Long.class).single()).as("daily retention is not part of the hourly job").isEqualTo(1L);

@@ -199,6 +199,16 @@ class StatsAggregationDbTest {
         assertThat(exists(part)).as("dropped after the hold limit even without a catch-up").isFalse();
     }
 
+    /** 후속 리뷰 L1: 연휴처럼 긴 정지(약 87 h) 뒤에는 보존을 하루 넘게 지난 파티션도 남아 있다 — 남아 있으면 센다 */
+    @Test
+    void afterALongStopAPartitionPastRetentionPlusADayIsStillCounted() {
+        LocalDate friday = LocalDate.now(MaintenanceJobs.DAY_ZONE).minusDays(4);
+        Instant k0 = friday.atStartOfDay(MaintenanceJobs.DAY_ZONE).toInstant();
+        DbTestSupport.ensureTrackPartitions(k0, k0.plusSeconds(24 * 3600 - 1));
+        assertThat(jobs(kstClock(friday.plusDays(4), 10)).families(friday)).contains(MaintenanceJobs.FAMILY_TRAFFIC); // 화 10:00 KST — 끝 + 96 h 지남
+        assertThat(jobs(kstClock(friday.plusDays(4 + MaintenanceJobs.CATCH_UP_DAYS), 10)).families(friday)).doesNotContain(MaintenanceJobs.FAMILY_TRAFFIC); // 창 밖은 묻지 않는다
+    }
+
     boolean exists(String relation) {
         return admin.sql("SELECT to_regclass(:p) IS NOT NULL").param("p", relation).query(Boolean.class).single();
     }
