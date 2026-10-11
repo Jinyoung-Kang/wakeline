@@ -8,7 +8,7 @@ import { WatchRunner } from "./watch/WatchRunner";
 import { openAlerts } from "@/lib/endpoints/alerts";
 import { alertZone } from "@/lib/alerts";
 import { errorLine } from "@/lib/api";
-import { requestNotify } from "@/lib/notify";
+import { enableNotify } from "@/lib/notify";
 import { fmtKstClock } from "@/lib/time";
 import { useApiResource } from "@/lib/use-api-resource";
 import { label, type WatchEvent } from "@/lib/watch";
@@ -43,7 +43,8 @@ export function MobileAlerts() {
       </ul>
       <section aria-labelledby="m-watch" data-testid="mobile-watch">
         <h2 id="m-watch" className="label mb-1">관심 대상 · 이 브라우저</h2>
-        {permission === "default" ? <button className="btn mb-2" onClick={() => void requestNotify().then(setPermission)}>브라우저 알림 켜기</button> : null}
+        {permission === "default" ? <button className="btn mb-2" onClick={() => void enableNotify().then(setPermission)}>브라우저 알림 켜기</button> : null}
+        {permission === "blocked" ? <div className="mb-2 text-[12px] text-fg-3" data-testid="mobile-notify">이 브라우저는 페이지 알림을 막음(안드로이드 크롬 등) — 이 화면의 배너만</div> : null}
         {!targets.length ? <div className="text-[12px] text-fg-3">관심 대상이 없습니다 — 상황판의 항공기 · 선박 · 공항 카드에서 더합니다(같은 브라우저).</div> : (
           <ul className="border-t border-line">
             {targets.map((t) => (

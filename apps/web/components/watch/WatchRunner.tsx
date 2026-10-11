@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { watchNow } from "@/lib/endpoints/watch";
 import { errorLine } from "@/lib/api";
-import { notifyPermission, showNotification } from "@/lib/notify";
+import { keepBlocked, notifyPermission, showNotification } from "@/lib/notify";
 import { getData, subscribeData } from "@/lib/store";
 import { fmtKst } from "@/lib/time";
 import { useUi } from "@/lib/ui-store";
@@ -56,7 +56,12 @@ export function WatchRunner({ open = (e: WatchEvent) => openTarget(e.target), op
     fired.current = r.fired;
     if (!r.pass.length) return;
     useWatch.getState().pushEvents(r.pass, now);
-    for (const e of r.pass) showNotification(e.title, e.body, e.key, () => openRef.current(e));
+    if (useWatch.getState().permission === "blocked") return; // 띄울 수 없다고 이미 알았다 — 배너만
+    for (const e of r.pass) {
+      if (showNotification(e.title, e.body, e.key, () => openRef.current(e)) !== "blocked") continue;
+      useWatch.getState().setPermission("blocked"); // 허락은 됐지만 생성자를 막는 브라우저(안드로이드 크롬 등)
+      return;
+    }
   };
 
   const poll = () => {
@@ -92,7 +97,7 @@ export function WatchRunner({ open = (e: WatchEvent) => openTarget(e.target), op
     if (!hiddenPoll) return;
     const t = setInterval(() => {
       if (!document.hidden) return;
-      const p = notifyPermission(); // 브라우저 설정에서 거둔 허락은 이벤트가 없다 — 주기마다 읽는다(QA-706)
+      const p = keepBlocked(useWatch.getState().permission, notifyPermission()); // 브라우저 설정에서 거둔 허락은 이벤트가 없다 — 주기마다 읽는다(QA-706)
       if (p !== useWatch.getState().permission) useWatch.getState().setPermission(p);
       if (pollWhileHidden(useWatch.getState().targets.length, p)) poll();
     }, WATCH_POLL_MS);

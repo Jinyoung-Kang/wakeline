@@ -97,6 +97,21 @@ describe("watch runner: events", () => {
     await m.settle();
     expect(shown).toHaveLength(1);
   });
+  it("a browser that blocks the notification constructor marks the permission 'blocked' and stops polling while hidden", async () => {
+    let open: number[] = [];
+    const asked = answers(() => open);
+    vi.stubGlobal("Notification", Object.assign(class { constructor() { throw new TypeError("Illegal constructor"); } }, { permission: "granted", requestPermission: async () => "granted" }));
+    await start([AC], "granted");
+    open = [42];
+    await advance(30_000);
+    await m.settle();
+    expect(m.allByTestId("watch-event")).toHaveLength(1); // 배너는 늘
+    expect(useWatch.getState().permission).toBe("blocked");
+    const before = asked();
+    await setHidden(true);
+    for (let i = 0; i < 3; i++) { await advance(30_000); await m.settle(); }
+    expect(asked()).toBe(before); // 띄울 수 없는 알림을 위해 숨은 탭에서 조회하지 않는다
+  });
   it("a WS alert for a watched aircraft notifies at once; alerts present at start are the baseline", async () => {
     setData({ alerts: new Map([[1, wsAlert(1)]]), alertsVersion: 1 }); // 첫 전체 목록이 온 뒤(기준은 그때 잡는다 — QA-705)
     answers(() => []);

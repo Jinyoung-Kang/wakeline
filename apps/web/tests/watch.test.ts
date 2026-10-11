@@ -9,7 +9,7 @@ import {
   diffWatch, loadTargets, normalizeTargets, parseWatch, pollWhileHidden, saveTargets, suppress, toggleTarget, watchQuery, WATCH_KEY, WATCH_MAX, WATCH_REPEAT_MS,
   type WatchState, type WatchTarget,
 } from "@/lib/watch";
-import { notifyPermission, requestNotify, showNotification, type NotificationApi } from "@/lib/notify";
+import { enableNotify, keepBlocked, notifyPermission, NOTIFY_ENABLED_TAG, requestNotify, showNotification, type NotificationApi } from "@/lib/notify";
 
 const AC: WatchTarget = { kind: "aircraft", id: "71be01", label: "KAL081" };
 const SHIP: WatchTarget = { kind: "ship", id: "440123456" };
@@ -138,13 +138,30 @@ describe("browser notifications", () => {
   }
   it("unsupported → banner only; shows nothing until granted; asks only when called (the button)", async () => {
     expect(notifyPermission(null)).toBe("unsupported");
-    expect(showNotification("t", "b", "k", undefined, null)).toBe(false);
+    expect(showNotification("t", "b", "k", undefined, null)).toBe("off");
     const f = fake("default");
     expect(notifyPermission(f.N)).toBe("default");
-    expect(showNotification("t", "b", "k", undefined, f.N)).toBe(false);
+    expect(showNotification("t", "b", "k", undefined, f.N)).toBe("off");
     expect(f.asked()).toBe(0);
     expect(await requestNotify(f.N)).toBe("granted");
-    expect(showNotification("제목", "본문", "ac:1", undefined, f.N)).toBe(true);
+    expect(showNotification("제목", "본문", "ac:1", undefined, f.N)).toBe("shown");
     expect(f.shown).toEqual([{ title: "제목", body: "본문", tag: "ac:1" }]);
+  });
+  it("the enable button confirms with one notification; a browser that grants but blocks page notifications (Android Chrome) is 'blocked'", async () => {
+    const f = fake("default");
+    expect(await enableNotify(f.N)).toBe("granted");
+    expect(f.shown.map((x) => x.tag)).toEqual([NOTIFY_ENABLED_TAG]);
+    // 서비스 워커 전용 브라우저: 허락은 granted 인데 생성자가 던진다 — 화면이 '켜짐'이라고 하지 않고, 숨은 탭에서 헛되이 조회하지 않는다
+    const Blocked = class { constructor() { throw new TypeError("Illegal constructor"); } } as unknown as NotificationApi;
+    Object.assign(Blocked, { permission: "default", requestPermission: async () => { (Blocked as { permission: string }).permission = "granted"; return "granted"; } });
+    expect(await enableNotify(Blocked)).toBe("blocked");
+    expect(showNotification("t", "b", "k", undefined, Blocked)).toBe("blocked");
+    expect(pollWhileHidden(3, "blocked")).toBe(false);
+  });
+  it("re-reading the browser permission keeps 'blocked' while it still says granted, and follows a withdrawal", () => {
+    expect(keepBlocked("blocked", "granted")).toBe("blocked");
+    expect(keepBlocked("blocked", "denied")).toBe("denied");
+    expect(keepBlocked("granted", "denied")).toBe("denied");
+    expect(keepBlocked("default", "granted")).toBe("granted");
   });
 });

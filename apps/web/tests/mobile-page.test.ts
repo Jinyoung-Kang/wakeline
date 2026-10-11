@@ -89,4 +89,15 @@ describe("/m renders the open alerts and the watchlist", () => {
     expect(asked.filter((u) => u === "/api/v1/alerts").length).toBe(n + 1); // 숨은 동안 쉰다
     expect(asked.some((u) => u.includes("/ws"))).toBe(false);
   });
+  it("says so when the browser blocks page notifications (no enable button, banner only)", async () => {
+    vi.stubGlobal("self", globalThis);
+    vi.stubGlobal("fetch", async () => json(ALERTS));
+    useWatch.setState({ targets: [], permission: "blocked" });
+    vi.doMock("next/navigation", () => ({ useRouter: () => ({ push: () => {} }) }));
+    const { MobileAlerts } = await import("@/components/MobileAlerts");
+    await m.render(m.React.createElement(MobileAlerts));
+    await m.settle();
+    expect(m.byTestId("mobile-notify")?.textContent).toBe("이 브라우저는 페이지 알림을 막음(안드로이드 크롬 등) — 이 화면의 배너만");
+    expect(m.byTestId("mobile-watch")?.textContent).not.toContain("브라우저 알림 켜기");
+  });
 });
