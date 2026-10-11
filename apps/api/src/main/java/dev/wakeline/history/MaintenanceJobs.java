@@ -69,6 +69,8 @@ public class MaintenanceJobs {
     private final int alertRetentionDays;
     /** 보존 경계 · '오늘'(KST 날짜)을 정하는 시계 — 운영은 시스템 시계, 시험은 고정 시계(경계 시각을 재현한다) */
     private final Clock clock;
+    /** 이 잡이 시작한 때(항적 파티션 삭제 보류의 상한 기준) */
+    private final Instant startedAt;
 
     public MaintenanceJobs(JdbcClient db, AppProperties props, RegionSettings region, TransactionTemplate tx) {
         this(db, props, region, tx, DEFAULT_ALERT_RETENTION_DAYS);
@@ -87,6 +89,7 @@ public class MaintenanceJobs {
         this.tx = tx;
         this.alertRetentionDays = alertRetentionDays;
         this.clock = clock;
+        this.startedAt = clock.instant();
     }
 
     /** 이 잡의 시계로 본 오늘(KST 날짜) */
@@ -110,7 +113,12 @@ public class MaintenanceJobs {
      */
     @Scheduled(cron = "0 2 * * * *", zone = "UTC")
     public void dropExpiredPartitions() {
-        retention("track_point partitions", () -> db.sql("SELECT track_point_drop_old(:h)").param("h", props.trackRetentionHours()).query(Integer.class).single());
+        // 기동 뒤 첫 따라잡기가 성공하기 전에는 항적 파티션을 지우지 않는다(상한 DROP_HOLD_MAX — 독립 리뷰 M3): 교통량은 그날 파티션이 있을 때만 다시 센다({@link #families}).
+        // 주말에 꺼지는 AWS 데모의 금요일 교통량은 월요일 아침 따라잡기가 세는데, RDS 가 늦게 준비되면 그 전에 목요일 UTC 파티션이 지워져 영구히 빠졌다
+        if (catchUpOkAt == null && clock.instant().isBefore(startedAt.plus(DROP_HOLD_MAX)))
+            log.info("retention track_point partitions: kept until the first catch-up after start (at most {} h)", DROP_HOLD_MAX.toHours());
+        else
+            retention("track_point partitions", () -> db.sql("SELECT track_point_drop_old(:h)").param("h", props.trackRetentionHours()).query(Integer.class).single());
         retention("ship_position partitions", () -> db.sql("SELECT ship_position_drop_old(:h)").param("h", SHIP_RETENTION_HOURS).query(Integer.class).single());
     }
 
@@ -267,6 +275,8 @@ public class MaintenanceJobs {
         return total;
     }
 
+    /** 기동 뒤 첫 따라잡기가 성공하기 전 항적 파티션 삭제를 미루는 상한(독립 리뷰 M3) */
+    static final Duration DROP_HOLD_MAX = Duration.ofHours(6);
     /** 성공한 따라잡기 뒤 다음 따라잡기까지(REL-18) */
     static final Duration CATCH_UP_EVERY = Duration.ofHours(3);
     /** 실패 뒤 첫 재시도 간격 — 실패가 이어지면 두 배씩 {@link #CATCH_UP_RETRY_MAX} 까지(결정적으로 실패하는 집계를 공유 RDS 에 1분마다 되풀이하지 않게) */
@@ -436,9 +446,25 @@ public class MaintenanceJobs {
      */
     List<String> families(LocalDate day) {
         List<String> f = new ArrayList<>(List.of(FAMILY_SIGMET));
-        if (trackPartitionEnd(day.atStartOfDay(DAY_ZONE).toInstant()).isAfter(clock.instant().minus(props.trackRetentionHours(), ChronoUnit.HOURS))) f.add(FAMILY_TRAFFIC);
+        if (trafficRecountable(day)) f.add(FAMILY_TRAFFIC);
         if (alertsRetained(day)) f.add(FAMILY_ALERTS);
         return f;
+    }
+
+    /**
+     * 그날(KST)의 교통량을 다시 셀 수 있는가: 그날 첫 순간이 든 UTC 날 파티션이 보존 안이거나(시계 — 삭제는 이 경계 뒤 매시 :02 에 돈다), 경계를 지났어도
+     * 그 파티션이 아직 있으면(삭제를 미룬 동안 — {@link #dropExpiredPartitions}). 항적은 UTC 날 파티션째 오래된 것부터 지워지므로 그 파티션이 있으면 그날
+     * 원본이 모두 있다. 시계만 보던 때는 금요일 교통량을 월 09:00 KST 부터 다시 세지 않아, RDS 가 늦게 준비된 월요일에는 영구히 빠졌다(독립 리뷰 M3).
+     * 파티션이 있는지만 보지는 않는다 — 꺼져 있던 동안은 파티션이 처음부터 없고(자료도 없다), 그날의 나머지 자료는 세야 한다.
+     * 보존보다 하루 넘게 지난 날은 묻지 않는다(보류 상한 DROP_HOLD_MAX 보다 길어 이미 지워졌다).
+     */
+    boolean trafficRecountable(LocalDate day) {
+        Instant start = day.atStartOfDay(DAY_ZONE).toInstant();
+        Instant end = trackPartitionEnd(start);
+        if (end.isAfter(clock.instant().minus(props.trackRetentionHours(), ChronoUnit.HOURS))) return true;
+        if (!end.isAfter(clock.instant().minus(props.trackRetentionHours() + 24L, ChronoUnit.HOURS))) return false;
+        String partition = "track_point_" + LocalDate.ofInstant(start, ZoneOffset.UTC).format(java.time.format.DateTimeFormatter.BASIC_ISO_DATE);
+        return Boolean.TRUE.equals(db.sql("SELECT to_regclass(:p) IS NOT NULL").param("p", partition).query(Boolean.class).single());
     }
 
     /** 순간 t 가 든 항적 파티션(UTC 날 [d, d+1))의 끝 = 다음 UTC 날 00:00 — 파티션 이름 · 경계 · 보존 삭제가 모두 UTC 날이다(V2 · V9) */

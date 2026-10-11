@@ -1696,9 +1696,11 @@
   경고 문구는 그대로 두어 로그 지문과 운영자 '해결' 표시가 유지된다. 연달아 실패하는 동안 경고(주 · 지정 보존 복사)는 10분에 한 번만 남긴다. 예약 작업 수는 같다.
 - **고정**: `MaintenanceCatchUpScheduleTest` — 수정 전 `[retry interval after a failed catch-up (ms)] Expecting actual: 10800000L to be less than or equal to: 60000L`.
   실패 → 1분 → 실패 → 2분 → 성공 → 3 h 안에는 다시 돌지 않음, 이어지는 실패의 간격 1 · 2 · 4 · 8 · 16 · 30 · 30분을 가짜 시계로 고정했다.
-- **남는 것**(독립 리뷰 M3): 교통량을 다시 셀 수 있는지는 시계로 판단한다(`families` — 그날 첫 순간의 UTC 파티션 끝 > now − 72 h). 그래서 금요일 교통량은
-  월 09:00 KST 까지 성공해야 한다 — 08:50 기동이면 약 9분(재시도 1 · 2 · 4분). RDS 가 그보다 늦게 준비되면 여전히 빠진다. 근본 해결은 파티션이 실제로
-  있는지로 판단하고, 기동 뒤 첫 따라잡기가 성공하기 전에는 항적 파티션을 지우지 않는 것이다(다음 단계 — 이번 범위 밖).
+- **뒤이어 고침**(독립 리뷰 M3 — 2026-10-11 후속): 교통량을 다시 셀 수 있는지를 시계로만 판단해, 금요일 교통량은 월 09:00 KST 까지 성공해야 했다.
+  이제 경계를 지났어도 그날 첫 순간의 UTC 파티션이 남아 있으면 센다(`trafficRecountable`). 기동 뒤 첫 따라잡기가 성공하기 전에는 항적 파티션 삭제를 미룬다(상한 6 h — `DROP_HOLD_MAX`).
+  파티션이 있는지만 보지는 않는다 — 꺼져 있던 동안은 파티션이 처음부터 없어 그날 나머지 자료를 세지 못하게 된다(통합 시험 `JobsAndRadarIT` 가 잡았다).
+  시험: `StatsAggregationDbTest.fridayTrafficIsCountedOnMondayWhileItsPartitionsRemain` · `trackPartitionsAreKeptUntilTheFirstCatchUpAfterStart` — 수정 전
+  `Expecting ArrayList: ["sigmet", "alerts"] to contain: ["traffic"]` · `[kept before the first catch-up] Expecting value to be true but was false`.
 
 ## #139 AWS 데모의 방문자 브라우저 오류가 운영 로그에 하나도 쌓이지 않음 — 보고에 앞단 잠금 쿠키를 싣지 않음
 - **증상**: 30 h 동안 api 의 web-client 항목 0건. 그런데 공개 화면은 "보냄 — 운영자 시스템 로그"라고 적는다(AWS 리뷰 D-1).
