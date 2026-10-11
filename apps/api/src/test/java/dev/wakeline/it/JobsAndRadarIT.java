@@ -70,6 +70,7 @@ class JobsAndRadarIT extends IntegrationTest {
         jobs.ensurePartitions();
         assertThat(exists(future)).as("partition created by the api role (SECURITY DEFINER)").isEqualTo(1);
 
+        jobs.catchUp(); // 기동 뒤 첫 따라잡기 전에는 항적 파티션 삭제를 미룬다(MaintenanceJobs.DROP_HOLD_MAX)
         jobs.dropOldPartitions();
         assertThat(exists(old)).as("expired partition dropped").isZero();
         assertThat(exists(partition(today))).isEqualTo(1);

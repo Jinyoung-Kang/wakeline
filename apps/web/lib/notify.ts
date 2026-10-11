@@ -41,6 +41,28 @@ export async function enableNotify(n: NotificationApi | null = api()): Promise<N
   return showNotification("관심 대상 알림 켜짐", "관심 대상의 상태가 바뀌면 이렇게 알립니다", NOTIFY_ENABLED_TAG, undefined, n) === "blocked" ? "blocked" : "granted";
 }
 
+/** 막힘을 기억하는 브라우저 저장소 열쇠(값 "1") — 새로고침 뒤에도 '켜짐'으로 돌아가지 않게(생성자는 띄워 봐야만 막힘을 안다) */
+export const NOTIFY_BLOCKED_KEY = "wakeline.notify.blocked";
+export interface PermissionStorage { getItem(k: string): string | null; setItem(k: string, v: string): void; removeItem(k: string): void }
+
+/** 첫 상태: 브라우저 값(read)에 기억한 막힘을 얹는다 — 브라우저가 granted 가 아니면 막힘 기억을 지운다. 저장소를 못 쓰면 read 그대로 */
+export function initialPermission(storage: PermissionStorage | null, read: NotifyPermission): NotifyPermission {
+  try {
+    if (storage?.getItem(NOTIFY_BLOCKED_KEY) !== "1") return read;
+    if (read === "granted") return "blocked";
+    storage.removeItem(NOTIFY_BLOCKED_KEY);
+  } catch { /* 저장소를 못 쓰면 이번 접속 동안만 */ }
+  return read;
+}
+
+/** 바뀐 허락 상태를 기억한다(막힘만 — 그 밖이면 기억을 지운다). 저장소 오류는 삼킨다 */
+export function rememberPermission(storage: PermissionStorage | null, p: NotifyPermission): void {
+  try {
+    if (p === "blocked") storage?.setItem(NOTIFY_BLOCKED_KEY, "1");
+    else storage?.removeItem(NOTIFY_BLOCKED_KEY);
+  } catch { /* 이번 접속 동안만 */ }
+}
+
 /** 브라우저의 허락을 다시 읽은 값으로 바꾸되, 막힘 기록은 브라우저가 여전히 granted 라고 하는 동안 둔다(거두면 그 값을 따른다) */
 export function keepBlocked(current: NotifyPermission, read: NotifyPermission): NotifyPermission {
   return current === "blocked" && read === "granted" ? "blocked" : read;

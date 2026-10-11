@@ -143,11 +143,74 @@ class StatsAggregationDbTest {
         afternoon.aggregateDay(day);
         assertThat(trafficByHour(day)).as("a partial recount must not replace the full one").containsExactlyInAnyOrderEntriesOf(Map.of("00", 1, "10", 1));
         assertThat(markers(day)).containsExactlyInAnyOrder("sigmet", "alerts");
-        // 경계 양쪽: D+3 08:59 KST(경계 D−1 23:59 UTC)에는 D−1 파티션이 아직 보존 안 — 다시 셀 수 있다. 09:00 KST 부터는 아니다.
+        // 경계 양쪽: D+3 08:59 KST(경계 D−1 23:59 UTC)에는 D−1 파티션이 아직 보존 안 — 다시 셀 수 있다. 09:00 KST 부터는 그 파티션이 남아 있을 때만
+        // (여기서는 지웠다 — 남아 있는 경우는 fridayTrafficIsCountedOnMondayWhileItsPartitionsRemain)
         Clock before = Clock.fixed(day.plusDays(3).atTime(8, 59, 59).atZone(MaintenanceJobs.DAY_ZONE).toInstant(), ZoneOffset.UTC);
         assertThat(jobs(before).families(day)).contains(MaintenanceJobs.FAMILY_TRAFFIC);
         assertThat(jobs(kstClock(day.plusDays(3), 9)).families(day)).doesNotContain(MaintenanceJobs.FAMILY_TRAFFIC);
         assertThat(jobs(kstClock(day.plusDays(3), 23)).families(day)).doesNotContain(MaintenanceJobs.FAMILY_TRAFFIC);
+    }
+
+    /**
+     * AWS 리뷰 독립 리뷰 M3: AWS 데모는 주말에 꺼져 금요일(KST)의 교통량을 월요일 아침 따라잡기에만 셀 수 있다. 시계로 판단하면 월 09:00 KST(목요일 UTC 파티션의
+     * 보존 경계)부터는 파티션이 아직 지워지지 않았어도 다시 세지 않아, RDS 가 늦게 준비된 월요일에는 금요일 교통량이 영구히 빠졌다. 파티션이 있으면 센다.
+     */
+    @Test
+    void fridayTrafficIsCountedOnMondayWhileItsPartitionsRemain() {
+        LocalDate friday = LocalDate.now(MaintenanceJobs.DAY_ZONE).minusDays(3);
+        Instant k0 = friday.atStartOfDay(MaintenanceJobs.DAY_ZONE).toInstant();
+        DbTestSupport.ensureTrackPartitions(k0, k0.plusSeconds(24 * 3600 - 1));
+        track("e10001", k0.plusSeconds(30 * 60));             // 00:30 KST — 목요일 UTC 파티션
+        track("e10002", k0.plusSeconds(10 * 3600 + 30 * 60)); // 10:30 KST — 금요일 UTC 파티션
+        MaintenanceJobs monday = jobs(kstClock(friday.plusDays(3), 10)); // 월 10:00 KST — 시계 경계(09:00)는 지났고 파티션은 아직 있다
+        assertThat(monday.families(friday)).contains(MaintenanceJobs.FAMILY_TRAFFIC);
+        monday.aggregateDay(friday);
+        assertThat(trafficByHour(friday)).containsExactlyInAnyOrderEntriesOf(Map.of("00", 1, "10", 1));
+        assertThat(markers(friday)).contains(MaintenanceJobs.FAMILY_TRAFFIC);
+    }
+
+    /**
+     * 같은 까닭(M3): 기동 뒤 첫 따라잡기가 성공하기 전에는 항적 파티션을 지우지 않는다 — 지우면 그 파티션에 든 날의 교통량을 다시 셀 수 없다.
+     * 따라잡기가 계속 실패해도 저장이 늘기만 하지 않게 상한(DROP_HOLD_MAX) 뒤에는 지운다.
+     */
+    @Test
+    void trackPartitionsAreKeptUntilTheFirstCatchUpAfterStart() {
+        LocalDate old = LocalDate.now(ZoneOffset.UTC).minusDays(6);
+        DbTestSupport.ensureTrackPartitions(old.atStartOfDay(ZoneOffset.UTC).toInstant(), old.atStartOfDay(ZoneOffset.UTC).toInstant());
+        String part = "track_point_" + old.format(DateTimeFormatter.BASIC_ISO_DATE);
+        MaintenanceJobs started = jobs(Clock.systemUTC());
+        started.dropExpiredPartitions();
+        assertThat(exists(part)).as("kept before the first catch-up").isTrue();
+        started.catchUpTick();
+        started.dropExpiredPartitions();
+        assertThat(exists(part)).as("dropped after it").isFalse();
+
+        DbTestSupport.ensureTrackPartitions(old.atStartOfDay(ZoneOffset.UTC).toInstant(), old.atStartOfDay(ZoneOffset.UTC).toInstant());
+        Instant t0 = Instant.now();
+        Instant[] now = {t0};
+        Clock moving = new Clock() {
+            @Override public java.time.ZoneId getZone() { return ZoneOffset.UTC; }
+            @Override public Clock withZone(java.time.ZoneId z) { return this; }
+            @Override public Instant instant() { return now[0]; }
+        };
+        MaintenanceJobs failing = jobs(moving);
+        now[0] = t0.plus(MaintenanceJobs.DROP_HOLD_MAX).plusSeconds(60);
+        failing.dropExpiredPartitions();
+        assertThat(exists(part)).as("dropped after the hold limit even without a catch-up").isFalse();
+    }
+
+    /** 후속 리뷰 L1: 연휴처럼 긴 정지(약 87 h) 뒤에는 보존을 하루 넘게 지난 파티션도 남아 있다 — 남아 있으면 센다 */
+    @Test
+    void afterALongStopAPartitionPastRetentionPlusADayIsStillCounted() {
+        LocalDate friday = LocalDate.now(MaintenanceJobs.DAY_ZONE).minusDays(4);
+        Instant k0 = friday.atStartOfDay(MaintenanceJobs.DAY_ZONE).toInstant();
+        DbTestSupport.ensureTrackPartitions(k0, k0.plusSeconds(24 * 3600 - 1));
+        assertThat(jobs(kstClock(friday.plusDays(4), 10)).families(friday)).contains(MaintenanceJobs.FAMILY_TRAFFIC); // 화 10:00 KST — 끝 + 96 h 지남
+        assertThat(jobs(kstClock(friday.plusDays(4 + MaintenanceJobs.CATCH_UP_DAYS), 10)).families(friday)).doesNotContain(MaintenanceJobs.FAMILY_TRAFFIC); // 창 밖은 묻지 않는다
+    }
+
+    boolean exists(String relation) {
+        return admin.sql("SELECT to_regclass(:p) IS NOT NULL").param("p", relation).query(Boolean.class).single();
     }
 
     /**
