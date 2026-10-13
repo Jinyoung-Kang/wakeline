@@ -1,0 +1,12 @@
+# QA 2026-10 AWS: 격리 QA 스택의 이미지를 고정 QA 태그(기본 :qa)로 빌드 · 실행한다.
+# compose.yml 은 wakeline-*:local(로컬 운영 스택이 쓰는 태그)을 가리키므로, 이 파일을 두 번째 -f 로 붙여 :local 을 덮지 않게 한다.
+#   WLQA_TAG=qa docker compose -p wlqa-a -f infra/compose.yml -f tools/qa/compose.qa-tag.yml --env-file <시험 env> build
+# 보통은 tools/qa/wlqa.sh 를 쓴다.
+services:
+  edge: { image: "wakeline-edge:${WLQA_TAG:-qa}" }
+  web: { image: "wakeline-web:${WLQA_TAG:-qa}" }
+  migrate: { image: "wakeline-api:${WLQA_TAG:-qa}" }
+  api: { image: "wakeline-api:${WLQA_TAG:-qa}" }
+  collector: { image: "wakeline-collector:${WLQA_TAG:-qa}" }
+  ais: { image: "wakeline-collector:${WLQA_TAG:-qa}" }
+  db: { image: "wakeline-db:${WLQA_TAG:-qa}" }
