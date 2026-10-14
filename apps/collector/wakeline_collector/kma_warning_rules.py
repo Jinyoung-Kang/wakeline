@@ -8,7 +8,8 @@
   02:59 새벽(00–03시) · 05:59 새벽(03–06시) · 08:59 아침(06–09시) · 11:59 오전(09–12시) · 14:59 낮(12–15시) · 17:59 늦은 오후(15–18시) · 20:59 저녁(18–21시) ·
   23:59 밤(21–24시) · 11:58 오전(06–12시) · 17:58 오후(12–18시) · 05:58 새벽(00–06시) · 23:58 밤(18–24시) · 14:58 오후(12–18시). 이때 effective_at 은
   없고(정확한 시각을 짐작하지 않는다) effective_from · effective_to(그 시간대, UTC)와 effective_text(때 이름)를 싣는다. 표에 없는 부호면 시간대도 모른다.
-- 모르는 모양의 줄(열 수 · 구역 코드 · 시각이 틀림)은 버리고 센다 — 목록 전체를 버리지 않는다.
+- 모르는 모양의 줄(열 수 · 구역 코드 · 시각이 틀림)은 버리고 센다 — 목록 전체를 버리지 않는다. 글자를 풀 수 없는 줄도 같다(QA-1222 — 전에는 본문 전체를
+  한 번에 풀어 EUC-KR 밖의 글자(CP949 확장 한글 '똠' · 깨진 바이트) 하나가 목록 전체를 버렸다). 응답 전체가 풀리지 않을 때만 줄마다 따로 푼다.
 """
 
 from __future__ import annotations
@@ -65,17 +66,38 @@ class ParsedWarnings:
     dropped: list[dict[str, str]] = field(default_factory=list)
 
 
-def decode(body: bytes) -> str:
-    """UTF-8 을 먼저, 아니면 EUC-KR(확인한 응답은 EUC-KR — 조사 때 UTF-8 로 온 적도 있다)."""
+def _decode_text(data: bytes) -> str:
+    """UTF-8 을 먼저, 아니면 EUC-KR(확인한 응답은 EUC-KR — 조사 때 UTF-8 로 온 적도 있다). 둘 다 아니면 UnicodeDecodeError(EUC-KR 의 것)."""
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        return data.decode("euc-kr")
+
+
+def decode_lines(body: bytes) -> tuple[list[str], list[dict[str, str]]]:
+    """본문 → (풀린 줄, 풀지 못한 줄의 dropped 기록). 본문 전체가 한 글로 풀리면 그 글의 줄. 아니면 바이트 줄(LF · CR · CRLF — EUC-KR · UTF-8 의
+    여러 바이트 글자 안에는 이 바이트가 없다)마다 따로 풀고, 풀리지 않는 특보 줄만 버린다(QA-1222). 풀리지 않는 주석 줄('#')은 세지 않는다 — 주석은
+    원래 읽지 않고, dropped 가 0 이 아니면 api 가 특보 끝내기를 미룬다(QA-1203). 그래도 머리 주석이 없으면 응답 전체가 글이 아닌 것으로 보고
+    WarningResponseError(본문 전체를 풀 때 처음 실패한 바이트 위치)."""
     if len(body) > MAX_BYTES:
         raise WarningResponseError(f"response too large ({len(body)} bytes)")
     try:
-        return body.decode("utf-8")
-    except UnicodeDecodeError:
+        return _decode_text(body).splitlines(), []
+    except UnicodeDecodeError as e:
+        whole_error = f"neither UTF-8 nor EUC-KR (byte {e.start})"
+    lines: list[str] = []
+    bad: list[dict[str, str]] = []
+    for raw in body.splitlines():
         try:
-            return body.decode("euc-kr")
+            lines.extend(_decode_text(raw).splitlines())
         except UnicodeDecodeError as e:
-            raise WarningResponseError(f"neither UTF-8 nor EUC-KR (byte {e.start})") from None
+            if raw.startswith(b"#"):
+                continue
+            shown = raw.decode("euc-kr", errors="replace").strip()[:200]
+            bad.append({"reason": f"neither UTF-8 nor EUC-KR (byte {e.start} of the line)", "line": shown})
+    if not any(line.startswith("#") and "REG_ID" in line for line in lines):
+        raise WarningResponseError(whole_error)
+    return lines, bad
 
 
 def kst_to_utc(tm: str) -> datetime:
@@ -148,14 +170,14 @@ def parse_line(line: str) -> dict[str, Any]:
 
 def parse(body: bytes) -> ParsedWarnings:
     """응답 바이트 → 특보 목록 · 버린 줄. 머리 주석이 없으면 특보현황 응답이 아니다(오류 문서 · 인증 실패 글 등)."""
-    text = decode(body)
-    lines = text.splitlines()
+    lines, undecodable = decode_lines(body)
     if not any(line.startswith("#") and "REG_ID" in line for line in lines):
+        text = "\n".join(lines)
         raise WarningResponseError(f"not a warning list: {text.strip()[:80]!r}")
-    out = ParsedWarnings()
+    out = ParsedWarnings(dropped=undecodable)
     rows = [line for line in lines if line.strip() and not line.startswith("#")]
-    if len(rows) > MAX_ROWS:
-        raise WarningResponseError(f"too many rows ({len(rows)})")
+    if len(rows) + len(undecodable) > MAX_ROWS:
+        raise WarningResponseError(f"too many rows ({len(rows) + len(undecodable)})")
     for line in rows:
         try:
             out.warnings.append(parse_line(line))
