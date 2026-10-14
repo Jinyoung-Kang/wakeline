@@ -454,8 +454,9 @@ function SettingsForm({ items, msg, setMsg, onSaved, onAuthMiss }: {
               {conflict && ed ? (
                 <div className="mt-1 text-[11px] text-warn" role="alert" data-testid="setting-conflict">
                   편집하는 동안 서버 값이 바뀜(v{ed.version} → v{s.version}: <span className="mono">{String(s.value)}</span>)
-                  <button className="btn ml-1" onClick={() => drop(s.key)}>새 값 보기</button>
-                  <button className="btn ml-1" onClick={() => setEdit({ ...edit, [s.key]: rebaseSetting(ed, s) })}>내 값으로 덮어쓰기</button>
+                  {/* 두 단추 모두 이 충돌 줄을 지운다 — 초점을 그 키의 값 입력으로(QA-1422 — 누른 단추와 함께 사라져 body 로 떨어졌다) */}
+                  <button className="btn ml-1" onClick={() => { rescue(() => [inputs.current.get(s.key)]); drop(s.key); }}>새 값 보기</button>
+                  <button className="btn ml-1" onClick={() => { rescue(() => [inputs.current.get(s.key)]); setEdit({ ...edit, [s.key]: rebaseSetting(ed, s) }); }}>내 값으로 덮어쓰기</button>
                 </div>
               ) : null}
             </td>
