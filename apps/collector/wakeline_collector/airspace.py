@@ -293,9 +293,17 @@ def kml_bytes(data: bytes) -> bytes:
     kmls = [i for i in infos if i.filename.lower().endswith(".kml") and not i.is_dir()]
     if len(kmls) != 1:
         raise AirspaceError(f"KMZ must hold exactly one .kml (found {len(kmls)})")
+    # 읽기 전에 두 가지를 본다(QA-1130): zipfile 은 deflate 멤버만 한 번 읽을 때 푸는 양을 묶고, bzip2 · LZMA 멤버는 파이썬 3.13.16 전까지
+    # 읽은 압축 조각 전체를 한꺼번에 풀었다(CVE-2026-15310) — 아래의 '읽으며 세기'가 메모리를 지키지 못한다. 런타임 판에 기대지 않게
+    # ① 머리에 적힌 풀린 크기가 상한을 넘으면 바로 거절하고 ② KMZ 가 쓰는 압축(stored · deflate)만 받는다(머리의 크기는 속일 수 있다).
+    member = kmls[0]
+    if member.file_size > MAX_KML_BYTES:
+        raise AirspaceTooLarge(f"KML larger than {MAX_KML_BYTES} bytes when unpacked (declared {member.file_size})")
+    if member.compress_type not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED):
+        raise AirspaceError(f"KMZ member uses unsupported compression (type {member.compress_type}) — KMZ is stored or deflate")
     out = bytearray()
     try:
-        with z.open(kmls[0]) as f:
+        with z.open(member) as f:
             while chunk := f.read(1 << 16):
                 out += chunk
                 if len(out) > MAX_KML_BYTES:
