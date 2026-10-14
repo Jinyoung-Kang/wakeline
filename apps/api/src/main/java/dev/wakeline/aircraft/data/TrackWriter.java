@@ -34,7 +34,8 @@ import java.util.concurrent.locks.ReentrantLock;
  * <ul>
  *   <li>큐 상한 50,000행 — 넘치면 오래된 것부터 버리고 wakeline_track_rows_total{result="dropped"} 로 센다(5.1절 DB 느림).</li>
  *   <li>배치 실패(REL-10): 버리지 않는다. 일시 장애(연결·풀 대기·타임아웃)는 같은 배치를 백오프(2 s → 30 s)로 재시도하고, 그동안
- *       새 행은 큐에 쌓인다(넘치면 위 규칙). 영구 오류(카디널리티·데이터·제약·권한, SQLState 21·22·23·42)는 3회 시도 뒤 버리고 result="failed" 로 센다.</li>
+ *       새 행은 큐에 쌓인다(넘치면 위 규칙). 영구 오류(카디널리티·데이터·제약·권한, SQLState 21·22·23·42)는 3회 시도 뒤 버리고 result="failed" 로 센다.
+ *       '파티션 없음'(23514)이면 다시 쓰기 전에 일 파티션을 만든다(QA-1240).</li>
  *   <li>at-least-once(API-CONC-8): 메시지마다 그 메시지의 마지막 행 번호(seq)에 표식(영수증)을 단다. 행은 들어온 순서대로 큐를 떠나고
  *       (배치 또는 넘침으로 버림), 배치는 한 번에 하나씩 끝나므로 "여기까지의 행은 모두 끝났다"(resolvedUpTo)를 셀 수 있다. 표식의 seq 가
  *       그 안에 들면 영수증을 놓는다 → 스트림 메시지 ACK. 커밋 전에 프로세스가 죽으면 ACK 되지 않은 메시지가 PEL 에 남아 재처리된다.
@@ -357,11 +358,25 @@ public class TrackWriter implements StreamPrerequisite, WriteBacklog {
                     continue;
                 } else {
                     log.info("track batch failed (attempt {}/{}), retry in {} ms: {}", permanentFailures, PERMANENT_ATTEMPTS, backoff, e.toString());
+                    if (DbErrors.mayBeMissingPartition(e)) ensurePartitions();
                 }
                 if (transientError) recovery.pause(backoff, () -> running); // DB 가 다시 답하면 일찍 깬다
                 else sleepWhileRunning(backoff);
                 backoff = Math.min(backoffMaxMs, backoff * 2);
             }
+        }
+    }
+
+    /**
+     * '파티션 없음'(23514)일 수 있는 실패 뒤, 다시 쓰기 전에 일 파티션(어제 ~ +3일 — MaintenanceJobs.ensurePartitions 와 같은 함수 · 범위)을 만든다(QA-1240:
+     * 연휴 뒤 기동 때 DB 가 늦게 답하면 오늘(UTC) 파티션이 없는 동안 들어온 행을 세 번 시도 뒤 모두 버렸다). 실패해도 그대로 — 다음 시도가 드러낸다.
+     */
+    private void ensurePartitions() {
+        try {
+            Integer n = jdbc.queryForObject("SELECT track_point_ensure_partitions(3)", Integer.class);
+            if (n != null && n > 0) log.warn("created {} track_point partition(s) after a 'no partition' write failure — the batch is retried", n);
+        } catch (RuntimeException e) {
+            log.warn("ensure track_point partitions before the retry failed: {}", e.toString());
         }
     }
 

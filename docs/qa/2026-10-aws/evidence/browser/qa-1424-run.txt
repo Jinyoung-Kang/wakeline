@@ -1,0 +1,56 @@
+
+Running 1 test using 1 worker
+
+QA-1424 alerts h1="ALERT EVIDENCE · #%EF%BC%90%EF%BC%91" · airport h1=["AIRPORT WEATHER · %EA%B9%80%ED%8F%AC%20%EA%B3%B5%ED%95%AD"] · api=["/api/v1/airports/%25EA%25B9%2580%25ED%258F%25AC%2520%25EA%25B3%25B5%25ED%2595%25AD/wx"]
+  ✘  1 e2e/qa/qa-1424-route-param-percent-encoded.spec.ts:11:5 › QA-1424 route params are shown decoded (not percent-encoded) (3.4s)
+
+
+  1) e2e/qa/qa-1424-route-param-percent-encoded.spec.ts:11:5 › QA-1424 route params are shown decoded (not percent-encoded) 
+
+    Error: expect(received).not.toMatch(expected)
+
+    Expected pattern: not /%[0-9A-F]{2}/i
+    Received string:      "ALERT EVIDENCE · #%EF%BC%90%EF%BC%91"
+
+      26 |   saveJson("qa-1424-route-param.json", out);
+      27 |   console.log(`QA-1424 alerts h1="${out.alertsH1}" · airport h1=${JSON.stringify(out.airportH1)} · api=${JSON.stringify(out.airportApi)}`);
+    > 28 |   expect.soft(String(out.alertsH1)).not.toMatch(/%[0-9A-F]{2}/i);
+         |                                         ^
+      29 |   expect.soft(JSON.stringify(out.airportH1) + String(out.airportText)).not.toMatch(/%[0-9A-F]{2}/i);
+      30 |   expect(JSON.stringify(out.airportApi), "api asked with the value the user typed (not %25-double-encoded)").not.toMatch(/%25/);
+      31 | });
+        at /Users/jinyoung/Projects/wakeline/apps/web/e2e/qa/qa-1424-route-param-percent-encoded.spec.ts:28:41
+
+    Error: expect(received).not.toMatch(expected)
+
+    Expected pattern: not /%[0-9A-F]{2}/i
+    Received string:      "[\"AIRPORT WEATHER · %EA%B9%80%ED%8F%AC%20%EA%B3%B5%ED%95%AD\"]AIRPORT WEATHER · %EA%B9%80%ED%8F%AC%20%EA%B3%B5%ED%95%AD 공항 코드 형식이 올바르지 않습니다: %EA%B9%80%ED%8F%AC%20%EA%B3%B5%ED%95%AD 요청 id 5a1fe05f2984b7b40231c148339834ff 복사 로그 보기"
+
+      27 |   console.log(`QA-1424 alerts h1="${out.alertsH1}" · airport h1=${JSON.stringify(out.airportH1)} · api=${JSON.stringify(out.airportApi)}`);
+      28 |   expect.soft(String(out.alertsH1)).not.toMatch(/%[0-9A-F]{2}/i);
+    > 29 |   expect.soft(JSON.stringify(out.airportH1) + String(out.airportText)).not.toMatch(/%[0-9A-F]{2}/i);
+         |                                                                            ^
+      30 |   expect(JSON.stringify(out.airportApi), "api asked with the value the user typed (not %25-double-encoded)").not.toMatch(/%25/);
+      31 | });
+      32 |
+        at /Users/jinyoung/Projects/wakeline/apps/web/e2e/qa/qa-1424-route-param-percent-encoded.spec.ts:29:76
+
+    Error: api asked with the value the user typed (not %25-double-encoded)
+
+    expect(received).not.toMatch(expected)
+
+    Expected pattern: not /%25/
+    Received string:      "[\"/api/v1/airports/%25EA%25B9%2580%25ED%258F%25AC%2520%25EA%25B3%25B5%25ED%2595%25AD/wx\"]"
+
+      28 |   expect.soft(String(out.alertsH1)).not.toMatch(/%[0-9A-F]{2}/i);
+      29 |   expect.soft(JSON.stringify(out.airportH1) + String(out.airportText)).not.toMatch(/%[0-9A-F]{2}/i);
+    > 30 |   expect(JSON.stringify(out.airportApi), "api asked with the value the user typed (not %25-double-encoded)").not.toMatch(/%25/);
+         |                                                                                                                  ^
+      31 | });
+      32 |
+        at /Users/jinyoung/Projects/wakeline/apps/web/e2e/qa/qa-1424-route-param-percent-encoded.spec.ts:30:114
+
+    Error Context: test-results/qa/qa-1424-route-param-percen-95463-ecoded-not-percent-encoded-/error-context.md
+
+  1 failed
+    e2e/qa/qa-1424-route-param-percent-encoded.spec.ts:11:5 › QA-1424 route params are shown decoded (not percent-encoded) 

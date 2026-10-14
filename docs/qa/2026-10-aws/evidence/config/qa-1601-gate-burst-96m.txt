@@ -1,0 +1,18 @@
+# QA-1601/1602 gate burst 증거 — portfolio-gate:local · mem 96m · 저장소 gate.py 읽기전용 마운트. 2026-10-13T18:57:52Z
+# burst=4 생존 · burst=40 reliably OOM(die 137)+재시작+잠금초기화(3) 401
+#### burst=4
+before: {'Status': 'running', 'OOMKilled': False, 'RestartCount': 0, 'StartedAt': '2026-10-13T18:57:52.84167863Z'} mem limit 96m
+1) 한 IP 순서대로 6회: ['401', '401', '401', '401', '401', '429'] → 마지막이 429 면 잠김
+2) 서로 다른 IP 동시 4회(0.1 s): {'401': 4}
+   after: {'Status': 'running', 'OOMKilled': False, 'RestartCount': 0, 'StartedAt': '2026-10-13T18:57:52.84167863Z'} | cgroup memory.peak(지금 프로세스 기준, 재시작하면 새로 셈): 94838784
+3) 1) 의 IP 가 다시 시도: 429 → 429 면 잠금 유지, 401 이면 잠금이 사라짐(재시작으로 시도 기록 초기화)
+   gate 'start' 사건 수(기동 횟수): 1
+   docker events(버스트 뒤): []
+#### burst=40
+before: {'Status': 'running', 'OOMKilled': False, 'RestartCount': 0, 'StartedAt': '2026-10-13T18:57:57.680321257Z'} mem limit 96m
+1) 한 IP 순서대로 6회: ['401', '401', '401', '401', '401', '429'] → 마지막이 429 면 잠김
+2) 서로 다른 IP 동시 40회(0.3 s): {'RemoteDisconnected': 40}
+   after: {'Status': 'running', 'OOMKilled': False, 'RestartCount': 1, 'StartedAt': '2026-10-13T18:57:59.307024758Z'} | cgroup memory.peak(지금 프로세스 기준, 재시작하면 새로 셈): 100663296
+3) 1) 의 IP 가 다시 시도: 401 → 429 면 잠금 유지, 401 이면 잠금이 사라짐(재시작으로 시도 기록 초기화)
+   gate 'start' 사건 수(기동 횟수): 2
+   docker events(버스트 뒤): ['kill exitCode=', 'die exitCode=137', 'start exitCode=', 'oom exitCode=', 'die exitCode=137', 'start exitCode=']

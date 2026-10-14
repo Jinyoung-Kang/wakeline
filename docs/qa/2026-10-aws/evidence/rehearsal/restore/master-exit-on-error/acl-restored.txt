@@ -1,0 +1,50 @@
+database	wakeline	wakeline_migrator	wakeline_api=c/wakeline_migrator,wakeline_collector=c/wakeline_migrator,wakeline_migrator=CTc/wakeline_migrator
+function	ship_position_drop_old(retention_hours integer)	rdsmaster	SECURITY DEFINER 
+function	ship_position_ensure_partitions(days_ahead integer)	rdsmaster	SECURITY DEFINER 
+function	track_point_drop_old(retention_hours integer)	rdsmaster	SECURITY DEFINER 
+function	track_point_ensure_partitions(days_ahead integer)	rdsmaster	SECURITY DEFINER 
+rel:p	ship_position	rdsmaster	
+rel:p	track_point	rdsmaster	
+rel:r	aircraft	rdsmaster	
+rel:r	airport	rdsmaster	
+rel:r	airspace	rdsmaster	
+rel:r	airspace_edition	rdsmaster	
+rel:r	alert_event	rdsmaster	
+rel:r	app_setting	rdsmaster	
+rel:r	audit_log	rdsmaster	
+rel:r	flyway_schema_history	rdsmaster	
+rel:r	ingest_gap	rdsmaster	
+rel:r	ingest_run	rdsmaster	
+rel:r	kst_day_cutover	rdsmaster	
+rel:r	marine_grid4	rdsmaster	
+rel:r	metar_obs	rdsmaster	
+rel:r	ops_resolution	rdsmaster	
+rel:r	ops_user	rdsmaster	
+rel:r	port_call	rdsmaster	
+rel:r	port_call_coverage	rdsmaster	
+rel:r	provider_budget_day	rdsmaster	
+rel:r	provider_switch	rdsmaster	
+rel:r	quality_event	rdsmaster	
+rel:r	quality_rule_count	rdsmaster	
+rel:r	quality_rule_count_utc_legacy	rdsmaster	
+rel:r	radar_frame	rdsmaster	
+rel:r	retained_track	rdsmaster	
+rel:r	ship	rdsmaster	
+rel:r	ship_position_YYYYMMDD	rdsmaster	
+rel:r	sigmet	rdsmaster	
+rel:r	stats_daily	rdsmaster	
+rel:r	stats_daily_utc_legacy	rdsmaster	
+rel:r	track_point_1m	rdsmaster	
+rel:r	track_point_YYYYMMDD	rdsmaster	
+rel:r	wx_warning	rdsmaster	
+rel:S	airspace_edition_id_seq	rdsmaster	
+rel:S	airspace_id_seq	rdsmaster	
+rel:S	alert_event_id_seq	rdsmaster	
+rel:S	audit_log_id_seq	rdsmaster	
+rel:S	ingest_gap_id_seq	rdsmaster	
+rel:S	ingest_run_id_seq	rdsmaster	
+rel:S	ops_resolution_id_seq	rdsmaster	
+rel:S	ops_user_id_seq	rdsmaster	
+rel:S	quality_event_id_seq	rdsmaster	
+rel:S	wx_warning_id_seq	rdsmaster	
+schema	public	pg_database_owner	pg_database_owner=UC/pg_database_owner,wakeline_api=U/pg_database_owner,wakeline_collector=U/pg_database_owner,wakeline_migrator=UC/pg_database_owner

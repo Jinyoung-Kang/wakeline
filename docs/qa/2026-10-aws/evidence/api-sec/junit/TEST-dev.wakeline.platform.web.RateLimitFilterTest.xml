@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="dev.wakeline.platform.web.RateLimitFilterTest" tests="2" skipped="0" failures="0" errors="0" timestamp="2026-10-13T19:03:05.965Z" hostname="Jinyoung-MacBookPro.local" time="0.036">
+  <properties/>
+  <testcase name="underTheLimitThePublicRequestPassesWithItsHeaders()" classname="dev.wakeline.platform.web.RateLimitFilterTest" time="0.033"/>
+  <testcase name="the429BodyIsProblemJsonWithTheRequestPathEscaped()" classname="dev.wakeline.platform.web.RateLimitFilterTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

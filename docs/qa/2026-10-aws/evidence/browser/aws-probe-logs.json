@@ -1,0 +1,17 @@
+{
+  "rows0": 3,
+  "gridCount": 1,
+  "gridRole": 1,
+  "statusLine": "3건 표시(최신 순) 훑은 항목 3 해결 처리로 숨김 0건 보이는 목록 복사 .txt .ndjson",
+  "newButton": {
+    "seen": true,
+    "afterMs": 12381,
+    "label": "새 항목 1건"
+  },
+  "rowWithTag": 0,
+  "apiCalls": [
+    "16205 GET /api/v1/ops/logs?since=2026-10-13T18%3A23%3A35.120Z&limit=100&resolved=hide"
+  ],
+  "bad": [],
+  "statusLine2": "3건 표시(최신 순) 훑은 항목 3 해결 처리로 숨김 0건 새 항목 1건 보이는 목록 복사 .txt .ndjson"
+}

@@ -1,0 +1,8 @@
+/healthz
+      0.1s ..    72.2s  n= 19  max_ms=    21  status=200 health=ok
+/api/v1/ships?bbox=120,30,135,40
+      0.1s ..    72.2s  n= 19  max_ms=    23  status=200
+/api/v1/aircraft?bbox=124,33,132,39
+      0.1s ..    72.2s  n= 19  max_ms=    26  status=200
+/api/v1/alerts/history
+      0.1s ..    72.2s  n= 19  max_ms=    34  status=200

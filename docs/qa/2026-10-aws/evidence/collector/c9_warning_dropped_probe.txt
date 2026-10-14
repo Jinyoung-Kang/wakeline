@@ -1,0 +1,7 @@
+$ cd apps/collector && uv run --offline python ../../docs/qa/2026-10-aws/evidence/collector/c9_warning_dropped_probe.py
+# 2026-10-13T18:55:22Z
+rows: 3
+S1310000, 남해동부전해상                          , S1312020, 남해동부바깥먼바다                      , 202610091600, 202610101758, 풍랑  , 예비    , 발표,  ,=
+MAX_LEN + OverflowError lines: published warnings=3 dropped=2
+one line with a CP949-only syllable: NOT published — last_error='WarningResponseError — neither UTF-8 nor EUC-KR (byte 1744) · wrn_now_data · 0.0 s 경과'
+one line with a stray 0xFF byte: NOT published — last_error='WarningResponseError — neither UTF-8 nor EUC-KR (byte 1839) · wrn_now_data · 0.0 s 경과'

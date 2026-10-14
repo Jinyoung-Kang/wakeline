@@ -1,0 +1,8 @@
+{
+	auto_https off
+	admin off
+}
+:8103 {
+	header -Server
+	respond "ok" 200
+}

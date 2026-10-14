@@ -14,6 +14,9 @@ describe("statsPickDay · statsEmptyText: no future day is queried or promised",
     expect(statsPickDay("2026-11-01", "2026-10-01")).toEqual({ day: "2026-10-01", clamped: true });
     expect(statsPickDay("", "2026-10-01")).toBeNull();
     expect(statsPickDay("2026-02-30", "2026-10-01")).toBeNull();
+    // api 가 받지 않는 1970-01-01 앞(QA-1303)은 하한으로 되돌린다
+    expect(statsPickDay("1969-12-31", "2026-10-01")).toEqual({ day: "1970-01-01", clamped: true, below: true });
+    expect(statsPickDay("1970-01-01", "2026-10-01")).toEqual({ day: "1970-01-01", clamped: false });
   });
   it("a day after today never gets the 'filled after the next run' promise", () => {
     const t = statsEmptyText(false, "2026-11-01", "2026-10-02");

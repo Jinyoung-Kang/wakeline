@@ -1,0 +1,1201 @@
+{
+ "at": "2026-10-14T10:07:33Z",
+ "base": "http://localhost:8701",
+ "reps": 3,
+ "rows": [
+  {
+   "name": "aircraft wide full",
+   "path": "/api/v1/aircraft?bbox=100,10,150,60&detail=full",
+   "runs": [
+    {
+     "status": 200,
+     "ms": 95.60420799971325,
+     "wire": 91771,
+     "raw": 633388,
+     "enc": "gzip",
+     "ctype": "application/geo+json",
+     "cache": "max-age=5, public"
+    },
+    {
+     "status": 200,
+     "ms": 52.097332998528145,
+     "wire": 91769,
+     "raw": 633388,
+     "enc": "gzip",
+     "ctype": "application/geo+json",
+     "cache": "max-age=5, public"
+    },
+    {
+     "status": 200,
+     "ms": 29.19741699588485,
+     "wire": 91773,
+     "raw": 633388,
+     "enc": "gzip",
+     "ctype": "application/geo+json",
+     "cache": "max-age=5, public"
+    }
+   ],
+   "flags": []
+  },
+  {
+   "name": "aircraft wide lite",
+   "path": "/api/v1/aircraft?bbox=100,10,150,60&detail=lite",
+   "runs": [
+    {
+     "status": 200,
+     "ms": 37.17583300021943,
+     "wire": 88209,
+     "raw": 536421,
+     "enc": "gzip",
+     "ctype": "application/geo+json",
+     "cache": "max-age=5, public"
+    },
+    {
+     "status": 200,
+     "ms": 25.275959000282455,
+     "wire": 88208,
+     "raw": 536421,
+     "enc": "gzip",
+     "ctype": "application/geo+json",
+     "cache": "max-age=5, public"
+    },
+    {
+     "status": 200,
+     "ms": 38.297582999803126,
+     "wire": 88207,
+     "raw": 536421,
+     "enc": "gzip",
+     "ctype": "application/geo+json",
+     "cache": "max-age=5, public"
+    }
+   ],
+   "flags": []
+  },
+  {
+   "name": "aircraft world (422)",
+   "path": "/api/v1/aircraft?bbox=-180,-90,180,90&detail=full",
+   "runs": [
+    {
+     "status": 422,
+     "ms": 28.681957999651786,
+     "wire": 244,
+     "raw": 244,
+     "enc": "-",
+     "ctype": "application/problem+json",
+     "cache": "no-cache, no-store, max-age=0, must-revalidate"
+    },
+    {
+     "status": 422,
+     "ms": 10.117875004652888,
+     "wire": 244,
+     "raw": 244,
+     "enc": "-",
+     "ctype": "application/problem+json",
+     "cache": "no-cache, no-store, max-age=0, must-revalidate"
+    },
+    {
+     "status": 422,
+     "ms": 6.476916998508386,
+     "wire": 244,
+     "raw": 244,
+     "enc": "-",
+     "ctype": "application/problem+json",
+     "cache": "no-cache, no-store, max-age=0, must-revalidate"
+    }
+   ],
+   "flags": []
+  },
+  {
+   "name": "aircraft search",
+   "path": "/api/v1/aircraft/search?q=F2",
+   "runs": [
+    {
+     "status": 200,
+     "ms": 13.242499997431878,
+     "wire": 1095,
+     "raw": 4813,
+     "enc": "gzip",
+     "ctype": "application/json",
+     "cache": "max-age=5, public"
+    },
+    {
+     "status": 200,
+     "ms": 12.469625005905982,
+     "wire": 1097,
+     "raw": 4813,
+     "enc": "gzip",
+     "ctype": "application/json",
+     "cache": "max-age=5, public"
+    },
+    {
+     "status": 200,
+     "ms": 11.500000000523869,
+     "wire": 1089,
+     "raw": 4813,
+     "enc": "gzip",
+     "ctype": "application/json",
+     "cache": "max-age=5, public"
+    }
+   ],
+   "flags": []
+  },
+  {
+   "name": "aircraft detail",
+   "path": "/api/v1/aircraft/f10000",
+   "runs": [
+    {
+     "status": 200,
+     "ms": 61.01529100124026,
+     "wire": 278,
+     "raw": 402,
+     "enc": "gzip",
+     "ctype": "application/json",
+     "cache": "max-age=5, public"
+    },
+    {
+     "status": 200,
+     "ms": 17.37400000274647,
+     "wire": 278,
+     "raw": 402,
+     "enc": "gzip",
+     "ctype": "application/json",
+     "cache": "max-age=5, public"
+    },
+    {
+     "status": 200,
+     "ms": 12.691791998804547,
+     "wire": 277,
+     "raw": 402,
+     "enc": "gzip",
+     "ctype": "application/json",
+     "cache": "max-age=5, public"
+    }
+   ],
+   "flags": []
+  },
+  {
+   "name": "aircraft track 24h",
+   "path": "/api/v1/aircraft/f10000/track?from=2026-10-13T10:06:25Z&to=2026-10-14T10:06:25Z",
+   "runs": [
+    {
+     "status": 200,
+     "ms": 470.25841700087767,
+     "wire": 215131,
+     "raw": 1067358,
+     "enc": "gzip",
+     "ctype": "application/geo+json",
+     "cache": "max-age=30, public"
+    },
+    {
+     "status": 200,
+     "ms": 49.64766699413303,
+     "wire": 215132,
+     "raw": 1067358,
+     "enc": "gzip",
+     "ctype": "application/geo+json",
+     "cache": "max-age=30, public"
+    },
+    {
+     "status": 200,
+     "ms": 84.32637500663986,
+     "wire": 215127,
+     "raw": 1067358,
+     "enc": "gzip",
+     "ctype": "application/geo+json",
+     "cache": "max-age=30, public"
+    }
+   ],
+   "flags": [
+    "BIG"
+   ]
+  },
+  {
+   "name": "aircraft track 24h step60",
+   "path": "/api/v1/aircraft/f10000/track?from=2026-10-13T10:06:25Z&to=2026-10-14T10:06:25Z&stepS=60",
+   "runs": [
+    {
+     "status": 200,
+     "ms": 63.59070900361985,
+     "wire": 60159,
+     "raw": 280350,
+     "enc": "gzip",
+     "ctype": "application/geo+json",
+     "cache": "max-age=30, public"
+    },
+    {
+     "status": 200,
+     "ms": 43.40299999603303,
+     "wire": 60151,
+     "raw": 280350,
+     "enc": "gzip",
+     "ctype": "application/geo+json",
+     "cache": "max-age=30, public"
+    },
+    {
+     "status": 200,
+     "ms": 95.78479199990397,
+     "wire": 60152,
+     "raw": 280350,
+     "enc": "gzip",
+     "ctype": "application/geo+json",
+     "cache": "max-age=30, public"
+    }
+   ],
+   "flags": []
+  },
+  {
+   "name": "airports all",
+   "path": "/api/v1/airports?watched=false",
+   "runs": [
+    {
+     "status": 200,
+     "ms": 25.774333997105714,
+     "wire": 1132,
+     "raw": 6247,
+     "enc": "gzip",
+     "ctype": "application/geo+json",
+     "cache": "max-age=60, public"
+    },
+    {
+     "status": 200,
+     "ms": 17.167083999083843,
+     "wire": 1132,
+     "raw": 6247,
+     "enc": "gzip",
+     "ctype": "application/geo+json",
+     "cache": "max-age=60, public"
+    },
+    {
+     "status": 200,
+     "ms": 7.86570899799699,
+     "wire": 1129,
+     "raw": 6247,
+     "enc": "gzip",
+     "ctype": "application/geo+json",
+     "cache": "max-age=60, public"
+    }
+   ],
+   "flags": []
+  },
+  {
+   "name": "airport wx",
+   "path": "/api/v1/airports/RKSI/wx",
+   "runs": [
+    {
+     "status": 200,
+     "ms": 22.712541998771485,
+     "wire": 761,
+     "raw": 5727,
+     "enc": "gzip",
+     "ctype": "application/json",
+     "cache": "max-age=300, public"
+    },
+    {
+     "status": 200,
+     "ms": 14.974791003623977,
+     "wire": 758,
+     "raw": 5727,
+     "enc": "gzip",
+     "ctype": "application/json",
+     "cache": "max-age=300, public"
+    },
+    {
+     "status": 200,
+     "ms": 17.91912500630133,
+     "wire": 761,
+     "raw": 5727,
+     "enc": "gzip",
+     "ctype": "application/json",
+     "cache": "max-age=300, public"
+    }
+   ],
+   "flags": []
+  },
+  {
+   "name": "ais gaps 31d",
+   "path": "/api/v1/ais/gaps?from=2026-09-13T10:11:25Z&to=2026-10-14T10:06:25Z",
+   "runs": [
+    {
+     "status": 200,
+     "ms": 27.34783399500884,
+     "wire": 6200,
+     "raw": 77961,
+     "enc": "gzip",
+     "ctype": "application/json",
+     "cache": "max-age=30, public"
+    },
+    {
+     "status": 200,
+     "ms": 16.741292005463038,
+     "wire": 6200,
+     "raw": 77961,
+     "enc": "gzip",
+     "ctype": "application/json",
+     "cache": "max-age=30, public"
+    },
+    {
+     "status": 200,
+     "ms": 18.166832996939775,
+     "wire": 6198,
+     "raw": 77961,
+     "enc": "gzip",
+     "ctype": "application/json",
+     "cache": "max-age=30, public"
+    }
+   ],
+   "flags": []
+  },
+  {
+   "name": "alerts active",
+   "path": "/api/v1/alerts",
+   "runs": [
+    {
+     "status": 200,
+     "ms": 24.81387499574339,
+     "wire": 54423,
+     "raw": 518524,
+     "enc": "gzip",
+     "ctype": "application/json",
+     "cache": "max-age=5, public"
+    },
+    {
+     "status": 200,
+     "ms": 17.092957998102065,
+     "wire": 54458,
+     "raw": 518524,
+     "enc": "gzip",
+     "ctype": "application/json",
+     "cache": "max-age=5, public"
+    },
+    {
+     "status": 200,
+     "ms": 21.235290994809475,
+     "wire": 54442,
+     "raw": 518524,
+     "enc": "gzip",
+     "ctype": "application/json",
+     "cache": "max-age=5, public"
+    }
+   ],
+   "flags": []
+  },
+  {
+   "name": "alerts history 30d x200",
+   "path": "/api/v1/alerts/history?from=2026-09-14T10:11:25Z&to=2026-10-14T10:06:25Z&limit=200",
+   "runs": [
+    {
+     "status": 200,
+     "ms": 29.233499997644685,
+     "wire": 19111,
+     "raw": 160977,
+     "enc": "gzip",
+     "ctype": "application/json",
+     "cache": "max-age=60, public"
+    },
+    {
+     "status": 200,
+     "ms": 28.14349999971455,
+     "wire": 19107,
+     "raw": 160977,
+     "enc": "gzip",
+     "ctype": "application/json",
+     "cache": "max-age=60, public"
+    },
+    {
+     "status": 200,
+     "ms": 26.552958006504923,
+     "wire": 19110,
+     "raw": 160977,
+     "enc": "gzip",
+     "ctype": "application/json",
+     "cache": "max-age=60, public"
+    }
+   ],
+   "flags": []
+  },
+  {
+   "name": "radar frames",
+   "path": "/api/v1/radar/frames",
+   "runs": [
+    {
+     "status": 200,
+     "ms": 12.334915998508222,
+     "wire": 510,
+     "raw": 1080,
+     "enc": "gzip",
+     "ctype": "application/json",
+     "cache": "max-age=60, public"
+    },
+    {
+     "status": 200,
+     "ms": 6.704708001052495,
+     "wire": 510,
+     "raw": 1080,
+     "enc": "gzip",
+     "ctype": "application/json",
+     "cache": "max-age=60, public"
+    },
+    {
+     "status": 200,
+     "ms": 10.163707993342541,
+     "wire": 510,
+     "raw": 1080,
+     "enc": "gzip",
+     "ctype": "application/json",
+     "cache": "max-age=60, public"
+    }
+   ],
+   "flags": []
+  },
+  {
+   "name": "radar kr",
+   "path": "/api/v1/radar/kr",
+   "runs": [
+    {
+     "status": 200,
+     "ms": 18.106541996530723,
+     "wire": 343,
+     "raw": 364,
+     "enc": "gzip",
+     "ctype": "application/json",
+     "cache": "max-age=30, public"
+    },
+    {
+     "status": 200,
+     "ms": 13.164375006454065,
+     "wire": 342,
+     "raw": 364,
+     "enc": "gzip",
+     "ctype": "application/json",
+     "cache": "max-age=30, public"
+    },
+    {
+     "status": 200,
+     "ms": 7.396416993287858,
+     "wire": 344,
+     "raw": 364,
+     "enc": "gzip",
+     "ctype": "application/json",
+     "cache": "max-age=30, public"
+    }
+   ],
+   "flags": []
+  },
+  {
+   "name": "replay wide recent",
+   "path": "/api/v1/replay?at=2026-10-14T09:36:25Z&bbox=100,10,150,60",
+   "runs": [
+    {
+     "status": 200,
+     "ms": 152.84291699936148,
+     "wire": 65761,
+     "raw": 395280,
+     "enc": "gzip",
+     "ctype": "application/json",
+     "cache": "max-age=60, public"
+    },
+    {
+     "status": 200,
+     "ms": 63.759167001990136,
+     "wire": 65760,
+     "raw": 395280,
+     "enc": "gzip",
+     "ctype": "application/json",
+     "cache": "max-age=60, public"
+    },
+    {
+     "status": 200,
+     "ms": 56.628375001309905,
+     "wire": 65761,
+     "raw": 395280,
+     "enc": "gzip",
+     "ctype": "application/json",
+     "cache": "max-age=60, public"
+    }
+   ],
+   "flags": []
+  },
+  {
+   "name": "replay wide 1m (10d)",
+   "path": "/api/v1/replay?at=2026-10-04T10:06:25Z&bbox=100,10,150,60",
+   "runs": [
+    {
+     "status": 200,
+     "ms": 152.41175000119256,
+     "wire": 10202,
+     "raw": 44855,
+     "enc": "gzip",
+     "ctype": "application/json",
+     "cache": "max-age=60, public"
+    },
+    {
+     "status": 200,
+     "ms": 17.06808400194859,
+     "wire": 10207,
+     "raw": 44855,
+     "enc": "gzip",
+     "ctype": "application/json",
+     "cache": "max-age=60, public"
+    },
+    {
+     "status": 200,
+     "ms": 30.519083004037384,
+     "wire": 10203,
+     "raw": 44855,
+     "enc": "gzip",
+     "ctype": "application/json",
+     "cache": "max-age=60, public"
+    }
+   ],
+   "flags": []
+  },
+  {
+   "name": "ships wide",
+   "path": "/api/v1/ships?bbox=100,10,150,60",
+   "runs": [
+    {
+     "status": 200,
+     "ms": 55.49591700400924,
+     "wire": 244431,
+     "raw": 1511391,
+     "enc": "gzip",
+     "ctype": "application/geo+json",
+     "cache": "max-age=10, public"
+    },
+    {
+     "status": 200,
+     "ms": 41.2064999982249,
+     "wire": 244080,
+     "raw": 1511930,
+     "enc": "gzip",
+     "ctype": "application/geo+json",
+     "cache": "max-age=10, public"
+    },
+    {
+     "status": 200,
+     "ms": 33.39191599661717,
+     "wire": 244078,
+     "raw": 1511930,
+     "enc": "gzip",
+     "ctype": "application/geo+json",
+     "cache": "max-age=10, public"
+    }
+   ],
+   "flags": [
+    "BIG"
+   ]
+  },
+  {
+   "name": "ships atlantic",
+   "path": "/api/v1/ships?bbox=-60,0,-10,50",
+   "runs": [
+    {
+     "status": 200,
+     "ms": 13.144790995283984,
+     "wire": 36291,
+     "raw": 215526,
+     "enc": "gzip",
+     "ctype": "application/geo+json",
+     "cache": "max-age=10, public"
+    },
+    {
+     "status": 200,
+     "ms": 14.9253330018837,
+     "wire": 36292,
+     "raw": 215526,
+     "enc": "gzip",
+     "ctype": "application/geo+json",
+     "cache": "max-age=10, public"
+    },
+    {
+     "status": 200,
+     "ms": 18.127208997611888,
+     "wire": 36293,
+     "raw": 215526,
+     "enc": "gzip",
+     "ctype": "application/geo+json",
+     "cache": "max-age=10, public"
+    }
+   ],
+   "flags": []
+  },
+  {
+   "name": "ships coverage",
+   "path": "/api/v1/ships/coverage",
+   "runs": [
+    {
+     "status": 200,
+     "ms": 59.925916997599415,
+     "wire": 176880,
+     "raw": 722659,
+     "enc": "gzip",
+     "ctype": "application/json",
+     "cache": "max-age=60, public"
+    },
+    {
+     "status": 200,
+     "ms": 25.878833002934698,
+     "wire": 176875,
+     "raw": 722659,
+     "enc": "gzip",
+     "ctype": "application/json",
+     "cache": "max-age=60, public"
+    },
+    {
+     "status": 200,
+     "ms": 31.04358400014462,
+     "wire": 176876,
+     "raw": 722659,
+     "enc": "gzip",
+     "ctype": "application/json",
+     "cache": "max-age=60, public"
+    }
+   ],
+   "flags": []
+  },
+  {
+   "name": "ships search x20",
+   "path": "/api/v1/ships/search?q=QA%20VESSEL&limit=20",
+   "runs": [
+    {
+     "status": 200,
+     "ms": 44.767291998141445,
+     "wire": 1209,
+     "raw": 5700,
+     "enc": "gzip",
+     "ctype": "application/json",
+     "cache": "max-age=5, public"
+    },
+    {
+     "status": 200,
+     "ms": 29.298166002263315,
+     "wire": 1211,
+     "raw": 5700,
+     "enc": "gzip",
+     "ctype": "application/json",
+     "cache": "max-age=5, public"
+    },
+    {
+     "status": 200,
+     "ms": 18.095874998834915,
+     "wire": 1214,
+     "raw": 5703,
+     "enc": "gzip",
+     "ctype": "application/json",
+     "cache": "max-age=5, public"
+    }
+   ],
+   "flags": []
+  },
+  {
+   "name": "ship detail",
+   "path": "/api/v1/ships/300000001",
+   "runs": [
+    {
+     "status": 200,
+     "ms": 19.17404199775774,
+     "wire": 566,
+     "raw": 1091,
+     "enc": "gzip",
+     "ctype": "application/json",
+     "cache": "max-age=5, public"
+    },
+    {
+     "status": 200,
+     "ms": 8.048125004279427,
+     "wire": 565,
+     "raw": 1091,
+     "enc": "gzip",
+     "ctype": "application/json",
+     "cache": "max-age=5, public"
+    },
+    {
+     "status": 200,
+     "ms": 9.5073750053416,
+     "wire": 564,
+     "raw": 1091,
+     "enc": "gzip",
+     "ctype": "application/json",
+     "cache": "max-age=5, public"
+    }
+   ],
+   "flags": []
+  },
+  {
+   "name": "ship track 24h",
+   "path": "/api/v1/ships/300000001/track?from=2026-10-13T10:06:25Z&to=2026-10-14T10:06:25Z",
+   "runs": [
+    {
+     "status": 200,
+     "ms": 182.3016659982386,
+     "wire": 55378,
+     "raw": 287425,
+     "enc": "gzip",
+     "ctype": "application/geo+json",
+     "cache": "max-age=30, public"
+    },
+    {
+     "status": 200,
+     "ms": 20.923750002111774,
+     "wire": 55381,
+     "raw": 287425,
+     "enc": "gzip",
+     "ctype": "application/geo+json",
+     "cache": "max-age=30, public"
+    },
+    {
+     "status": 200,
+     "ms": 30.904374994861428,
+     "wire": 55379,
+     "raw": 287425,
+     "enc": "gzip",
+     "ctype": "application/geo+json",
+     "cache": "max-age=30, public"
+    }
+   ],
+   "flags": []
+  },
+  {
+   "name": "sigmets all",
+   "path": "/api/v1/sigmets?active=false",
+   "runs": [
+    {
+     "status": 200,
+     "ms": 22.343875003571156,
+     "wire": 29254,
+     "raw": 122682,
+     "enc": "gzip",
+     "ctype": "application/geo+json",
+     "cache": "max-age=60, public"
+    },
+    {
+     "status": 200,
+     "ms": 11.275208002189174,
+     "wire": 29254,
+     "raw": 122682,
+     "enc": "gzip",
+     "ctype": "application/geo+json",
+     "cache": "max-age=60, public"
+    },
+    {
+     "status": 200,
+     "ms": 14.874499996949453,
+     "wire": 29255,
+     "raw": 122682,
+     "enc": "gzip",
+     "ctype": "application/geo+json",
+     "cache": "max-age=60, public"
+    }
+   ],
+   "flags": []
+  },
+  {
+   "name": "sigmets active",
+   "path": "/api/v1/sigmets?active=true",
+   "runs": [
+    {
+     "status": 200,
+     "ms": 16.807625004730653,
+     "wire": 29254,
+     "raw": 122682,
+     "enc": "gzip",
+     "ctype": "application/geo+json",
+     "cache": "max-age=60, public"
+    },
+    {
+     "status": 200,
+     "ms": 11.542291998921428,
+     "wire": 29259,
+     "raw": 122682,
+     "enc": "gzip",
+     "ctype": "application/geo+json",
+     "cache": "max-age=60, public"
+    },
+    {
+     "status": 200,
+     "ms": 13.678083996637724,
+     "wire": 29255,
+     "raw": 122682,
+     "enc": "gzip",
+     "ctype": "application/geo+json",
+     "cache": "max-age=60, public"
+    }
+   ],
+   "flags": []
+  },
+  {
+   "name": "stats sigmet fir 92d",
+   "path": "/api/v1/stats/sigmet?from=2026-07-14&to=2026-10-14&group=fir",
+   "runs": [
+    {
+     "status": 200,
+     "ms": 70.34941600431921,
+     "wire": 50023,
+     "raw": 488367,
+     "enc": "gzip",
+     "ctype": "application/json",
+     "cache": "max-age=600, public"
+    },
+    {
+     "status": 200,
+     "ms": 68.38816600065911,
+     "wire": 50021,
+     "raw": 488367,
+     "enc": "gzip",
+     "ctype": "application/json",
+     "cache": "max-age=600, public"
+    },
+    {
+     "status": 200,
+     "ms": 75.80320900160586,
+     "wire": 50023,
+     "raw": 488367,
+     "enc": "gzip",
+     "ctype": "application/json",
+     "cache": "max-age=600, public"
+    }
+   ],
+   "flags": []
+  },
+  {
+   "name": "stats sigmet hazard 92d",
+   "path": "/api/v1/stats/sigmet?from=2026-07-14&to=2026-10-14&group=hazard",
+   "runs": [
+    {
+     "status": 200,
+     "ms": 18.15583300049184,
+     "wire": 4437,
+     "raw": 32862,
+     "enc": "gzip",
+     "ctype": "application/json",
+     "cache": "max-age=600, public"
+    },
+    {
+     "status": 200,
+     "ms": 17.506000003777444,
+     "wire": 4437,
+     "raw": 32862,
+     "enc": "gzip",
+     "ctype": "application/json",
+     "cache": "max-age=600, public"
+    },
+    {
+     "status": 200,
+     "ms": 19.77633299975423,
+     "wire": 4436,
+     "raw": 32862,
+     "enc": "gzip",
+     "ctype": "application/json",
+     "cache": "max-age=600, public"
+    }
+   ],
+   "flags": []
+  },
+  {
+   "name": "stats alerts 92d",
+   "path": "/api/v1/stats/alerts?from=2026-07-14&to=2026-10-14",
+   "runs": [
+    {
+     "status": 200,
+     "ms": 18.685082999581937,
+     "wire": 1283,
+     "raw": 11293,
+     "enc": "gzip",
+     "ctype": "application/json",
+     "cache": "max-age=600, public"
+    },
+    {
+     "status": 200,
+     "ms": 15.105792001122609,
+     "wire": 1283,
+     "raw": 11293,
+     "enc": "gzip",
+     "ctype": "application/json",
+     "cache": "max-age=600, public"
+    },
+    {
+     "status": 200,
+     "ms": 11.875874995894264,
+     "wire": 1284,
+     "raw": 11293,
+     "enc": "gzip",
+     "ctype": "application/json",
+     "cache": "max-age=600, public"
+    }
+   ],
+   "flags": []
+  },
+  {
+   "name": "stats traffic",
+   "path": "/api/v1/stats/traffic?day=2026-10-13",
+   "runs": [
+    {
+     "status": 200,
+     "ms": 15.486584001337178,
+     "wire": 445,
+     "raw": 1472,
+     "enc": "gzip",
+     "ctype": "application/json",
+     "cache": "max-age=600, public"
+    },
+    {
+     "status": 200,
+     "ms": 15.388000007078517,
+     "wire": 448,
+     "raw": 1472,
+     "enc": "gzip",
+     "ctype": "application/json",
+     "cache": "max-age=600, public"
+    },
+    {
+     "status": 200,
+     "ms": 9.464417002163827,
+     "wire": 446,
+     "raw": 1472,
+     "enc": "gzip",
+     "ctype": "application/json",
+     "cache": "max-age=600, public"
+    }
+   ],
+   "flags": []
+  },
+  {
+   "name": "status",
+   "path": "/api/v1/status",
+   "runs": [
+    {
+     "status": 200,
+     "ms": 18.838833006157074,
+     "wire": 671,
+     "raw": 1510,
+     "enc": "gzip",
+     "ctype": "application/json",
+     "cache": "max-age=5, public"
+    },
+    {
+     "status": 200,
+     "ms": 9.522583000943996,
+     "wire": 671,
+     "raw": 1510,
+     "enc": "gzip",
+     "ctype": "application/json",
+     "cache": "max-age=5, public"
+    },
+    {
+     "status": 200,
+     "ms": 8.455499999399763,
+     "wire": 670,
+     "raw": 1510,
+     "enc": "gzip",
+     "ctype": "application/json",
+     "cache": "max-age=5, public"
+    }
+   ],
+   "flags": []
+  },
+  {
+   "name": "traffic grid",
+   "path": "/api/v1/traffic/grid",
+   "runs": [
+    {
+     "status": 200,
+     "ms": 9.330708002380561,
+     "wire": 451,
+     "raw": 565,
+     "enc": "gzip",
+     "ctype": "application/json",
+     "cache": "max-age=30, public"
+    },
+    {
+     "status": 200,
+     "ms": 13.641875004395843,
+     "wire": 451,
+     "raw": 565,
+     "enc": "gzip",
+     "ctype": "application/json",
+     "cache": "max-age=30, public"
+    },
+    {
+     "status": 200,
+     "ms": 10.425541004224215,
+     "wire": 452,
+     "raw": 565,
+     "enc": "gzip",
+     "ctype": "application/json",
+     "cache": "max-age=30, public"
+    }
+   ],
+   "flags": []
+  },
+  {
+   "name": "healthz",
+   "path": "/healthz",
+   "runs": [
+    {
+     "status": 200,
+     "ms": 10.36845799535513,
+     "wire": 71,
+     "raw": 54,
+     "enc": "gzip",
+     "ctype": "application/json",
+     "cache": "no-store"
+    },
+    {
+     "status": 200,
+     "ms": 10.039958004199434,
+     "wire": 71,
+     "raw": 54,
+     "enc": "gzip",
+     "ctype": "application/json",
+     "cache": "no-store"
+    },
+    {
+     "status": 200,
+     "ms": 7.78662499942584,
+     "wire": 71,
+     "raw": 54,
+     "enc": "gzip",
+     "ctype": "application/json",
+     "cache": "no-store"
+    }
+   ],
+   "flags": []
+  },
+  {
+   "name": "airspace all",
+   "path": "/api/v1/airspace",
+   "runs": [
+    {
+     "status": 200,
+     "ms": 16.897708002943546,
+     "wire": 254,
+     "raw": 247,
+     "enc": "gzip",
+     "ctype": "application/geo+json",
+     "cache": "max-age=300, public"
+    },
+    {
+     "status": 200,
+     "ms": 5.983249997370876,
+     "wire": 254,
+     "raw": 247,
+     "enc": "gzip",
+     "ctype": "application/geo+json",
+     "cache": "max-age=300, public"
+    },
+    {
+     "status": 200,
+     "ms": 9.157041997241322,
+     "wire": 254,
+     "raw": 247,
+     "enc": "gzip",
+     "ctype": "application/geo+json",
+     "cache": "max-age=300, public"
+    }
+   ],
+   "flags": []
+  },
+  {
+   "name": "warnings now",
+   "path": "/api/v1/warnings",
+   "runs": [
+    {
+     "status": 200,
+     "ms": 10.6707919985638,
+     "wire": 641,
+     "raw": 1973,
+     "enc": "gzip",
+     "ctype": "application/json",
+     "cache": "max-age=30, public"
+    },
+    {
+     "status": 200,
+     "ms": 9.926832994096912,
+     "wire": 640,
+     "raw": 1973,
+     "enc": "gzip",
+     "ctype": "application/json",
+     "cache": "max-age=30, public"
+    },
+    {
+     "status": 200,
+     "ms": 10.04879199899733,
+     "wire": 639,
+     "raw": 1973,
+     "enc": "gzip",
+     "ctype": "application/json",
+     "cache": "max-age=30, public"
+    }
+   ],
+   "flags": []
+  },
+  {
+   "name": "warnings history 30d x500",
+   "path": "/api/v1/warnings/history?from=2026-09-14T10:11:25Z&to=2026-10-14T10:06:25Z&limit=500",
+   "runs": [
+    {
+     "status": 200,
+     "ms": 35.54887499922188,
+     "wire": 17720,
+     "raw": 191163,
+     "enc": "gzip",
+     "ctype": "application/json",
+     "cache": "max-age=60, public"
+    },
+    {
+     "status": 200,
+     "ms": 24.79158299684059,
+     "wire": 17717,
+     "raw": 191163,
+     "enc": "gzip",
+     "ctype": "application/json",
+     "cache": "max-age=60, public"
+    },
+    {
+     "status": 200,
+     "ms": 17.945459003385622,
+     "wire": 17716,
+     "raw": 191163,
+     "enc": "gzip",
+     "ctype": "application/json",
+     "cache": "max-age=60, public"
+    }
+   ],
+   "flags": []
+  },
+  {
+   "name": "watch x50",
+   "path": "/api/v1/watch?aircraft=f10000,f10001,f10002,f10003,f10004,f10005,f10006,f10007,f10008,f10009,f1000a,f1000b,f1000c,f1000d,f1000e,f1000f,f10010,f10011,f10012,f10013,f10014,f10015,f10016,f10017,f10018,f10019,f1001a,f1001b,f1001c,f1001d&ships=300000001,300000002,300000003,300000004,300000005,300000006,300000007,300000008,300000009,300000010,300000011,300000012,300000013,300000014,300000015&airports=RKSI,RKSS,RKPC,RKPK,RKTU",
+   "runs": [
+    {
+     "status": 200,
+     "ms": 20.105666997551452,
+     "wire": 747,
+     "raw": 4426,
+     "enc": "gzip",
+     "ctype": "application/json",
+     "cache": "max-age=5, private"
+    },
+    {
+     "status": 200,
+     "ms": 11.99679199635284,
+     "wire": 749,
+     "raw": 4426,
+     "enc": "gzip",
+     "ctype": "application/json",
+     "cache": "max-age=5, private"
+    },
+    {
+     "status": 200,
+     "ms": 13.923042002716102,
+     "wire": 754,
+     "raw": 4426,
+     "enc": "gzip",
+     "ctype": "application/json",
+     "cache": "max-age=5, private"
+    }
+   ],
+   "flags": []
+  }
+ ]
+}

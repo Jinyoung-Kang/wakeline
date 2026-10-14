@@ -1,0 +1,25 @@
+# 실행: cd apps/api && ./gradlew --offline test --tests 'dev.wakeline.qa.Qa1311BboxExactly2500SqdegRejectedTest'
+# 결과(2026-10-14 05:2x KST, 브랜치 qa/aws-2026-10 · 제품 코드 수정 없음): tests=7 failures=5 errors=0
+
+PASS  "124.1,10.1,174.1,60.1"
+PASS  "0,0,50,50"
+FAIL  "100.3,10.3,150.3,60.3"
+      java.lang.AssertionError: [bbox=100.3,10.3,150.3,60.3 — 10진 표기 폭 50° × 50° = 2,500 sq° (≤ 상한)] 
+Expecting code not to raise a throwable but caught
+  "dev.wakeline.platform.web.Problem: bbox area 2500 sq° exceeds 2500
+FAIL  "100.3,0,150.3,50"
+      java.lang.AssertionError: [bbox=100.3,0,150.3,50 — 10진 표기 폭 50° × 50° = 2,500 sq° (≤ 상한)] 
+Expecting code not to raise a throwable but caught
+  "dev.wakeline.platform.web.Problem: bbox area 2500 sq° exceeds 2500
+FAIL  "0,14.4,50,64.4"
+      java.lang.AssertionError: [bbox=0,14.4,50,64.4 — 10진 표기 폭 50° × 50° = 2,500 sq° (≤ 상한)] 
+Expecting code not to raise a throwable but caught
+  "dev.wakeline.platform.web.Problem: bbox area 2500 sq° exceeds 2500
+FAIL  "101.8,14.9,151.8,64.9"
+      java.lang.AssertionError: [bbox=101.8,14.9,151.8,64.9 — 10진 표기 폭 50° × 50° = 2,500 sq° (≤ 상한)] 
+Expecting code not to raise a throwable but caught
+  "dev.wakeline.platform.web.Problem: bbox area 2500 sq° exceeds 2500
+FAIL  "-177.8,-89.9,-127.8,-39.9"
+      java.lang.AssertionError: [bbox=-177.8,-89.9,-127.8,-39.9 — 10진 표기 폭 50° × 50° = 2,500 sq° (≤ 상한)] 
+Expecting code not to raise a throwable but caught
+  "dev.wakeline.platform.web.Problem: bbox area 2500 sq° exceeds 2500

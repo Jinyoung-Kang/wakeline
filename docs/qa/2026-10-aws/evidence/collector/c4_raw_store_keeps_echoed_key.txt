@@ -1,0 +1,4 @@
+$ cd apps/collector && uv run --offline python ../../docs/qa/2026-10-aws/evidence/collector/c4_raw_store_keeps_echoed_key.py
+# 2026-10-13T18:56:04Z — 가짜 키, 임시 폴더(지움)
+raw ref portmis/20261013/185559_175784.json.gz: fake key on disk = True (masking registered = True)
+stored real responses scanned: key names found = none

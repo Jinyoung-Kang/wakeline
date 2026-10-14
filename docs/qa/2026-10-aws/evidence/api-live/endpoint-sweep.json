@@ -1,0 +1,206 @@
+{
+ "label": "api-live",
+ "at": "2026-10-13T20:00:11.562417+00:00",
+ "rows": [
+  {
+   "path": "/healthz",
+   "status": 200,
+   "retry_after": null,
+   "ms": 3,
+   "health": [
+    "ok",
+    null
+   ]
+  },
+  {
+   "path": "/api/v1/status",
+   "status": 200,
+   "retry_after": null,
+   "ms": 11
+  },
+  {
+   "path": "/api/v1/aircraft?bbox=124,33,132,39",
+   "status": 200,
+   "retry_after": null,
+   "ms": 11
+  },
+  {
+   "path": "/api/v1/aircraft/search?q=B-",
+   "status": 200,
+   "retry_after": null,
+   "ms": 9
+  },
+  {
+   "path": "/api/v1/aircraft/71aa64",
+   "status": 200,
+   "retry_after": null,
+   "ms": 10
+  },
+  {
+   "path": "/api/v1/aircraft/71aa64/track",
+   "status": 200,
+   "retry_after": null,
+   "ms": 15
+  },
+  {
+   "path": "/api/v1/ships?bbox=120,30,135,40",
+   "status": 200,
+   "retry_after": null,
+   "ms": 7
+  },
+  {
+   "path": "/api/v1/ships/search?q=44",
+   "status": 200,
+   "retry_after": null,
+   "ms": 9
+  },
+  {
+   "path": "/api/v1/ships/440095870",
+   "status": 200,
+   "retry_after": null,
+   "ms": 9
+  },
+  {
+   "path": "/api/v1/ships/440095870/track",
+   "status": 200,
+   "retry_after": null,
+   "ms": 7
+  },
+  {
+   "path": "/api/v1/ships/coverage",
+   "status": 200,
+   "retry_after": null,
+   "ms": 7
+  },
+  {
+   "path": "/api/v1/ais/gaps?from=2026-10-13T14%3A00%3A01Z",
+   "status": 200,
+   "retry_after": null,
+   "ms": 10
+  },
+  {
+   "path": "/api/v1/traffic/grid",
+   "status": 200,
+   "retry_after": null,
+   "ms": 12,
+   "stale": true
+  },
+  {
+   "path": "/api/v1/sigmets",
+   "status": 200,
+   "retry_after": null,
+   "ms": 7
+  },
+  {
+   "path": "/api/v1/sigmets/GVSC%3A1%3A1791919784",
+   "status": 200,
+   "retry_after": null,
+   "ms": 8
+  },
+  {
+   "path": "/api/v1/alerts",
+   "status": 200,
+   "retry_after": null,
+   "ms": 14
+  },
+  {
+   "path": "/api/v1/alerts/history",
+   "status": 200,
+   "retry_after": null,
+   "ms": 9
+  },
+  {
+   "path": "/api/v1/radar/frames",
+   "status": 200,
+   "retry_after": null,
+   "ms": 11
+  },
+  {
+   "path": "/api/v1/radar/kr",
+   "status": 200,
+   "retry_after": null,
+   "ms": 8,
+   "stale": true
+  },
+  {
+   "path": "/api/v1/airports?bbox=124,33,132,39",
+   "status": 200,
+   "retry_after": null,
+   "ms": 5
+  },
+  {
+   "path": "/api/v1/airports/RKSI/wx",
+   "status": 200,
+   "retry_after": null,
+   "ms": 9
+  },
+  {
+   "path": "/api/v1/replay?at=2026-10-13T19%3A55%3A01Z&bbox=124,33,132,39",
+   "status": 200,
+   "retry_after": null,
+   "ms": 15
+  },
+  {
+   "path": "/api/v1/stats/sigmet?from=2026-10-13&to=2026-10-13",
+   "status": 200,
+   "retry_after": null,
+   "ms": 9
+  },
+  {
+   "path": "/api/v1/stats/traffic?day=2026-10-13",
+   "status": 200,
+   "retry_after": null,
+   "ms": 13
+  },
+  {
+   "path": "/api/v1/stats/alerts?from=2026-10-13&to=2026-10-13",
+   "status": 200,
+   "retry_after": null,
+   "ms": 5
+  },
+  {
+   "path": "/api/v1/airspace",
+   "status": 200,
+   "retry_after": null,
+   "ms": 8
+  },
+  {
+   "path": "/api/v1/warnings",
+   "status": 200,
+   "retry_after": null,
+   "ms": 9
+  },
+  {
+   "path": "/api/v1/warnings/history?from=2026-10-06T20%3A00%3A01Z",
+   "status": 200,
+   "retry_after": null,
+   "ms": 17
+  },
+  {
+   "path": "/api/v1/watch?aircraft=71aa64&ships=440095870&airports=RKSI",
+   "status": 200,
+   "retry_after": null,
+   "ms": 16
+  },
+  {
+   "path": "/api/v1/alerts/1791921591013008",
+   "status": 200,
+   "retry_after": null,
+   "ms": 12
+  },
+  {
+   "path": "/api/v1/radar/kr/202601010000.png",
+   "status": 404,
+   "retry_after": null,
+   "ms": 10,
+   "code": "NOT_FOUND"
+  },
+  {
+   "path": "/api/v1/openapi",
+   "status": 200,
+   "retry_after": null,
+   "ms": 344
+  }
+ ],
+ "suspect": []
+}

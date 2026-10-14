@@ -1,5 +1,6 @@
 package dev.wakeline.platform.web;
 
+import dev.wakeline.platform.support.Spaces;
 import org.springframework.web.bind.WebDataBinder;
 
 import java.beans.PropertyEditorSupport;
@@ -34,7 +35,7 @@ public final class NumberParams {
 
         @Override
         public void setAsText(String text) {
-            String t = text == null ? "" : text.strip();
+            String t = text == null ? "" : Spaces.strip(text); // 공백 글자만 — 제어 문자는 남아 아래 형식 검사에 걸린다(QA-1103)
             if (t.isEmpty()) {
                 if (primitive) throw new IllegalArgumentException("a number is required");
                 setValue(null);

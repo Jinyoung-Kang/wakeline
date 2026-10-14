@@ -1,0 +1,71 @@
+{
+  "downloaded_at_kst": "10-14 04:47:21 KST",
+  "downloaded_at": "2026-10-13T19:47:21.536Z",
+  "response": {
+    "alert": {
+      "id": 1791920831270031,
+      "kind": "OBSERVED",
+      "hex": "71c361",
+      "callsign": "AAR751",
+      "sigmet_id": "RKRR:Q9:1791919800",
+      "fir_id": "RKRR",
+      "hazard": "<i id=qaxh>TS",
+      "qualifier": "<b>EMBD",
+      "entered_at": "2026-10-13T19:47:11.269621014Z",
+      "alt_ft": 18350,
+      "evidence": {
+        "polygon_index": 0,
+        "band_ft": [
+          0,
+          45000
+        ],
+        "base_source": "assumed_surface",
+        "top_source": "json",
+        "base_assumed_surface": true,
+        "aircraft_alt_ft": 18350,
+        "valid_from": "2026-10-13T19:30:00Z",
+        "valid_to": "2026-10-13T23:30:00Z",
+        "judged_at": "2026-10-13T19:47:11.269621014Z",
+        "method": "observed_point_in_polygon",
+        "confirmations": 2,
+        "confirmations_seen_at": [
+          "2026-10-13T19:46:59.755Z",
+          "2026-10-13T19:47:10.261Z"
+        ],
+        "position": [
+          36.25994,
+          126.31525
+        ],
+        "provider": "fixture",
+        "seen_at": "2026-10-13T19:47:10.261Z",
+        "position_age_s": 1
+      },
+      "estimated": false
+    },
+    "source": "engine",
+    "sigmet": {
+      "id": "RKRR:Q9:1791919800",
+      "fir_id": "RKRR",
+      "fir_name": "<i id=qaxs>F</i><img src=x onerror=window.__qa_xss=11>",
+      "hazard": "<i id=qaxh>TS",
+      "qualifier": "<b>EMBD",
+      "base_ft": 0,
+      "top_ft": 45000,
+      "base_source": "assumed_surface",
+      "top_source": "json",
+      "valid_from": "2026-10-13T19:30:00Z",
+      "valid_to": "2026-10-13T23:30:00Z",
+      "raw_text": "WSKO31 RKSI\nRKRR SIGMET Q9 <img src=x onerror=window.__qa_xss=11> <script>window.__qa_xss=14</script> javascript:alert(1)=",
+      "provider": "fixture"
+    },
+    "retention_days": 30,
+    "meta": {
+      "provider": "engine",
+      "fetched_at": "2026-10-13T19:47:18.416163253Z",
+      "lag_s": 0,
+      "stale": false,
+      "generated_at": "2026-10-13T19:47:18.416163919Z",
+      "request_id": "81887c513b24deaec6a4ebaf6263a4ef"
+    }
+  }
+}

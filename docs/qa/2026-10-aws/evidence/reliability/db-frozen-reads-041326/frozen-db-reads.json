@@ -1,0 +1,54 @@
+{
+ "hold_s": 45,
+ "results": [
+  {
+   "path": "/api/v1/replay?at=2026-10-13T19%3A10%3A26Z&bbox=124,33,132,39",
+   "status": 503,
+   "retry_after": "10",
+   "s": 5.1
+  },
+  {
+   "path": "/api/v1/alerts/history",
+   "status": 503,
+   "retry_after": "10",
+   "s": 5.1
+  },
+  {
+   "path": "/api/v1/stats/traffic?day=2026-10-14",
+   "status": 503,
+   "retry_after": "10",
+   "s": 1.1
+  },
+  {
+   "path": "/api/v1/airports?bbox=124,33,132,39",
+   "status": 503,
+   "retry_after": "10",
+   "s": 1.1
+  },
+  {
+   "path": "/api/v1/replay?at=2026-10-13T19%3A10%3A26Z&bbox=120,30,135,40",
+   "status": 503,
+   "retry_after": "10",
+   "s": 5.1
+  },
+  {
+   "path": "/api/v1/alerts/history?limit=10",
+   "status": 503,
+   "retry_after": "10",
+   "s": 5.1
+  },
+  {
+   "path": "/api/v1/ais/gaps",
+   "status": 503,
+   "retry_after": "10",
+   "s": 5.1
+  },
+  {
+   "path": "/api/v1/airports/RKSI/wx",
+   "status": 503,
+   "retry_after": "10",
+   "s": 5.1
+  }
+ ],
+ "over_limit": 0
+}

@@ -17,6 +17,10 @@
  *   select_ship → ship_selected(목적지 풀이 destination_info 포함 — 계약 v4 §B). 구독한 화면(bbox·줌)은 스토어 viewport 에도 둔다(선박 칩 문구).
  *   받은 값은 lib/ships.ts 로 검증한다(MMSI·위치가 틀리면 버림, 필드는 모르면 null). 메인 스레드 선박 수 상한 MAX_SHIPS.
  * - 수요(계약 v2 §A3): {type:"demand"} 를 그대로 스토어에 — 연결이 끊기면 지운다(서버 임대는 60 s 안에 만료되므로 "추적 중"이라 말하지 않는다).
+ * - 앞단 확인(QA-1300): 브라우저 WebSocket API 는 업그레이드 응답을 보여 주지 않는다(AWS 데모 앞단의 잠금 401 · 오프라인 503 도 close 1006 뿐).
+ *   열린 적 없이 끝난 연결이 FRONT_CHECK_AFTER_FAILS 번 이어지면 같은 출처 GET 하나(lib/endpoints/status — 최소 간격 FRONT_CHECK_MIN_GAP_MS)로 가려
+ *   스토어 connIssue(lib/conn-issue)에 둔다 — 상태 바 · 알림 패널이 까닭(접근 코드 만료 · 서버에 닿지 못함)을 적는다. 재접속은 그대로 이어 간다
+ *   (다른 탭에서 잠금을 풀면 쿠키를 함께 쓰므로 이어진다). 서버가 연결 수 상한(1013)으로 닫으면 그 까닭(limit — QA-1462)을 둔다. 연결이 열리면(welcome) 지운다.
  * - 수신 검증(계약 v5 §E2 · ADR-020): 모든 메시지를 lib/ws-validate 로 검사한다 — 틀린 원소는 버리고 세고, 봉투가 틀린 메시지는 버린다.
  *   워커에도 검증된 같은 목록을 보낸다(주 스레드와 갈라지지 않게). diff 의 lastSeq(선박 sseq)는 적용이 끝난 뒤에만 오르고(R-93), 처리 중 예외는
  *   잡아서 세고 브라우저 오류로 보고(§C8)한다. 버린·실패한 메시지 뒤에는 그 종류에 맞게 다시 받는다(recoverFrom): 항공기·선박 흐름은 resync,
@@ -30,6 +34,8 @@ import { aircraftStates, clockOffsetMs, getData, observeServerTime, setData, shi
 import { describeThrown, reportClientError, type ClientErrorInput } from "./errorReport";
 import { isMmsi, MAX_SHIPS, parseAisStatus } from "./ships";
 import { validateServerMessage, type ServerMsg } from "./ws-validate";
+import { CLOSE_CONNECTION_LIMIT, connIssueOf } from "./conn-issue";
+import { reachPublicStatus } from "./endpoints/status";
 
 export type WorkerLike = { postMessage: (m: unknown) => void };
 
@@ -54,6 +60,8 @@ export interface WsClientOptions {
   createSocket?: (url: string) => SocketLike;
   /** 형식 오류 · 처리 예외 보고(기본: 계약 v5 §C8 브라우저 오류 보고기 — 같은 문구 60 s 에 1번, 분당 5번 이하) */
   report?: (e: ClientErrorInput) => void;
+  /** 앞단 확인 요청(기본: 같은 출처 GET /api/v1/status — lib/endpoints/status). 실패의 code 로 까닭을 가린다(lib/conn-issue connIssueOf) */
+  checkFront?: () => Promise<unknown>;
 }
 
 const WS_OPEN = 1;
@@ -69,6 +77,10 @@ const CLOCK_POST_EPS_MS = 250;
 const CLOSE_RX_TIMEOUT = 4000;
 /** welcome 처리 중 예외로 닫을 때(구독 상태를 알 수 없다 — 검증기는 welcome 을 버리지 않고 틀린 값만 센다) */
 const CLOSE_BAD_WELCOME = 4001;
+/** 열린 적 없이 끝난 연결이 이만큼 이어지면 같은 출처 요청 하나로 앞단(잠금 · 정지)을 가린다(QA-1300) — 한 번은 망이 잠깐 흔들린 것일 수 있다 */
+const FRONT_CHECK_AFTER_FAILS = 2;
+/** 앞단 확인 요청의 최소 간격 — 재접속마다 보내지 않는다. 밤사이 정지(서버에 닿지 못함) → 아침 기동 뒤 잠금 만료처럼 바뀌는 까닭은 이 간격으로 따라간다 */
+const FRONT_CHECK_MIN_GAP_MS = 60_000;
 /** 항공기 흐름(seq)과 선박 흐름(sseq · 선박 재동기 게이트)의 메시지 — 버리거나 처리에 실패하면 그 흐름의 seq 를 버리고 resync */
 const AIRCRAFT_STREAM: ReadonlySet<string> = new Set(["snapshot", "diff"]);
 const SHIP_STREAM: ReadonlySet<string> = new Set(["ships_snapshot", "ships_diff", "ships_grid"]);
@@ -117,6 +129,12 @@ export class WakelineWsClient {
   /** 이 연결에서 현재 bbox 로 subscribe 했는가(아니면 resume 대신 subscribe 를 보낸다) */
   private subscribedOnConn = false;
   private closedByUser = false;
+  /** 지금 연결이 열렸는가(onopen) — 열린 적 없이 끝나면 업그레이드 실패다 */
+  private opened = false;
+  /** 열린 적 없이 끝난 연결이 몇 번 이어졌나(열리면 0) */
+  private failedOpens = 0;
+  private frontChecking = false;
+  private frontCheckedAt: number | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
   /** 예산 초과로 미룬 메시지(종류별 최신 1개, 삽입 순서 유지) */
   private readonly pending = new Map<string, Msg>();
@@ -127,6 +145,7 @@ export class WakelineWsClient {
   private readonly mono: (() => number) | null;
   private readonly createSocket: (url: string) => SocketLike;
   private readonly report: (e: ClientErrorInput) => void;
+  private readonly checkFront: () => Promise<unknown>;
 
   constructor(private worker: WorkerLike, opts: WsClientOptions = {}) {
     this.url = opts.url ?? defaultUrl();
@@ -135,6 +154,7 @@ export class WakelineWsClient {
     this.mono = opts.mono ?? (typeof performance !== "undefined" ? () => performance.now() : null);
     this.createSocket = opts.createSocket ?? ((u) => new WebSocket(u) as unknown as SocketLike);
     this.report = opts.report ?? ((e) => { reportClientError(e); });
+    this.checkFront = opts.checkFront ?? (() => reachPublicStatus());
     this.syncWorkerClock(); // 이전 화면에서 이미 추정한 오프셋이 있으면 새 워커에도
   }
 
@@ -147,11 +167,14 @@ export class WakelineWsClient {
     this.ws = ws;
     this.welcomed = false;
     this.healthy = false;
+    this.opened = false;
     this.lastRxAt = this.now(); // 열리지도 않는 연결(SYN 무응답)도 감시가 끊는다
     this.watchdog = setInterval(() => this.checkRx(), WATCHDOG_TICK_MS);
     ws.onopen = () => {
       if (this.ws !== ws) return;
       // 시도 횟수는 여기서 초기화하지 않는다(WS-1) — 열린 뒤 곧바로 닫히는 서버에 1 s 마다 붙지 않게
+      this.opened = true;
+      this.failedOpens = 0;
       this.lastRxAt = this.now();
       this.lastSeq = null;
       this.resyncGate.clear();
@@ -208,6 +231,25 @@ export class WakelineWsClient {
     const delay = nextBackoffMs(this.attempt++);
     this.timer = setTimeout(() => this.connect(), delay);
     setData({ reconnectAttempt: this.attempt });
+    if (code === CLOSE_CONNECTION_LIMIT) setData({ connIssue: "limit" }); // 까닭을 서버가 말했다(QA-1462) — 다른 탭을 닫으면 이어진다
+    if (!this.opened) { this.failedOpens++; this.maybeCheckFront(); }
+  }
+
+  /**
+   * 앞단 확인(QA-1300): 열린 적 없는 실패가 이어지면 같은 출처 GET 하나로 까닭을 가린다(최소 간격 FRONT_CHECK_MIN_GAP_MS, 한 번에 하나).
+   * 답이 성공이거나 앞단이 아닌 오류면 까닭 모름(null). 그사이 사용자가 닫았거나 연결이 다시 열렸으면 버린다.
+   */
+  private maybeCheckFront() {
+    if (this.failedOpens < FRONT_CHECK_AFTER_FAILS || this.frontChecking) return;
+    const now = this.now();
+    if (this.frontCheckedAt != null && now - this.frontCheckedAt < FRONT_CHECK_MIN_GAP_MS) return;
+    this.frontChecking = true;
+    this.frontCheckedAt = now;
+    void Promise.resolve().then(() => this.checkFront()).then(() => null, (e: unknown) => connIssueOf(e)).then((issue) => {
+      this.frontChecking = false;
+      if (this.closedByUser || this.welcomed) return;
+      if (getData().connIssue !== issue) setData({ connIssue: issue });
+    });
   }
 
   private stopConnTimers() {
@@ -475,7 +517,7 @@ export class WakelineWsClient {
         if (this.isHidden()) this.paused = true;
         this.lastRxStored = now;
         // 이전 연결의 마지막 이벤트 배너는 지운다(R-23) — 새 연결에서 받은 이벤트만 "방금"으로 보인다
-        setData({ conn: this.paused ? "paused" : "open", alertsVersion: null, alertsIncomplete: false, lastRxAt: now, lastEvent: null });
+        setData({ conn: this.paused ? "paused" : "open", alertsVersion: null, alertsIncomplete: false, lastRxAt: now, lastEvent: null, connIssue: null });
         const ws = this.ws;
         if (this.healthyTimer) clearTimeout(this.healthyTimer);
         this.healthyTimer = setTimeout(() => { this.healthyTimer = null; if (this.ws === ws) this.markHealthy(); }, HEALTHY_AFTER_MS);

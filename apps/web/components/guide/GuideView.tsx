@@ -4,7 +4,7 @@ import { ScrollRegion } from "@/components/ScrollRegion";
 import { creditGroups } from "@/lib/attribution";
 import { KR_RADAR_STALE_S, METAR_STALE_S } from "@/lib/format";
 import {
-  flattenToc, GUIDE_TOC, PLAN, SHORTCUTS, shotView, tocItem, type GuideManifest, type ManifestDrop,
+  fillGuideText, flattenToc, GUIDE_TOC, PLAN, SHORTCUTS, shotView, tocItem, type GuideManifest, type ManifestDrop,
 } from "@/lib/guide";
 import { EXTRAPOLATE_CAP_OPENSKY_S, EXTRAPOLATE_CAP_S, STALE_AFTER_OPENSKY_S, STALE_AFTER_S } from "@/lib/interpolate";
 import {
@@ -24,17 +24,18 @@ import {
   AIS_GAP_SHOW_MS, AIS_LAG_WARN_S, SHIP_STALE_S, SHIP_TRACK_HOURS, SHIPS_OUT_OF_COVERAGE_TEXT, SHIPS_RULE_TEXT, SHIPS_ZERO_AIS_DOWN_TEXT, SHIPS_ZERO_TEXT, STORED_STATIC_LABEL, STORED_STATIC_TIME_LABEL,
 } from "@/lib/ships";
 import { NOTE_MAX, RESOLUTION_STATE_TEXT, RESOLVE_EFFECT } from "@/lib/resolutions";
-import { STATS_FAILED_TEXT, STATS_LOADING_TEXT, STATS_RUN_KST } from "@/lib/stats";
+import { STATS_CATCH_UP_DAYS, STATS_CATCH_UP_EVERY_H, STATS_FAILED_TEXT, STATS_LOADING_TEXT, STATS_RUN_KST, statsRunPhrase, statsSchedule } from "@/lib/stats";
 import { fmtKstRange, fmtTimeTitle, fmtZuluToken, kstDayStartMs, kstWallMs, RAW_BULLETIN_LABEL, utcDayWindowKst } from "@/lib/time";
 import { TRAFFIC_BINS, TRAFFIC_LAYER_LABEL, TRAFFIC_LEGEND_NOTE, TRAFFIC_POLL_MS } from "@/lib/traffic-grid";
 import { RECEPTION_BINS, RECEPTION_LAYER_LABEL } from "@/lib/reception-meta";
 import { GLOBAL_STALE_S, REGION_STALE_S, RX_DEAD_MS, RX_FRESH_MS } from "@/lib/ws-protocol";
 import { HOT_MIN_ZOOM } from "@/lib/viewport";
 import { GuideFigure } from "./GuideFigure";
+import { GuideImageLoader } from "./GuideImageLoader";
 import { GuideToc } from "./GuideToc";
 
 /*
- * 설명서(/guide) 본문 — 서버 컴포넌트(정적 내용, 데이터 요청 없음). 클라이언트 코드는 목차(GuideToc)뿐.
+ * 설명서(/guide) 본문 — 서버 컴포넌트(정적 내용, 데이터 요청 없음). 클라이언트 코드는 목차(GuideToc)와 스크린샷 받기(GuideImageLoader — 그리는 것 없음, QA-1501)뿐.
  * 숫자 · 문구는 가능한 한 화면 코드가 쓰는 상수를 그대로 가져온다(lib/*) — 동작이 바뀌면 설명도 같이 바뀐다.
  * 출처 목록은 하단 출처 줄과 같은 lib/attribution 에서. 시각은 화면 전체의 공유 형식기(lib/time · components/KstTime — 계약 v5 §G20, KST 만)로만 그린다
  * (7장의 예가 화면과 글자까지 같다). 예는 정해 둔 순간(아래 상수)에서 계산한다.
@@ -112,12 +113,20 @@ const DROP_EFFECT: [ManifestDrop["effect"], string][] = [
   ["unused", "계획에 없어 무시 — 어느 그림에도 영향 없음"],
 ];
 
-export function GuideView({ manifest, dropped }: { manifest: GuideManifest; dropped: readonly ManifestDrop[] }) {
+export function GuideView({ manifest, dropped, demo = false }: { manifest: GuideManifest; dropped: readonly ManifestDrop[]; demo?: boolean }) {
+  /** 통계 일 집계 방식 — 공개 데모(ADR-039 덧붙임 2-1)는 03:30 KST 정시 집계가 돌지 않고 켜진 뒤 따라잡기로 센다(QA-1461 — 통계 화면과 같은 말) */
+  const schedule = statsSchedule(demo);
+  const slots = { "stats-run": statsRunPhrase(schedule) };
+  const fill = (text: string) => fillGuideText(text, slots);
   /** 그림 번호 = 계획 순서(문서 순서 — parsePlan 이 확인) */
-  const fig = (id: string) => {
+  const figNo = (id: string) => {
     const i = PLAN.shots.findIndex((s) => s.id === id);
     if (i < 0) throw new Error(`guide: 계획에 없는 스크린샷 "${id}"`);
-    return <GuideFigure shot={PLAN.shots[i]} view={shotView(PLAN.shots[i], manifest)} no={i + 1} />;
+    return i + 1;
+  };
+  const fig = (id: string) => {
+    const i = figNo(id) - 1;
+    return <GuideFigure shot={PLAN.shots[i]} view={shotView(PLAN.shots[i], manifest)} no={i + 1} fill={fill} />;
   };
   /** 본문에서 그림의 번호를 가리킨다 — 없는 번호면 던진다(빌드 · 시험에서 드러남) */
   const ref = (id: string, n: number) => {
@@ -131,6 +140,7 @@ export function GuideView({ manifest, dropped }: { manifest: GuideManifest; drop
     <ScrollRegion label="설명서 본문" main className="h-full overflow-y-auto" data-testid="guide" data-guide-scroll="">
       <div className="mx-auto grid max-w-[1320px] grid-cols-1 gap-x-8 px-4 pb-16 min-[900px]:grid-cols-[236px_minmax(0,1fr)] min-[900px]:px-6">
         <GuideToc items={GUIDE_TOC} />
+        <GuideImageLoader />
         {/* 글줄은 읽기 좋은 폭(860 px)까지, 그림 · 표는 더 넓게 — 스크린샷의 작은 글자가 덜 줄어들게 */}
         <article className="g-doc min-w-0 max-w-[1120px] pt-4 text-[13px] leading-relaxed">
           <header className="mb-2 pb-4">
@@ -265,7 +275,7 @@ export function GuideView({ manifest, dropped }: { manifest: GuideManifest; drop
                 <li><B>핫 리전</B>{ref("hot", 1)} — 항공기를 고르지 않고 줌 {HOT_MIN_ZOOM} 이상으로 고정 관심 지역(한반도) 밖을 보면, 서버가 화면 중심을 0.5° 격자에 맞춘 칸을 수집기에 맡겨 따로 조회합니다.
                   반경은 화면 대각선의 절반을 50 NM 단위로 올린 값(50–250 NM)이고, 주기는 30 s(호출 여유가 모자라면 60 · 120 s)입니다. 같은 칸을 여러 사람이 보면 한 번만 조회하고, 축소 · 이동하거나 창을 닫으면 60 s 안에 멈춥니다.</li>
                 <li><B>칩 읽기</B> — 서버가 보고한 상태를 그대로 적습니다(예): ‘{hotExample("active")}’ = 수집기가 그 칸의 조회에 성공해 발행했고 마지막 성공이 주기 × 3(적어도 15 s) 안(조회한 칸에 항공기가 없어도 ‘갱신’입니다) ·
-                  ‘{hotExample("pending")}’ = 아직 조회 전 · ‘호출 상한으로 지연’ = 공급자 호출 상한 때문에 주기를 늘렸거나 이 칸을 건너뜀 · ‘{hotExample("covered_by_region")}’ = 화면 중심이 관심 지역 안이라 따로 조회하지 않음.
+                  ‘{hotExample("pending")}’ = 아직 조회 전 · ‘{hotExample("throttled")}’ = 공급자 호출 상한 때문에 주기를 늘렸거나, 서버 전체 핫 리전 칸 수를 다른 방문자와 나눠 이 칸을 건너뜀(다른 주소(IP)의 방문자가 기다리는 동안 한 주소는 그 절반까지 — 서버는 둘을 가려 알리지 않음) · ‘{hotExample("covered_by_region")}’ = 화면 중심이 관심 지역 안이라 따로 조회하지 않음.
                   관심 지역 피드는 region 칩{ref("hot", 3)}입니다.</li>
                 <li><B>항공기 수</B>{ref("hot", 2)} — 지도 영역 안 항공기 수. 여러 피드를 합친 목록이라(같은 항공기는 가장 최근 관측 하나) 카드의 출처는 공급자 이름이고, 어느 수집(관심 지역 · 핫 리전 · 전세계)으로 받았는지는 따로 적지 않습니다.</li>
               </UL>
@@ -393,7 +403,12 @@ export function GuideView({ manifest, dropped }: { manifest: GuideManifest; drop
           <Sec id="stats">
             {fig("stats")}
             <UL>
-              <li><B>집계 시각</B> — 매일 <span className="mono">{STATS_RUN_KST}</span> 에 전날(KST 날짜 — 00:00–24:00 KST)을 집계합니다. 오늘 날짜는 아직 없고, 기본 날짜는 어제(KST 날짜)입니다.</li>
+              {schedule === "daily"
+                ? <li><B>집계 시각</B> — 매일 <span className="mono">{STATS_RUN_KST}</span> 에 전날(KST 날짜 — 00:00–24:00 KST)을 집계합니다. 오늘 날짜는 아직 없고, 기본 날짜는 어제(KST 날짜)입니다.
+                  공개 데모(AWS)는 서버를 늘 켜 두지 않아 이 정시 집계가 돌지 않고, 켜진 뒤 따라잡기(마지막 성공 뒤 {STATS_CATCH_UP_EVERY_H}시간마다)가 지난 날을 셉니다 — 통계 화면도 그렇게 적습니다.</li>
+                : <li><B>집계 시각</B> — 이 공개 데모는 서버를 늘 켜 두지 않아 매일 정해진 시각의 집계가 돌지 않습니다. 켜진 뒤 따라잡기(마지막 성공 뒤 {STATS_CATCH_UP_EVERY_H}시간마다 ·
+                  최근 {STATS_CATCH_UP_DAYS}일)가 전날까지(KST 날짜 — 00:00–24:00 KST)를 셉니다. 오늘 날짜는 아직 없고, 기본 날짜는 어제(KST 날짜)입니다.
+                  통계 그림(그림 {figNo("stats")})은 늘 켜 둔 서버에서 찍어 머리 글이 정시 집계로 적혀 있습니다 — 이 데모의 통계 화면은 ‘켜진 뒤 따라잡기’로 적습니다.</li>}
               <li><B>SIGMET</B> — 최근 7일 FIR별(상위 24) · 위험 유형별 발표 건수.</li>
               <li><B>시간대별 고유 항공기</B> — 날짜는 KST 날짜이고 막대 이름은 그날의 KST 시(00시 → 23시)입니다. 자료가 없는 시간은 점선 —(수집 중단일 수 있어 0 대와 구분).</li>
               <li><B>알림</B> — 날짜 · 종류별 건수와 평균 체류. † 표시 행은 수정 전 기준으로 판정된 관측 알림이라 이후 날짜와 비교할 수 없습니다.</li>

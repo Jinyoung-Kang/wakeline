@@ -1,0 +1,27 @@
+$ cd apps/collector && uv run --offline pytest tests/qa/test_qa_1221_region_center_non_finite.py -q -p no:cacheprovider
+# 2026-10-13T18:54:21Z — 외부 호출 없음(respx 가로챔)
+E       AssertionError: 'nan,nan' → (nan, nan); api reads the default
+E       AssertionError: 'inf,127.8' → (inf, 127.8); api reads the default
+E       AssertionError: '36.5,-infinity' → (36.5, -inf); api reads the default
+E       AssertionError: '1_0,127.8' → (10.0, 127.8); api reads the default
+E       AssertionError: region poll sent ['https://api.adsb.lol/v2/point/nan/nan/250']
+FAILED tests/qa/test_qa_1221_region_center_non_finite.py::test_qa_1221_a_center_the_api_reads_as_default_is_the_default_here_too[nan,nan]
+FAILED tests/qa/test_qa_1221_region_center_non_finite.py::test_qa_1221_a_center_the_api_reads_as_default_is_the_default_here_too[inf,127.8]
+FAILED tests/qa/test_qa_1221_region_center_non_finite.py::test_qa_1221_a_center_the_api_reads_as_default_is_the_default_here_too[36.5,-infinity]
+FAILED tests/qa/test_qa_1221_region_center_non_finite.py::test_qa_1221_a_center_the_api_reads_as_default_is_the_default_here_too[1_0,127.8]
+FAILED tests/qa/test_qa_1221_region_center_non_finite.py::test_qa_1221_the_region_poll_never_sends_nan_coordinates_to_a_provider
+5 failed in 0.21s
+
+# 덧붙임 — 같은 해석의 다른 값(evidence/collector/c7_runtime_settings_probe.py, FIXTURES_DIR=fixtures):
+'nan,nan' -> (nan, nan, 250)
+'inf,127.8' -> (inf, 127.8, 250)
+'1_0,127.8' -> (10.0, 127.8, 250)
+'95,200' -> (95.0, 200.0, 250)
+'36.5d,127.8' -> (36.5, 127.8, 250)
+'0x1p5,127.8' -> (36.5, 127.8, 250)
+'  37 , 127 ' -> (37.0, 127.0, 250)
+fixture region with nan center: EXC ValueError math domain error
+poll '10,10' -> global 120 region 10
+poll '1e9' -> global 120 region 10
+poll '-5' -> global 60 region 5
+poll '999999999' -> global 999999999 region 120

@@ -1,0 +1,18 @@
+# QA 2026-10 AWS: 격리 fixture 스택을 AWS 판(infra/compose.aws.yml)처럼 — RDS · realip 를 뺀 나머지.
+# 바꾸는 것: 공개 데모 화면, DB 연결 수(공유 풀 6 · 공개 조회 허가 3 · 선택 조회 풀 2), 항공기 공급자 순서(OpenSky 끔).
+# realip(사설 대역 X-Forwarded-For 신뢰)는 넣지 않는다 — 호스트가 XFF 로 IP 를 골라 요청 제한 결과가 무의미해진다. realip 는 AWS 리허설(R)에서만 본다.
+#   tools/qa/wlqa.sh A1 up -d --wait
+services:
+  api:
+    environment:
+      SPRING_DATASOURCE_HIKARI_MAXIMUMPOOLSIZE: "6"
+      WAKELINE_PUBLICREADS_PERMITS: "3"
+      WAKELINE_READPOOL_SIZE: "2"
+  collector:
+    environment:
+      OPENSKY_CLIENT_ID: ""
+      OPENSKY_CLIENT_SECRET: ""
+      AIRCRAFT_PROVIDERS: adsb_fi,adsb_lol
+  web:
+    environment:
+      WAKELINE_PUBLIC_DEMO: "1"

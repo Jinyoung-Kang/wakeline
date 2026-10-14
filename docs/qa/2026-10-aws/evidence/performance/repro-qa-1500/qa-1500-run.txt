@@ -1,0 +1,98 @@
+
+Running 3 tests using 1 worker
+
+QA-1500 mobile cls=0.162 shifts=[[957,0.162,["hazard 229→264 h130→281","traffic 369→554 h143→127","alerts 521→0 h130→0"]]]
+  ✘  1 e2e/qa/qa-1500-stats-mobile-cls.spec.ts:63:5 › QA-1500 /stats mobile CLS stays ≤ 0.1 when AWS-scale stats arrive after the loading panels (2.8s)
+QA-1500 mobile 412 places={"ready":{"fir":[89.8,164.2],"hazard":[263.7,281],"traffic":[554.4,216.4],"alerts":[780.5,216]},"loading":{"fir":[89.8,129.8],"hazard":[229.3,129.8],"traffic":[368.8,142.8],"alerts":[521.3,129.8]},"empty":{"fir":[89.8,98.5],"hazard":[198,98.5],"traffic":[306.3,111.5],"alerts":[427.5,98.5]},"error":{"fir":[89.8,167.1],"hazard":[266.6,167.1],"traffic":[443.5,180.1],"alerts":[633.4,167.1]}}
+  ✘  2 e2e/qa/qa-1500-stats-mobile-cls.spec.ts:103:7 › QA-1500 /stats panels keep their place in loading · empty · error (mobile 412) (4.0s)
+QA-1500 desktop 1350 places={"ready":{"fir":[73.3,281],"hazard":[73.3,281],"traffic":[364,293.8],"alerts":[364,293.8]},"loading":{"fir":[73.3,129.8],"hazard":[73.3,129.8],"traffic":[212.8,142.8],"alerts":[212.8,142.8]},"empty":{"fir":[73.3,98.5],"hazard":[73.3,98.5],"traffic":[181.5,111.5],"alerts":[181.5,111.5]},"error":{"fir":[73.3,149.6],"hazard":[73.3,149.6],"traffic":[232.6,162.6],"alerts":[232.6,162.6]}}
+  ✘  3 e2e/qa/qa-1500-stats-mobile-cls.spec.ts:103:7 › QA-1500 /stats panels keep their place in loading · empty · error (desktop 1350) (3.9s)
+
+
+  1) e2e/qa/qa-1500-stats-mobile-cls.spec.ts:63:5 › QA-1500 /stats mobile CLS stays ≤ 0.1 when AWS-scale stats arrive after the loading panels 
+
+    Error: mobile CLS of /stats with AWS-scale stats
+
+    expect(received).toBeLessThanOrEqual(expected)
+
+    Expected: <= 0.1
+    Received:    0.1621160956478006
+
+       97 |   console.log(`QA-1500 mobile cls=${cls.toFixed(3)} shifts=${JSON.stringify(shifts.map((s) => [s.t, Number(s.v.toFixed(3)), s.src]))}`);
+       98 |   await ctx.close();
+    >  99 |   expect(cls, "mobile CLS of /stats with AWS-scale stats").toBeLessThanOrEqual(0.1);
+          |                                                            ^
+      100 | });
+      101 |
+      102 | for (const [name, opts] of [["mobile 412", MOBILE], ["desktop 1350", { viewport: { width: 1350, height: 940 } }]] as const) {
+        at /Users/jinyoung/Projects/wakeline/apps/web/e2e/qa/qa-1500-stats-mobile-cls.spec.ts:99:60
+
+    Error Context: test-results/qa/qa-1500-stats-mobile-cls-Q-82846-ve-after-the-loading-panels/error-context.md
+
+  2) e2e/qa/qa-1500-stats-mobile-cls.spec.ts:103:7 › QA-1500 /stats panels keep their place in loading · empty · error (mobile 412) 
+
+    Error: mobile 412: panels below move when the stats arrive
+
+    expect(received).toEqual(expected) // deep equality
+
+    - Expected  -  1
+    + Received  + 11
+
+    - Array []
+    + Array [
+    +   "loading: hazard top 229.3 (ready 263.7)",
+    +   "loading: traffic top 368.8 (ready 554.4)",
+    +   "loading: alerts top 521.3 (ready 780.5)",
+    +   "empty: hazard top 198 (ready 263.7)",
+    +   "empty: traffic top 306.3 (ready 554.4)",
+    +   "empty: alerts top 427.5 (ready 780.5)",
+    +   "error: hazard top 266.6 (ready 263.7)",
+    +   "error: traffic top 443.5 (ready 554.4)",
+    +   "error: alerts top 633.4 (ready 780.5)",
+    + ]
+
+      127 |     }
+      128 |     console.log(`QA-1500 ${name} places=${JSON.stringify(Object.fromEntries(Object.entries(out).map(([k, v]) => [k, Object.fromEntries(Object.entries(v).map(([p, x]) => [p, [x.top, x.height]]))])))}`);
+    > 129 |     expect(moved, `${name}: panels below move when the stats arrive`).toEqual([]);
+          |                                                                       ^
+      130 |   });
+      131 | }
+      132 |
+        at /Users/jinyoung/Projects/wakeline/apps/web/e2e/qa/qa-1500-stats-mobile-cls.spec.ts:129:71
+
+    Error Context: test-results/qa/qa-1500-stats-mobile-cls-Q-2ebdb-·-empty-·-error-mobile-412-/error-context.md
+
+  3) e2e/qa/qa-1500-stats-mobile-cls.spec.ts:103:7 › QA-1500 /stats panels keep their place in loading · empty · error (desktop 1350) 
+
+    Error: desktop 1350: panels below move when the stats arrive
+
+    expect(received).toEqual(expected) // deep equality
+
+    - Expected  - 1
+    + Received  + 8
+
+    - Array []
+    + Array [
+    +   "loading: traffic top 212.8 (ready 364)",
+    +   "loading: alerts top 212.8 (ready 364)",
+    +   "empty: traffic top 181.5 (ready 364)",
+    +   "empty: alerts top 181.5 (ready 364)",
+    +   "error: traffic top 232.6 (ready 364)",
+    +   "error: alerts top 232.6 (ready 364)",
+    + ]
+
+      127 |     }
+      128 |     console.log(`QA-1500 ${name} places=${JSON.stringify(Object.fromEntries(Object.entries(out).map(([k, v]) => [k, Object.fromEntries(Object.entries(v).map(([p, x]) => [p, [x.top, x.height]]))])))}`);
+    > 129 |     expect(moved, `${name}: panels below move when the stats arrive`).toEqual([]);
+          |                                                                       ^
+      130 |   });
+      131 | }
+      132 |
+        at /Users/jinyoung/Projects/wakeline/apps/web/e2e/qa/qa-1500-stats-mobile-cls.spec.ts:129:71
+
+    Error Context: test-results/qa/qa-1500-stats-mobile-cls-Q-b0b76-empty-·-error-desktop-1350-/error-context.md
+
+  3 failed
+    e2e/qa/qa-1500-stats-mobile-cls.spec.ts:63:5 › QA-1500 /stats mobile CLS stays ≤ 0.1 when AWS-scale stats arrive after the loading panels 
+    e2e/qa/qa-1500-stats-mobile-cls.spec.ts:103:7 › QA-1500 /stats panels keep their place in loading · empty · error (mobile 412) 
+    e2e/qa/qa-1500-stats-mobile-cls.spec.ts:103:7 › QA-1500 /stats panels keep their place in loading · empty · error (desktop 1350) 

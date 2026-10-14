@@ -1,0 +1,59 @@
+# QA-1501 /guide — Lighthouse 12.8.2 · 실제 GPU · 배경지도 열림 · AWS 규모 시드 · 스택 A1(공개 데모) · web :qa c4559d3dec6c(QA-1500 + QA-1501 고침) · 2026-10-14 20:21:31 KST
+# 명령: PERF_CWV_OUT=$EV/after-fix/cwv tools/qa/perf_cwv.sh qa-1501 gpu ofm 6 /guide · 같은 때 비교: perf_cwv.sh ref-same-session gpu ofm 3 /about
+
+== docs/qa/2026-10-aws/evidence/performance/after-fix/cwv/qa-1501/gpu-ofm
+화면       프리셋       n            점수                 LCP ms                 TBT ms                  CLS               FCP ms   JS KiB  판정
+/guide   desktop   6 100 [100–100]          641 [620–665]                0 [0–0]  0.000 [0.000–0.000]        322 [314–360]    180.5  good
+/guide   mobile    6    96 [92–97]    2,657 [2,541–2,793]            56 [23–225]  0.000 [0.000–0.000]  1,123 [1,077–1,212]    180.5  MISS LCP>2500
+
+== docs/qa/2026-10-aws/evidence/performance/after-fix/cwv/ref-same-session/gpu-ofm
+화면       프리셋       n            점수                 LCP ms                 TBT ms                  CLS               FCP ms   JS KiB  판정
+/about   desktop   3 100 [100–100]          570 [561–584]                0 [0–0]  0.000 [0.000–0.000]        265 [256–280]    179.3  good
+/about   mobile    3    97 [97–99]    2,515 [1,985–2,519]             56 [55–94]  0.000 [0.000–0.000]        920 [917–935]    179.3  MISS LCP>2500
+
+## 실행마다(/guide)
+## /guide desktop #1  score 100 · LCP 658 · TBT 0 · CLS 0.000 · FCP 325 · JS 180.5 KiB · reqs 14 (ext 0 · ofm 0) · bench 2771.5
+  LCP 요소: section#overview > div.my-4 > div.bg-bg > div.text-[12px] «AIS 실시간 스트림의 위치와 선원이 입력한 보고값(이름 · 목적지 · »  | 단계: TTFB 143 · Load Delay 0 · Load Time 0 · Render Delay 516
+## /guide desktop #2  score 100 · LCP 665 · TBT 0 · CLS 0.000 · FCP 360 · JS 180.5 KiB · reqs 14 (ext 0 · ofm 0) · bench 2776
+  LCP 요소: section#overview > div.my-4 > div.bg-bg > div.text-[12px] «AIS 실시간 스트림의 위치와 선원이 입력한 보고값(이름 · 목적지 · »  | 단계: TTFB 160 · Load Delay 0 · Load Time 0 · Render Delay 505
+## /guide desktop #3  score 100 · LCP 627 · TBT 0 · CLS 0.000 · FCP 319 · JS 180.5 KiB · reqs 14 (ext 0 · ofm 0) · bench 2863.5
+  LCP 요소: section#overview > div.my-4 > div.bg-bg > div.text-[12px] «AIS 실시간 스트림의 위치와 선원이 입력한 보고값(이름 · 목적지 · »  | 단계: TTFB 139 · Load Delay 0 · Load Time 0 · Render Delay 487
+## /guide desktop #4  score 100 · LCP 643 · TBT 0 · CLS 0.000 · FCP 319 · JS 180.5 KiB · reqs 14 (ext 0 · ofm 0) · bench 2876.5
+  LCP 요소: section#overview > div.my-4 > div.bg-bg > div.text-[12px] «AIS 실시간 스트림의 위치와 선원이 입력한 보고값(이름 · 목적지 · »  | 단계: TTFB 135 · Load Delay 0 · Load Time 0 · Render Delay 507
+## /guide desktop #5  score 100 · LCP 620 · TBT 0 · CLS 0.000 · FCP 314 · JS 180.5 KiB · reqs 14 (ext 0 · ofm 0) · bench 2876
+  LCP 요소: section#overview > div.my-4 > div.bg-bg > div.text-[12px] «AIS 실시간 스트림의 위치와 선원이 입력한 보고값(이름 · 목적지 · »  | 단계: TTFB 137 · Load Delay 0 · Load Time 0 · Render Delay 483
+## /guide desktop #6  score 100 · LCP 638 · TBT 0 · CLS 0.000 · FCP 332 · JS 180.5 KiB · reqs 14 (ext 0 · ofm 0) · bench 2859.5
+  LCP 요소: section#overview > div.my-4 > div.bg-bg > div.text-[12px] «AIS 실시간 스트림의 위치와 선원이 입력한 보고값(이름 · 목적지 · »  | 단계: TTFB 146 · Load Delay 0 · Load Time 0 · Render Delay 492
+## /guide mobile #1  score 92 · LCP 2,793 · TBT 225 · CLS 0.000 · FCP 1,084 · JS 180.5 KiB · reqs 13 (ext 0 · ofm 0) · bench 2791
+  LCP 요소: div.mx-auto > article.g-doc > section#overview > p.g-p «Wakeline 은 항공기(ADS-B) · 선박(AIS) · 위험기상(S»  | 단계: TTFB 467 · Load Delay 0 · Load Time 0 · Render Delay 2326
+## /guide mobile #2  score 97 · LCP 2,541 · TBT 60 · CLS 0.000 · FCP 1,141 · JS 180.5 KiB · reqs 13 (ext 0 · ofm 0) · bench 2825
+  LCP 요소: div.mx-auto > article.g-doc > section#overview > p.g-p «Wakeline 은 항공기(ADS-B) · 선박(AIS) · 위험기상(S»  | 단계: TTFB 472 · Load Delay 0 · Load Time 0 · Render Delay 2069
+## /guide mobile #3  score 96 · LCP 2,661 · TBT 38 · CLS 0.000 · FCP 1,212 · JS 180.5 KiB · reqs 13 (ext 0 · ofm 0) · bench 2627.5
+  LCP 요소: div.mx-auto > article.g-doc > section#overview > p.g-p «Wakeline 은 항공기(ADS-B) · 선박(AIS) · 위험기상(S»  | 단계: TTFB 465 · Load Delay 0 · Load Time 0 · Render Delay 2196
+## /guide mobile #4  score 96 · LCP 2,647 · TBT 84 · CLS 0.000 · FCP 1,077 · JS 180.6 KiB · reqs 13 (ext 0 · ofm 0) · bench 2857
+  LCP 요소: div.mx-auto > article.g-doc > section#overview > p.g-p «Wakeline 은 항공기(ADS-B) · 선박(AIS) · 위험기상(S»  | 단계: TTFB 464 · Load Delay 0 · Load Time 0 · Render Delay 2184
+## /guide mobile #5  score 96 · LCP 2,653 · TBT 23 · CLS 0.000 · FCP 1,190 · JS 180.5 KiB · reqs 13 (ext 0 · ofm 0) · bench 2866.5
+  LCP 요소: div.mx-auto > article.g-doc > section#overview > p.g-p «Wakeline 은 항공기(ADS-B) · 선박(AIS) · 위험기상(S»  | 단계: TTFB 467 · Load Delay 0 · Load Time 0 · Render Delay 2186
+## /guide mobile #6  score 96 · LCP 2,674 · TBT 52 · CLS 0.000 · FCP 1,104 · JS 180.5 KiB · reqs 13 (ext 0 · ofm 0) · bench 2824
+  LCP 요소: div.mx-auto > article.g-doc > section#overview > p.g-p «Wakeline 은 항공기(ADS-B) · 선박(AIS) · 위험기상(S»  | 단계: TTFB 463 · Load Delay 0 · Load Time 0 · Render Delay 2210
+
+## LCP 전에 시작해 끝난 요청(관측 LCP 기준 — Lantern 비관 그래프에 들어가는 것) · 문서 전송
+before guide-mobile-1.json.gz   LCP  2910 obsLCP  232 doc 68852B/329338B pre-LCP 14 req 559507B images ['dashboard.983c6efd68.webp', 'world.3b4f72f4f9.webp']
+before guide-mobile-2.json.gz   LCP  2955 obsLCP  279 doc 68851B/329338B pre-LCP 14 req 559487B images ['dashboard.983c6efd68.webp', 'world.3b4f72f4f9.webp']
+before guide-mobile-3.json.gz   LCP  2842 obsLCP  255 doc 68850B/329338B pre-LCP 14 req 559519B images ['dashboard.983c6efd68.webp', 'world.3b4f72f4f9.webp']
+after  guide-mobile-1.json.gz   LCP  2793 obsLCP  294 doc 69514B/337419B pre-LCP 12 req 263019B images []
+after  guide-mobile-2.json.gz   LCP  2541 obsLCP  274 doc 69516B/337419B pre-LCP 12 req 262991B images []
+after  guide-mobile-3.json.gz   LCP  2661 obsLCP  259 doc 69518B/337419B pre-LCP 12 req 262992B images []
+after  guide-mobile-4.json.gz   LCP  2647 obsLCP  214 doc 69512B/337419B pre-LCP 12 req 263024B images []
+after  guide-mobile-5.json.gz   LCP  2653 obsLCP  223 doc 69520B/337419B pre-LCP 12 req 263018B images []
+after  guide-mobile-6.json.gz   LCP  2674 obsLCP  192 doc 69520B/337419B pre-LCP 12 req 263006B images []
+after  about-mobile-1.json.gz   LCP  2515 obsLCP  149 doc 17356B/45920B pre-LCP 13 req 210092B images []
+after  about-mobile-2.json.gz   LCP  1985 obsLCP  102 doc 17361B/45920B pre-LCP 12 req 209528B images []
+after  about-mobile-3.json.gz   LCP  2519 obsLCP  127 doc 17360B/45920B pre-LCP 12 req 209579B images []
+
+## 고치기 전(같은 조건 — findings/performance.md §7, cwv/aws/gpu-ofm)
+화면       프리셋       n            점수                 LCP ms                 TBT ms                  CLS               FCP ms   JS KiB  판정
+/about   desktop   3 100 [100–100]          574 [573–586]                0 [0–0]  0.000 [0.000–0.000]        269 [265–281]    179.3  good
+/about   mobile    3    97 [97–97]    2,543 [2,540–2,546]            62 [62–103]  0.000 [0.000–0.000]        935 [921–943]    179.3  MISS LCP>2500
+/guide   desktop   3 100 [100–100]          657 [657–684]                0 [0–0]  0.000 [0.000–0.000]        328 [312–338]    180.3  good
+/guide   mobile    3    95 [95–95]    2,910 [2,842–2,955]             42 [24–55]  0.000 [0.000–0.000]  1,192 [1,077–1,209]    180.3  MISS LCP>2500

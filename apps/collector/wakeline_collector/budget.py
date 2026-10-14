@@ -42,7 +42,8 @@ redis.call('EXPIRE', KEYS[1], ARGV[3])
 return {1, used}
 """
 
-# 돌려주기(F3): 그 키가 있고 사용량이 cost 이상일 때만 뺀다 — 키를 만들지 않고(TTL 없는 키가 noeviction 에 남지 않게) 음수로 내리지 않는다
+# 돌려주기(F3 · QA-1220): 그 키가 있고 사용량이 cost 이상일 때만 뺀다 — 키를 만들지 않고(TTL 없는 키가 noeviction 에 남지 않게) 음수로 내리지 않는다.
+# 하루 키(release)와 시간 창 키(release_key)가 함께 쓴다
 RELEASE_LUA = """
 local used = tonumber(redis.call('HGET', KEYS[1], 'used'))
 local cost = tonumber(ARGV[1])
@@ -147,9 +148,10 @@ class Budget:
             return provider not in self._strict, UNKNOWN, key
 
     async def release_key(self, key: str, cost: int = 1) -> None:
-        """reserve_hour 로 예약했지만 호출하지 못한 몫을 그 키에서 되돌린다."""
+        """reserve_hour 로 예약했지만 호출하지 못한 몫을 그 키에서 되돌린다. 키가 없거나 사용량이 cost 보다 적으면 아무것도 하지 않는다
+        (RELEASE_LUA — QA-1220: 전에는 HINCRBY 한 줄이라 예약 뒤 사라진 키를 used=-1 · TTL 없는 키로 새로 만들었다)."""
         try:
-            await self._r.hincrby(key, "used", -cost)
+            await self._script(RELEASE_LUA, key, cost)
         except Exception as e:  # noqa: BLE001
             self._warn("release", e)
 

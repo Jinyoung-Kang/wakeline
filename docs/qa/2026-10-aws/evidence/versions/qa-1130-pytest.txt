@@ -1,0 +1,15 @@
+# QA-1130 pytest — 2026-10-14 04:01:25 KST · 호스트 uv 파이썬 Python 3.13.13
+$ cd apps/collector && uv run --offline pytest tests/qa/test_qa_1130_airspace_kmz_bzip2_lzma_bomb.py -q -p no:cacheprovider
+E       AssertionError: 247 B KMZ 의 128 MiB 멤버를 읽는 동안 최고 269.4 MiB (> 60 MiB) — 한 번 읽을 때 푸는 양이 묶이지 않았다(CVE-2026-15310)
+E       assert 282471466 < 62914560
+E       AssertionError: 19,150 B KMZ 의 128 MiB 멤버를 읽는 동안 최고 277.4 MiB (> 60 MiB) — 한 번 읽을 때 푸는 양이 묶이지 않았다(CVE-2026-15310)
+E       assert 290892495 < 62914560
+FAILED tests/qa/test_qa_1130_airspace_kmz_bzip2_lzma_bomb.py::test_qa_1130_kmz_unpack_limit_bounds_memory[bzip2]
+FAILED tests/qa/test_qa_1130_airspace_kmz_bzip2_lzma_bomb.py::test_qa_1130_kmz_unpack_limit_bounds_memory[lzma]
+2 failed, 1 passed in 4.29s
+
+$ bash tools/qa/qa_1130_collector_python_zip_bomb.sh   # 이미지 단위(수집기와 같은 512m)
+image wakeline-collector:qa · python 3.13.15 · bomb.kmz 917 B
+airspace_import --dry-run (512m): exit 137 
+FAIL  기대: 종료 1 + '거절: KML larger than … when unpacked' — 실제: 종료 137 (137 = OOM 으로 죽음)
+exit=1

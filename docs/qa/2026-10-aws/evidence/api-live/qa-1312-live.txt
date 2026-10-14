@@ -1,0 +1,38 @@
+| 경로 | &x=%zz | 파라미터 합쳐 1,001개 | 합쳐 1,000개 |
+|---|---|---|---|
+| `/healthz` | 200  | 200  | 200  |
+| `/api/v1/status` | 200  | 200  | 200  |
+| `/api/v1/aircraft?bbox=124,33,132,39` | 500 INTERNAL | 500 INTERNAL | 200  |
+| `/api/v1/aircraft/search?q=KAL` | 500 INTERNAL | 500 INTERNAL | 200  |
+| `/api/v1/aircraft/71aa64` | 200  | 200  | 200  |
+| `/api/v1/aircraft/71aa64/track` | 500 INTERNAL | 500 INTERNAL | 200  |
+| `/api/v1/ships?bbox=120,30,135,40` | 500 INTERNAL | 500 INTERNAL | 200  |
+| `/api/v1/ships/search?q=44` | 500 INTERNAL | 500 INTERNAL | 200  |
+| `/api/v1/ships/440095870` | 200  | 200  | 200  |
+| `/api/v1/ships/440095870/track` | 500 INTERNAL | 500 INTERNAL | 200  |
+| `/api/v1/ships/coverage` | 200  | 200  | 200  |
+| `/api/v1/ais/gaps` | 500 INTERNAL | 500 INTERNAL | 200  |
+| `/api/v1/traffic/grid` | 200  | 200  | 200  |
+| `/api/v1/sigmets` | 500 INTERNAL | 500 INTERNAL | 200  |
+| `/api/v1/alerts` | 500 INTERNAL | 500 INTERNAL | 200  |
+| `/api/v1/alerts/history` | 500 INTERNAL | 500 INTERNAL | 200  |
+| `/api/v1/radar/frames` | 200  | 200  | 200  |
+| `/api/v1/radar/kr` | 200  | 200  | 200  |
+| `/api/v1/airports` | 500 INTERNAL | 500 INTERNAL | 200  |
+| `/api/v1/airports/RKSI/wx` | 200  | 200  | 200  |
+| `/api/v1/replay?at={at}&bbox=124,33,132,39` | 500 INTERNAL | 500 INTERNAL | 200  |
+| `/api/v1/stats/sigmet` | 500 INTERNAL | 500 INTERNAL | 200  |
+| `/api/v1/stats/traffic` | 500 INTERNAL | 500 INTERNAL | 200  |
+| `/api/v1/stats/alerts` | 500 INTERNAL | 500 INTERNAL | 200  |
+| `/api/v1/airspace` | 500 INTERNAL | 500 INTERNAL | 200  |
+| `/api/v1/warnings` | 200  | 200  | 200  |
+| `/api/v1/warnings/history` | 500 INTERNAL | 500 INTERNAL | 200  |
+| `/api/v1/watch` | 500 INTERNAL | 500 INTERNAL | 200  |
+| `/api/v1/openapi` | 200  | 200  | 200  |
+
+500 응답: 36
+
+운영 로그(/api/v1/ops/logs?level=ERROR&service=api): 최근 20건 중 InvalidParameterException 20건 — 예:
+  2026-10-13T20:33:29.175Z fp=0ab3e019b768fff2 suppressed=0 unhandled error request_id=53e1860117ea793a80e5550896a0d17a path=/api/v1/airspace | More than the maximum number of request parameters (GET plus POST) for a single request ([1,000]) were detected. Any parameters beyond this 
+  2026-10-13T20:33:27.469Z fp=0bda8769c6af764e suppressed=0 unhandled error request_id=2433223a9846d5d6bf243740729f7c6b path=/api/v1/stats/alerts | More than the maximum number of request parameters (GET plus POST) for a single request ([1,000]) were detected. Any parameters beyond this 
+  2026-10-13T20:33:25.761Z fp=7a93b23045979002 suppressed=0 unhandled error request_id=beeb9f6ac221b4519598485ff96f8979 path=/api/v1/stats/traffic | More than the maximum number of request parameters (GET plus POST) for a single request ([1,000]) were detected. Any parameters beyond this 

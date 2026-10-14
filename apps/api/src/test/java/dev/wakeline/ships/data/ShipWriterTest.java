@@ -58,6 +58,7 @@ class ShipWriterTest {
         @Override public void writePositions(List<ShipState> rows) { positions.addAll(rows); }
         @Override public void touch(java.util.Collection<ShipState> rows) { touched.addAll(rows); }
         @Override public boolean insertGap(AisGap g) { gaps.add(g); return true; }
+        @Override public int ensurePartitions() { return 0; }
     }
 
     /**
@@ -238,6 +239,40 @@ class ShipWriterTest {
             } finally {
                 w.stop();
             }
+        }
+    }
+
+    /**
+     * QA-1240: '파티션 없음'(23514 — 연휴 뒤 기동 때 오늘(UTC) 파티션이 아직 없다)이면 다시 쓰기 전에 파티션을 만든다 — 세 번 뒤 버리지 않고 두 번째 시도에 쓴다.
+     */
+    @Test void missingPartition_createsThePartitionsAndRetries() throws Exception {
+        AtomicInteger ensured = new AtomicInteger();
+        FakeRepo repo = new FakeRepo() {
+            @Override public int ensurePartitions() {
+                ensured.incrementAndGet();
+                fail = null; // 파티션이 생겼다
+                return 1;
+            }
+        };
+        repo.fail = new org.springframework.dao.DataIntegrityViolationException("x",
+                new java.sql.SQLException("no partition of relation \"ship_position\" found for row", "23514"));
+        SimpleMeterRegistry meters = new SimpleMeterRegistry();
+        ShipWriter w = new ShipWriter(repo, null, meters, 1, 2);
+        w.start();
+        try {
+            AtomicInteger acked = new AtomicInteger();
+            Receipt r = new Receipt(acked::incrementAndGet);
+            w.enqueue(List.of(new ShipWriter.Pos(pos("440000001", T), true)), r);
+            r.release();
+            long end = System.currentTimeMillis() + 5_000;
+            while (acked.get() == 0 && System.currentTimeMillis() < end) Thread.sleep(5);
+            assertThat(acked.get()).isEqualTo(1);
+            assertThat(repo.attempts.get()).as("written on the second attempt").isEqualTo(2);
+            assertThat(ensured.get()).isEqualTo(1);
+            assertThat(repo.positions).hasSize(1);
+            assertThat(meters.counter("wakeline_ship_rows_total", "result", "failed").count()).isZero();
+        } finally {
+            w.stop();
         }
     }
 

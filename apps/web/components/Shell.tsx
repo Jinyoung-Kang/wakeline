@@ -38,7 +38,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
           {/* 미리 가져오기 끔: 모든 화면이 동적 경로(ƒ)라 미리 가져오기마다 서버 렌더가 돌고, edge 의 IP당 양동이(/api/ 와 공유)를 먼저 쓴다 — E2E 429(VERIFICATION #30) */}
           <Link href="/" prefetch={false} className="flex shrink-0 items-baseline gap-2">
             <span className="text-sm font-semibold tracking-[0.2em]">WAKELINE</span>
-            <span className="label hidden lg:inline">Aircraft · Ships · Hazardous Weather</span>
+            <span className="label hidden lg:inline" lang="en">Aircraft · Ships · Hazardous Weather</span>
           </Link>
           <nav className="flex min-w-0 gap-1 overflow-x-auto" aria-label="주 메뉴">
             {nav.map((n) => (

@@ -13,6 +13,7 @@ from __future__ import annotations
 import re
 
 from wakeline_collector.http import HttpClient
+from wakeline_collector.masking import SCAN_MAX, mask_head
 from wakeline_collector.models import ProviderResult
 
 LIST_URL = "https://apihub.kma.go.kr/api/typ01/url/rdr_cmp_file_list.php"
@@ -55,7 +56,7 @@ class KmaRadarProvider:
         )
         text = resp.body.decode("euc-kr", "replace")
         if text.lstrip().startswith("{"):
-            raise ValueError(f"unexpected list response: {text[:120]}")
+            raise ValueError(f"unexpected list response: {mask_head(text, 120)}")  # 가린 뒤 자른다(QA-1140)
         return ProviderResult(
             self.name,
             resp.body,
@@ -74,7 +75,8 @@ class KmaRadarProvider:
             read_s=KMA_READ_S,
         )
         if not resp.body.startswith(b"\x1f\x8b"):
-            raise ValueError(f"not gzip: {resp.body[:80].decode('euc-kr', 'replace')!r}")
+            head = resp.body[:SCAN_MAX].decode("euc-kr", "replace")
+            raise ValueError(f"not gzip: {mask_head(head, 80, cut=len(resp.body) > SCAN_MAX)!r}")  # 가린 뒤 자른다(QA-1140)
         return ProviderResult(
             self.name, resp.body, resp.fetched_at, resp.status, resp.latency_ms, data={"tm": tm, "bytes": len(resp.body)}
         )

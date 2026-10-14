@@ -1,28 +1,36 @@
 "use client";
-import { use } from "react";
+import { use, useRef } from "react";
 import { airportWx } from "@/lib/endpoints/weather";
 import { ScrollRegion } from "@/components/ScrollRegion";
 import { useApiResource } from "@/lib/use-api-resource";
 import { useNow } from "@/lib/clock";
 import { serverNowMs } from "@/lib/store";
-import { airportErrorText, CAT_COLORS, catSourceLabel, ceilingLabel, fmtDuration, fmtWind, isMetarStale, metarAgeS } from "@/lib/format";
+import { airportErrorText, CAT_COLORS, catSourceLabel, ceilingLabel, fmtDuration, isMetarStale, metarAgeS } from "@/lib/format";
 import { RequestIdOf } from "@/components/logs/ErrorNote";
 import { KstTime } from "@/components/KstTime";
 import { RAW_BULLETIN_LABEL, RAW_BULLETIN_TITLE } from "@/lib/time";
-import { WX_UNREADABLE } from "@/lib/airport-wx";
+import { fmtWind, WX_UNREADABLE } from "@/lib/airport-wx";
+import { routeParam } from "@/lib/route-param";
+import { useRetryAfterOnce } from "@/lib/use-retry-after";
+import { RetryNote } from "@/components/RetryNote";
 
 /**
  * 공항 기상 이력(FR-22). 시각은 날짜 포함 KST 만(계약 v5 §G20, lib/time — title 에 연도 · ms 까지의 KST). METAR · TAF 원문은 발표된 그대로(data-raw — 안의 "…Z" 는 발표 형식).
  * 시정은 원문(vis_raw, 예 "6+")을 우선 — 파싱한 숫자(6)는 "6 이상"을 잃는다.
- * 조회 실패는 한국어 안내 + 요청 id(복사 — 계약 v5 §C8).
+ * 조회 실패는 한국어 안내 + 요청 id(복사 — 계약 v5 §C8). 일시적 실패(503 + Retry-After — 공개 조회 허가 고갈)는 그 뒤 한 번 다시 받고, 다시 해 볼 만한 실패에는
+ * '다시 시도' 단추를 둔다(QA-1463 — 전에는 페이지 전체를 새로 불러야 했다).
  */
 export default function AirportPage({ params }: { params: Promise<{ icao: string }> }) {
   const { icao } = use(params);
-  const code = icao.toUpperCase();
+  // Next 는 params 를 인코딩해 넘긴다 — 사람이 친 값으로 보이고 묻는다(QA-1424 · lib/route-param)
+  const code = routeParam(icao).toUpperCase();
   const now = useNow(30_000);
   // 본문은 parseWx 로 검사한다(web-review B10) — 읽을 수 없으면(null) 그리지 않고 그렇다고 말한다. 이 화면은 코드마다 다시 마운트되고(동적 조각),
   // 결과는 그 요청의 것만 쓴다(lib/use-api-resource — 개발 모드는 조회를 두 번 해 첫 실패와 이력이 함께 보였다, web-review B17)
   const res = useApiResource(code, (signal) => airportWx(code, { signal }));
+  const auto = useRetryAfterOnce(code, res.status, res.error, res.retry);
+  /** '다시 시도'를 누르면 단추가 사라진다 — 초점을 상태 줄로(QA-304 와 같은 목적) */
+  const statusBox = useRef<HTMLDivElement>(null);
   const wx = res.data;
   const err = res.status === "failed" ? { text: airportErrorText(res.error, code), error: res.error }
     : res.status === "loaded" && !wx ? { text: `${WX_UNREADABLE}.`, error: null } : null;
@@ -34,8 +42,11 @@ export default function AirportPage({ params }: { params: Promise<{ icao: string
   return (
     <ScrollRegion label={`${code} 공항 기상 이력`} main className="h-full overflow-y-auto p-4">
       <h1 className="label mb-2" lang="en">Airport weather · {code}</h1>
-      {err ? <div className="text-bad" role="alert">{err.text}<RequestIdOf error={err.error} /></div> : null}
-      {!wx && !err ? <div className="text-fg-3" role="status" data-testid="airport-wx-loading">{code} 기상 이력 불러오는 중…</div> : null}
+      <div ref={statusBox} tabIndex={-1} className="outline-none">
+        {err ? <div className="text-bad" role="alert">{err.text}<RequestIdOf error={err.error} /></div> : null}
+        {res.status === "failed" ? <RetryNote error={res.error} auto={auto} onRetry={() => { statusBox.current?.focus(); res.retry(); }} /> : null}
+        {!wx && !err ? <div className="text-fg-3" role="status" data-testid="airport-wx-loading">{code} 기상 이력 불러오는 중…</div> : null}
+      </div>
       {wx ? <>
         <div className="mb-3 text-sm font-semibold">{wx.airport.name ?? code} <span className="mono text-[11px] text-fg-3">({wx.airport.lat?.toFixed(3) ?? "—"}, {wx.airport.lon?.toFixed(3) ?? "—"}) · elev {wx.airport.elev_ft ?? "—"} ft</span></div>
         {m ? <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
@@ -54,7 +65,7 @@ export default function AirportPage({ params }: { params: Promise<{ icao: string
           </section>
           <section className="panel p-3"><div className="label mb-1" title={RAW_BULLETIN_TITLE}>TAF ({RAW_BULLETIN_LABEL})</div><pre className="mono whitespace-pre-wrap text-[11px]" title={RAW_BULLETIN_TITLE} data-raw="bulletin">{m.taf_raw ?? "—"}</pre></section>
         </div> : <div className="text-fg-3">METAR 없음</div>}
-        <section className="panel mt-3 p-3"><div className="label mb-2">History (latest 24)</div>
+        <section className="panel mt-3 p-3"><div className="label mb-2" lang="en">History (latest 24)</div>
           <table><thead><tr><th scope="col" title="관측 시각 — 한국 표준시(칸에 마우스를 올리면 연도 · ms 까지)">obs (KST)</th><th scope="col">cat</th><th scope="col">wind</th><th scope="col">vis (sm)</th><th scope="col">ceiling (ft)</th><th scope="col">temp (°C)</th></tr></thead>
             <tbody>{wx.history.map((h) => <tr key={h.obs_time}>
               <td className="whitespace-nowrap"><KstTime v={h.obs_time} variant="cell" /></td>

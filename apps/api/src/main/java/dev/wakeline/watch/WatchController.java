@@ -2,6 +2,7 @@ package dev.wakeline.watch;
 
 import dev.wakeline.aircraft.core.AircraftState;
 import dev.wakeline.aircraft.core.SnapshotStore;
+import dev.wakeline.platform.support.Spaces;
 import dev.wakeline.platform.web.Meta;
 import dev.wakeline.platform.web.Params;
 import dev.wakeline.platform.web.Problem;
@@ -100,16 +101,16 @@ public class WatchController {
 
     /** 쉼표 목록 → 검사한 값(순서 유지 · 중복 한 번). 빈 칸은 건너뛴다. 너무 긴 입력은 개수 검사 전에 막는다. */
     static List<String> list(String raw, UnaryOperator<String> check) {
-        if (raw == null || raw.isBlank()) return List.of();
+        if (Spaces.isBlank(raw)) return List.of();
         String[] parts = raw.split(",", MAX_TARGETS + 2);
         if (parts.length > MAX_TARGETS + 1) throw Problem.badRequest("TOO_MANY_TARGETS", "at most " + MAX_TARGETS + " targets in total");
         Set<String> out = new LinkedHashSet<>();
-        for (String p : parts) if (!p.isBlank()) out.add(check.apply(p));
+        for (String p : parts) if (!Spaces.isBlank(p)) out.add(check.apply(p)); // 제어 문자만 있는 칸은 빈 칸이 아니다 — 형식 검사가 400(QA-1103)
         return List.copyOf(out);
     }
 
     static String mmsi(String v) {
-        String s = v == null ? "" : v.strip();
+        String s = v == null ? "" : Spaces.strip(v);
         if (!MMSI.matcher(s).matches()) throw Problem.badRequest("BAD_MMSI", "mmsi must be 9 digits");
         return s;
     }

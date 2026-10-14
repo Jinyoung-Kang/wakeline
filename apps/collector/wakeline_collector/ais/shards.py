@@ -20,6 +20,9 @@
 기록한다(원인 끝에 ' · 구역 제거', 계약 v4 G D-3) — 그 시각까지 받지 못한 것은 사실이고, 그 뒤로 그 영역은 구독 범위 밖이다.
 재시작 이어받기: 이전 실행의 shards 배열에서 **같은 scope** 의 구역은 그 구역에 잇는다. v4 이전 해시(shards 없음)는 bbox 가 같은 구역
 (또는 fixture)에 한 번. 같은 구역이 없어 잇지 못한 기록은 첫 구역들을 만든 뒤(restore_leftover) 구역 없는 공백 하나로 잇는다(G D-3).
+기동 때 Redis 가 답하지 않아 이전 상태를 읽지 못했으면(부팅 때 ais 가 Redis 보다 먼저 · Redis 장애 중 재시작) 발행 태스크가 첫 상태 쓰기 전에
+다시 읽어 같은 이어받기를 그때 한다(carry_over_late — QA-1241). 그사이 데이터를 받은 구역은 이어받은 공백을 그 구역의 첫 데이터 시각에
+닫는다(구역 없는 공백은 어느 구역이든 첫 데이터 시각) — 기동 때 읽었을 때와 같은 공백이 남는다.
 """
 
 from __future__ import annotations
@@ -112,6 +115,7 @@ class Shard:
     stop: asyncio.Event = field(default_factory=asyncio.Event)
     task: asyncio.Task[None] | None = None
     removed_at: float | None = None  # 설정에서 뺀 시각(wall) — 그때 열린 공백을 닫는다
+    restorable: bool = False  # 기동 때 만든 구역 — 이전 실행의 기록을 잇는다(늦게 읽은 이전 상태도 — carry_over_late)
 
     @property
     def label(self) -> str:
@@ -140,6 +144,7 @@ class ShardSet:
         self.leftover = GapTracker()
         self._prev: dict[str, str] = {}
         self._prev_shards: list[dict[str, Any]] | None = None
+        self.first_data_at: float | None = None  # 이 프로세스에서 어느 구역이든 처음 받은 데이터 시각(carry_over_late)
 
     # ── 구역 만들기·없애기 ─────────────────────────────────────
 
@@ -161,7 +166,7 @@ class ShardSet:
         """구역 하나를 만든다. restore = 이전 실행의 같은 구역 기록을 잇는다(기동 때 만든 구역만)."""
         feed = FeedState(self.provider, scope=scope, changed=self.changed, wall=self._wall, mono=self._mono)
         feed.on_first_data = self._any_data
-        shard = Shard(self._next_id, len(self.active), feed, window=(self._mono(), 0))
+        shard = Shard(self._next_id, len(self.active), feed, window=(self._mono(), 0), restorable=restore)
         self._next_id += 1
         if restore:
             self._restore(shard)
@@ -184,9 +189,24 @@ class ShardSet:
             self._prev = {}  # v4 이전 해시는 구역 하나에만 잇는다
         else:
             return
-        feed.gaps.restore({"provider": self.provider, **src}, self.provider, now, feed.scope)
-        if feed.gaps.open_since is not None:
-            log.info("carrying over an open AIS gap from the previous run (%s, %s)", feed.gaps.reason, shard.label)
+        if feed.first_msg_at is None:  # 기동 때(또는 아직 받은 것이 없음): 열어 두고 첫 데이터 메시지에 닫는다
+            feed.gaps.restore({"provider": self.provider, **src}, self.provider, now, feed.scope)
+            if feed.gaps.open_since is not None:
+                log.info("carrying over an open AIS gap from the previous run (%s, %s)", feed.gaps.reason, shard.label)
+            return
+        # 늦게 읽은 이전 상태(carry_over_late): 이 구역은 이미 받고 있다 — 그 공백은 이 구역의 첫 데이터 시각에 닫혔어야 했다
+        g = GapTracker()
+        g.restore({"provider": self.provider, **src}, self.provider, now, feed.scope)
+        reason = g.reason
+        ev = g.close(feed.first_msg_at)
+        if ev is not None:
+            pending = feed.gaps.pending
+            if len(pending) == pending.maxlen:  # 보관 상한 — 가장 오래된 것(이것)을 버린다(GapTracker.close 와 같은 규칙)
+                feed.gaps.pending_dropped += 1
+            else:
+                pending.appendleft(ev)  # 이 구역의 다른 공백보다 앞선 것
+            feed.gaps.last = _later(feed.gaps.last, ev)
+            log.info("carrying over an AIS gap from the previous run read late (%s, %s)", reason, shard.label)
 
     def begin_closing(self, shard: Shard) -> None:
         """설정에서 빠진 구역: 상태·합계에서 빼고, 연결을 닫는 동안 누적 수·보낼 공백만 남긴다.
@@ -253,10 +273,26 @@ class ShardSet:
         since, reason = min(opened)
         self.leftover.open(since, reason, None)
         log.info("carrying over an open AIS gap with no matching shard as unscoped until the first message (%s)", reason)
+        if self.first_data_at is not None:  # 늦게 읽은 이전 상태(carry_over_late) — 이미 어느 구역이든 받았다
+            self.leftover.close(self.first_data_at)
         self.changed.set()
+
+    def carry_over_late(self, prev: dict[str, str]) -> None:
+        """기동 때 읽지 못한 이전 실행의 상태 해시를 나중에(발행 태스크의 첫 상태 쓰기 전에) 읽었을 때: 기동 때 했을 이어받기 — load_previous →
+        기동 때 만든 구역마다 _restore → restore_leftover — 를 지금 한다(QA-1241). 그사이 데이터를 받은 구역 · 모음은 이어받은 공백을 첫 데이터
+        시각에 닫아 보낼 공백에 넣는다. 그 뒤로 만든 구역(restorable 아님)은 잇지 않는다 — 기동 때와 같다."""
+        self.load_previous(prev)
+        if not self._prev:
+            return
+        for shard in list(self.active):
+            if shard.restorable:
+                self._restore(shard)
+        self.restore_leftover()
 
     def _any_data(self, now: float) -> None:
         """어느 구역이든 연결의 첫 데이터 메시지: 이어받은 구역 없는 공백을 닫는다."""
+        if self.first_data_at is None:
+            self.first_data_at = now
         if self.leftover.open_since is not None:
             self.leftover.close(now)
             self.changed.set()

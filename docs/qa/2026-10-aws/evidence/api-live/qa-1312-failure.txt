@@ -1,0 +1,19 @@
+# 실행: cd apps/api && ./gradlew --offline test --tests 'dev.wakeline.qa.Qa1312QueryParameterParseFailureIs500IT'
+# 결과(2026-10-14 KST · 제품 코드 수정 없음): tests=1 failures=1 errors=0
+
+Multiple Failures (13 failures)
+ * GET /api/v1/aircraft?bbox=%zz — body {"detail":"unexpected error","instance":"/api/v1/aircraft","status":500,"title":"internal error","type":"https://wakeline.invalid/problems/internal","code":"INT (all: {/api/v1/aircraft?bbox=%zz
+ * GET /api/v1/aircraft?bbox=126,37,127,38&x=%FF — body {"detail":"unexpected error","instance":"/api/v1/aircraft","status":500,"title":"internal error","type":"https://wakeline.invalid/problems/internal","code":"INT (all: {/api/v1/a
+ * GET /api/v1/aircraft?bbox=126,37,127,38% — body {"detail":"unexpected error","instance":"/api/v1/aircraft","status":500,"title":"internal error","type":"https://wakeline.invalid/problems/internal","code":"INT (all: {/api/v1/aircra
+ * GET /api/v1/sigmets?hazard=%zz — body {"detail":"unexpected error","instance":"/api/v1/sigmets","status":500,"title":"internal error","type":"https://wakeline.invalid/problems/internal","code":"INTE (all: {/api/v1/aircraft?bbox=%z
+ * GET /api/v1/alerts?kind=%C3 — body {"detail":"unexpected error","instance":"/api/v1/alerts","status":500,"title":"internal error","type":"https://wakeline.invalid/problems/internal","code":"INTER (all: {/api/v1/aircraft?bbox=%zz=5
+ * GET /api/v1/ships/search?q=%2 — body {"detail":"unexpected error","instance":"/api/v1/ships/search","status":500,"title":"internal error","type":"https://wakeline.invalid/problems/internal","code": (all: {/api/v1/aircraft?bbox=%zz
+ * GET /api/v1/stats/traffic?day=% — body {"detail":"unexpected error","instance":"/api/v1/stats/traffic","status":500,"title":"internal error","type":"https://wakeline.invalid/problems/internal","code" (all: {/api/v1/aircraft?bbox=%
+ * GET /api/v1/watch?airports=%zz — body {"detail":"unexpected error","instance":"/api/v1/watch","status":500,"title":"internal error","type":"https://wakeline.invalid/problems/internal","code":"INTERN (all: {/api/v1/aircraft?bbox=%z
+ * GET /api/v1/aircraft?bbox=126,37,127,38&x&x&x&x&x&x&x&x&x&x&x&x&…(2035 B) — body {"detail":"unexpected error","instance":"/api/v1/aircraft","status":500,"title":"internal error","type":"https://wakeline.invalid/problems/internal",
+ * GET /api/v1/replay?at=2026-10-13T20:30:17Z&bbox=126,37,127,38&x&…(2057 B) — body {"detail":"unexpected error","instance":"/api/v1/replay","status":500,"title":"internal error","type":"https://wakeline.invalid/problems/internal","c
+ * GET /api/v1/alerts/history?limit=5&x&x&x&x&x&x&x&x&x&x&x&x&x&x&x…(2030 B) — body {"detail":"unexpected error","instance":"/api/v1/alerts/history","status":500,"title":"internal error","type":"https://wakeline.invalid/problems/inte
+ * ERROR log for an anonymous query string
+ * ERROR entries in the server log stream wakeline:logs written by anonymous requests
+
+서버 로그 스트림 발췌: Expecting empty but was: [{"v":1,"ts":"2026-10-13T20:32:17.265Z","service":"api","instance":"Jinyoung-MacBookPro.local:51671","level":"ERROR","logger":"dev.wakeline.platform.web.ProblemAdvice","thread":"tomcat-handler-0","message":"unhandled error request_id=1a136f745535dbc68baceeaf4db path=/api/v1/aircraft","exception":{"type":"org.apache.tomcat.util.http.InvalidParameterException","message":"Character decoding failed. Parameter [bbox] with value [%zz] has been ignored. Note that the name and value quoted here may be corrupted due to the failed decoding. Use debug level logging to see the original, non-corrupted values.","stack":"org.apache.tomcat.util.http.InvalidParameterException: Character decoding failed. Parameter [bbox] with value [%zz] has been ignored. Note that the name and value quoted here may be corrupted due to the failed decoding. Use debug level logging to see the origin

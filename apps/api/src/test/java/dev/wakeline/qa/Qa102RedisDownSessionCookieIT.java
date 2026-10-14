@@ -63,9 +63,11 @@ class Qa102RedisDownSessionCookieIT extends IntegrationTest {
     private static String redisContainerId() {
         DockerClient docker = DockerClientFactory.instance().client();
         int mapped = ItStack.redisPort();
-        for (Container c : docker.listContainersCmd().exec())
+        for (Container c : docker.listContainersCmd().exec()) {
+            if (c.getPorts() == null) continue; // 포트 정보가 없는 컨테이너(예: 만들어지는 중 · 망 없음)도 목록에 온다(QA-1290)
             for (ContainerPort p : c.getPorts())
                 if (p.getPublicPort() != null && p.getPublicPort() == mapped) return c.getId();
+        }
         throw new IllegalStateException("redis test container not found on port " + mapped);
     }
 

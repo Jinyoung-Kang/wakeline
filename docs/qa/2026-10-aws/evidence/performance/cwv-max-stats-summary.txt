@@ -1,0 +1,5 @@
+
+== docs/qa/2026-10-aws/evidence/performance/cwv/max-stats/gpu-ofm
+화면       프리셋       n            점수                 LCP ms                 TBT ms                  CLS               FCP ms   JS KiB  판정
+/stats   desktop   3    99 [99–99]          560 [503–577]                0 [0–0]  0.072 [0.068–0.072]        257 [249–321]    186.1  good
+/stats   mobile    3    91 [90–93]    2,391 [1,308–2,454]             66 [59–68]  0.159 [0.159–0.159]        796 [787–815]    186.1  MISS CLS>0.1

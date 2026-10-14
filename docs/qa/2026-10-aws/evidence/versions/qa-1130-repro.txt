@@ -1,0 +1,35 @@
+# QA-1130 재현 출력 — 2026-10-13T18:50:58Z (KST 2026-10-14 03:50:58)
+
+$ docker image inspect wakeline-collector:qa --format "{{.Id}} {{.Created}}" ; PYTHON_VERSION
+sha256:8220ce595cdf9d457651c7511c75cb952668643d52433b4c27f49247f2024b11 2026-10-11T12:42:07.918112469Z
+PYTHON_VERSION=3.13.15
+
+$ grep -n "^FROM" apps/collector/Dockerfile
+4:FROM python:3.13-slim@sha256:7c61056e61ac89e852de05f3dc6fa51a6dd2181797bceed46aa725dd7cb2cd3b AS build
+14:FROM python:3.13-slim@sha256:7c61056e61ac89e852de05f3dc6fa51a6dd2181797bceed46aa725dd7cb2cd3b
+
+## 1) tracemalloc 최고 메모리 — 같은 탐침(qa-1130-probe.py), 멤버 256 MiB
+$ docker run --rm -i --network none --cap-drop ALL --entrypoint python wakeline-collector:qa - 256 < qa-1130-probe.py
+python 3.13.15 · wakeline_collector.airspace · limit 20 MiB · member 256 MiB unpacked
+bzip2    kmz=     343 B  peak=   557.4 MiB   1.02s  -> AirspaceTooLarge: KML larger than 20971520 bytes when unpacked
+lzma     kmz=  38,082 B  peak=   565.5 MiB   0.70s  -> AirspaceTooLarge: KML larger than 20971520 bytes when unpacked
+deflate  kmz= 261,049 B  peak=    22.7 MiB   0.09s  -> AirspaceTooLarge: KML larger than 20971520 bytes when unpacked
+exit=0
+$ docker run --rm -i --network none --cap-drop ALL --entrypoint python portfolio-gate:local - 256 < qa-1130-probe.py   # python 3.14.8(aws-deploy gate 이미지 — 표준 라이브러리만, kml_bytes 사본)
+python 3.14.8 · copy of kml_bytes · limit 20 MiB · member 256 MiB unpacked
+bzip2    kmz=     343 B  peak=    22.6 MiB   0.13s  -> Err: KML larger than limit when unpacked
+lzma     kmz=  38,082 B  peak=    30.6 MiB   0.08s  -> Err: KML larger than limit when unpacked
+deflate  kmz= 261,049 B  peak=    22.7 MiB   0.07s  -> Err: KML larger than limit when unpacked
+exit=0
+
+## 2) 운영자 명령 경로 — airspace_import --dry-run, 수집기와 같은 메모리 한도 512m
+bomb-bzip2-1g.kmz: 917 B, sha256 a6d6c36cd81a7f12f04e85a57d84545ddd52429a7a54d8d6007e9d9172503abc — zipfile.ZIP_BZIP2 멤버 doc.kml = 공백 1 GiB
+$ docker run --rm -i --network none --cap-drop ALL --memory 512m --memory-swap 512m --entrypoint python wakeline-collector:qa -m wakeline_collector.tools.airspace_import --dry-run --edition QA1130 < bomb-bzip2-1g.kmz
+exit=137   (기대: 1 + '거절: KML larger than 20971520 bytes when unpacked')
+
+## 3) 대조 — 같은 airspace.py(작업 트리 읽기 전용 마운트) · 같은 512m · python 3.14.8
+$ docker run --rm -i --network none --cap-drop ALL --memory 512m --memory-swap 512m -v apps/collector/wakeline_collector:/src/wakeline_collector:ro -v qa-1130-parse_stdin.py:/src/parse_stdin.py:ro -e PYTHONPATH=/src --entrypoint python portfolio-gate:local /src/parse_stdin.py < bomb-bzip2-1g.kmz
+거절: KML larger than 20971520 bytes when unpacked
+exit=1
+$ (같은 스크립트) … wakeline-collector:qa(python 3.13.15)
+exit=137

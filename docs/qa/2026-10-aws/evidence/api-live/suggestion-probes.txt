@@ -1,0 +1,12 @@
+# 개선 제안 근거 탐침(스택 A, 2026-10-14 KST)
+watch airports=RKSI×50: 200  airports=1
+watch airports=RKSI×51: 200  airports=1
+watch airports=RKSI×52: 400 TOO_MANY_TARGETS airports=
+watch airports=RKSI×60: 400 TOO_MANY_TARGETS airports=
+watch aircraft=71be01 + 빈 칸 52: 400 TOO_MANY_TARGETS
+alerts/history cursor=1: 200 items=0 next_cursor=None
+alerts/history cursor=0: 200 items=0 next_cursor=None
+alerts/history cursor=-1: 200 items=0 next_cursor=None
+alerts/history cursor=9223372036854775807: 200 items=0 next_cursor=None
+airports/ZZZZ/wx: 404 airport not watched: ZZZZ
+warnings/history limit=500: 200 items 15 keys ['items', 'meta', 'source']

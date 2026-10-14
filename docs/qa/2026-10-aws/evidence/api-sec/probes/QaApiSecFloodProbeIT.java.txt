@@ -1,0 +1,67 @@
+package dev.wakeline.qa;
+
+import dev.wakeline.it.IntegrationTest;
+import dev.wakeline.it.ItStack;
+import dev.wakeline.logs.LogSink;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledIf;
+
+import java.nio.charset.StandardCharsets;
+import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
+
+/** 임시 탐침(api-sec, QA-1101 영향 측정) — 한 IP 가 공개 경로 10곳에 10 s 마다 한 번씩 C1 헤더를 보낼 때 서버 로그 스트림에 쌓이는 ERROR 수. */
+@EnabledIf("dev.wakeline.DbTestSupport#dockerAvailable")
+class QaApiSecFloodProbeIT extends IntegrationTest {
+    @Test
+    void probe() throws Exception {
+        ItStack.deleteKeys("rl:*");
+        String bbox = "126,37,127,38";
+        List<String> paths = List.of("/api/v1/aircraft?bbox=" + bbox, "/api/v1/ships?bbox=" + bbox, "/api/v1/sigmets", "/api/v1/radar/frames",
+                "/api/v1/radar/kr", "/api/v1/traffic/grid", "/api/v1/ships/coverage", "/api/v1/warnings", "/api/v1/airspace");
+        String start = Qa1101ControlCharHeaderValueIs500IT.lastServerLogId();
+        long len0 = ItStack.admin().opsForStream().size(LogSink.STREAM);
+        long t0 = System.currentTimeMillis();
+        Map<Integer, Integer> st = new TreeMap<>();
+        int sent = 0;
+        for (int round = 0; round < 7; round++) {
+            long roundStart = System.currentTimeMillis();
+            for (String p : paths) { st.merge(QaRawHttp.get(port, p, Map.of("If-None-Match", "\"\u0085\"")).status(), 1, Integer::sum); sent++; }
+            st.merge(QaRawHttp.send(port, "POST", "/api/v1/client-errors", Map.of("Content-Type", "application/json", "User-Agent", "x\u0085"),
+                    ("{\"message\":\"m\",\"path\":\"/\",\"ts\":\"2026-10-14T00:00:00Z\"}").getBytes(StandardCharsets.UTF_8)).status(), 1, Integer::sum);
+            sent++;
+            long wait = 10_100 - (System.currentTimeMillis() - roundStart);
+            if (round < 6 && wait > 0) Thread.sleep(wait);
+        }
+        long elapsed = System.currentTimeMillis() - t0;
+        var errs = Qa1101ControlCharHeaderValueIs500IT.awaitServerErrorsAfter(start, 12_000);
+        long len1 = ItStack.admin().opsForStream().size(LogSink.STREAM);
+        System.out.println("QAPROBE flood sent=" + sent + " statuses=" + st + " elapsed_ms=" + elapsed + " error_entries=" + errs.size()
+                + " xlen_before=" + len0 + " xlen_after=" + len1 + " per_min(7 rounds x 10 s)=" + (errs.size() * 60.0 / 70.0)
+                + " minutes_to_3000=" + (3000.0 / (errs.size() * 60.0 / 70.0)));
+
+        // 2단계: 같은 경로를 퍼센트 인코딩만 바꿔(디코딩하면 같은 경로) 10 s 안에 보낸다 — 지문(getRequestURI 원문)이 달라 억제되지 않는가
+        ItStack.deleteKeys("rl:*");
+        String start2 = Qa1101ControlCharHeaderValueIs500IT.lastServerLogId();
+        String base = "api/v1/aircraft";
+        Map<Integer, Integer> st2 = new TreeMap<>();
+        int n2 = 0;
+        long t2 = System.currentTimeMillis();
+        for (int i = 0; i < base.length() && n2 < 30; i++) {
+            char c = base.charAt(i);
+            if (!Character.isLetter(c)) continue;
+            for (int mask = 0; mask < 2 && n2 < 30; mask++) {
+                String enc = mask == 0 ? String.format("%%%02X", (int) c) : String.format("%%%02x", (int) c);
+                String path = "/" + base.substring(0, i) + enc + base.substring(i + 1) + "?bbox=" + bbox;
+                st2.merge(QaRawHttp.get(port, path, Map.of("If-None-Match", "\"\u0085\"")).status(), 1, Integer::sum);
+                n2++;
+            }
+        }
+        long el2 = System.currentTimeMillis() - t2;
+        var errs2 = Qa1101ControlCharHeaderValueIs500IT.awaitServerErrorsAfter(start2, 4_000);
+        java.util.Set<String> fps2 = new java.util.HashSet<>();
+        for (var e : errs2) fps2.add(e.path("fp").asString());
+        System.out.println("QAPROBE encoded-variants sent=" + n2 + " in_ms=" + el2 + " statuses=" + st2 + " error_entries=" + errs2.size() + " distinct_fp=" + fps2.size());
+    }
+}

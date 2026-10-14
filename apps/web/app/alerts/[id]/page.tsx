@@ -1,10 +1,14 @@
 "use client";
-import { use } from "react";
+import { use, useRef } from "react";
 import { ScrollRegion } from "@/components/ScrollRegion";
 import { AlertSheet } from "@/components/AlertSheet";
 import { RequestIdOf } from "@/components/logs/ErrorNote";
 import { alertDetail } from "@/lib/endpoints/alerts";
 import { ApiError } from "@/lib/api";
+import { frontNotice } from "@/lib/front-answer";
+import { routeParam } from "@/lib/route-param";
+import { useRetryAfterOnce } from "@/lib/use-retry-after";
+import { RetryNote } from "@/components/RetryNote";
 import { useApiResource } from "@/lib/use-api-resource";
 
 /**
@@ -12,19 +16,37 @@ import { useApiResource } from "@/lib/use-api-resource";
  * JSON 내려받기(API 응답 그대로 + 내려받은 시각) · 브라우저 인쇄(흰 바탕 · 지도 없이 좌표 표 — globals.css @media print, 서버 PDF 없음) · 그 시각 재생 링크.
  * 닫힌 알림은 보존 기간(기본 30일) 안에서만 — 지나면 404 를 '보존 기간이 지나 볼 수 없음'으로. 시각은 KST, 원문은 발표된 그대로.
  */
+/**
+ * 받지 못한 까닭: 404 = 보존 기간이 지났거나 없는 번호. 앞단(AWS 데모)이 답한 오류(잠금 만료 · 원본에 닿지 못함)는 그 안내(QA-1301 — lib/front-answer),
+ * 그 밖의 HTTP 오류는 상태 번호를, 응답이 없으면(망) 그렇다고 적는다 — "받지 못함"만 남기지 않는다.
+ */
+function alertPageErrorText(e: unknown): string {
+  if (!(e instanceof ApiError)) return "알림 근거를 받지 못함 — 서버에 연결할 수 없음(네트워크)";
+  if (e.status === 404) return "보존 기간이 지나 볼 수 없음(닫힌 알림은 30일 보존) — 또는 없는 알림 번호";
+  const front = frontNotice(e);
+  return `알림 근거를 받지 못함(HTTP ${e.status})${front ? ` · ${front}` : ""}`;
+}
+
 export default function AlertPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = use(params);
+  // Next 는 params 를 인코딩해 넘긴다 — 사람이 친 값으로 보이고 검사한다(QA-1424 · lib/route-param)
+  const id = routeParam(use(params).id);
   const valid = /^[0-9]{1,18}$/.test(id);
   const res = useApiResource(valid ? id : null, (signal) => alertDetail(id, { signal }));
+  // 일시적 실패(503 + Retry-After)는 한 번 다시 받고, 다시 해 볼 만한 실패에는 '다시 시도'(QA-1463 — 공항 화면과 같은 빈칸, QA-1301 표)
+  const auto = useRetryAfterOnce(valid ? id : null, res.status, res.error, res.retry);
+  const statusBox = useRef<HTMLDivElement>(null);
   const d = res.data;
   const err = !valid ? "알림 번호가 아님 — 숫자만 받습니다"
-    : res.status === "failed" ? (res.error instanceof ApiError && res.error.status === 404 ? "보존 기간이 지나 볼 수 없음(닫힌 알림은 30일 보존) — 또는 없는 알림 번호" : "알림 근거를 받지 못함")
+    : res.status === "failed" ? alertPageErrorText(res.error)
     : res.status === "loaded" && !d ? "응답의 모양이 틀려 그리지 않음" : null;
   return (
     <ScrollRegion label={`알림 ${id} 근거`} main className="h-full overflow-y-auto p-4" data-print="sheet">
       <h1 className="label mb-2" lang="en">Alert evidence · #{id}</h1>
-      {err ? <div className="text-bad" role="alert" data-testid="alert-page-error">{err}{res.status === "failed" ? <RequestIdOf error={res.error} /> : null}</div> : null}
-      {!d && !err ? <div className="text-fg-3" role="status">알림 {id} 근거 불러오는 중…</div> : null}
+      <div ref={statusBox} tabIndex={-1} className="outline-none">
+        {err ? <div className="text-bad" role="alert" data-testid="alert-page-error">{err}{res.status === "failed" ? <RequestIdOf error={res.error} /> : null}</div> : null}
+        {res.status === "failed" ? <RetryNote error={res.error} auto={auto} onRetry={() => { statusBox.current?.focus(); res.retry(); }} /> : null}
+        {!d && !err ? <div className="text-fg-3" role="status">알림 {id} 근거 불러오는 중…</div> : null}
+      </div>
       {d ? <AlertSheet d={d} /> : null}
     </ScrollRegion>
   );

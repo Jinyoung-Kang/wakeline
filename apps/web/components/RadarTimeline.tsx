@@ -58,7 +58,7 @@ export function RadarTimeline() {
     <div className="relative flex min-h-9 shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-t border-line bg-bg-1 px-3 py-1" data-testid="radar-timeline">
       {/* 범례·정합 패널은 단추를 누른 뒤에 받는다(DashboardParts — ADR-026) */}
       {kr ? <KrRadarPanelPart onClose={() => setKr(false)} opener={() => krBtn.current} /> : null}
-      <span className="label">Radar</span>
+      <span className="label" lang="en">Radar</span>
       <button className="btn" aria-pressed={!kma} onClick={() => setSource("rainviewer")} data-testid="radar-src-rv">RainViewer</button>
       <button className="btn" aria-pressed={kma} onClick={() => setSource("kma")} disabled={!krAvailable} title={krAvailable ? "기상청 합성 HSR 500 m" : krMiss?.text || radarKr?.note || "수집 전"} data-testid="radar-src-kma">기상청 HSR</button>
       {/* '재생' 은 상단 메뉴(이력 재생 화면)의 이름이다 — 레이더 애니메이션은 다른 말로(R-60) */}

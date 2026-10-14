@@ -1,0 +1,1 @@
+restore refused: 확인 문구가 필요합니다 — 대상 이름을 그대로 적으세요: confirm=wlqa-b (받은 값: 'wrong')

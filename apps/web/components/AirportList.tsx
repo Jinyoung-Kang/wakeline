@@ -5,6 +5,7 @@ import { useServerNow } from "@/lib/clock";
 import { panIfOutside } from "@/lib/focus";
 import { airportListRows } from "@/lib/airport-list";
 import { useUi } from "@/lib/ui-store";
+import { frontNotice } from "@/lib/front-answer";
 
 /** 공항 탭(선택 없음): 감시 공항 목록 — 지도 클릭 없이 키보드로 고른다(R-40). 카테고리는 글자로도 쓴다(색만으로 구분하지 않음). */
 export function AirportList() {
@@ -12,11 +13,14 @@ export function AirportList() {
   const res = useApiResource("watched", (signal) => watchedAirports({ signal }));
   const now = useServerNow(60_000);
   const state = res.status === "loaded" ? "done" : res.status === "failed" ? "error" : "loading";
-  return <AirportListView state={state} features={res.data ?? []} now={now} />;
+  return <AirportListView state={state} features={res.data ?? []} now={now} notice={state === "error" ? frontNotice(res.error) : null} />;
 }
 
-/** 표시 부분(목록을 인자로 — 서버 렌더 시험용) */
-export function AirportListView({ state, features, now }: { state: "loading" | "error" | "done"; features: AirportFeature[]; now: number }) {
+/**
+ * 표시 부분(목록을 인자로 — 서버 렌더 시험용). notice = 앞단(AWS 데모)이 답한 실패의 안내(잠금 만료 · 원본에 닿지 못함 — QA-1301):
+ * 그때는 지도 클릭도 같은 앞단에 막히므로 '지도에서 클릭'을 권하지 않고 그 안내를 보인다.
+ */
+export function AirportListView({ state, features, now, notice = null }: { state: "loading" | "error" | "done"; features: AirportFeature[]; now: number; notice?: string | null }) {
   const selectAirport = useUi((s) => s.selectAirport);
   const items = airportListRows(features, now);
   return (
@@ -35,7 +39,7 @@ export function AirportListView({ state, features, now }: { state: "loading" | "
           </li>
         ))}
         {state === "loading" ? <li className="px-2 py-2 text-[11px] text-fg-3">공항 목록 불러오는 중…</li> : null}
-        {state === "error" ? <li className="px-2 py-2 text-[11px] text-warn">공항 목록을 불러오지 못했습니다 — 지도에서 공항을 클릭하세요.</li> : null}
+        {state === "error" ? <li className="px-2 py-2 text-[11px] text-warn">공항 목록을 불러오지 못했습니다 — {notice ?? "지도에서 공항을 클릭하세요."}</li> : null}
         {state === "done" && items.length === 0 ? <li className="px-2 py-2 text-[11px] text-fg-3">감시 공항이 없습니다.</li> : null}
       </ul>
     </div>

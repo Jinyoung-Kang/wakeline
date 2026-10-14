@@ -1,7 +1,8 @@
 "use client";
 import type { Alert } from "@/lib/types";
 import { band, fmtAltDual, fmtEta, fmtGsDual, fmtNum, hazardColor } from "@/lib/format";
-import { alertListState, alertZone, closeReasonLabel, etaRemainingS, evidenceBand, evidenceBandSource } from "@/lib/alerts";
+import { alertListState, alertZone, closeReasonLabel, etaRemainingS } from "@/lib/alerts";
+import { evidenceBand, evidenceBandSource } from "@/lib/evidence-band";
 import { bandText } from "@/lib/airspace";
 import { useServerData } from "@/lib/store";
 import { useRxFresh, useServerNow } from "@/lib/clock";

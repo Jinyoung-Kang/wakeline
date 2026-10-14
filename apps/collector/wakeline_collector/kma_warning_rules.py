@@ -8,7 +8,14 @@
   02:59 새벽(00–03시) · 05:59 새벽(03–06시) · 08:59 아침(06–09시) · 11:59 오전(09–12시) · 14:59 낮(12–15시) · 17:59 늦은 오후(15–18시) · 20:59 저녁(18–21시) ·
   23:59 밤(21–24시) · 11:58 오전(06–12시) · 17:58 오후(12–18시) · 05:58 새벽(00–06시) · 23:58 밤(18–24시) · 14:58 오후(12–18시). 이때 effective_at 은
   없고(정확한 시각을 짐작하지 않는다) effective_from · effective_to(그 시간대, UTC)와 effective_text(때 이름)를 싣는다. 표에 없는 부호면 시간대도 모른다.
-- 모르는 모양의 줄(열 수 · 구역 코드 · 시각이 틀림)은 버리고 센다 — 목록 전체를 버리지 않는다.
+- 모르는 모양의 줄(열 수 · 구역 코드 · 시각이 틀림)은 버리고 센다 — 목록 전체를 버리지 않는다. 글자를 풀 수 없는 줄도 같다(QA-1222 — 전에는 본문 전체를
+  한 번에 풀어 EUC-KR 밖의 글자(CP949 확장 한글 '똠' · 깨진 바이트) 하나가 목록 전체를 버렸다). 응답 전체가 풀리지 않을 때만 줄마다 따로 푼다.
+- 단, 특보 줄이 있는데 하나도 읽지 못했으면(모든 줄을 버림) 응답 전체의 모양이 틀린 것으로 보고 WarningResponseError — 이번 주기는 발행하지 않는다
+  (QA-1204). 공급자 형식이 바뀌면 모든 줄이 같은 까닭으로 버려지는데, 그것을 빈 목록(dropped = N)으로 보내면 화면은 곧바로 '발효 중 0건'을 보이고 api
+  이력은 1 h 뒤 발효 중인 특보를 모두 끝냈다(QA-1203 의 상한). 발행하지 않으면 화면은 마지막 목록과 그 나이를 보이고 실행 기록에 실패가 남는다.
+  대가: 발효 중인 특보의 줄이 모두 버려지면(몇 건이든 — 예: 모두 계약 한도를 넘는 구역 이름 · 풀 수 없는 글자) 그 주기도 발행하지 않는다(화면은 앞 목록 ·
+  15분 뒤 '오래됨', 실행 기록에 실패). 특보가 없는 응답에 '#' 아닌 잡줄이 섞여도 같다(실제 응답에서 본 적은 없다). 거절한 응답은 품질 기록 · 원문 보관을
+  남기지 않는다(last_error 의 첫 까닭만). 특보가 없는 응답(머리 주석만)은 빈 목록이다.
 """
 
 from __future__ import annotations
@@ -18,6 +25,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
+
+from wakeline_collector.masking import mask_head
 
 KST = ZoneInfo("Asia/Seoul")
 ZONE = re.compile(r"^[LS][0-9]{7}$")
@@ -65,17 +74,38 @@ class ParsedWarnings:
     dropped: list[dict[str, str]] = field(default_factory=list)
 
 
-def decode(body: bytes) -> str:
-    """UTF-8 을 먼저, 아니면 EUC-KR(확인한 응답은 EUC-KR — 조사 때 UTF-8 로 온 적도 있다)."""
+def _decode_text(data: bytes) -> str:
+    """UTF-8 을 먼저, 아니면 EUC-KR(확인한 응답은 EUC-KR — 조사 때 UTF-8 로 온 적도 있다). 둘 다 아니면 UnicodeDecodeError(EUC-KR 의 것)."""
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        return data.decode("euc-kr")
+
+
+def decode_lines(body: bytes) -> tuple[list[str], list[dict[str, str]]]:
+    """본문 → (풀린 줄, 풀지 못한 줄의 dropped 기록). 본문 전체가 한 글로 풀리면 그 글의 줄. 아니면 바이트 줄(LF · CR · CRLF — EUC-KR · UTF-8 의
+    여러 바이트 글자 안에는 이 바이트가 없다)마다 따로 풀고, 풀리지 않는 특보 줄만 버린다(QA-1222). 풀리지 않는 주석 줄('#')은 세지 않는다 — 주석은
+    원래 읽지 않고, dropped 가 0 이 아니면 api 가 특보 끝내기를 미룬다(QA-1203). 그래도 머리 주석이 없으면 응답 전체가 글이 아닌 것으로 보고
+    WarningResponseError(본문 전체를 풀 때 처음 실패한 바이트 위치)."""
     if len(body) > MAX_BYTES:
         raise WarningResponseError(f"response too large ({len(body)} bytes)")
     try:
-        return body.decode("utf-8")
-    except UnicodeDecodeError:
+        return _decode_text(body).splitlines(), []
+    except UnicodeDecodeError as e:
+        whole_error = f"neither UTF-8 nor EUC-KR (byte {e.start})"
+    lines: list[str] = []
+    bad: list[dict[str, str]] = []
+    for raw in body.splitlines():
         try:
-            return body.decode("euc-kr")
+            lines.extend(_decode_text(raw).splitlines())
         except UnicodeDecodeError as e:
-            raise WarningResponseError(f"neither UTF-8 nor EUC-KR (byte {e.start})") from None
+            if raw.startswith(b"#"):
+                continue
+            shown = raw.decode("euc-kr", errors="replace").strip()[:200]
+            bad.append({"reason": f"neither UTF-8 nor EUC-KR (byte {e.start} of the line)", "line": shown})
+    if not any(line.startswith("#") and "REG_ID" in line for line in lines):
+        raise WarningResponseError(whole_error)
+    return lines, bad
 
 
 def kst_to_utc(tm: str) -> datetime:
@@ -147,18 +177,24 @@ def parse_line(line: str) -> dict[str, Any]:
 
 
 def parse(body: bytes) -> ParsedWarnings:
-    """응답 바이트 → 특보 목록 · 버린 줄. 머리 주석이 없으면 특보현황 응답이 아니다(오류 문서 · 인증 실패 글 등)."""
-    text = decode(body)
-    lines = text.splitlines()
+    """응답 바이트 → 특보 목록 · 버린 줄. 머리 주석이 없으면 특보현황 응답이 아니다(오류 문서 · 인증 실패 글 등). 특보 줄이 있는데 모두 버렸으면
+    모양이 바뀐 응답이다(QA-1204 — 모듈 설명). 둘 다 WarningResponseError."""
+    lines, undecodable = decode_lines(body)
     if not any(line.startswith("#") and "REG_ID" in line for line in lines):
-        raise WarningResponseError(f"not a warning list: {text.strip()[:80]!r}")
-    out = ParsedWarnings()
+        text = "\n".join(lines)
+        raise WarningResponseError(f"not a warning list: {mask_head(text.strip(), 80)!r}")  # 가린 뒤 자른다(QA-1140)
+    out = ParsedWarnings(dropped=undecodable)
     rows = [line for line in lines if line.strip() and not line.startswith("#")]
-    if len(rows) > MAX_ROWS:
-        raise WarningResponseError(f"too many rows ({len(rows)})")
+    if len(rows) + len(undecodable) > MAX_ROWS:
+        raise WarningResponseError(f"too many rows ({len(rows) + len(undecodable)})")
     for line in rows:
         try:
             out.warnings.append(parse_line(line))
         except (ValueError, OverflowError) as e:  # OverflowError: 날짜 계산이 넘침(QA-603) — 그 줄만 버린다
             out.dropped.append({"reason": str(e), "line": line.strip()[:200]})
+    if out.dropped and not out.warnings:
+        # 특보 줄을 하나도 읽지 못했다 — 응답의 모양이 바뀐 것으로 본다(QA-1204). 빈 목록으로 보내면 화면은 '발효 중 0건', api 이력은 1 h 뒤 발효 중인
+        # 특보를 모두 끝낸다(QA-1203 의 상한). 까닭만 싣는다(줄 내용은 싣지 않는다)
+        reason = out.dropped[0]["reason"]
+        raise WarningResponseError(f"every warning line dropped ({len(out.dropped)}; first: {reason})")
     return out

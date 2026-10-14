@@ -1,0 +1,1 @@
+2026-10-13 20:00:38,168 WARNING db: db: connect failed (gaierror) — live path continues, writes queued (1)

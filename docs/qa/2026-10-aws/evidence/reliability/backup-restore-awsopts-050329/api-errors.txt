@@ -1,0 +1,8 @@
+2026-10-13T20:04:16.001Z ERROR 7 --- [wakeline-api] [omcat-handler-5] [rid:0e8eeaca086024761912437f2312532c] d.wakeline.platform.web.ProblemAdvice    : unhandled error request_id=0e8eeaca086024761912437f2312532c path=/api/v1/warnings/history
+Caused by: org.postgresql.util.PSQLException: ERROR: permission denied for table wx_warning
+2026-10-13T20:04:16.071Z ERROR 7 --- [wakeline-api] [omcat-handler-7] [rid:671beb645e678cada6f52975e834473d] d.wakeline.platform.web.ProblemAdvice    : unhandled error request_id=671beb645e678cada6f52975e834473d path=/api/v1/alerts/history
+Caused by: org.postgresql.util.PSQLException: ERROR: permission denied for table airspace
+2026-10-13T20:04:16.102Z ERROR 7 --- [wakeline-api] [omcat-handler-8] [rid:d5fc8074d74d58b83cd600946158782d] d.wakeline.platform.web.ProblemAdvice    : unhandled error request_id=d5fc8074d74d58b83cd600946158782d path=/api/v1/stats/traffic
+Caused by: org.postgresql.util.PSQLException: ERROR: permission denied for table stats_daily
+2026-10-13T20:04:16.269Z ERROR 7 --- [wakeline-api] [mcat-handler-12] [rid:9cc3367d60009e5f1be5e0a80a837acc] d.wakeline.platform.web.ProblemAdvice    : unhandled error request_id=9cc3367d60009e5f1be5e0a80a837acc path=/api/v1/ops/session
+Caused by: org.postgresql.util.PSQLException: ERROR: permission denied for table ops_user

@@ -25,7 +25,7 @@ from qa_session import OpsSession  # noqa: E402
 BASE = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:8701"
 OUT = os.environ.get("QA_EVIDENCE", os.path.join(os.path.dirname(__file__), "../../docs/qa/2026-10/evidence/security"))
 SLOW_S = 3.0
-INTERNAL = re.compile(r"(Exception|org\.postgresql|org\.springframework|java\.lang|\.java:\d+|ERROR: |out of range)")
+INTERNAL = re.compile(r"(Exception|org\.postgresql|org\.springframework|java\.lang|\.java:\d+|ERROR: |(?<!bbox )out of range)")  # 'bbox out of range' 는 정상 문구
 
 TIME = ["300000-01-01T00:00:00Z", "+300000-01-01T00:00:00Z", "-999999999-01-01T00:00:00Z", "+1000000000-12-31T23:59:59Z",
         "0000-01-01T00:00:00Z", "-0001-01-01T00:00:00Z", "1970-01-01T00:00:00Z", "2026-13-40T00:00:00Z", "2026-10-01", ""]
@@ -57,7 +57,9 @@ def get(path: str, sess: OpsSession | None = None):
     if sess is not None:
         st, hd, body = sess.request("GET", path)
     else:
-        req = urllib.request.Request(BASE + path, headers={"Accept": "application/json"})
+        # GeoJSON 경로(aircraft · ships · sigmets · airports · airspace · track)는 application/json 만 받으면 406(본문 없음)이라 값 검사에 닿지 않았다
+        # (AWS QA 2026-10-14 api-live) — 웹과 같은 Accept 를 보낸다
+        req = urllib.request.Request(BASE + path, headers={"Accept": "application/geo+json, application/json;q=0.9, application/problem+json;q=0.8, image/png;q=0.5"})
         try:
             with urllib.request.urlopen(req, timeout=30) as r:
                 st, hd, body = r.status, dict(r.headers), r.read()
@@ -149,7 +151,34 @@ def main() -> int:
         probe("aircraft detail param", f"/api/v1/aircraft?bbox=126,33,130,38&detail={q(v)}")
     probe("sigmet id (real)", f"/api/v1/sigmets/{q(str(sid))}")
 
-    # 운영(읽기만) — 세션 qa-a
+    # AWS QA 2026-10-14(api-live): 앞선 표에 빠진 9경로 — 공역 · 특보 · 특보 이력 · 관심 대상 · 알림 한 건 · 관측 수신 · 교통량 격자 · 레이더 목록 둘
+    for v in TEXT + ["prohibited", "prohibited,restricted", ",", "," * 300, "a\x00", "\t", "PROHIBITED"]:
+        probe("airspace category", f"/api/v1/airspace?category={q(v)}")
+    for v in TIME:
+        probe("warnings history from", f"/api/v1/warnings/history?from={q(v)}")
+        probe("warnings history to", f"/api/v1/warnings/history?to={q(v)}")
+    for v in NUM:
+        probe("warnings history limit", f"/api/v1/warnings/history?limit={q(v)}")
+        probe("alert id", f"/api/v1/alerts/{q(v) or '-'}")
+    for v in TEXT + ["S1312020", "L1100100", "S131202\x00", "s1312020"]:
+        probe("warnings history zone", f"/api/v1/warnings/history?zone={q(v)}")
+    for v in TEXT + ["71be01", "71be01," * 60, ",,,", "zzzzzz"]:
+        probe("watch aircraft", f"/api/v1/watch?aircraft={q(v)}")
+    for v in TEXT + ["440123450", "440123450," * 60, "٤٤٠١٢٣٤٥٠"]:
+        probe("watch ships", f"/api/v1/watch?ships={q(v)}")
+    for v in TEXT + ["RKSI", "RKSI," * 60, "ＲＫＳＩ"]:
+        probe("watch airports", f"/api/v1/watch?airports={q(v)}")
+    for v in ["9" * 18, "9" * 19, "0", "-1", "1e3", "%00", "١٢٣", "0001", "A" * 5000]:
+        probe("alert id path", f"/api/v1/alerts/{q(v)}")
+    for path in ("/api/v1/ships/coverage", "/api/v1/traffic/grid", "/api/v1/radar/frames", "/api/v1/radar/kr", "/api/v1/warnings", "/api/v1/status",
+                 "/api/v1/airspace", "/api/v1/watch"):
+        for v in TEXT[:3] + ["1e309"]:
+            probe(f"{path} junk param", f"{path}?x={q(v)}&bbox={q(v)}")
+        probe(f"{path} dup param", f"{path}?x=1&x=2")
+
+    # 운영(읽기만) — 세션 qa-a(QA_CREDS 가 계정 하나 모양이면 그 계정 — qa_session.account)
+    if os.environ.get("QA_SKIP_OPS"):
+        return finish()
     s = OpsSession(BASE, "qa-a")
     for v in TIME:
         probe("ops runs since", f"/api/v1/ops/runs?since={q(v)}", s)
@@ -178,7 +207,10 @@ def main() -> int:
     for v in ["99999999999999999999-0", "1-99999999999999999999", "18446744073709551615-18446744073709551615", "0-0"]:
         probe("ops logs id", f"/api/v1/ops/logs/{v}", s)
     s.request("DELETE", "/api/v1/ops/session")
+    return finish()
 
+
+def finish() -> int:
     os.makedirs(OUT, exist_ok=True)
     with open(os.path.join(OUT, "boundary_api.jsonl"), "w") as f:
         for r in rows:

@@ -3,10 +3,10 @@ import { Fragment, useCallback, useRef, useState } from "react";
 import { ApiError } from "@/lib/api";
 import { opsSession, opsTabPath, saveSetting, setProviderEnabled, signOutRequest, type OpsTab } from "@/lib/endpoints/ops";
 import { DISPLAY_TZ, fmtKst, fmtKstClock, fmtTimeTitle, utcDayWindowKst } from "@/lib/time";
-import { fmtBudgetLimit, fmtLatencyMs } from "@/lib/format";
+import { fmtLatencyMs } from "@/lib/format";
 import { liveNote, mirrorDiffers, switchCell, toggleNote, type SwitchNote } from "@/lib/provider-switch";
 import {
-  classifyOpsError, editSetting, isAuthMiss, parseSetting, pipelineLossCount, providerLastError, providerMissing, providersNowMs, rebaseSetting,
+  classifyOpsError, editSetting, fmtBudgetLimit, isAuthMiss, parseSetting, pipelineLossCount, providerLastError, providerMissing, providersNowMs, rebaseSetting,
   RUN_STATUS_TITLE, runStatusClass, runStatusTone, SESSION_EXPIRED_NOTE, settingConflict, qualityPartialDay, settingIfMatch, settingSpec, signOut, switchHistoryError, dlqReadError, withProviderResolutions,
   type SettingEdit,
 } from "@/lib/ops";
@@ -332,7 +332,8 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
                     onClick={() => { drillOpener.current = document.activeElement as HTMLElement | null; if (key) setDrill(open ? null : { k: key, since: summarySince(runs) }); }}>{open ? "접기" : "실행"}</button></td>
                 </tr>
                 {open && drill ? <tr><td colSpan={8}>
-                  <OpsRunsDrill id={RUNS_DRILL_ID} k={drill.k} since={drill.since} onClose={() => { setDrill(null); rescue(() => [drillOpener.current, tabBody.current]); }} onAuthMiss={(e) => { void authMiss(e); }} />
+                  <OpsRunsDrill id={RUNS_DRILL_ID} k={drill.k} since={drill.since} onClose={() => { setDrill(null); rescue(() => [drillOpener.current, tabBody.current]); }} onAuthMiss={(e) => { void authMiss(e); }}
+                    opener={() => drillOpener.current} />
                 </td></tr> : null}
               </Fragment>;
             })}</tbody></table>
@@ -454,8 +455,9 @@ function SettingsForm({ items, msg, setMsg, onSaved, onAuthMiss }: {
               {conflict && ed ? (
                 <div className="mt-1 text-[11px] text-warn" role="alert" data-testid="setting-conflict">
                   편집하는 동안 서버 값이 바뀜(v{ed.version} → v{s.version}: <span className="mono">{String(s.value)}</span>)
-                  <button className="btn ml-1" onClick={() => drop(s.key)}>새 값 보기</button>
-                  <button className="btn ml-1" onClick={() => setEdit({ ...edit, [s.key]: rebaseSetting(ed, s) })}>내 값으로 덮어쓰기</button>
+                  {/* 두 단추 모두 이 충돌 줄을 지운다 — 초점을 그 키의 값 입력으로(QA-1422 — 누른 단추와 함께 사라져 body 로 떨어졌다) */}
+                  <button className="btn ml-1" onClick={() => { rescue(() => [inputs.current.get(s.key)]); drop(s.key); }}>새 값 보기</button>
+                  <button className="btn ml-1" onClick={() => { rescue(() => [inputs.current.get(s.key)]); setEdit({ ...edit, [s.key]: rebaseSetting(ed, s) }); }}>내 값으로 덮어쓰기</button>
                 </div>
               ) : null}
             </td>

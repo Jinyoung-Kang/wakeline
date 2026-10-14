@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { gzipSync } from "node:zlib";
 
 // 설명서(/guide) — 데이터 요청이 없는 정적 화면. 목차 이동(넓은 화면 목록 · 좁은 화면 선택 상자), 그림(이미지 또는 자리표시), CSP 위반 · 페이지 오류 없음.
 test("guide: contents move to sections on wide and narrow screens; every figure is an image or a placeholder", async ({ page }) => {
@@ -60,4 +61,17 @@ test("guide: contents move to sections on wide and narrow screens; every figure 
   await scroller.evaluate((el) => el.scrollTo(0, 0));
   await expect(select).toHaveValue("overview");
   expect(errors).toEqual([]);
+});
+
+// QA-1501(주인이 받아들임 2026-10-14 — docs/PERF.md §15.6): 설명서 내용은 HTML 과 RSC 페이로드로 두 번 실려, 문서가 클수록 모바일 LCP 가 늦다(받아들인 값
+// 2,677 ms). 받아들인 크기 — 운영 빌드 원본 337,496 B · gzip 66,921 B(Node zlib 기본 수준, 2026-10-14) — 에서 크게 늘면 여기서 멈춘다. 절을 더해 넘으면
+// 모바일 LCP 를 다시 재고 이 상한을 정한다(작은 문구 고침은 여유 안).
+const GUIDE_DOC_GZIP_MAX = 72_000;
+
+test("guide: the document stays within the accepted size (QA-1501)", async ({ request }) => {
+  const res = await request.get("/guide");
+  expect(res.status()).toBe(200);
+  const body = await res.body();
+  const gz = gzipSync(body).length;
+  expect(gz, `/guide document ${body.length} B, gzip ${gz} B (max ${GUIDE_DOC_GZIP_MAX})`).toBeLessThanOrEqual(GUIDE_DOC_GZIP_MAX);
 });

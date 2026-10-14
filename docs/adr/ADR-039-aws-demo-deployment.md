@@ -30,6 +30,7 @@
    - 앞단 Caddy가 edge로 보낼 때 Host를 `localhost`로 바꾼다. edge의 Host 허용 목록은 그대로다.
    - 웹은 상대 경로와 `location.host`로 REST · WS 주소를 만든다. CSP도 `connect-src 'self'`라 Host를 쓰지 않는다.
    - api의 `WAKELINE_ALLOWED_ORIGINS`에는 공개 주소(`PUBLIC_ORIGIN`)를 더하고, 관리자 터널용 localhost 주소를 남긴다.
+   - 운영 쿠키는 Secure다(`AWS_COOKIE_SECURE`, 기본 true). 로컬용 `COOKIE_SECURE`는 읽지 않는다 — `.env.example`의 false가 기본값을 이겨 Secure 없이 배포됐다(QA-1600, 2026-10-14).
 4. **edge realip**: `nginx.conf`에 `include /etc/nginx/edge.d/*.conf;`를 둔다(로컬에서는 비어 있어 아무 일도 하지 않는다).
    - AWS에서는 `edge/realip.aws.conf`를 마운트한다. 사설 대역(도커 브리지 게이트웨이)에서 온 `X-Forwarded-For`를 믿는다.
    - realip이 `$remote_addr` 자체를 바꾸므로 `proxy_headers.conf`의 덮어쓰기와 api의 `WAKELINE_TRUSTED_PROXY`는 그대로다.
@@ -91,7 +92,8 @@
 기존 코드는 늘 켜 둔 로컬을 전제했다. AWS 데모는 평일 08:50–18:00 KST 만 켜고(주말 약 63 h 꺼짐), 1 GB RDS 를 세 프로젝트가 나눠 쓰며, 모든 요청이 앞단 잠금을 지난다.
 
 1. **따라잡기는 꺼진 시간을 넘는다**
-   - 1분 요약 따라잡기 창은 원해상도 보존 − 2 h 다(전에는 24 h — 금요일 마지막 시간이 매주 빠졌다, #137).
+   - 1분 요약 따라잡기 창은 남아 있는 가장 오래된 항적 파티션부터다(1분 요약 보존 30일 안). 전에는 24 h 라 금요일 마지막 시간이 매주 빠졌고(#137),
+     그 뒤의 '원해상도 보존 − 2 h'(70 h)는 그보다 긴 정지(연휴 · 기동 실패)에서 멈추기 직전 시간을 잃었다(QA-1200).
    - 일 통계 따라잡기는 1분마다 보고, 마지막 성공 뒤 3 h 가 지났을 때 돈다. 실패하면 1분 뒤 다시 하고, 이어지면 두 배씩 30분까지 늘린다(전에는 3 h 뒤, #138).
      교통량은 그날 첫 순간의 UTC 파티션이 보존 안이거나 아직 남아 있으면 다시 센다. 기동 뒤 첫 따라잡기가 성공하기 전에는 항적 파티션 삭제를 미룬다(상한 6 h, #138).
    - 03:30 KST 정시 집계는 AWS 에서 돌지 않는다 — 기동 뒤 따라잡기가 그 몫을 한다.

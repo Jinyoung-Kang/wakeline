@@ -1,0 +1,78 @@
+# 설치된 실제 판 — QA 이미지(:qa, 스택 A 컨테이너 안) · 2026-10-14 04:03:34 KST
+# 명령은 읽기만(docker exec … --version / package.json / dpkg -l / jar 목록). 이미지 ID 는 docker image inspect.
+wakeline-api:qa sha256:372eee42749efb01d52fb99a34c7ddd34f982f10621604d1a6e289ada7a09ba1 2026-10-12T15:41:50.601786339Z
+wakeline-collector:qa sha256:8220ce595cdf9d457651c7511c75cb952668643d52433b4c27f49247f2024b11 2026-10-11T12:42:07.918112469Z
+wakeline-web:qa sha256:1a0ec7158604d5989b422d03c06ff95b945aa5d550771214723f79dcfcf09f30 2026-10-12T15:42:06.140923888Z
+wakeline-db:qa sha256:a1b67035920c31a0842f1ceb4c110ee37caecd46b1b5e8b8cd9fb639e2aece0a 2026-10-01T16:26:48.194010505Z
+wakeline-edge:qa sha256:4c042b930c916a075e52708cde718a2911b1bd9d754bc23b4c68b47d4a0c6197 2026-10-09T08:31:23.183631512Z
+redis(compose 고정) sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0 2026-09-21T17:37:05.096186658Z
+portfolio-gate:local sha256:29cd64fc90e074e02d541370fd90ab756a4e1d6aba802ced0bc700104fb6286c 2026-10-10T07:52:47.698929875Z
+
+== web (wlqa-a-web-1)
+node v24.21.0 · openssl(내장) 3.5.8 · alpine 3.24.2
+next 16.3.8
+react 19.3.0
+react-dom 19.3.0
+sharp 0.35.5
+maplibre-gl 6.11.2 (package-lock — 브라우저 번들)
+
+== api (wlqa-a-api-1)
+openjdk version "25.0.4.1" 2026-08-18 LTS
+OpenJDK Runtime Environment Temurin-25.0.4.1+1 (build 25.0.4.1+1-LTS)
+OpenJDK 64-Bit Server VM Temurin-25.0.4.1+1 (build 25.0.4.1+1-LTS, mixed mode, sharing)
+PRETTY_NAME="Ubuntu 26.04.1 LTS"
+-- BOOT-INF/lib (주요)
+HikariCP-7.0.2.jar
+flyway-core-12.4.0.jar
+flyway-database-postgresql-12.4.0.jar
+jackson-databind-2.22.3.jar
+jackson-databind-3.2.3.jar
+json-schema-validator-3.0.8.jar
+lettuce-core-7.5.2.RELEASE.jar
+logback-core-1.5.38.jar
+netty-handler-4.2.17.Final.jar
+postgresql-42.7.13.jar
+snakeyaml-2.6.jar
+spring-boot-4.1.1.jar
+spring-core-7.0.9.jar
+spring-security-core-7.1.1.jar
+spring-session-core-4.1.1.jar
+spring-web-7.0.9.jar
+springdoc-openapi-starter-common-3.1.1.jar
+springdoc-openapi-starter-webmvc-api-3.1.1.jar
+springdoc-openapi-starter-webmvc-ui-3.1.1.jar
+tomcat-embed-core-11.0.26.jar
+
+== collector (wlqa-a-collector-1)
+Python 3.13.15
+PRETTY_NAME="Debian GNU/Linux 13 (trixie)"
+asyncpg 0.31.0 · httpx 0.28.1 · httpcore 1.0.9 · websockets 17.1 · redis 8.1.0 · jsonschema 4.26.0 · pydantic 2.13.5 · numpy 2.5.3 · pillow 12.3.0 · pyproj 3.8.0 · shapely 2.1.2 · orjson 3.12.0
+
+== db (wlqa-a-db-1 — 로컬 전용, AWS 는 RDS PostgreSQL 18.6)
+postgres (PostgreSQL) 18.6 (Debian 18.6-1.pgdg13+2)
+PRETTY_NAME="Debian GNU/Linux 13 (trixie)"
+postgresql-18-postgis-3 3.6.4+dfsg-2.pgdg13+1
+postgresql-18-postgis-3-scripts 3.6.4+dfsg-2.pgdg13+1
+
+== redis (wlqa-a-redis-1)
+Redis server v=8.10.2 sha=00000000:1 malloc=jemalloc-5.3.0 bits=64 build=733afb4c18605b55
+alpine 3.23.6
+
+== edge (wlqa-a-edge-1)
+nginx version: nginx/1.30.5
+alpine 3.24.2
+libssl3-3.5.9-r0
+pcre2-10.49-r0
+zlib-1.3.2-r1
+
+== aws-deploy(읽기만)
+30:    image: caddy:2.11.7-alpine@sha256:d8542f48d34a9cf4e4c11a478865229840e87e4c96ea3f439101f31a5d35f75f
+2:FROM python:3.14.8-slim-trixie@sha256:a2b82f3c48559aa0a8446d9af49826b6e2b2016f4cd2afabfe6013ec53729170
+v2.11.7 h1:yj0Y4fYZGPkSvibBJ1sTWE33xC0fxztVyXEW5iIdUT4=
+Python 3.14.8
+16:| 서버 | EC2 `m7i-flex.large`(2 vCPU · 8 GB, Ubuntu 24.04) · Elastic IP · Docker Compose |
+106:   - AMI: Ubuntu Server 24.04 LTS (x86)
+
+== 상류 최신(레지스트리 읽기 — Docker Hub 는 이후 429 로 일부만)
+python:3.13-slim → sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f PYTHON_VERSION=3.13.16 (Dockerfile 고정: sha256:7c61056e… = 3.13.15)
+node:24-alpine → 고정 다이제스트와 같음(24.21.0) · eclipse-temurin:25-jre → 같음(jdk-25.0.4.1+1) · redis:8-alpine → 같음(8.10.2) · nginx-unprivileged:1.30-alpine → 새 다이제스트 56b8272e…(NGINX_VERSION 1.30.5 같음 — edge 는 빌드 때 apk upgrade)

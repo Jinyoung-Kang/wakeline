@@ -7,6 +7,7 @@ import type { AisGap, AisStatus, DestinationInfo, ShipGridCell, ShipLite, ShipSt
 import type { AircraftState, Alert, AlertEventType, FeedInfo, KrRadar, PublicStatus, RadarFrames, SelectedInfo, SigmetCollection } from "./types";
 import { TRAFFIC_POLL_NONE, type TrafficPollState } from "./traffic-grid";
 import type { ReceptionPollState } from "./reception";
+import type { ConnIssue } from "./conn-issue";
 
 export type ConnState = "connecting" | "open" | "closed" | "paused";
 
@@ -59,6 +60,11 @@ export interface ShipTrackInfo {
 export interface ServerData {
   conn: ConnState;
   reconnectAttempt: number;
+  /**
+   * 실시간 연결이 이어지지 않는 까닭 중 브라우저가 알아낸 것(lib/conn-issue — 앞단 잠금 만료 · 원본에 닿지 못함). null = 모름 · 없음.
+   * 연결이 다시 열리면(welcome) 지운다
+   */
+  connIssue: ConnIssue | null;
   /** 마지막으로 WS 메시지(ping 포함)를 받은 브라우저 시각(ms, 5 s 단위로만 갱신). null = 이 연결에서 아직 없음 */
   lastRxAt: number | null;
   snapshotVersion: number;
@@ -134,6 +140,7 @@ export const SHIPS_OFF: ShipsView = { mode: "off", version: 0, count: 0, total: 
 const initial: ServerData = {
   conn: "connecting",
   reconnectAttempt: 0,
+  connIssue: null,
   lastRxAt: null,
   snapshotVersion: 0,
   snapshotAt: null,

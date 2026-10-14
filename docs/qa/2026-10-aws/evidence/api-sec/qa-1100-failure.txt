@@ -1,0 +1,12 @@
+cd apps/api && ./gradlew --offline test --tests 'dev.wakeline.qa.Qa110*' --tests 'dev.wakeline.it.SecurityIT' --tests 'dev.wakeline.ops.OpsSessionLifetimeFilterTest' --tests 'dev.wakeline.platform.web.RateLimitFilterTest'
+# 결과: 52 tests completed, 15 failed (실패 15 = 아래 QA-1100 2 · QA-1101 1 · QA-1102 1 · QA-1103 11 — 대조군 SecurityIT 25 · OpsSessionLifetimeFilterTest 9 · RateLimitFilterTest 2 모두 통과)
+# 2026-10-14 · 브랜치 qa/aws-2026-10 (main 29d39e38 + QA 도구) · Testcontainers(wakeline-db:local · redis:8-alpine)
+
+FAIL anonymousOpsWritesRefusedByCsrfAreCountedToo()
+  java.lang.AssertionError: [api limiter counter after 121 anonymous ops writes (statuses: {403=121})] 
+Expected size: 1 but was: 0 in:
+[]
+FAIL anonymousOpsGetsAreCountedAgainstThePerIpLimit()
+  org.opentest4j.AssertionFailedError: [X-RateLimit-Limit on an anonymous /api/v1/ops request (statuses of 121 requests: {404=121})] 
+expected: "120"
+ but was: null

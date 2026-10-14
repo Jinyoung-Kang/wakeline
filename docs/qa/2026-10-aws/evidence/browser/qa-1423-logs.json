@@ -1,0 +1,11 @@
+{
+  "focusWhenEsc": {
+    "tag": "table",
+    "name": "로그 목록 — ↑/↓ 이동 · Enter 상세 · c 텍스트 복사",
+    "visible": true,
+    "outline": "solid 2px rgb(76, 144, 240)",
+    "testid": "log-grid",
+    "inViewport": true
+  },
+  "openAfterEsc": true
+}

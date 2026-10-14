@@ -1,0 +1,19 @@
+{
+  "browserTimeZone": "UTC",
+  "/": [],
+  "/replay": [],
+  "/stats": [],
+  "/airports/RKSI": [],
+  "/about": [],
+  "/guide": [],
+  "/ (evidence + status details)": [],
+  "/ (aircraft card)": [],
+  "/ops providers": [],
+  "/ops runs": [],
+  "/ops quality": [],
+  "/ops settings": [],
+  "/ops audit": [],
+  "/ops dlq": [],
+  "/ops pipeline": [],
+  "/logs (list + detail)": []
+}

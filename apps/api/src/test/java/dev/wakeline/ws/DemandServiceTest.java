@@ -390,6 +390,31 @@ class DemandServiceTest {
         assertThat(first).doesNotContainKey("gone").containsEntry("a", 10L).containsEntry("b", 5L);
     }
 
+    /**
+     * QA-1350 · ADR-013 개정(2026-10-14): 핫 리전 셀의 IP 당 몫 — 다른 IP 가 원하는 셀이 상한 안에 들지 못하는 동안 한 IP 만 원하는 셀은 IP 마다 3 셀(전체의
+     * 절반)까지. 혼자 쓰면 6 셀까지(남는 자리를 버리지 않는다), 여러 IP 가 함께 보는 셀은 누구의 몫으로도 세지 않는다. 순위(세션 수 → 먼저 요청)는 그대로.
+     */
+    @Test void chooseHot_perIpShareOnlyWhileAnotherIpWaits() {
+        assertThat(DemandService.MAX_HOT_CELLS_PER_IP).isEqualTo(3);
+        // a1..a7 은 IP a 만, b1 · b2 는 IP b 만 — 모두 세션 1, a 가 먼저 요청했다
+        Map<String, Integer> counts = new java.util.LinkedHashMap<>();
+        Map<String, java.util.Set<String>> ips = new HashMap<>();
+        Map<String, Long> first = new HashMap<>();
+        for (int i = 1; i <= 7; i++) { counts.put("a" + i, 1); ips.put("a" + i, java.util.Set.of("A")); first.put("a" + i, (long) i); }
+        // 혼자: 6 셀 모두(상한) — 몫 때문에 자리를 비우지 않는다
+        assertThat(DemandService.chooseHot(counts, ips, first, 6, 3, 100)).containsExactly("a1", "a2", "a3", "a4", "a5", "a6");
+        // 다른 IP 가 두 곳을 원하면: a 는 몫 3 + 남는 자리 1, b 는 두 곳 모두
+        for (int i = 1; i <= 2; i++) { counts.put("b" + i, 1); ips.put("b" + i, java.util.Set.of("B")); first.put("b" + i, 50L + i); }
+        assertThat(DemandService.chooseHot(counts, ips, first, 6, 3, 100)).containsExactly("a1", "a2", "a3", "b1", "b2", "a4");
+        // 둘 다 다섯 곳 이상이면 반씩
+        for (int i = 3; i <= 5; i++) { counts.put("b" + i, 1); ips.put("b" + i, java.util.Set.of("B")); first.put("b" + i, 50L + i); }
+        assertThat(DemandService.chooseHot(counts, ips, first, 6, 3, 100)).containsExactlyInAnyOrder("a1", "a2", "a3", "b1", "b2", "b3");
+        // 두 IP 가 함께 보는 셀(세션 2 — 맨 앞)은 몫에 세지 않는다: a 는 그 셀 + 자기 몫 3
+        counts.put("ab", 2); ips.put("ab", java.util.Set.of("A", "B")); first.put("ab", 99L);
+        List<String> out = DemandService.chooseHot(counts, ips, first, 6, 3, 100);
+        assertThat(out).hasSize(6).startsWith("ab").contains("a1", "a2", "a3", "b1", "b2").doesNotContain("a4", "b3");
+    }
+
     @Test void focusSessionCap_30min_thenReselectRestarts() throws Exception {
         try (Rig r = new Rig()) {
             FakeWsSession f = r.session("s", TOKYO);

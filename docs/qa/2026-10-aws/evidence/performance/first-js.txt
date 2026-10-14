@@ -1,0 +1,36 @@
+
+> wakeline-web@0.2.0 check:first-js
+> node scripts/check-first-screen-js.mjs --in-image
+
+웹 이미지의 Node 로 잽니다: docker run --rm --network none --read-only -v /Users/jinyoung/Projects/wakeline/apps/web:/w:ro -w /w -e FIRST_JS_IMAGE=node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 --entrypoint node node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 scripts/check-first-screen-js.mjs
+첫 화면 JS(`/`) — 빌드 결과에서 계산(gzip 수준 6 = Next 내장 압축, 응답 머리 제외)
+압축기: Node v24.21.0 · zlib 1.3.2.1-motley-8002e91 · linux/arm64 (웹 이미지 node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 의 Node — 예산의 기준)
+
+묶음        파일                                                      원본      gzip 본문
+maplibre  /maplibre/6.11.2/maplibre-gl.mjs                 576.4 KiB    146.9 KiB
+maplibre  /maplibre/6.11.2/maplibre-gl-shared.mjs          503.8 KiB    144.6 KiB
+entry     /_next/static/chunks/3eyx6maxrg7e7.js            228.9 KiB     71.6 KiB
+entry     /_next/static/chunks/1w2c-5c6j_7is.js            158.2 KiB     43.1 KiB
+entry     /_next/static/chunks/1qwmgbczfl0_-.js             63.9 KiB     20.9 KiB
+entry     /_next/static/chunks/3ybtr5qdy1vn3.js             50.8 KiB     19.4 KiB
+entry     /_next/static/chunks/29e5pfpnuq3cl.js             47.7 KiB     17.1 KiB
+entry     /_next/static/chunks/25al_q2ax_6xe.js             45.2 KiB     17.1 KiB
+dynamic   /_next/static/chunks/2ci58kqymvn57.js             46.7 KiB     16.2 KiB
+dynamic   /_next/static/chunks/42vstjr6d143y.js             22.0 KiB      9.2 KiB
+entry     /_next/static/chunks/1ca_d3tijhqim.js             32.1 KiB      8.6 KiB
+maplibre  /maplibre/6.11.2/maplibre-gl-worker.mjs           18.7 KiB      6.0 KiB
+entry     /_next/static/chunks/2nqd9qs6nr_1y.js             15.3 KiB      3.9 KiB
+entry     /_next/static/chunks/turbopack-28l0cw9814-ou.js    9.5 KiB      3.7 KiB
+public    /interpolate.worker.js                             8.1 KiB      3.4 KiB
+entry     /_next/static/chunks/1_6445i180bis.js              5.5 KiB      2.5 KiB
+entry     /_next/static/chunks/1mt0o5niojstr.js              5.3 KiB      2.4 KiB
+entry     /_next/static/chunks/3x8dje1_knzsx.js              0.3 KiB      0.3 KiB
+
+  maplibre    3개  원본 1098.9 KiB  gzip 본문  297.4 KiB (304573 B)
+  entry      12개  원본  662.8 KiB  gzip 본문  210.8 KiB (215815 B)
+  dynamic     2개  원본   68.6 KiB  gzip 본문   25.3 KiB (25944 B)
+  public      1개  원본    8.1 KiB  gzip 본문    3.4 KiB (3508 B)
+  합계         18개  원본 1838.5 KiB  gzip 본문  537.0 KiB (549840 B)
+
+예산 550000 B (537.1 KiB) 안 — 남은 여유 160 B
+check_exit=0

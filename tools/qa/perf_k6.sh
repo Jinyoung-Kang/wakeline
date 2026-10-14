@@ -5,6 +5,8 @@
 #     tools/qa/perf_k6.sh ws200-r1 ws.js 260 -e CONN=200 -e SHIPS=1 -e ORIGIN=http://localhost:8701
 # api 에 직접(BASE_URL=http://10.78.0.30:8000)이 기본 — edge 는 -e BASE_URL=http://10.78.0.10:8700 -e HOST=localhost:8701.
 # 운영 스택 · 스택 B 는 건드리지 않는다(망 wakeline-e2e_wakeline · 컨테이너 wakeline-e2e-* 만).
+# QA 2026-10 AWS: 다른 격리 스택은 PERF_PROJECT(기본 wakeline-e2e — 망 <프로젝트>_wakeline · 표본 컨테이너 <프로젝트>-*) · PERF_API(기본 10.78.0.30:8000).
+#   예: PERF_PROJECT=wlqa-a PERF_EV=docs/qa/2026-10-aws/evidence/performance tools/qa/perf_k6.sh …
 set -euo pipefail
 label=$1; script=$2; secs=$3; shift 3
 root=$(cd "$(dirname "$0")/../.." && pwd)
@@ -17,7 +19,7 @@ sampler=$!
 
 start=$(date -u +%FT%TZ)
 set +e
-docker run --rm --network wakeline-e2e_wakeline -v "$root/perf:/perf" -w /perf -e BASE_URL=http://10.78.0.30:8000 \
+docker run --rm --network "${PERF_PROJECT:-wakeline-e2e}_wakeline" -v "$root/perf:/perf" -w /perf -e BASE_URL="http://${PERF_API:-10.78.0.30:8000}" \
   -e OUT="results/k6-$label.json" "$@" "$K6_IMAGE" run --quiet "$script" 2>&1 \
   | grep --line-buffered -v "VU iteration was interrupted" > "$ev/k6-$label.log"
 rc=${PIPESTATUS[0]}

@@ -1,0 +1,6 @@
+2026-10-13 19:44:20,653 WARNING ais.sink: ships xadd failed (ConnectionError) — holding the first position of each minute per ship until redis answers (51 held, cap 100000)
+2026-10-13 19:46:20,667 WARNING ais.sink: ships backfill xadd failed (ConnectionError) — 586 held positions kept
+2026-10-13 19:46:46,206 INFO ais.sink: published 685 per-minute positions held during the redis outage (1 entries)
+2026-10-13 19:46:46,773 INFO ais.main: ais starting in fixture mode (replay ais_east_asia_90s.jsonl, no external calls)
+2026-10-13 19:46:46,773 INFO ais.shards: carrying over an open AIS gap from the previous run (ais process stopped, shard 1)
+2026-10-13 19:46:48,294 INFO ais.sink: ais gap published: 2026-10-13T19:46:45.943Z → 2026-10-13T19:46:48.293Z (ais process stopped)

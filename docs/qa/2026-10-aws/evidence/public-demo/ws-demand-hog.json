@@ -1,0 +1,327 @@
+{
+ "owner_ip_sessions": [
+  {
+   "name": "Tokyo",
+   "opened": true,
+   "close": null,
+   "welcome_limits": {
+    "max_bbox_area": 2500.0,
+    "diff_interval_s": 10,
+    "resync_interval_s": 30,
+    "resync_world_interval_s": 120,
+    "max_client_messages": 20,
+    "client_message_window_s": 10,
+    "hello_timeout_s": 5
+   },
+   "demand": [
+    {
+     "t": 1.06,
+     "hot": {
+      "cell": "35.5:139.5:50",
+      "radius_nm": 50,
+      "state": "pending"
+     },
+     "focus": null
+    }
+   ],
+   "last_hot": {
+    "cell": "35.5:139.5:50",
+    "radius_nm": 50,
+    "state": "pending"
+   }
+  },
+  {
+   "name": "Shanghai",
+   "opened": true,
+   "close": null,
+   "welcome_limits": {
+    "max_bbox_area": 2500.0,
+    "diff_interval_s": 10,
+    "resync_interval_s": 30,
+    "resync_world_interval_s": 120,
+    "max_client_messages": 20,
+    "client_message_window_s": 10,
+    "hello_timeout_s": 5
+   },
+   "demand": [
+    {
+     "t": 1.06,
+     "hot": {
+      "cell": "31.0:121.5:50",
+      "radius_nm": 50,
+      "state": "pending"
+     },
+     "focus": null
+    },
+    {
+     "t": 8.61,
+     "hot": {
+      "cell": "31.0:121.5:50",
+      "radius_nm": 50,
+      "state": "active",
+      "interval_s": 30,
+      "last_success_at": "2026-10-13T20:52:25.910498Z"
+     },
+     "focus": null
+    }
+   ],
+   "last_hot": {
+    "cell": "31.0:121.5:50",
+    "radius_nm": 50,
+    "state": "active",
+    "interval_s": 30,
+    "last_success_at": "2026-10-13T20:52:25.910498Z"
+   }
+  },
+  {
+   "name": "Beijing",
+   "opened": true,
+   "close": null,
+   "welcome_limits": {
+    "max_bbox_area": 2500.0,
+    "diff_interval_s": 10,
+    "resync_interval_s": 30,
+    "resync_world_interval_s": 120,
+    "max_client_messages": 20,
+    "client_message_window_s": 10,
+    "hello_timeout_s": 5
+   },
+   "demand": [
+    {
+     "t": 1.06,
+     "hot": {
+      "cell": "40.0:116.5:50",
+      "radius_nm": 50,
+      "state": "pending"
+     },
+     "focus": null
+    }
+   ],
+   "last_hot": {
+    "cell": "40.0:116.5:50",
+    "radius_nm": 50,
+    "state": "pending"
+   }
+  },
+  {
+   "name": "Taipei",
+   "opened": true,
+   "close": null,
+   "welcome_limits": {
+    "max_bbox_area": 2500.0,
+    "diff_interval_s": 10,
+    "resync_interval_s": 30,
+    "resync_world_interval_s": 120,
+    "max_client_messages": 20,
+    "client_message_window_s": 10,
+    "hello_timeout_s": 5
+   },
+   "demand": [
+    {
+     "t": 1.06,
+     "hot": {
+      "cell": "25.0:121.5:50",
+      "radius_nm": 50,
+      "state": "pending"
+     },
+     "focus": null
+    },
+    {
+     "t": 8.61,
+     "hot": {
+      "cell": "25.0:121.5:50",
+      "radius_nm": 50,
+      "state": "active",
+      "interval_s": 30,
+      "last_success_at": "2026-10-13T20:52:25.890670Z"
+     },
+     "focus": null
+    }
+   ],
+   "last_hot": {
+    "cell": "25.0:121.5:50",
+    "radius_nm": 50,
+    "state": "active",
+    "interval_s": 30,
+    "last_success_at": "2026-10-13T20:52:25.890670Z"
+   }
+  },
+  {
+   "name": "Vladivostok",
+   "opened": true,
+   "close": [
+    1013,
+    "connection limit"
+   ],
+   "welcome_limits": null,
+   "demand": [],
+   "last_hot": null
+  },
+  {
+   "name": "Osaka",
+   "opened": true,
+   "close": null,
+   "welcome_limits": {
+    "max_bbox_area": 2500.0,
+    "diff_interval_s": 10,
+    "resync_interval_s": 30,
+    "resync_world_interval_s": 120,
+    "max_client_messages": 20,
+    "client_message_window_s": 10,
+    "hello_timeout_s": 5
+   },
+   "demand": [
+    {
+     "t": 1.06,
+     "hot": {
+      "cell": "34.5:135.5:50",
+      "radius_nm": 50,
+      "state": "pending"
+     },
+     "focus": null
+    }
+   ],
+   "last_hot": {
+    "cell": "34.5:135.5:50",
+    "radius_nm": 50,
+    "state": "pending"
+   }
+  }
+ ],
+ "visitor_other_ip_sessions": [
+  {
+   "name": "Manila",
+   "opened": true,
+   "close": null,
+   "welcome_limits": {
+    "max_bbox_area": 2500.0,
+    "diff_interval_s": 10,
+    "resync_interval_s": 30,
+    "resync_world_interval_s": 120,
+    "max_client_messages": 20,
+    "client_message_window_s": 10,
+    "hello_timeout_s": 5
+   },
+   "demand": [
+    {
+     "t": 0.42,
+     "hot": {
+      "cell": "14.5:121.0:50",
+      "radius_nm": 50,
+      "state": "pending"
+     },
+     "focus": null
+    }
+   ],
+   "last_hot": {
+    "cell": "14.5:121.0:50",
+    "radius_nm": 50,
+    "state": "pending"
+   }
+  },
+  {
+   "name": "HongKong",
+   "opened": true,
+   "close": null,
+   "welcome_limits": {
+    "max_bbox_area": 2500.0,
+    "diff_interval_s": 10,
+    "resync_interval_s": 30,
+    "resync_world_interval_s": 120,
+    "max_client_messages": 20,
+    "client_message_window_s": 10,
+    "hello_timeout_s": 5
+   },
+   "demand": [
+    {
+     "t": 0.42,
+     "hot": {
+      "cell": "22.5:114.0:50",
+      "radius_nm": 50,
+      "state": "throttled"
+     },
+     "focus": null
+    }
+   ],
+   "last_hot": {
+    "cell": "22.5:114.0:50",
+    "radius_nm": 50,
+    "state": "throttled"
+   }
+  }
+ ],
+ "select_flood_one_session": [
+  {
+   "i": 1,
+   "hex": "a00000",
+   "focus": {
+    "hex": "a00000",
+    "state": "pending",
+    "since": "2026-10-13T20:52:56.229Z"
+   }
+  },
+  {
+   "i": 2,
+   "hex": "a00001",
+   "focus": {
+    "hex": "a00001",
+    "state": "pending",
+    "since": "2026-10-13T20:52:58.431Z"
+   }
+  },
+  {
+   "i": 3,
+   "hex": "a00002",
+   "focus": {
+    "hex": "a00002",
+    "state": "pending",
+    "since": "2026-10-13T20:53:00.632Z"
+   }
+  },
+  {
+   "i": 4,
+   "hex": "a00003",
+   "focus": {
+    "hex": "a00003",
+    "state": "pending",
+    "since": "2026-10-13T20:53:02.834Z"
+   }
+  },
+  {
+   "i": 5,
+   "hex": "a00004",
+   "focus": {
+    "hex": "a00004",
+    "state": "pending",
+    "since": "2026-10-13T20:53:05.038Z"
+   }
+  },
+  {
+   "i": 6,
+   "hex": "a00005",
+   "focus": {
+    "hex": "a00005",
+    "state": "pending",
+    "since": "2026-10-13T20:53:07.239Z"
+   }
+  },
+  {
+   "i": 7,
+   "hex": "a00006",
+   "focus": {
+    "hex": "a00006",
+    "state": "limited",
+    "since": "2026-10-13T20:53:09.441Z"
+   }
+  },
+  {
+   "i": 8,
+   "hex": "a00007",
+   "focus": {
+    "hex": "a00007",
+    "state": "limited",
+    "since": "2026-10-13T20:53:11.644Z"
+   }
+  }
+ ]
+}

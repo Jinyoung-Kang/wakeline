@@ -1,0 +1,39 @@
+# 실행: cd apps/api && ./gradlew --offline test --tests 'dev.wakeline.qa.Qa1310NonAsciiCaseFoldAcceptedIT'
+# 결과(2026-10-14 05:2x KST, 브랜치 qa/aws-2026-10 · 제품 코드 수정 없음): tests=13 failures=9 errors=0
+
+PASS  "/api/v1/stats/sigmet?group=FIR" → "200" "-"
+PASS  "/api/v1/alerts?kind=OBSERVED" → "200" "-"
+PASS  "/api/v1/ships/search?q=ev%C4%B1er" → "400" "BAD_QUERY"
+PASS  "/api/v1/airports/rks%C4%B1/wx" → "400" "BAD_ICAO"
+FAIL  "/api/v1/stats/sigmet?group=f%C4%B1r" → "400" "BAD_FILTER"
+      org.opentest4j.AssertionFailedError: [GET /api/v1/stats/sigmet?group=f%C4%B1r — body {"days":[{"day":"2026-10-07","aggregated":false},{"day":"2026-10-08","aggregated":false},{"day":"2026-10-09","aggregated":false},{"day":"2026-10-10","aggregated":false},{"day":"2026-10-11","aggregated":false},{"day":"2026-10-12","aggregated":false},{"day":"2026-10-13","aggregated":false},{"day":"2026-10-14","aggregated":false}],"items":[],"group":"fir","day_zone":"Asia/Seoul","meta":{"provider":"db","fetched_at":"2026-10-13T20:19:46.908749Z","lag_s":0.0,"stale":false,"generated_at":"2026-10-13T20:19:46.908751Z
+FAIL  "/api/v1/stats/sigmet?group=f%C4%B0r" → "400" "BAD_FILTER"
+      org.opentest4j.AssertionFailedError: [GET /api/v1/stats/sigmet?group=f%C4%B0r — body {"days":[{"day":"2026-10-07","aggregated":false},{"day":"2026-10-08","aggregated":false},{"day":"2026-10-09","aggregated":false},{"day":"2026-10-10","aggregated":false},{"day":"2026-10-11","aggregated":false},{"day":"2026-10-12","aggregated":false},{"day":"2026-10-13","aggregated":false},{"day":"2026-10-14","aggregated":false}],"items":[],"group":"fir","day_zone":"Asia/Seoul","meta":{"provider":"db","fetched_at":"2026-10-13T20:19:46.934864Z","lag_s":0.0,"stale":false,"generated_at":"2026-10-13T20:19:46.934866Z
+FAIL  "/api/v1/alerts?kind=ob%C5%BFerved" → "400" "BAD_FILTER"
+      org.opentest4j.AssertionFailedError: [GET /api/v1/alerts?kind=ob%C5%BFerved — body {"items":[],"meta":{"provider":"engine","fetched_at":"2026-10-13T20:19:46.951449Z","lag_s":0.0,"stale":false,"generated_at":"2026-10-13T20:19:46.951451Z","request_id":"1a136ebd2842ef78fad7531839a"}}] 
+expected: 400
+ but was: 200
+FAIL  "/api/v1/alerts?kind=pred%C4%B1cted" → "400" "BAD_FILTER"
+      org.opentest4j.AssertionFailedError: [GET /api/v1/alerts?kind=pred%C4%B1cted — body {"items":[],"meta":{"provider":"engine","fetched_at":"2026-10-13T20:19:46.966537Z","lag_s":0.0,"stale":false,"generated_at":"2026-10-13T20:19:46.966538Z","request_id":"1a136ebd29395a773387aa58cf6"}}] 
+expected: 400
+ but was: 200
+FAIL  "/api/v1/aircraft?bbox=124,33,132,39&detail=l%C4%B1te" → "400" "BAD_FILTER"
+      org.opentest4j.AssertionFailedError: [GET /api/v1/aircraft?bbox=124,33,132,39&detail=l%C4%B1te — body {"type":"FeatureCollection","features":[],"meta":{"stale":true,"generated_at":"2026-10-13T20:19:46.980898Z","request_id":"1a136ebd2a0804a6a8db2d89442","sources":{"region":{"stale":true},"global":null}}}] 
+expected: 400
+ but was: 200
+FAIL  "/api/v1/aircraft/search?q=%C5%BFJO" → "400" "BAD_QUERY"
+      org.opentest4j.AssertionFailedError: [GET /api/v1/aircraft/search?q=%C5%BFJO — body {"items":[],"meta":{"stale":true,"generated_at":"2026-10-13T20:19:47.002692Z","request_id":"1a136ebd2b4cc44a29d83b559c0"}}] 
+expected: 400
+ but was: 200
+FAIL  "/api/v1/aircraft/search?q=%C4%B1BX" → "400" "BAD_QUERY"
+      org.opentest4j.AssertionFailedError: [GET /api/v1/aircraft/search?q=%C4%B1BX — body {"items":[],"meta":{"stale":true,"generated_at":"2026-10-13T20:19:47.014600Z","request_id":"1a136ebd2c3d1ba7bcc38dc3801"}}] 
+expected: 400
+ but was: 200
+FAIL  "/api/v1/aircraft/search?q=%C3%9F%C3%9F" → "400" "BAD_QUERY"
+      org.opentest4j.AssertionFailedError: [GET /api/v1/aircraft/search?q=%C3%9F%C3%9F — body {"items":[],"meta":{"stale":true,"generated_at":"2026-10-13T20:19:47.026733Z","request_id":"1a136ebd2cf53759cc1ae4a2b9b"}}] 
+expected: 400
+ but was: 200
+FAIL  "/api/v1/aircraft/search?q=%EF%AC%801" → "400" "BAD_QUERY"
+      org.opentest4j.AssertionFailedError: [GET /api/v1/aircraft/search?q=%EF%AC%801 — body {"items":[],"meta":{"stale":true,"generated_at":"2026-10-13T20:19:47.038438Z","request_id":"1a136ebd2da2016b9a620532b67"}}] 
+expected: 400
+ but was: 200

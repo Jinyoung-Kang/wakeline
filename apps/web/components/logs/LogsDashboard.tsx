@@ -403,7 +403,7 @@ export function LogsDashboard({ me, onLeave }: { me: { username: string }; onLea
             <aside className="max-h-[50%] min-h-0 overflow-auto border-t border-line bg-bg-1 lg:max-h-none lg:w-[46%] lg:border-t-0 lg:border-l" aria-label="항목 상세">
               {detail ? (
                 <LogDetail key={entryKey(detail)} entry={detail} period={filter.period} resolvedMode={filter.resolved} onClose={closeDetail} onOpen={openEntry} onFilterFp={filterFp}
-                  onFilterRid={filterRid} onCopy={(l, t) => void copy(l, t)} onAuthMiss={authMiss} onResolveChanged={resolveChanged} />
+                  onFilterRid={filterRid} onCopy={(l, t) => void copy(l, t)} onAuthMiss={authMiss} onResolveChanged={resolveChanged} opener={() => grid.current} />
               ) : detailMiss ? (
                 <div className="p-3 text-[12px]" data-testid="log-detail-miss">
                   <div className="mb-1"><span className="label mr-2">항목</span><span className="mono">{detailMiss.id}</span></div>

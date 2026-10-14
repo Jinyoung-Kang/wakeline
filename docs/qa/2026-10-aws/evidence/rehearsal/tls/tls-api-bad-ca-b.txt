@@ -1,0 +1,9 @@
+# api bad-ca-b — 02:59:20Z 다시 만든 뒤 75 s
+state: running restarts=0 health=healthy
+edge /healthz: {"status":"degraded","reasons":["writer_backlog"],"region_lag_s":0,"snapshot_version":18} [200]
+GET /api/v1/alerts/history?limit=1: 503
+--- TLS 관련 로그(앞 12줄)
+2026-10-14T02:59:24.380Z  WARN 7 --- [wakeline-api] [omcat-handler-8] [rid:8f17d853433d0bd4fce013e4b44f12cb] d.wakeline.platform.web.ProblemAdvice    : could not get a DB connection (SQLSTATE 08006) request_id=8f17d853433d0bd4fce013e4b44f12cb path=/api/v1/alerts/history query="limit=1" elapsed_ms=3469 → 503: CannotGetJdbcConnectionException ← SunCertPathBuilderException: unable to find valid c
+--- TLS 관련 로그 줄 수: 1
+--- 서버 쪽 TLS 세션(같은 계정 · application_name)
+wakeline_collector	wakeline-collector	t	TLSv1.3	1

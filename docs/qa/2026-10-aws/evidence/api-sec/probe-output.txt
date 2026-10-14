@@ -1,0 +1,86 @@
+# api-sec 탐침 출력(2026-10-14 · qa/aws-2026-10 · Testcontainers 통합 시험 — 실제 Tomcat 임의 포트 · 실제 Redis ACL · PostGIS)
+# 원본: probes/QaApiSecProbeIT.java.txt — 다시 돌리려면 apps/api/src/test/java/dev/wakeline/qa/QaApiSecProbeIT.java 로 복사한 뒤
+#   cd apps/api && ./gradlew --offline test --tests 'dev.wakeline.qa.QaApiSecProbeIT'
+#   (출력은 build/test-results/test/TEST-dev.wakeline.qa.QaApiSecProbeIT.xml 의 system-out 에서 'QAPROBE' 줄)
+# 요청은 모두 127.0.0.1(신뢰하지 않는 원격) · 원시 소켓(QaRawHttp — 헤더 값 바이트 그대로). request_id 는 지웠다.
+
+## 1. 익명 운영 요청과 요청 제한(QA-1100)
+QAPROBE anon GET ops x125 statuses={404=125} lastRateLimitHeader=null
+QAPROBE rl keys after anon ops=[]
+QAPROBE anon PUT ops (no csrf) x125 statuses={403=125} body={"type":"https://wakeline.invalid/problems/csrf-invalid","title":"forbidden","status":403,"detail":"missing or invalid CSRF token","instance":"/api/v1/ops/settings/region_poll_s","code":"CSRF_INVALID"}
+QAPROBE anon POST ops (bad origin) statuses={403=5} body={"type":"https://wakeline.invalid/problems/origin-not-allowed","title":"forbidden","status":403,"detail":"ops changes are accepted only from the allowed origins","instance":"/api/v1/ops/providers/opensky/disable","code":"ORIGIN_NOT_ALLOWED"}
+QAPROBE rl keys after anon ops writes=[]
+
+## 2. 헤더 값의 C1 제어 문자(바이트 0x85 · 0x9F)(QA-1101)
+QAPROBE sigmets If-None-Match C1 -> 500 {"detail":"unexpected error","instance":"/api/v1/sigmets","status":500,"title":"internal error","type":"https://wakeline.invalid/problems/internal","code":"INTERNAL"}
+QAPROBE status Accept C1 -> 400 {"type":"https://wakeline.invalid/problems/bad-request","title":"bad request","status":400,"detail":"request rejected","instance":"/api/v1/status","code":"BAD_REQUEST"}
+QAPROBE status X-Qa C1 -> 200
+QAPROBE sigmets/{id} Accept C1 -> 400 {"type":"https://wakeline.invalid/problems/bad-request","title":"bad request","status":400,"detail":"request rejected","instance":"/api/v1/sigmets/ABCDEFG","code":"BAD_REQUEST"}
+QAPROBE unknown path Accept C1 -> 400 {"type":"https://wakeline.invalid/problems/bad-request","title":"bad request","status":400,"detail":"request rejected","instance":"/api/v1/nope-qa-x","code":"BAD_REQUEST"}
+QAPROBE aircraft If-None-Match C1 -> 500 {"detail":"unexpected error","instance":"/api/v1/aircraft","status":500,"title":"internal error","type":"https://wakeline.invalid/problems/internal","code":"INTERNAL"}
+QAPROBE status If-None-Match DEL -> 400
+QAPROBE client-errors UA C1 -> 500 {"detail":"unexpected error","instance":"/api/v1/client-errors","status":500,"title":"internal error","type":"https://wakeline.invalid/problems/internal","code":"INTERNAL"}
+QAPROBE login X-Qa C1 -> 401 {"detail":"invalid credentials","instance":"/api/v1/ops/session","status":401,"title":"unauthorized","type":"https://wakeline.invalid/problems/bad-credentials","code":"BAD_CREDENTIALS"}
+QAPROBE ws handshake X-Qa C1 -> 400 {"type":"https://wakeline.invalid/problems/bad-request","title":"bad request","status":400,"detail":"request rejected","instance":"/ws/v1","code":"BAD_REQUEST"}
+QAPROBE logs stream XLEN=3
+
+## 3. 로그인 사용자 이름의 NUL(QA-1102)
+QAPROBE login username NUL -> 500 {"detail":"unexpected error","instance":"/api/v1/ops/session","status":500,"title":"internal error","type":"https://wakeline.invalid/problems/internal","code":"INTERNAL"}
+
+## 4. strip() · trim() 이 지우는 제어 문자(QA-1103)
+QAPROBE strip /api/v1/alerts/history?hex=71be01%1F -> 200
+QAPROBE strip /api/v1/alerts/history?hex=71be01%09 -> 200
+QAPROBE strip /api/v1/alerts/history?hex=71be01%00 -> 400 {"detail":"hex must be 6 hex chars","instance":"/api/v1/alerts/history","status":400,"title":"bad request","type":"https://wakeline.invalid/problems/bad-hex","code":"BAD_HEX"}
+QAPROBE strip /api/v1/alerts/history?hex=%1C71be01 -> 200
+QAPROBE strip /api/v1/alerts/history?limit=10%1F -> 200
+QAPROBE strip /api/v1/alerts/history?limit=10%00 -> 400 {"detail":"invalid parameter: limit","instance":"/api/v1/alerts/history","status":400,"title":"bad request","type":"https://wakeline.invalid/problems/bad-request","code":"BAD_REQUEST"}
+QAPROBE strip /api/v1/airports/RKSI%1F/wx -> 404 {"detail":"airport not watched: RKSI","instance":"/api/v1/airports/RKSI%1F/wx","status":404,"title":"not found","type":"https://wakeline.invalid/problems/not-found","code":"NOT_FOUND"}
+QAPROBE strip /api/v1/airports/RKSI%09/wx -> 404 {"detail":"airport not watched: RKSI","instance":"/api/v1/airports/RKSI%09/wx","status":404,"title":"not found","type":"https://wakeline.invalid/problems/not-found","code":"NOT_FOUND"}
+QAPROBE strip /api/v1/aircraft/71be01%1F -> 404 {"detail":"aircraft 71be01 not seen","instance":"/api/v1/aircraft/71be01%1F","status":404,"title":"not found","type":"https://wakeline.invalid/problems/not-found","code":"NOT_FOUND"}
+QAPROBE strip /api/v1/alerts?kind=observed%1F -> 200
+QAPROBE strip /api/v1/stats/sigmet?group=fir%1F -> 200
+QAPROBE strip /api/v1/ships/440123456%1F -> 404 {"detail":"ship 440123456 not seen","instance":"/api/v1/ships/440123456%1F","status":404,"title":"not found","type":"https://wakeline.invalid/problems/not-found","code":"NOT_FOUND"}
+QAPROBE strip /api/v1/ships/440123456%09 -> 404 {"detail":"ship 440123456 not seen","instance":"/api/v1/ships/440123456%09","status":404,"title":"not found","type":"https://wakeline.invalid/problems/not-found","code":"NOT_FOUND"}
+QAPROBE strip /api/v1/stats/traffic?day=2026-10-01%1F -> 200
+
+## 5. 경로 변형(익명) — 결함 없음
+QAPROBE path /api/v1/%6Fps/providers -> 404 NOT_FOUND
+QAPROBE path /API/v1/ops/providers -> 404 NOT_FOUND
+QAPROBE path //api/v1/ops/providers -> 400 BAD_REQUEST "request rejected"(방화벽)
+QAPROBE path /api/v1/ops;x/providers -> 400 BAD_REQUEST "request rejected"
+QAPROBE path /api/v1/./ops/providers -> 400 BAD_REQUEST "request rejected"
+QAPROBE path /api/v1/ops/../ops/providers -> 400 BAD_REQUEST "request rejected"
+QAPROBE path /api/v1/ops%2Fproviders -> 400 BAD_REQUEST "bad request"(Tomcat — ProblemErrorReportValve)
+QAPROBE path /api/v1/ops/providers/ -> 404 NOT_FOUND
+QAPROBE path /api/v1/Ops/providers -> 404 NOT_FOUND
+QAPROBE path /api/v1/o%70s/providers -> 404 NOT_FOUND
+QAPROBE path /api/v1/ops%20/providers -> 404 NOT_FOUND
+QAPROBE path /api/v1/ops/providers%3B -> 400 BAD_REQUEST "request rejected"
+QAPROBE path /api/v1/%2e/ops/providers -> 400 BAD_REQUEST "request rejected"
+QAPROBE path /api/v1/ops/providers.json -> 404 NOT_FOUND
+QAPROBE path /%61pi/v1/ops/providers -> 404 NOT_FOUND
+QAPROBE path /api/v1/ops/%70roviders -> 404 NOT_FOUND
+QAPROBE path /api//v1/ops/providers -> 400 BAD_REQUEST "request rejected"
+QAPROBE path /api/v1/ops/providers?x=%00 -> 404 NOT_FOUND
+
+## 6. 운영자 세션으로 경로 변형 · CSRF · 세션 갱신 — 결함 없음
+QAPROBE login -> 200 cookies=[WAKELINE_CSRF, WAKELINE_SESSION]
+QAPROBE authed path /api/v1/ops/providers -> 200
+QAPROBE authed path /api/v1/%6Fps/providers -> 200        (디코딩 경로로 운영 경로 — 인가 · 세션 · 수명 검사를 받는다)
+QAPROBE authed path /API/v1/ops/providers -> 404
+QAPROBE authed path /api/v1/ops/providers/ -> 404
+QAPROBE authed path /api/v1/Ops/providers -> 404
+QAPROBE authed POST no csrf /api/v1/%6Fps/stats/aggregate?day=2026-10-01 -> 403 CSRF_INVALID
+QAPROBE authed POST no csrf /api/v1/ops/stats/aggregate/?day=2026-10-01 -> 403 CSRF_INVALID
+QAPROBE client-errors with session cookie -> 204 lastAccessed changed=false ttlBefore=28800 ttlAfter=28798 set-cookie=[]
+QAPROBE status with session cookie -> 200 lastAccessed changed=false
+
+## 7. 본문 크기(api 직접 — edge 의 client_max_body_size 1m 밖) — 개선 제안
+QAPROBE login 20MiB body -> 401 in 775 ms BAD_CREDENTIALS     (공백 20 MiB + JSON — 끝까지 읽고 답)
+QAPROBE login 15MiB password -> 400 in 553 ms BAD_REQUEST     (비밀번호 글자 15 MiB — Jackson 이 다 읽은 뒤 @Size 로 거절)
+QAPROBE client-errors 9000 B -> 413
+
+## 8. 공개 정보
+QAPROBE openapi servers -> "servers":[{"url":"http://127.0.0.1:53706","description":"Generated server url"}]   (요청의 Host · 포트를 그대로 싣는다)
+QAPROBE status keys -> {"server_time":…,"snapshot_version":0,"fixture_mode":false,"collector_mode_known":false,"region":{…},"global":{…},"sigmet":{…},"radar":{…},"radar_kr":{},"engine":{…},"active_providers":{},"demand":{…},"sources":{},"meta":{…}}
+QAPROBE server header=null x-powered=null

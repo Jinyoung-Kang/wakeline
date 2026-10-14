@@ -28,7 +28,7 @@ export function WarningPanelView({ poll, nowMs }: { poll: WarningsPollState; now
   const line = warningsStatus(w, poll.error, nowMs, usePublicDemo());
   return (
     <div className="flex h-full flex-col text-[11px]" data-testid="warning-panel">
-      <div className="row"><span className="label">Weather warnings</span><span className="text-fg-3">기상청 · KST</span></div>
+      <div className="row"><span className="label" lang="en">Weather warnings</span><span className="text-fg-3">기상청 · KST</span></div>
       <div className={`border-b border-line px-2.5 py-1 ${TONE[line.tone]}`} role="status" aria-live="polite" data-testid="warnings-status">{line.text}</div>
       <div className="min-h-0 flex-1 overflow-y-auto">
         {w?.received && w.items.length === 0 ? <div className="p-3 text-fg-3" data-testid="warnings-empty">지금 발효 중인 기상특보가 없습니다(마지막 목록 기준).</div> : null}

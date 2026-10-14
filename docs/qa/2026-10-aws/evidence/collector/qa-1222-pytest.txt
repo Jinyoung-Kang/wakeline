@@ -1,0 +1,9 @@
+$ cd apps/collector && uv run --offline pytest tests/qa/test_qa_1222_warning_one_undecodable_line.py -q -p no:cacheprovider
+# 2026-10-13T18:55:13Z
+E       AssertionError: [CP949-only syllable in a zone name] nothing published — the whole list was dropped: WarningResponseError — neither UTF-8 nor EUC-KR (byte 1743) · wrn_now_data · 0.0 s 경과
+WARNING  job.weather:weather.py:134 kma_warning/kma_warning failed: wrn_now_data — WarningResponseError — neither UTF-8 nor EUC-KR (byte 1743) after 0.0 s
+E       AssertionError: [one stray 0xFF byte] nothing published — the whole list was dropped: WarningResponseError — neither UTF-8 nor EUC-KR (byte 1807) · wrn_now_data · 0.0 s 경과
+WARNING  job.weather:weather.py:134 kma_warning/kma_warning failed: wrn_now_data — WarningResponseError — neither UTF-8 nor EUC-KR (byte 1807) after 0.0 s
+FAILED tests/qa/test_qa_1222_warning_one_undecodable_line.py::test_qa_1222_one_undecodable_line_drops_only_that_line[cp949-syllable]
+FAILED tests/qa/test_qa_1222_warning_one_undecodable_line.py::test_qa_1222_one_undecodable_line_drops_only_that_line[stray-0xff]
+2 failed in 0.35s

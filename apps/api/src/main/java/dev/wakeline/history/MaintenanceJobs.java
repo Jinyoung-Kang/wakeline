@@ -31,7 +31,7 @@ import java.util.Map;
  * 선박(ADR-014): 위치 ship_position 72 h, 정적 정보·수신 공백 영구.
  * 관심 지역은 런타임 설정(collector 와 같은 값, {@link RegionSettings})에서 읽는다(COR-12).
  * 따라잡기(REL-18): cron 은 놓친 시각을 다시 돌리지 않는다 — 기동 1분 뒤 · 성공 뒤 3시간마다(실패하면 1분부터 두 배씩, 30분 상한) 원본이 남은
- * 시간(보존 − 2 h) 중 요약이 없는 시간과 최근 7일 중 완료 표식이 없는 통계 계열이 있는 날을 채운다(둘 다 멱등, R-46 · AWS 리뷰 B-1 · B-2). 그보다 오래된 날도 원본이 남은 계열(SIGMET · 알림)에 표식이 없으면
+ * 시간(남아 있는 가장 오래된 항적 파티션부터) 중 요약이 없는 시간과 최근 7일 중 완료 표식이 없는 통계 계열이 있는 날을 채운다(둘 다 멱등, R-46 · AWS 리뷰 B-1 · B-2 · QA-1200). 그보다 오래된 날도 원본이 남은 계열(SIGMET · 알림)에 표식이 없으면
  * 채운다({@link #backfillStats} — V16 뒤 KST 날짜로 다시 세기. 원해상도가 지워진 옛 날의 교통량은 V16 이 옛 UTC 시 행에서 옮겨 실었다).
  */
 @org.springframework.context.annotation.Profile("!cli & !migrate")  // CLI(ops-user)·마이그레이션 실행에서는 웹·소비자·잡을 띄우지 않는다
@@ -48,9 +48,16 @@ public class MaintenanceJobs {
 
     /** 오늘(KST 날짜) */
     public static LocalDate today() { return LocalDate.now(DAY_ZONE); }
-    /** 1분 요약 따라잡기 창이 원해상도 보존보다 짧은 만큼(지워지는 중인 파티션을 읽지 않게 — {@link #RETAIN_CATCH_UP_HOURS} 와 같은 규칙) */
-    static final int CATCH_UP_MARGIN_HOURS = 2;
     static final int CATCH_UP_DAYS = 7;
+    /**
+     * 1분 요약 따라잡기가 요약이 이미 있어도 다시 요약하는 최근 닫힌 시간 수(QA-1202 — 있는 분은 ON CONFLICT 로 그대로, 빠진 분만 더한다). 정시 요약(:05)은
+     * 그때 있는 원본만 요약하는데, 그 시간의 행이 :05 뒤에 쓰이는 길이 있다: Redis 장애 동안 수집기가 쌓아 둔 발행(재전송 큐 1,000건 · 64 MiB — 넘치면
+     * 가장 오래된 것부터 버린다)이 장애 뒤 들어오거나, api 재시작 뒤 스트림 백로그(시간 트리밍 2.5 h)를 따라잡는 동안 :05 가 돈다 — 둘 다 늦음을 약
+     * 2.5 h 로 묶는다(저장기 큐 50,000행은 몇 분 분량). 따라잡기는 성공 뒤 3 h({@link #CATCH_UP_EVERY})마다 돌므로 6 h 면 어느 시간이든 끝나고 3 h 넘게
+     * 지난 따라잡기가 한 번은 다시 본다. 그보다 오래된 시간은 요약이 하나도 없을 때만 요약한다 — 원본을 다시 읽는 양은 따라잡기마다 6시간분이다
+     * (모든 시간을 다시 읽으면 3일치 원본을 3시간마다 읽는다). 3 h 넘게 늦은 행은 여전히 요약되지 않는다(위 경로로는 생기지 않는다).
+     */
+    static final int RESUMMARIZE_HOURS = 6;
     /** 따라잡기 창 밖의 날을 한 번의 따라잡기에 채우는 최대 일수(backfillStats) — /stats 범위 상한(92일)과 같다 */
     static final int BACKFILL_MAX_DAYS = 92;
     /** 선박 위치 보존(계약 v2 §B3). 함수가 24 h ~ 30일 밖의 값을 거절한다(V5). */
@@ -95,15 +102,44 @@ public class MaintenanceJobs {
     /** 이 잡의 시계로 본 오늘(KST 날짜) */
     LocalDate todayKst() { return LocalDate.ofInstant(clock.instant(), DAY_ZONE); }
 
-    @Scheduled(initialDelay = 5_000, fixedDelay = 6 * 3600_000)
+    /** 이어진 보장 실패 수 · 다음 시도까지 건너뛸 틱(1분) 수 — 예약 작업 스레드만 바꾼다 */
+    private volatile int partitionFailures;
+    private volatile int partitionSkipTicks;
+
+    /**
+     * 항적 · 선박 위치의 일(UTC) 파티션(어제 ~ +3일)을 만든다 — 기동 5 s 뒤부터 1분 틱마다. 이미 있으면 카탈로그 확인 몇 번뿐이라 매분 해도 가볍다
+     * (성공 뒤 몇 시간 쉬게 하면 그동안 직접 부른 보장 — 운영 · 시험 — 이 아무것도 하지 않는다). 실패하면 다음 틱에 다시 하고, 이어서 실패하면 건너뛰는
+     * 틱을 두 배씩 늘린다(따라잡기와 같은 물러남 — 1 · 2 · 4 · … 분, {@link #CATCH_UP_RETRY_MAX} 상한 — 연결이 꽉 찬 공유 RDS 에 매분 붙지 않게).
+     * 틱을 세어 물러난다(시계가 아니라 — 실패 뒤 첫 다시 시도는 늘 바로 다음 틱이다).
+     * 예전에는 6 h 고정 주기였다(QA-1240): 3일 넘게 멈춘 뒤(연휴 — 마지막 보장의 +3일이 오늘에 닿지 않는다) 기동하면 오늘(UTC) 파티션이 없는데, 기동 순간
+     * DB 가 아직 답하지 않으면(RDS 준비 전 · 공유 RDS 연결 고갈 53300) 6 h 동안 다시 만들지 않아 그동안 들어온 항적 · 선박 위치가 '파티션 없음'(23514)으로
+     * 모두 버려지고 ACK 됐다. 저장기도 23514 로 실패한 배치는 파티션을 만든 뒤 다시 쓴다(TrackWriter · ShipWriter) — 이 작업은 들어오는 행이 없어도
+     * 앞날의 파티션을 미리 만든다.
+     */
+    @Scheduled(initialDelay = 5_000, fixedDelay = 60_000)
     public void ensurePartitions() {
+        if (partitionSkipTicks > 0) {
+            partitionSkipTicks--;
+            return;
+        }
+        int failures = partitionFailures + 1; // 이번에 실패하면
+        long retryMinutes = Math.min(CATCH_UP_RETRY_FIRST.toMinutes() << Math.min(failures - 1, 10), CATCH_UP_RETRY_MAX.toMinutes());
+        boolean done = true;
         for (String table : new String[]{"track_point", "ship_position"}) { // 하나가 실패해도 다른 것은 만든다
             try {
                 Integer n = db.sql("SELECT " + table + "_ensure_partitions(3)").query(Integer.class).single();
                 if (n > 0) log.info("created {} {} partitions", n, table);
             } catch (RuntimeException e) {
-                log.warn("ensure {} partitions failed: {}", table, e.toString());
+                done = false;
+                log.warn("ensure {} partitions failed (retry in {} min): {}", table, retryMinutes, e.toString());
             }
+        }
+        if (done) {
+            if (partitionFailures > 0) log.info("partitions ensured after {} failed attempt(s)", partitionFailures);
+            partitionFailures = 0;
+        } else {
+            partitionFailures = failures;
+            partitionSkipTicks = (int) retryMinutes - 1; // 1분 틱 — 다음 시도는 retryMinutes 틱 뒤
         }
     }
 
@@ -115,10 +151,13 @@ public class MaintenanceJobs {
     public void dropExpiredPartitions() {
         // 기동 뒤 첫 따라잡기가 성공하기 전에는 항적 파티션을 지우지 않는다(상한 DROP_HOLD_MAX — 독립 리뷰 M3): 교통량은 그날 파티션이 있을 때만 다시 센다({@link #families}).
         // 주말에 꺼지는 AWS 데모의 금요일 교통량은 월요일 아침 따라잡기가 세는데, RDS 가 늦게 준비되면 그 전에 목요일 UTC 파티션이 지워져 영구히 빠졌다
-        if (catchUpOkAt == null && clock.instant().isBefore(startedAt.plus(DROP_HOLD_MAX)))
-            log.info("retention track_point partitions: kept until the first catch-up after start (at most {} h)", DROP_HOLD_MAX.toHours());
-        else
-            retention("track_point partitions", () -> db.sql("SELECT track_point_drop_old(:h)").param("h", props.trackRetentionHours()).query(Integer.class).single());
+        // 선박 위치 파티션도 같다(QA-1201 남은 곳 — 독립 리뷰 2026-10-14): 첫 따라잡기가 지정 선박의 점을 보존표로 옮기기 전에 지우면, 긴 정지 직전
+        // 시간의 그 점이 원본과 함께 사라진다(따라잡기가 RDS 를 기다리며 물러나 :02 를 넘길 때)
+        if (catchUpOkAt == null && clock.instant().isBefore(startedAt.plus(DROP_HOLD_MAX))) {
+            log.info("retention track_point · ship_position partitions: kept until the first catch-up after start (at most {} h)", DROP_HOLD_MAX.toHours());
+            return;
+        }
+        retention("track_point partitions", () -> db.sql("SELECT track_point_drop_old(:h)").param("h", props.trackRetentionHours()).query(Integer.class).single());
         retention("ship_position partitions", () -> db.sql("SELECT ship_position_drop_old(:h)").param("h", SHIP_RETENTION_HOURS).query(Integer.class).single());
     }
 
@@ -205,10 +244,8 @@ public class MaintenanceJobs {
 
     /** 지정 대상 보존 기간(ADR-038 — 계획 결정 D7) */
     static final int RETAINED_DAYS = 365;
-    /** 매시간 옮기는 창(닫힌 시간까지 거슬러) — 한두 번 놓쳐도 다음 실행이 채운다(겹치면 무시) */
+    /** 매시간 옮기는 창(닫힌 시간까지 거슬러) — 한두 번 놓쳐도 다음 실행이 채운다(겹치면 무시). 기동 뒤 따라잡기는 원본이 남은 모든 시간({@link #runCatchUp}) */
     static final int RETAIN_COPY_HOURS = 3;
-    /** 기동 뒤 따라잡기 창 — 원해상도 보존(72 h)보다 조금 짧게(지워지는 중인 파티션을 읽지 않게) */
-    static final int RETAIN_CATCH_UP_HOURS = 70;
 
     /**
      * 지정 대상 기록 보존(ADR-038 · SPEC F7): 지난 {@value #RETAIN_COPY_HOURS}시간(닫힌 시간까지)을 옮긴다. 매시 1분 요약 작업({@link #summarize1m})이 이어서
@@ -346,10 +383,12 @@ public class MaintenanceJobs {
                 log.warn("catch-up failed (will retry): {}", e.toString());
             }
         }
-        // 지정 대상 보존 복사는 따로 가둔다(ADR-038 결정 3 · QA-601): 위가 실패해도 72 h 파티션 삭제 전에 옮길 기회를 잃지 않는다
+        // 지정 대상 보존 복사는 따로 가둔다(ADR-038 결정 3 · QA-601): 위가 실패해도 72 h 파티션 삭제 전에 옮길 기회를 잃지 않는다.
+        // 창 = 원본이 남아 있는 모든 시간(보존 365일 안 — 남은 파티션만 읽힌다, 대상마다 (hex|mmsi, ts) 기본 키 범위). 70 h 고정이던 때는 그보다 긴 정지
+        // (연휴 · 기동 실패) 직전 시간의 지정 대상 점을 원본이 남아 있는데도 옮기지 않아 원본 삭제와 함께 잃었다(QA-1201 — 매시 복사는 닫힌 3시간만 본다)
         try {
             Instant hour = clock.instant().truncatedTo(ChronoUnit.HOURS);
-            int retained = copyRetained(hour.minus(RETAIN_CATCH_UP_HOURS, ChronoUnit.HOURS), hour); // 기동 · 놓친 시간(겹치면 무시)
+            int retained = copyRetained(hour.minus(RETAINED_DAYS, ChronoUnit.DAYS), hour); // 기동 · 놓친 시간(겹치면 무시)
             if (retained > 0) log.info("catch-up: retained track {} new minute points", retained);
         } catch (RuntimeException e) {
             Instant now = clock.instant();
@@ -363,16 +402,28 @@ public class MaintenanceJobs {
     }
 
     /**
-     * 원본이 남아 있는 닫힌 시간(원해상도 보존 − {@value #CATCH_UP_MARGIN_HOURS} h) 중 원해상도 항적은 있는데 1분 요약이 하나도 없는 시간을 요약한다.
-     * 창을 보존에 묶는다: 24 h 이던 창은 하루 넘게 꺼져 있다 켠 기동(AWS 데모의 주말 정지 약 63 h — ADR-039)이 넘지 못해, 멈추기 직전 시간의
-     * 요약이 원본 삭제와 함께 영구히 빠졌다(재생은 보존 뒤 1분 요약만 읽는다). 시간마다 작은 EXISTS 두 번(ts BRIN · ts_minute 색인). @return 요약한 시간
+     * 원본이 남아 있는 닫힌 시간 중 원해상도 항적은 있는데 1분 요약이 하나도 없는 시간을 요약한다. 창의 시작 = 남아 있는 가장 오래된 항적 파티션의 시작
+     * ({@link #oldestPartitionStart}) — 1분 요약 보존({@code summaryRetentionDays})보다 오래된 시간은 빼고(요약해도 다음 보존 삭제가 지운다).
+     * 창을 시계로 고정하지 않는다(QA-1200): 24 h 이던 창은 주말 정지(약 63 h — ADR-039)를, 그 뒤의 '원해상도 보존 − 2 h'(70 h)는 그보다 긴 정지(연휴 ·
+     * 기동 실패 — 금 18:00 → 화 09:00 KST 는 87 h)를 넘지 못해, 멈추기 직전 시간의 요약이 원본 삭제와 함께 영구히 빠졌다(재생은 보존 뒤 1분 요약만
+     * 읽는다). 그 원본은 기동 뒤 첫 따라잡기가 끝날 때까지 삭제를 미루므로({@link #DROP_HOLD_MAX}) 파티션이 남아 있다 — 남은 파티션이 곧 요약할 수 있는 범위다.
+     * 지워지는 중인 파티션과 겹쳐도 깨지지 않는다: 파티션 DROP 은 부모의 ACCESS EXCLUSIVE 를 얻을 때까지 이 읽기를 기다리고, 그 뒤의 읽기는 그 시간을 빈
+     * 것으로 본다(예전 2 h 여유는 필요 없다). 시간마다 작은 EXISTS 두 번(ts BRIN · ts_minute 색인) — 평소 창은 가장 오래된 파티션까지 96 h 안팎.
+     * 최근 {@value #RESUMMARIZE_HOURS}시간은 요약이 있어도 다시 요약한다(늦게 쓰인 분 — QA-1202). @return 요약한 시간(최근 시간은 새로 더한 분이 있을 때만)
      */
     List<Instant> catchUpSummaries(Instant now) {
         Bbox b = region.current().bbox();
         Instant current = now.truncatedTo(ChronoUnit.HOURS);
+        Instant oldest = oldestPartitionStart("track_point");
+        if (oldest == null) return List.of();
+        Instant first = latest(oldest, current.minus(props.summaryRetentionDays(), ChronoUnit.DAYS));
+        Instant recent = current.minus(RESUMMARIZE_HOURS, ChronoUnit.HOURS);
         List<Instant> done = new ArrayList<>();
-        for (int i = Math.max(1, props.trackRetentionHours() - CATCH_UP_MARGIN_HOURS); i >= 1; i--) {
-            Instant h = current.minus(i, ChronoUnit.HOURS);
+        for (Instant h = first; h.isBefore(current); h = h.plus(1, ChronoUnit.HOURS)) {
+            if (!h.isBefore(recent)) {
+                if (summarizeHour(h) > 0) done.add(h); // 요약이 없던 시간 · 정시 요약 뒤에 늦게 쓰인 분
+                continue;
+            }
             Boolean missing = db.sql("""
                     SELECT NOT EXISTS (SELECT 1 FROM track_point_1m WHERE ts_minute >= :from AND ts_minute < :to)
                        AND EXISTS (SELECT 1 FROM track_point WHERE ts >= :from AND ts < :to
@@ -387,6 +438,20 @@ public class MaintenanceJobs {
         }
         return done;
     }
+
+    /**
+     * 표(track_point · ship_position)의 남아 있는 가장 오래된 일 파티션의 시작(UTC 날 00:00), 없으면 null. 파티션 이름(표_YYYYMMDD)으로 읽는다 —
+     * 파티션 함수 · 보존 삭제(V2 · V5 · V9)와 같은 규칙. 시스템 카탈로그만 읽는다(행을 읽지 않는다).
+     */
+    Instant oldestPartitionStart(String table) {
+        String day = db.sql("""
+                SELECT min(substring(c.relname from '^' || :t || '_([0-9]{8})$'))
+                FROM pg_inherits i JOIN pg_class c ON c.oid = i.inhrelid JOIN pg_class p ON p.oid = i.inhparent
+                WHERE p.relname = :t""").param("t", table).query(String.class).optional().orElse(null);
+        return day == null ? null : LocalDate.parse(day, java.time.format.DateTimeFormatter.BASIC_ISO_DATE).atStartOfDay(ZoneOffset.UTC).toInstant();
+    }
+
+    static Instant latest(Instant a, Instant b) { return a.isAfter(b) ? a : b; }
 
     /**
      * 어제부터 7일 전까지, 원본이 남아 있는 계열 중 완료 표식이 없는 계열이 하나라도 있는 날을 집계한다(R-46: 행이 있는지로 판단하면 자료가

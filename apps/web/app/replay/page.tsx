@@ -92,7 +92,8 @@ export default function ReplayPage() {
   const onPick = useCallback((p: ReplayPick) => { pickOpener.current = p && typeof document !== "undefined" ? document.activeElement : null; setPick(p); }, []);
   const closePick = () => { setPick(null); rescue(() => [pickOpener.current, listToggle.current]); };
   const inspector = useRef<HTMLDivElement>(null);
-  useEscapeClose(pick != null, closePick, { panel: inspector }); // Esc 로 상세 닫기(lib/escape-stack) — 초점은 closePick 이 연 자리로
+  // Esc 로 상세 닫기(lib/escape-stack) — 연 자리(목록 항목) 위의 Esc 도(QA-1423). 초점은 closePick 이 연 자리로
+  useEscapeClose(pick != null, closePick, { panel: inspector, opener: () => pickOpener.current });
   const ac = pick?.kind === "aircraft" && frame ? frame.aircraft.find((a) => a.hex === pick.hex) ?? null : null;
   const sg = pick?.kind === "sigmet" && frame ? frame.sigmets.find((s) => s.id === pick.id) ?? null : null;
   return (
@@ -106,7 +107,7 @@ export default function ReplayPage() {
       */}
       <div className="shrink-0 border-b border-line bg-bg-1 text-[11px]">
         <div className="flex min-h-9 flex-wrap items-center gap-x-3 gap-y-1 px-3 py-1 whitespace-nowrap" data-testid="replay-controls">
-          <span className="label">Replay</span>
+          <span className="label" lang="en">Replay</span>
           {/* 행동 단추: 이름이 지금 할 일(재생 · 정지)이라 aria-pressed 는 쓰지 않는다 — 둘을 함께 쓰면 "정지, 눌림"으로 읽혔다(QA 2026-10 화면 개선 제안 2) */}
           <button className="btn min-w-[4.5em]" onClick={() => setPlaying(!playing)}>{playing ? "정지" : "재생"}</button>
           <div className="flex gap-1" role="group" aria-label="재생 속도">

@@ -1,0 +1,198 @@
+{
+  "options": {
+    "noColor": false,
+    "summaryTrendStats": [
+      "avg",
+      "med",
+      "p(95)",
+      "p(99)",
+      "max"
+    ],
+    "summaryTimeUnit": ""
+  },
+  "state": {
+    "isStdOutTTY": false,
+    "isStdErrTTY": false,
+    "testRunDurationMs": 259996.320412
+  },
+  "metrics": {
+    "iterations": {
+      "type": "counter",
+      "contains": "default",
+      "values": {
+        "count": 57,
+        "rate": 0.21923387188586227
+      }
+    },
+    "ws_connecting": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "p(99)": 7.0081675,
+        "max": 29.592458,
+        "avg": 2.835482618421054,
+        "med": 2.517958,
+        "p(95)": 4.2006125999999995
+      }
+    },
+    "vus_max": {
+      "type": "gauge",
+      "contains": "default",
+      "values": {
+        "value": 200,
+        "min": 200,
+        "max": 200
+      }
+    },
+    "ws_diffs": {
+      "type": "counter",
+      "contains": "default",
+      "values": {
+        "count": 3039,
+        "rate": 11.688626958967287
+      }
+    },
+    "ws_ship_messages": {
+      "values": {
+        "count": 4666,
+        "rate": 17.94640782841111
+      },
+      "type": "counter",
+      "contains": "default"
+    },
+    "ws_snapshots": {
+      "type": "counter",
+      "contains": "default",
+      "values": {
+        "count": 1534,
+        "rate": 5.900083499524785
+      }
+    },
+    "ws_session_duration": {
+      "contains": "time",
+      "values": {
+        "avg": 240007.29606952626,
+        "med": 240004.586817,
+        "p(95)": 240017.686043,
+        "p(99)": 240056.23453348,
+        "max": 240086.453067
+      },
+      "type": "trend"
+    },
+    "ws_msgs_sent": {
+      "contains": "default",
+      "values": {
+        "count": 2300,
+        "rate": 8.846279041008478
+      },
+      "type": "counter"
+    },
+    "ws_errors": {
+      "thresholds": {
+        "count<1": {
+          "ok": true
+        }
+      },
+      "type": "counter",
+      "contains": "default",
+      "values": {
+        "count": 0,
+        "rate": 0
+      }
+    },
+    "ws_diff_lag_ms": {
+      "contains": "time",
+      "values": {
+        "med": 20,
+        "p(95)": 56,
+        "p(99)": 72,
+        "max": 112,
+        "avg": 22.329761644434726
+      },
+      "thresholds": {
+        "p(95)<500": {
+          "ok": true
+        }
+      },
+      "type": "trend"
+    },
+    "ws_sessions": {
+      "type": "counter",
+      "contains": "default",
+      "values": {
+        "count": 228,
+        "rate": 0.8769354875434491
+      }
+    },
+    "iteration_duration": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "med": 240004.832775,
+        "p(95)": 240018.2373834,
+        "p(99)": 240057.37458048,
+        "max": 240088.813984,
+        "avg": 240007.61647454387
+      }
+    },
+    "ws_messages": {
+      "type": "counter",
+      "contains": "default",
+      "values": {
+        "count": 18595,
+        "rate": 71.52024294241419
+      }
+    },
+    "ws_msgs_received": {
+      "type": "counter",
+      "contains": "default",
+      "values": {
+        "count": 18595,
+        "rate": 71.52024294241419
+      }
+    },
+    "ws_ships_lag_ms": {
+      "type": "trend",
+      "contains": "time",
+      "values": {
+        "p(95)": 56,
+        "p(99)": 78.34999999999995,
+        "max": 120,
+        "avg": 18.210030004286327,
+        "med": 11
+      }
+    },
+    "data_sent": {
+      "type": "counter",
+      "contains": "data",
+      "values": {
+        "count": 123939,
+        "rate": 476.69520785371725
+      }
+    },
+    "data_received": {
+      "type": "counter",
+      "contains": "data",
+      "values": {
+        "count": 306170591,
+        "rate": 1177595.861798469
+      }
+    },
+    "vus": {
+      "values": {
+        "value": 2,
+        "min": 2,
+        "max": 200
+      },
+      "type": "gauge",
+      "contains": "default"
+    }
+  },
+  "root_group": {
+    "name": "",
+    "path": "",
+    "id": "d41d8cd98f00b204e9800998ecf8427e",
+    "groups": [],
+    "checks": []
+  }
+}

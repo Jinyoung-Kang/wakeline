@@ -136,6 +136,8 @@ class FeedState:
         self.connected = False
         self.connected_since: float | None = None
         self.last_msg_at: float | None = None
+        # 이 프로세스에서 처음 받은 데이터 시각 — 늦게 읽은 이전 상태의 공백을 여기서 닫는다(QA-1241)
+        self.first_msg_at: float | None = None
         self.msgs_total = 0
         self.sessions_ended = 0
         self.last_error = ""  # 마지막 연결 오류(끊김 원인)
@@ -186,6 +188,8 @@ class FeedState:
         """데이터 메시지 하나를 받았다(now = 우리 수신 시각). 공급자 오류 프레임에는 부르지 않는다."""
         self.msgs_total += 1
         self.last_msg_at = now
+        if self.first_msg_at is None:
+            self.first_msg_at = now
         if self._session_first is None:
             self._session_first = self._mono()
             if self.state == "subscribed":

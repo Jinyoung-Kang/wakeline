@@ -78,6 +78,17 @@ def test_bad_rows_are_dropped_and_counted_not_the_whole_list():
                                                 "expected 10 columns, got 3"]  # fmt: skip
 
 
+def test_a_line_that_does_not_decode_is_dropped_alone():
+    """QA-1222: 본문 전체가 풀리지 않으면 줄마다 푼다 — 풀리지 않는 특보 줄만 dropped, 풀리지 않는 주석 줄은 세지 않는다, 줄마다 UTF-8 · EUC-KR 이 섞여도 읽는다."""
+    good = body(row(), row(reg_id="S1312030"))
+    p = r.parse(good + b"# \xff comment\n" + row(reg_id="S1312040").encode("euc-kr").replace(b"=", b"\xff="))
+    assert [w["zone_code"] for w in p.warnings] == ["S1312020", "S1312030"]
+    assert len(p.dropped) == 1 and p.dropped[0]["reason"].startswith("neither UTF-8 nor EUC-KR (byte ")
+    assert p.dropped[0]["line"].startswith("S1310000, 남해동부전해상")
+    mixed = r.parse(good + (row(reg_id="S1312050") + "\r\n").encode("utf-8") + b"S1, \xff\r\n")
+    assert [w["zone_code"] for w in mixed.warnings] == ["S1312020", "S1312030", "S1312050"] and len(mixed.dropped) == 1
+
+
 def test_a_land_zone_without_a_parent():
     w = r.parse(body(row(reg_id="L1100100", up="00000000", wrn="호우", lvl="경보"))).warnings[0]
     assert (w["sea"], w["kind"], w["level"]) == (False, "호우", "경보")

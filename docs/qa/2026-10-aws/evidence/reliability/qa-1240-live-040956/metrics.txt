@@ -1,0 +1,8 @@
+wakeline_ship_rows_total{result="downsampled"} 55.0
+wakeline_ship_rows_total{result="dropped"} 0.0
+wakeline_ship_rows_total{result="failed"} 862.0
+wakeline_ship_rows_total{result="out_of_range"} 0.0
+wakeline_ship_rows_total{result="written"} 0.0
+wakeline_track_rows_total{result="dropped"} 0.0
+wakeline_track_rows_total{result="failed"} 2413.0
+wakeline_track_rows_total{result="written"} 0.0

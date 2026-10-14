@@ -41,13 +41,23 @@ function neutral(t: unknown, top: EscapeLayer): boolean {
   return typeof el.closest === "function" && el.closest("[data-escape-neutral]") != null;
 }
 
+/**
+ * 패널을 연 요소 — 문서 본문 · 뿌리는 연 요소로 치지 않는다(아무 데도 초점이 없을 때 연 패널이면 activeElement 가 body 다 — 그것을 연 요소로 보면
+ * 모든 요소의 Esc 가 그 패널의 것이 된다).
+ */
+function openerOf(l: EscapeLayer): Element | null {
+  const o = l.opener?.() ?? null;
+  const d = typeof document === "undefined" ? null : document;
+  return o && d && (o === d.body || o === d.documentElement) ? null : o;
+}
+
 /** 위에서부터 규칙대로 하나를 닫는다. 닫았으면 true(이벤트는 preventDefault). layers 는 연 순서(마지막 = 맨 위). */
 export function handleEscape(e: EscapeKeyEvent, layers: readonly EscapeLayer[]): boolean {
   if (e.key !== "Escape" || e.defaultPrevented || e.isComposing || layers.length === 0) return false;
   const t = e.target;
   for (let i = layers.length - 1; i >= 0; i--) {
     const l = layers[i];
-    if (has(l.panel(), t) || has(l.opener?.() ?? null, t)) {
+    if (has(l.panel(), t) || has(openerOf(l), t)) {
       e.preventDefault?.();
       l.close(true);
       return true;

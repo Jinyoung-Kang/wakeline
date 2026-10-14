@@ -1,0 +1,43 @@
+{
+  "vh": 823,
+  "lcpMs": 196,
+  "lcpEl": "P.g-p",
+  "offscreen": [
+    "dashboard",
+    "world",
+    "traffic",
+    "search",
+    "aircraft",
+    "hot",
+    "ship",
+    "reception",
+    "port-calls",
+    "alerts",
+    "radar",
+    "replay",
+    "stats",
+    "airport",
+    "ops",
+    "logs"
+  ],
+  "beforeScroll": [
+    {
+      "t": 186,
+      "file": "/guide/dashboard.983c6efd68.webp"
+    },
+    {
+      "t": 186,
+      "file": "/guide/world.3b4f72f4f9.webp"
+    }
+  ],
+  "afterScroll": [
+    {
+      "t": 186,
+      "file": "/guide/dashboard.983c6efd68.webp"
+    },
+    {
+      "t": 186,
+      "file": "/guide/world.3b4f72f4f9.webp"
+    }
+  ]
+}

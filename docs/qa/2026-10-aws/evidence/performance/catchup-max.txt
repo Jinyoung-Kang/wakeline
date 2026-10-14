@@ -1,0 +1,40 @@
+# perf_catchup 2026-10-14T10:01:13Z project=wlqa-a mode=default wait=150s
+marker_deleted 2026-10-13|alerts
+marker_deleted 2026-10-13|sigmet
+marker_deleted 2026-10-13|traffic
+marker_deleted DELETE 3
+image sha256:13d2614bef22298b2a5e1438d03344fc7e2ac1b1c337e181834e7dd343c7e13a
+reset=2026-10-14T10:01:13Z api_started=2026-10-14T10:01:17.369691754Z
+## 따라잡기 문장(pg_stat_statements — 비운 뒤 150s, 기동 · 저장기 문장은 뺐다)
+ calls | total_ms | mean_ms | max_ms | rows  |  hit   |  read  | tmp_w |                                                                                                  query                                                                                                   
+-------+----------+---------+--------+-------+--------+--------+-------+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+     1 |   4684.6 | 4684.57 | 4684.6 |    24 |     74 | 146564 |  4281 | INSERT INTO stats_daily (day, metric, dim, value) SELECT $1, $9, lpad(extract($10 FROM ts AT TIME ZONE $2)::int::text, $11, $12), count(DISTINCT hex) FROM track_point WHERE ts >= $3 AND ts < $4 AND ge
+     1 |   4131.4 | 4131.37 | 4131.4 |     0 | 133508 | 108866 |  2452 | INSERT INTO retained_track (kind, target_id, ts_minute, ts, geom, alt_ft, gs_kt, track_deg, provider) SELECT DISTINCT ON (hex, date_trunc('minute', ts)) $1, hex::text, date_trunc($2, ts), ts, geom, al
+     6 |   1596.9 |  266.15 |  526.4 | 10515 | 358280 |  32235 |  2743 | INSERT INTO track_point_1m (hex, ts_minute, geom, alt_ft, gs_kt, n) SELECT hex, date_trunc($7, ts) m, ST_SetSRID(ST_MakePoint(avg(ST_X(geom)), avg(ST_Y(geom))), $8), avg(alt_ft)::int, avg(gs_kt), coun
+     1 |   1587.4 | 1587.39 | 1587.4 |   100 | 134423 |  30481 |   393 | INSERT INTO retained_track (kind, target_id, ts_minute, ts, geom, sog_kn, cog_deg, provider) SELECT DISTINCT ON (mmsi, date_trunc('minute', ts)) $1, mmsi::text, date_trunc($2, ts), ts, geom, sog_kn, c
+     1 |    326.0 |  326.05 |  326.0 |     2 |     10 |   4201 |     0 | INSERT INTO stats_daily (day, metric, dim, value) SELECT $1, $4, kind, count(*) FROM alert_event WHERE entered_at >= $2 AND entered_at < $3 AND zone_type = $5 GROUP BY kind
+     1 |     46.2 |   46.16 |   46.2 |     1 |    478 |   1659 |     0 | SELECT (least((SELECT min(valid_from) FROM sigmet), (SELECT min(entered_at) FROM alert_event)) AT TIME ZONE $1)::date
+     1 |     23.0 |   23.03 |   23.0 |   119 |   1030 |   1433 |     0 | INSERT INTO stats_daily (day, metric, dim, value) SELECT $1, $4, fir_id, count(*) FROM sigmet WHERE valid_from >= $2 AND valid_from < $3 GROUP BY fir_id
+    52 |     15.2 |    0.29 |    1.8 |    52 |    150 |     58 |     0 | SELECT NOT EXISTS (SELECT $9 FROM track_point_1m WHERE ts_minute >= $1 AND ts_minute < $2) AND EXISTS (SELECT $10 FROM track_point WHERE ts >= $3 AND ts < $4 AND geom && ST_MakeEnvelope($5, $6, $7, $8
+     1 |     11.8 |   11.78 |   11.8 |     1 |   4205 |      0 |     0 | INSERT INTO stats_daily (day, metric, dim, value) SELECT $1, $4, $5, avg(extract($6 FROM (left_at - entered_at))) FROM alert_event WHERE kind = $7 AND left_at IS NOT NULL AND entered_at >= $2 AND ente
+     1 |     10.0 |   10.03 |   10.0 |   286 |    492 |    245 |     0 | SELECT day, dim FROM stats_daily WHERE metric = $1 AND day BETWEEN $2 AND $3
+     1 |      3.9 |    3.87 |    3.9 |     7 |   2060 |      0 |     0 | INSERT INTO stats_daily (day, metric, dim, value) SELECT $1, $4, hazard, count(*) FROM sigmet WHERE valid_from >= $2 AND valid_from < $3 GROUP BY hazard
+     3 |      3.7 |    1.25 |    2.7 |     3 |    198 |     12 |     0 | SELECT track_point_ensure_partitions($1)
+     7 |      3.7 |    0.53 |    1.3 |    17 |     19 |     18 |     0 | SELECT dim FROM stats_daily WHERE day = $1 AND metric = $2
+     3 |      0.9 |    0.29 |    0.5 |     3 |     45 |      0 |     0 | SELECT ship_position_ensure_partitions($1)
+     1 |      0.5 |    0.53 |    0.5 |     3 |     12 |      4 |     0 | INSERT INTO stats_daily (day, metric, dim, value) SELECT $1, $2, f, extract($4 FROM now())::bigint FROM unnest($3::text[]) f
+     1 |      0.4 |    0.35 |    0.4 |     1 |     25 |      0 |     0 | SELECT min(substring(c.relname from $3 || $1 || $4)) FROM pg_inherits i JOIN pg_class c ON c.oid = i.inhrelid JOIN pg_class p ON p.oid = i.inhparent WHERE p.relname = $2
+     1 |      0.3 |    0.27 |    0.3 |   156 |    160 |      2 |     0 | DELETE FROM stats_daily WHERE day = $1 AND (metric IN ($2 /*, ... */) OR (metric = $3 AND dim IN ($4 /*, ... */)))
+     1 |      0.0 |    0.03 |    0.0 |     3 |      9 |      0 |     0 | INSERT INTO stats_daily (day, metric, dim, value) VALUES ($1, $7, $8, $2), ($3, $9, $10, $4), ($5, $11, $12, $6)
+     1 |      0.0 |    0.02 |    0.0 |     0 |      2 |      0 |     0 | LOCK TABLE track_point IN ACCESS SHARE MODE
+(19 rows)
+
+catch-up statements total_ms=12441.3 calls=79
+## api 로그(따라잡기 · 보존 · 요약)
+2026-10-14T10:02:00.004Z  INFO 7 --- [wakeline-api] [       sched-10] dev.wakeline.history.MaintenanceJobs     : retention track_point partitions: kept until the first catch-up after start (at most 6 h)
+2026-10-14T10:02:00.018Z  INFO 7 --- [wakeline-api] [       sched-10] dev.wakeline.history.MaintenanceJobs     : retention ship_position partitions: 0 removed
+2026-10-14T10:02:30.425Z  INFO 7 --- [wakeline-api] [        sched-1] dev.wakeline.history.MaintenanceJobs     : daily stats aggregated for 2026-10-13: [sigmet, traffic, alerts] (region 36.5,127.8 r=250 NM)
+2026-10-14T10:02:30.494Z  INFO 7 --- [wakeline-api] [        sched-1] dev.wakeline.history.MaintenanceJobs     : catch-up: summarized hours [2026-10-14T09:00:00Z], aggregated days [2026-10-13], backfilled 0 older days 
+2026-10-14T10:02:36.237Z  INFO 7 --- [wakeline-api] [        sched-1] dev.wakeline.history.MaintenanceJobs     : catch-up: retained track 100 new minute points
+## WARN · ERROR
+2026-10-14T10:01:52.167Z  WARN 7 --- [wakeline-api] [erage-bootstrap] dev.wakeline.coverage.ShipCoverage       : ship coverage: memory cap reached (cells 16000 / 16000, ship-cells 22453 / 200000) — new cells or ships are not counted this hour; see wakeline_ship_coverage_dropped_total

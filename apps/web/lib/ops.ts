@@ -541,3 +541,15 @@ export function providerMissing(p: Record<string, unknown>, nowMs: number): KrMi
     list_tm: str("missing_list_tm") || null, list_newer: newer,
   }, nowMs);
 }
+
+/**
+ * 공급자 일일 예산 한도(DH-14). 0 은 설정상 "한도 없음"(budget.py: limit > 0 일 때만 검사) → "∞".
+ * 값이 없으면(아직 성공한 적 없는 공급자는 status 에 한도를 쓰지 않는다) "—" — 모르는 한도를 무제한으로 보이게 하지 않는다.
+ * (운영 화면만 쓴다 — lib/format 에서 옮겼다: lib/format 은 첫 화면 모듈이다, ADR-026)
+ */
+export function fmtBudgetLimit(v: unknown) {
+  if (v == null || v === "") return "—";
+  const n = Number(v);
+  if (!Number.isFinite(n) || n < 0) return "—";
+  return n > 0 ? String(n) : "∞";
+}

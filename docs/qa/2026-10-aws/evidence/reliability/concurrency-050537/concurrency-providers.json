@@ -1,0 +1,39 @@
+{
+ "ok": false,
+ "n": 8,
+ "statuses": {
+  "200": 8
+ },
+ "version": [
+  1,
+  6
+ ],
+ "audit_rows": 5,
+ "audit_version_chain": [
+  [
+   1,
+   2
+  ],
+  [
+   2,
+   3
+  ],
+  [
+   3,
+   4
+  ],
+  [
+   4,
+   5
+  ],
+  [
+   5,
+   6
+  ]
+ ],
+ "final": {
+  "audit_last_after_disabled": true,
+  "db_disabled": true,
+  "redis_disabled": "1"
+ }
+}

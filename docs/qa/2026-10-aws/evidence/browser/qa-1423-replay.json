@@ -1,0 +1,11 @@
+{
+  "focusWhenEsc": {
+    "tag": "button",
+    "name": "TS FRQRJJJ",
+    "visible": true,
+    "outline": "solid 2px rgb(76, 144, 240)",
+    "testid": "replay-list-sigmet",
+    "inViewport": true
+  },
+  "openAfterEsc": true
+}

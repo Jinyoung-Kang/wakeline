@@ -1,0 +1,10 @@
+{
+  "login429Focus": {
+    "tag": "input#ops-pass",
+    "name": "",
+    "visible": true,
+    "outline": "solid 2px rgb(76, 144, 240)",
+    "testid": "",
+    "inViewport": true
+  }
+}

@@ -1,0 +1,8 @@
+2026-10-14 03:37:23,698 WARNING db: db: ingest_run(region) rejected (InsufficientPrivilegeError: permission denied for table ingest_run) — dropped
+2026-10-14 03:37:24,651 WARNING db: db: ingest_run(sigmet) rejected (InsufficientPrivilegeError: permission denied for table ingest_run) — dropped
+2026-10-14 03:37:25,620 WARNING db: db: radar_frame rejected (InsufficientPrivilegeError: permission denied for table radar_frame) — dropped
+2026-10-14 03:37:25,632 WARNING db: db: ingest_run(radar) rejected (InsufficientPrivilegeError: permission denied for table ingest_run) — dropped
+2026-10-14 03:37:26,631 WARNING db: db: airport rejected (InsufficientPrivilegeError: permission denied for table airport) — dropped
+2026-10-14 03:37:26,642 WARNING db: db: metar_obs rejected (InsufficientPrivilegeError: permission denied for table metar_obs) — dropped
+2026-10-14 03:37:26,656 WARNING db: db: ingest_run(metar) rejected (InsufficientPrivilegeError: permission denied for table ingest_run) — dropped
+2026-10-14 03:37:28,624 WARNING db: db: ingest_run(global) rejected (InsufficientPrivilegeError: permission denied for table ingest_run) — dropped

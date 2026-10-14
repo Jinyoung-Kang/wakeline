@@ -19,6 +19,35 @@ export interface AirportWx {
   history: AirportWxRow[];
 }
 
+// ---- 표시(공항 카드 · 이력 화면만 — lib/format 에서 옮겼다: 첫 화면 JS 에 싣지 않는다, ADR-026) ----
+
+/**
+ * 시정(DH-7): AWC METAR JSON 의 visib 는 법정마일(SM) — 원문 9999(10 km 이상)가 "6+"(6.2 SM 이상)로 온다(2026-09-28 RKSI·RKPC 실응답 대조).
+ * "N+" 는 "N SM 이상"(하한). 숫자·분수 형식이 아니면 원문 그대로(단위를 붙이지 않는다). 없으면 "—".
+ */
+export function fmtVisSm(raw: string | number | null | undefined) {
+  if (raw == null || raw === "") return "—";
+  const v = String(raw).trim();
+  const m = /^(\d+(?:\.\d+)?|\d+\/\d+|\d+ \d+\/\d+)(\+)?$/.exec(v);
+  if (!m) return v;
+  return m[2] ? `${m[1]} SM 이상` : `${m[1]} SM`;
+}
+
+const finiteNum = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
+/** 바람 "270° 10 kt"(METAR 보고값). 모르는 부분은 "—" 만(단위를 붙이지 않는다 — "—° — kt" 는 잰 값처럼 읽힌다). 둘 다 모르면 "—" */
+export function fmtWind(dir: number | null | undefined, kt: number | null | undefined): string {
+  const d = finiteNum(dir), k = finiteNum(kt);
+  if (d == null && k == null) return "—";
+  return `${d == null ? "—" : `${d}°`} ${k == null ? "—" : `${k} kt`}`;
+}
+/** 기온/이슬점 "18 °C / 12 °C". 모르는 쪽은 "—" 만, 둘 다 모르면 "—" */
+export function fmtTempPair(t: number | null | undefined, dew: number | null | undefined): string {
+  const a = finiteNum(t), b = finiteNum(dew);
+  if (a == null && b == null) return "—";
+  const c = (v: number | null) => (v == null ? "—" : `${v} °C`);
+  return `${c(a)} / ${c(b)}`;
+}
+
 /** 읽을 수 없는 본문의 문구(카드 · 이력 화면) */
 export const WX_UNREADABLE = "공항 기상 응답 형식이 맞지 않음 — 표시하지 않습니다";
 

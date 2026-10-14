@@ -1,0 +1,179 @@
+SET
+== warnings.history 기본(최근 24 h, 200행)
+                                                   QUERY PLAN                                                    
+-----------------------------------------------------------------------------------------------------------------
+ Limit (actual time=0.047..0.123 rows=200.00 loops=1)
+   Buffers: shared hit=22
+   ->  Incremental Sort (actual time=0.047..0.106 rows=200.00 loops=1)
+         Sort Key: first_seen DESC, id DESC
+         Presorted Key: first_seen
+         Full-sort Groups: 7  Sort Method: quicksort  Average Memory: 27kB  Peak Memory: 27kB
+         Buffers: shared hit=22
+         ->  Index Scan using wx_warning_first_seen on wx_warning (actual time=0.009..0.051 rows=201.00 loops=1)
+               Index Cond: (first_seen <= now())
+               Filter: (COALESCE(ended_at, last_seen) >= (now() - '24:00:00'::interval))
+               Index Searches: 1
+               Buffers: shared hit=13
+ Planning:
+   Buffers: shared hit=164
+ Planning Time: 0.262 ms
+ Execution Time: 0.146 ms
+(16 rows)
+
+== warnings.history 옛 창(28–29일 전)
+                                                  QUERY PLAN                                                   
+---------------------------------------------------------------------------------------------------------------
+ Limit (actual time=0.006..0.007 rows=0.00 loops=1)
+   Buffers: shared hit=2
+   ->  Incremental Sort (actual time=0.006..0.006 rows=0.00 loops=1)
+         Sort Key: first_seen DESC, id DESC
+         Presorted Key: first_seen
+         Full-sort Groups: 1  Sort Method: quicksort  Average Memory: 25kB  Peak Memory: 25kB
+         Buffers: shared hit=2
+         ->  Index Scan using wx_warning_first_seen on wx_warning (actual time=0.002..0.002 rows=0.00 loops=1)
+               Index Cond: (first_seen <= (now() - '28 days'::interval))
+               Filter: (COALESCE(ended_at, last_seen) >= (now() - '29 days'::interval))
+               Index Searches: 1
+               Buffers: shared hit=2
+ Planning:
+   Buffers: shared hit=3 read=1
+ Planning Time: 0.105 ms
+ Execution Time: 0.014 ms
+(16 rows)
+
+== warnings.history 구역 하나 · 30일(행이 적은 구역 — 최악)
+                                                     QUERY PLAN                                                     
+--------------------------------------------------------------------------------------------------------------------
+ Limit (actual time=0.034..0.035 rows=2.00 loops=1)
+   Buffers: shared hit=3
+   ->  Sort (actual time=0.034..0.034 rows=2.00 loops=1)
+         Sort Key: first_seen DESC, id DESC
+         Sort Method: quicksort  Memory: 25kB
+         Buffers: shared hit=3
+         ->  Bitmap Heap Scan on wx_warning (actual time=0.031..0.032 rows=2.00 loops=1)
+               Recheck Cond: (zone_code = 'S1312020'::text)
+               Filter: ((first_seen <= now()) AND (COALESCE(ended_at, last_seen) >= (now() - '30 days'::interval)))
+               Heap Blocks: exact=1
+               Buffers: shared hit=3
+               ->  Bitmap Index Scan on wx_warning_natural_key (actual time=0.012..0.012 rows=3.00 loops=1)
+                     Index Cond: (zone_code = 'S1312020'::text)
+                     Index Searches: 1
+                     Buffers: shared hit=2
+ Planning:
+   Buffers: shared hit=7
+ Planning Time: 0.057 ms
+ Execution Time: 0.042 ms
+(19 rows)
+
+== warnings.history 구역 하나 · 옛 1 h 창(행 0 — 최악)
+                                                              QUERY PLAN                                                              
+--------------------------------------------------------------------------------------------------------------------------------------
+ Limit (actual time=0.003..0.003 rows=0.00 loops=1)
+   Buffers: shared hit=2
+   ->  Incremental Sort (actual time=0.003..0.003 rows=0.00 loops=1)
+         Sort Key: first_seen DESC, id DESC
+         Presorted Key: first_seen
+         Full-sort Groups: 1  Sort Method: quicksort  Average Memory: 25kB  Peak Memory: 25kB
+         Buffers: shared hit=2
+         ->  Index Scan using wx_warning_first_seen on wx_warning (actual time=0.002..0.002 rows=0.00 loops=1)
+               Index Cond: (first_seen <= (now() - '60 days'::interval))
+               Filter: ((zone_code = 'S1000001'::text) AND (COALESCE(ended_at, last_seen) >= (now() - '60 days 01:00:00'::interval)))
+               Index Searches: 1
+               Buffers: shared hit=2
+ Planning:
+   Buffers: shared hit=4
+ Planning Time: 0.034 ms
+ Execution Time: 0.008 ms
+(16 rows)
+
+== aircraft.track_retained 24 h
+                                                     QUERY PLAN                                                      
+---------------------------------------------------------------------------------------------------------------------
+ Limit (actual time=0.002..0.002 rows=0.00 loops=1)
+   Buffers: shared hit=2
+   ->  Index Scan using retained_track_ts_minute on retained_track (actual time=0.002..0.002 rows=0.00 loops=1)
+         Index Cond: ((ts_minute >= (now() - '60 days'::interval)) AND (ts_minute <= (now() - '59 days'::interval)))
+         Filter: ((kind = 'aircraft'::text) AND (target_id = 'f10000'::text))
+         Index Searches: 1
+         Buffers: shared hit=2
+ Planning:
+   Buffers: shared hit=50 read=5
+ Planning Time: 0.248 ms
+ Execution Time: 0.007 ms
+(11 rows)
+
+== alerts.by_id
+                                                            QUERY PLAN                                                             
+-----------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using alert_event_pkey on alert_event e (actual time=0.036..0.036 rows=1.00 loops=1)
+   Index Cond: (id = (InitPlan 2).col1)
+   Index Searches: 1
+   Buffers: shared hit=7
+   InitPlan 2
+     ->  Result (actual time=0.031..0.032 rows=1.00 loops=1)
+           Buffers: shared hit=4
+           InitPlan 1
+             ->  Limit (actual time=0.031..0.031 rows=1.00 loops=1)
+                   Buffers: shared hit=4
+                   ->  Index Only Scan Backward using alert_event_pkey on alert_event (actual time=0.030..0.030 rows=1.00 loops=1)
+                         Heap Fetches: 1
+                         Index Searches: 1
+                         Buffers: shared hit=4
+ Planning:
+   Buffers: shared hit=409
+ Planning Time: 0.439 ms
+ Execution Time: 0.046 ms
+(18 rows)
+
+== airports.watch 20곳
+                                                                       QUERY PLAN                                                                       
+--------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual time=0.059..0.060 rows=9.00 loops=1)
+   Sort Key: a.icao
+   Sort Method: quicksort  Memory: 25kB
+   Buffers: shared hit=33
+   ->  Nested Loop Left Join (actual time=0.021..0.050 rows=9.00 loops=1)
+         Buffers: shared hit=30
+         ->  Seq Scan on airport a (actual time=0.007..0.009 rows=9.00 loops=1)
+               Filter: (icao = ANY ('{RKSI,RKSS,RKPC,RKPK,RJFF,RJTT,RJAA,RCTP,VHHH,ZSPD,RKTN,RKTU,RKJJ,RKNY,RKJB,RKPU,RKTH,RJBB,RJCC,ZBAA}'::bpchar[]))
+               Rows Removed by Filter: 4
+               Buffers: shared hit=1
+         ->  Limit (actual time=0.004..0.004 rows=1.00 loops=9)
+               Buffers: shared hit=29
+               ->  Index Scan using metar_obs_time on metar_obs mo (actual time=0.004..0.004 rows=1.00 loops=9)
+                     Filter: (icao = a.icao)
+                     Rows Removed by Filter: 4
+                     Index Searches: 9
+                     Buffers: shared hit=29
+ Planning:
+   Buffers: shared hit=82
+ Planning Time: 0.146 ms
+ Execution Time: 0.080 ms
+(21 rows)
+
+== retained copy 한 시간(대상 20 — 유지보수 작업)
+                                                                                                                     QUERY PLAN                                                                                                                      
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Unique (actual time=0.347..3.846 rows=1200.00 loops=1)
+   Buffers: shared hit=74 read=1
+   ->  Incremental Sort (actual time=0.347..3.342 rows=7200.00 loops=1)
+         Sort Key: track_point.hex, (date_trunc('minute'::text, track_point.ts)), track_point.ts
+         Presorted Key: track_point.hex
+         Full-sort Groups: 10  Sort Method: quicksort  Average Memory: 27kB  Peak Memory: 27kB
+         Pre-sorted Groups: 10  Sort Method: quicksort  Average Memory: 53kB  Peak Memory: 53kB
+         Buffers: shared hit=74 read=1
+         ->  Merge Append (actual time=0.039..1.830 rows=7200.00 loops=1)
+               Sort Key: track_point.hex
+               Buffers: shared hit=74 read=1
+               Subplans Removed: 5
+               ->  Index Only Scan using track_point_20261014_pkey on track_point_20261014 track_point_1 (actual time=0.039..1.292 rows=7200.00 loops=1)
+                     Index Cond: ((hex = ANY ('{f10000,f10040,f10080,f100c0,f10100,f10140,f10180,f101c0,f10200,f10240}'::bpchar[])) AND (ts >= (date_trunc('hour'::text, now()) - '03:00:00'::interval)) AND (ts < date_trunc('hour'::text, now())))
+                     Heap Fetches: 4
+                     Index Searches: 10
+                     Buffers: shared hit=74 read=1
+ Planning:
+   Buffers: shared hit=381
+ Planning Time: 0.586 ms
+ Execution Time: 3.918 ms
+(21 rows)
+

@@ -1,0 +1,49 @@
+# 최종(QA-1500 · QA-1501 · QA-1461 고친 뒤 — HEAD 66213d7a) · Lighthouse 12.8.2 · 실제 GPU · 배경지도 열림 · AWS 규모 시드 · 스택 A1(공개 데모) · web :qa 27a3404c0860 · 2026-10-14 20:30:18 KST
+# 명령: PERF_CWV_OUT=$EV/after-fix/cwv tools/qa/perf_cwv.sh final gpu ofm 3 /stats /guide
+
+== docs/qa/2026-10-aws/evidence/performance/after-fix/cwv/final/gpu-ofm
+화면       프리셋       n            점수                 LCP ms                 TBT ms                  CLS               FCP ms   JS KiB  판정
+/stats   desktop   3 100 [100–100]          544 [528–555]                0 [0–0]  0.000 [0.000–0.000]        224 [221–236]    186.4  good
+/stats   mobile    3    97 [97–98]    2,439 [2,380–2,512]             61 [37–71]  0.000 [0.000–0.000]        776 [774–779]    186.4  good
+/guide   desktop   3 100 [100–100]          628 [614–642]                0 [0–0]  0.000 [0.000–0.001]        333 [313–339]    180.5  good
+/guide   mobile    3    96 [96–96]    2,677 [2,664–2,684]             43 [34–59]  0.000 [0.000–0.000]  1,165 [1,131–1,207]    180.6  MISS LCP>2500
+
+## /stats desktop #1  score 100 · LCP 555 · TBT 0 · CLS 0.000 · FCP 224 · JS 186.4 KiB · reqs 18 (ext 0 · ofm 0) · bench 2799
+  LCP 요소: body.h-full > div.flex > footer.shrink-0 > span.inline-block «|연안 교통량한국해양교통안전공단 MTIS 실시간 해양교통정보 (공공데이터»  | 단계: TTFB 132 · Load Delay 0 · Load Time 0 · Render Delay 423
+## /stats desktop #2  score 100 · LCP 544 · TBT 0 · CLS 0.000 · FCP 236 · JS 186.4 KiB · reqs 18 (ext 0 · ofm 0) · bench 2850
+  LCP 요소: body.h-full > div.flex > footer.shrink-0 > span.inline-block «|연안 교통량한국해양교통안전공단 MTIS 실시간 해양교통정보 (공공데이터»  | 단계: TTFB 138 · Load Delay 0 · Load Time 0 · Render Delay 406
+## /stats desktop #3  score 100 · LCP 528 · TBT 0 · CLS 0.000 · FCP 221 · JS 186.4 KiB · reqs 18 (ext 0 · ofm 0) · bench 2868
+  LCP 요소: body.h-full > div.flex > footer.shrink-0 > span.inline-block «|연안 교통량한국해양교통안전공단 MTIS 실시간 해양교통정보 (공공데이터»  | 단계: TTFB 130 · Load Delay 0 · Load Time 0 · Render Delay 397
+## /stats mobile #1  score 97 · LCP 2,439 · TBT 71 · CLS 0.000 · FCP 776 · JS 186.4 KiB · reqs 18 (ext 0 · ofm 0) · bench 2758.5
+  LCP 요소: body.h-full > div.flex > footer.shrink-0 > span.inline-block «|연안 교통량한국해양교통안전공단 MTIS 실시간 해양교통정보 (공공데이터»  | 단계: TTFB 463 · Load Delay 0 · Load Time 0 · Render Delay 1976
+## /stats mobile #2  score 97 · LCP 2,512 · TBT 37 · CLS 0.000 · FCP 779 · JS 186.4 KiB · reqs 18 (ext 0 · ofm 0) · bench 2843
+  LCP 요소: body.h-full > div.flex > footer.shrink-0 > span.inline-block «|연안 교통량한국해양교통안전공단 MTIS 실시간 해양교통정보 (공공데이터»  | 단계: TTFB 465 · Load Delay 0 · Load Time 0 · Render Delay 2048
+## /stats mobile #3  score 98 · LCP 2,380 · TBT 61 · CLS 0.000 · FCP 774 · JS 186.5 KiB · reqs 18 (ext 0 · ofm 0) · bench 2858
+  LCP 요소: body.h-full > div.flex > footer.shrink-0 > span.inline-block «|연안 교통량한국해양교통안전공단 MTIS 실시간 해양교통정보 (공공데이터»  | 단계: TTFB 462 · Load Delay 0 · Load Time 0 · Render Delay 1918
+## /guide desktop #1  score 100 · LCP 642 · TBT 0 · CLS 0.000 · FCP 339 · JS 180.5 KiB · reqs 14 (ext 0 · ofm 0) · bench 2818
+  LCP 요소: section#overview > div.my-4 > div.bg-bg > div.text-[12px] «AIS 실시간 스트림의 위치와 선원이 입력한 보고값(이름 · 목적지 · »  | 단계: TTFB 148 · Load Delay 0 · Load Time 0 · Render Delay 494
+## /guide desktop #2  score 100 · LCP 628 · TBT 0 · CLS 0.001 · FCP 333 · JS 180.6 KiB · reqs 14 (ext 0 · ofm 0) · bench 2871.5
+  LCP 요소: section#overview > div.my-4 > div.bg-bg > div.text-[12px] «AIS 실시간 스트림의 위치와 선원이 입력한 보고값(이름 · 목적지 · »  | 단계: TTFB 143 · Load Delay 0 · Load Time 0 · Render Delay 484
+## /guide desktop #3  score 100 · LCP 614 · TBT 0 · CLS 0.000 · FCP 313 · JS 180.5 KiB · reqs 14 (ext 0 · ofm 0) · bench 2806
+  LCP 요소: section#overview > div.my-4 > div.bg-bg > div.text-[12px] «AIS 실시간 스트림의 위치와 선원이 입력한 보고값(이름 · 목적지 · »  | 단계: TTFB 137 · Load Delay 0 · Load Time 0 · Render Delay 478
+## /guide mobile #1  score 96 · LCP 2,664 · TBT 34 · CLS 0.000 · FCP 1,165 · JS 180.6 KiB · reqs 13 (ext 0 · ofm 0) · bench 2873.5
+  LCP 요소: section#overview > div.my-4 > div.bg-bg > div.text-[12px] «AIS 실시간 스트림의 위치와 선원이 입력한 보고값(이름 · 목적지 · »  | 단계: TTFB 468 · Load Delay 0 · Load Time 0 · Render Delay 2196
+## /guide mobile #2  score 96 · LCP 2,684 · TBT 59 · CLS 0.000 · FCP 1,131 · JS 180.6 KiB · reqs 13 (ext 0 · ofm 0) · bench 2862.5
+  LCP 요소: div.mx-auto > article.g-doc > section#overview > p.g-p «Wakeline 은 항공기(ADS-B) · 선박(AIS) · 위험기상(S»  | 단계: TTFB 466 · Load Delay 0 · Load Time 0 · Render Delay 2219
+## /guide mobile #3  score 96 · LCP 2,677 · TBT 43 · CLS 0.000 · FCP 1,207 · JS 180.5 KiB · reqs 13 (ext 0 · ofm 0) · bench 2718
+  LCP 요소: div.mx-auto > article.g-doc > section#overview > p.g-p «Wakeline 은 항공기(ADS-B) · 선박(AIS) · 위험기상(S»  | 단계: TTFB 468 · Load Delay 0 · Load Time 0 · Render Delay 2208
+
+## 고치기 전(findings/performance.md §7)
+화면       프리셋       n            점수                 LCP ms                 TBT ms                  CLS               FCP ms   JS KiB  판정
+/stats   desktop   3 100 [100–100]          537 [526–540]                0 [0–0]  0.051 [0.033–0.051]        229 [218–230]    186.1  good
+/stats   mobile    3    91 [91–95]    2,388 [2,381–2,389]             62 [60–80]  0.156 [0.113–0.159]        777 [768–778]    186.1  MISS CLS>0.1
+/guide   desktop   3 100 [100–100]          657 [657–684]                0 [0–0]  0.000 [0.000–0.000]        328 [312–338]    180.3  good
+/guide   mobile    3    95 [95–95]    2,910 [2,842–2,955]             42 [24–55]  0.000 [0.000–0.000]  1,192 [1,077–1,209]    180.3  MISS LCP>2500
+
+## 첫 화면 JS(cd apps/web && npm run build && npm run check:first-js -- --in-image)
+  entry      12개  원본  662.8 KiB  gzip 본문  210.8 KiB (215815 B)
+  dynamic     2개  원본   68.6 KiB  gzip 본문   25.3 KiB (25944 B)
+  public      1개  원본    8.1 KiB  gzip 본문    3.4 KiB (3508 B)
+  합계         18개  원본 1838.5 KiB  gzip 본문  537.0 KiB (549840 B)
+
+예산 550000 B (537.1 KiB) 안 — 남은 여유 160 B

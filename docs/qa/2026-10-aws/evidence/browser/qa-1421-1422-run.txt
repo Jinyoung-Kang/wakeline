@@ -1,0 +1,96 @@
+
+Running 3 tests using 1 worker
+
+QA-1421 status=404 title="Wakeline — 실시간 항공기 · 선박 · 위험기상 상황판" html lang=ko h1=["404"] english=[{"text":"This page could not be found.","lang":"ko"}]
+  ✘  1 e2e/qa/qa-1421-not-found-page.spec.ts:11:5 › QA-1421 an unknown path shows a Korean (or lang-marked) not-found page with a telling title (1.9s)
+QA-1422 (1) focus after '새 값 보기' (Enter): {"tag":"body","name":"","visible":false,"outline":"","testid":"","inViewport":false}
+  ✘  2 e2e/qa/qa-1422-focus-lost-ops-forms.spec.ts:15:5 › QA-1422 (1) settings conflict: '새 값 보기' keeps focus on the page (16.5s)
+QA-1422 (2) error="로그인 시도가 너무 많습니다 — 37초 뒤 다시 시도하세요." focus={"tag":"body","name":"","visible":false,"outline":"","testid":"","inViewport":false}
+  ✘  3 e2e/qa/qa-1422-focus-lost-ops-forms.spec.ts:46:5 › QA-1422 (2) login server error: focus goes to the error text, not body (842ms)
+
+
+  1) e2e/qa/qa-1421-not-found-page.spec.ts:11:5 › QA-1421 an unknown path shows a Korean (or lang-marked) not-found page with a telling title 
+
+    Error: English text without lang=en on a lang=ko page
+
+    expect(received).toEqual(expected) // deep equality
+
+    - Expected  - 1
+    + Received  + 6
+
+    - Array []
+    + Array [
+    +   Object {
+    +     "lang": "ko",
+    +     "text": "This page could not be found.",
+    +   },
+    + ]
+
+      27 |   saveJson("qa-1421-not-found.json", { status: r?.status(), ...m });
+      28 |   console.log(`QA-1421 status=${r?.status()} title="${m.title}" html lang=${m.htmlLang} h1=${JSON.stringify(m.h1)} english=${JSON.stringify(m.englishTexts)}`);
+    > 29 |   expect.soft(m.englishTexts.filter((t) => !t.lang?.startsWith("en")), "English text without lang=en on a lang=ko page").toEqual([]);
+         |                                                                                                                          ^
+      30 |   expect(m.title, "title says the page does not exist").toMatch(/404|없|찾을 수 없|not found/i);
+      31 | });
+      32 |
+        at /Users/jinyoung/Projects/wakeline/apps/web/e2e/qa/qa-1421-not-found-page.spec.ts:29:122
+
+    Error: title says the page does not exist
+
+    expect(received).toMatch(expected)
+
+    Expected pattern: /404|없|찾을 수 없|not found/i
+    Received string:  "Wakeline — 실시간 항공기 · 선박 · 위험기상 상황판"
+
+      28 |   console.log(`QA-1421 status=${r?.status()} title="${m.title}" html lang=${m.htmlLang} h1=${JSON.stringify(m.h1)} english=${JSON.stringify(m.englishTexts)}`);
+      29 |   expect.soft(m.englishTexts.filter((t) => !t.lang?.startsWith("en")), "English text without lang=en on a lang=ko page").toEqual([]);
+    > 30 |   expect(m.title, "title says the page does not exist").toMatch(/404|없|찾을 수 없|not found/i);
+         |                                                         ^
+      31 | });
+      32 |
+        at /Users/jinyoung/Projects/wakeline/apps/web/e2e/qa/qa-1421-not-found-page.spec.ts:30:57
+
+    Error Context: test-results/qa/qa-1421-not-found-page-QA--ea5cf-d-page-with-a-telling-title/error-context.md
+
+  2) e2e/qa/qa-1422-focus-lost-ops-forms.spec.ts:15:5 › QA-1422 (1) settings conflict: '새 값 보기' keeps focus on the page 
+
+    Error: focus after '새 값 보기'
+
+    expect(received).not.toBe(expected) // Object.is equality
+
+    Expected: not "body"
+
+      41 |   saveJson("qa-1422-settings-focus.json", { focus });
+      42 |   console.log(`QA-1422 (1) focus after '새 값 보기' (Enter): ${JSON.stringify(focus)}`);
+    > 43 |   expect((focus as { tag: string }).tag, "focus after '새 값 보기'").not.toBe("body");
+         |                                                                      ^
+      44 | });
+      45 |
+      46 | test("QA-1422 (2) login server error: focus goes to the error text, not body", async ({ page, baseURL }) => {
+        at /Users/jinyoung/Projects/wakeline/apps/web/e2e/qa/qa-1422-focus-lost-ops-forms.spec.ts:43:70
+
+    Error Context: test-results/qa/qa-1422-focus-lost-ops-for-8addd--보기-keeps-focus-on-the-page/error-context.md
+
+  3) e2e/qa/qa-1422-focus-lost-ops-forms.spec.ts:46:5 › QA-1422 (2) login server error: focus goes to the error text, not body 
+
+    Error: focus after a login server error
+
+    expect(received).toBe(expected) // Object.is equality
+
+    Expected: "div#ops-login-err"
+    Received: "body"
+
+      64 |   saveJson("qa-1422-login-focus.json", { focus, text });
+      65 |   console.log(`QA-1422 (2) error="${text.split("\n")[0]}" focus=${JSON.stringify(focus)}`);
+    > 66 |   expect(focus.tag, "focus after a login server error").toBe("div#ops-login-err");
+         |                                                         ^
+      67 | });
+      68 |
+        at /Users/jinyoung/Projects/wakeline/apps/web/e2e/qa/qa-1422-focus-lost-ops-forms.spec.ts:66:57
+
+    Error Context: test-results/qa/qa-1422-focus-lost-ops-for-2b162--to-the-error-text-not-body/error-context.md
+
+  3 failed
+    e2e/qa/qa-1421-not-found-page.spec.ts:11:5 › QA-1421 an unknown path shows a Korean (or lang-marked) not-found page with a telling title 
+    e2e/qa/qa-1422-focus-lost-ops-forms.spec.ts:15:5 › QA-1422 (1) settings conflict: '새 값 보기' keeps focus on the page 
+    e2e/qa/qa-1422-focus-lost-ops-forms.spec.ts:46:5 › QA-1422 (2) login server error: focus goes to the error text, not body 

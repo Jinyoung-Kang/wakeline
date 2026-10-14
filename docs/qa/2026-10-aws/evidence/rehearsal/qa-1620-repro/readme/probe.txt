@@ -1,0 +1,141 @@
+{
+ "at": "2026-10-14T03:56:47Z",
+ "healthz": [
+  200,
+  "{\"status\":\"ok\",\"region_lag_s\":5,\"snapshot_version\":6}"
+ ],
+ "public": {
+  "/api/v1/status": 200,
+  "/api/v1/aircraft?bbox=124,33,132,39": 200,
+  "/api/v1/ships?bbox=124,33,132,39": 200,
+  "/api/v1/warnings": 200,
+  "/api/v1/warnings/history": 200,
+  "/api/v1/airspace": 200,
+  "/api/v1/alerts/history?limit=5": 200,
+  "/api/v1/stats/traffic": 200,
+  "/api/v1/sigmets": 200
+ },
+ "ops_login": 401,
+ "ops": {
+  "/api/v1/ops/providers": 404,
+  "/api/v1/ops/settings": 404,
+  "/api/v1/ops/audit": 404
+ },
+ "writes": {
+  "track_point": [
+   381,
+   1143
+  ],
+  "ship_position": [
+   137,
+   421
+  ],
+  "aircraft": [
+   127,
+   127
+  ],
+  "ship": [
+   156,
+   404
+  ],
+  "ingest_run": [
+   8,
+   15
+  ],
+  "provider_budget_day": [
+   0,
+   12
+  ]
+ },
+ "partitions": [
+  [
+   "ship_position",
+   "ship_position_20261014",
+   "wakeline_migrator"
+  ],
+  [
+   "ship_position",
+   "ship_position_20261015",
+   "wakeline_migrator"
+  ],
+  [
+   "ship_position",
+   "ship_position_20261016",
+   "wakeline_migrator"
+  ],
+  [
+   "ship_position",
+   "ship_position_20261017",
+   "wakeline_migrator"
+  ],
+  [
+   "track_point",
+   "track_point_20261014",
+   "wakeline_migrator"
+  ],
+  [
+   "track_point",
+   "track_point_20261015",
+   "wakeline_migrator"
+  ],
+  [
+   "track_point",
+   "track_point_20261016",
+   "wakeline_migrator"
+  ],
+  [
+   "track_point",
+   "track_point_20261017",
+   "wakeline_migrator"
+  ]
+ ],
+ "functions": [
+  [
+   "ship_position_drop_old",
+   "wakeline_migrator",
+   "true",
+   "wakeline_api=X/wakeline_migrator,wakeline_migrator=X/wakeline_migrator",
+   "true",
+   "false"
+  ],
+  [
+   "ship_position_ensure_partitions",
+   "wakeline_migrator",
+   "true",
+   "wakeline_api=X/wakeline_migrator,wakeline_migrator=X/wakeline_migrator",
+   "true",
+   "false"
+  ],
+  [
+   "track_point_drop_old",
+   "wakeline_migrator",
+   "true",
+   "wakeline_api=X/wakeline_migrator,wakeline_migrator=X/wakeline_migrator",
+   "true",
+   "false"
+  ],
+  [
+   "track_point_ensure_partitions",
+   "wakeline_migrator",
+   "true",
+   "wakeline_api=X/wakeline_migrator,wakeline_migrator=X/wakeline_migrator",
+   "true",
+   "false"
+  ]
+ ],
+ "perm_errors:wlqa-aws-api-1": {
+  "count": 0,
+  "sample": []
+ },
+ "perm_errors:wlqa-aws-collector-1": {
+  "count": 0,
+  "sample": []
+ },
+ "fail": [
+  "ops login → 401",
+  "GET /api/v1/ops/providers → 404",
+  "GET /api/v1/ops/settings → 404",
+  "GET /api/v1/ops/audit → 404"
+ ]
+}
+FAIL: ops login → 401 | GET /api/v1/ops/providers → 404 | GET /api/v1/ops/settings → 404 | GET /api/v1/ops/audit → 404

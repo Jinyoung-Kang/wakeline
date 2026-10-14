@@ -25,7 +25,8 @@ describe("v5-C8 ApiError keeps code and request_id", () => {
     vi.stubGlobal("fetch", async () => problem(502, "<html>bad gateway</html>", { "Content-Type": "text/html", "X-Request-Id": "0123456789abcdef0123456789abcdef" }));
     const a = (await apiGet("/api/v1/x").catch((x: unknown) => x)) as ApiError;
     expect(a.status).toBe(502);
-    expect(a.code).toBeNull();
+    // HTML 5xx 는 앞단(CloudFront)의 페이지 — 브라우저가 붙인 분류 code(QA-1302). 서버 code 는 없다
+    expect(a.code).toBe("ORIGIN_UNREACHABLE");
     expect(a.requestId).toBe("0123456789abcdef0123456789abcdef");
     vi.stubGlobal("fetch", async () => problem(500, { detail: "boom", code: 42, request_id: "<script>" }));
     const b = (await apiGet("/api/v1/x").catch((x: unknown) => x)) as ApiError;

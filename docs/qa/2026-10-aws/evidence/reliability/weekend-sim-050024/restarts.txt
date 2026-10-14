@@ -1,0 +1,8 @@
+/wlqa-b-edge-1 restarts=1
+/wlqa-b-api-1 restarts=0
+/wlqa-b-collector-1 restarts=0
+/wlqa-b-migrate-1 restarts=0
+/wlqa-b-ais-1 restarts=0
+/wlqa-b-redis-1 restarts=0
+/wlqa-b-db-1 restarts=0
+/wlqa-b-web-1 restarts=0

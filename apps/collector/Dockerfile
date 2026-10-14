@@ -1,7 +1,9 @@
 # syntax=docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e
 # 기반·도구 이미지(FROM · COPY --from · syntax)는 태그@다이제스트로 고정(R-85). 올릴 때: docker buildx imagetools inspect <태그> --format '{{.Manifest.Digest}}'
 # Wakeline collector — Python 3.13 + uv. 빌드 컨텍스트는 저장소 루트(schemas/·fixtures/ 를 함께 넣기 위해)
-FROM python:3.13-slim@sha256:7c61056e61ac89e852de05f3dc6fa51a6dd2181797bceed46aa725dd7cb2cd3b AS build
+# python:3.13-slim 다이제스트 = 3.13.16(2026-10-06 빌드) — 3.13.15 의 CVE-2026-15310(zipfile bzip2 · LZMA 멤버의 한 번 읽기가 묶이지 않음:
+# 공역 KMZ 의 '풀린 크기 상한'이 메모리를 지키지 못했다)을 고친 판(QA-1130). Trivy 는 인터프리터 판을 보지 않는다 — 올릴 때 PYTHON_VERSION 을 확인한다
+FROM python:3.13-slim@sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f AS build
 COPY --from=ghcr.io/astral-sh/uv:0.8@sha256:1d31be550ff927957472b2a491dc3de1ea9b5c2d319a9cea5b6a48021e2990a6 /uv /uvx /bin/
 WORKDIR /app
 ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=never
@@ -11,7 +13,7 @@ RUN --mount=type=cache,target=/root/.cache/uv uv sync --locked --no-dev --no-ins
 COPY apps/collector/wakeline_collector ./wakeline_collector
 RUN --mount=type=cache,target=/root/.cache/uv uv sync --locked --no-dev
 
-FROM python:3.13-slim@sha256:7c61056e61ac89e852de05f3dc6fa51a6dd2181797bceed46aa725dd7cb2cd3b
+FROM python:3.13-slim@sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f
 # 앱은 .venv(빌드 단계에서 uv 가 만든다)만 쓴다. 기반 이미지의 시스템 pip 는 지운다 — 쓰이지 않으면서
 # pip 가 품은 패키지(msgpack·setuptools)가 이미지의 고칠 수 있는 HIGH 취약점 전부였다(R-29).
 # apt-get upgrade: 기반 이미지(다이제스트 고정)가 나온 뒤 고쳐진 Debian 보안 갱신까지 — db 이미지와 같은 방식, Trivy 게이트가 결과를 본다

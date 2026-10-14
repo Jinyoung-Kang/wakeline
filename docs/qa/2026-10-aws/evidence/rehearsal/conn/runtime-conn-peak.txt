@@ -1,0 +1,14 @@
+*                      *                            max  76 at 03:18:46
+-                      *                            max   2 at 03:18:46
+-                      -                            max   2 at 03:18:46
+buildrisk              *                            max   7 at 03:15:53
+buildrisk              wlqa-holder-buildrisk        max   7 at 03:15:53
+macro                  *                            max  63 at 03:16:13
+macro                  wlqa-holder-macro            max  63 at 03:16:13
+postgres               *                            max   3 at 03:15:53
+postgres               psql                         max   3 at 03:15:53
+wakeline_api           *                            max   6 at 03:15:53
+wakeline_api           wakeline-api                 max   6 at 03:15:53
+wakeline_collector     *                            max   1 at 03:15:53
+wakeline_collector     wakeline-collector           max   1 at 03:15:53
+samples 243

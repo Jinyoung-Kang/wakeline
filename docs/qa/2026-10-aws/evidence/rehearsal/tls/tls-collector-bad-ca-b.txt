@@ -1,0 +1,12 @@
+# collector bad-ca-b — 03:09:41Z 다시 만든 뒤 75 s
+state: running restarts=0 health=healthy
+edge /healthz: {"status":"ok","region_lag_s":4,"snapshot_version":120} [200]
+GET /api/v1/alerts/history?limit=1: 200
+--- TLS 관련 로그(앞 12줄)
+2026-10-14 03:06:33,185 WARNING db: db: connect failed (SSLCertVerificationError) — live path continues, writes queued (1)
+2026-10-14 03:07:33,260 WARNING db: db: connect failed (SSLCertVerificationError) — live path continues, writes queued (27)
+2026-10-14 03:08:33,302 WARNING db: db: connect failed (SSLCertVerificationError) — live path continues, writes queued (35)
+2026-10-14 03:09:33,344 WARNING db: db: connect failed (SSLCertVerificationError) — live path continues, writes queued (44)
+--- TLS 관련 로그 줄 수: 4
+--- 서버 쪽 TLS 세션(같은 계정 · application_name)
+wakeline_api	wakeline-api	t	TLSv1.3	6

@@ -463,7 +463,9 @@ class MetarJob:
 class KmaWarningJob:
     """기상청 특보현황(ADR-036 · SPEC F3): 5분마다 API허브 wrn_now_data 한 번 → 발효 중인 특보 전체를 wakeline:wxwarn 에 한 엔트리로(complete — api 는
     목록 전체를 바꾼다). 호출이 실패하면 발행하지 않는다(api 는 마지막 목록과 그 나이를 보인다 — 빈 목록을 지어 내지 않는다). 키가 없거나 꺼졌으면
-    부르지 않고 heartbeat 상태로 알린다(fixture 모드는 재생 공급자). 모양이 틀린 줄은 버리고 품질 기록(kma_warning_bad_line)에 남긴다.
+    부르지 않고 heartbeat 상태로 알린다(fixture 모드는 재생 공급자). 모양이 틀린 줄(글자를 풀 수 없는 줄 포함 — QA-1222)은 그 줄만
+    버리고 품질 기록(kma_warning_bad_line)에 남긴다. 모든 줄을 버린 응답은 호출 실패와 같다(QA-1204 — 발행하지 않고 실행 기록 · last_error 에
+    첫 까닭, 품질 기록은 남기지 않는다).
     """
 
     job_name = "kma_warning"

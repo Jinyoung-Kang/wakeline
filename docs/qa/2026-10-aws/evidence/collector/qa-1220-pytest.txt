@@ -1,0 +1,13 @@
+$ cd apps/collector && WAKELINE_TEST_REDIS_URL=redis://127.0.0.1:56391/0 uv run --offline pytest tests/qa/test_qa_1220_release_key_creates_ttl_less_key.py -q -p no:cacheprovider
+# 2026-10-13T18:48:59Z — 실제 Redis = 버리는 컨테이너 redis:8-alpine(wlqa-collector-redis, 127.0.0.1:56391, 비밀번호 없음)
+E       AssertionError: release_key created budget:mof:h:2026101608 = {'used': '-1'} (ttl none)
+E       assert 'budget:mof:h:2026101608' not in {'budget:mof:h:2026101608': {'used': '-1'}}
+E        +  where {'budget:mof:h:2026101608': {'used': '-1'}} = <fakes.FakeRedis object at 0x1054734d0>.kv
+E           AssertionError: release_key left budget:qa1220:h:2026101608: fields={'used': '-1'} ttl=-1 (-1 = no expiry)
+E           assert ({'used': '-1'}, -1) == ({}, -2)
+E             
+E             At index 0 diff: {'used': '-1'} != {}
+E             Use -v to get more diff
+FAILED tests/qa/test_qa_1220_release_key_creates_ttl_less_key.py::test_qa_1220_giving_back_to_a_vanished_hour_window_creates_no_key
+FAILED tests/qa/test_qa_1220_release_key_creates_ttl_less_key.py::test_qa_1220_on_real_redis_the_created_key_has_no_ttl_and_a_negative_count
+2 failed in 0.20s

@@ -1,0 +1,5 @@
+ Container wlqa-rds-tools-run-b238a2e5209b Creating 
+ Container wlqa-rds-tools-run-b238a2e5209b Created 
+psql:<stdin>:53: NOTICE:  extension "postgis" already exists, skipping
+psql:<stdin>:56: NOTICE:  extension "postgis" already exists, skipping
+bootstrap 완료: macrodash · buildrisk · wakeline

@@ -1,0 +1,18 @@
+/healthz
+      0.1s ..    32.1s  n=  9  max_ms=    22  status=200 health=ok
+     36.2s ..    48.2s  n=  4  max_ms=  4163  status=502 retry-after=10 health=502
+     52.2s ..    52.2s  n=  1  max_ms=   182  status=200 health=starting
+     56.2s ..    92.2s  n= 10  max_ms=    25  status=200 health=ok
+/api/v1/ships?bbox=120,30,135,40
+      0.1s ..    32.1s  n=  9  max_ms=    22  status=200
+     36.2s ..    48.2s  n=  4  max_ms=  4162  status=502 retry-after=10 code=BAD_GATEWAY
+     52.2s ..    92.2s  n= 11  max_ms=   186  status=200
+/api/v1/aircraft?bbox=124,33,132,39
+      0.1s ..    32.1s  n=  9  max_ms=    22  status=200
+     36.2s ..    48.2s  n=  4  max_ms=  4162  status=502 retry-after=10 code=BAD_GATEWAY
+     52.2s ..    92.2s  n= 11  max_ms=   236  status=200
+/api/v1/alerts/history
+      0.1s ..    12.1s  n=  4  max_ms=    26  status=200
+     16.1s ..    32.1s  n=  5  max_ms=  5028  status=503 retry-after=10 code=UNAVAILABLE
+     36.2s ..    48.2s  n=  4  max_ms=  4162  status=502 retry-after=10 code=BAD_GATEWAY
+     52.2s ..    92.2s  n= 11  max_ms=   319  status=200

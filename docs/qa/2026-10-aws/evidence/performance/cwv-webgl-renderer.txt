@@ -1,0 +1,1 @@
+2026-10-14T08:44Z Chrome for Testing 153.0.8010.12 --headless=new --use-angle=metal --enable-gpu (perf_cwv.sh gpu 와 같은 플래그, Playwright 탐침): WEBGL_RENDERER=ANGLE (Apple, ANGLE Metal Renderer: Apple M1, Unspecified Version)

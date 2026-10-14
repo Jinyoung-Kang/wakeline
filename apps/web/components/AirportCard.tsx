@@ -9,11 +9,11 @@ import { isRefusedSegment } from "@/lib/endpoints/path";
 import { useUi } from "@/lib/ui-store";
 import { useNow } from "@/lib/clock";
 import { serverNowMs } from "@/lib/store";
-import { CAT_COLORS, catSourceLabel, ceilingLabel, fmtDuration, fmtTempPair, fmtVisSm, fmtWind, isMetarStale, metarAgeS } from "@/lib/format";
+import { CAT_COLORS, catSourceLabel, ceilingLabel, fmtDuration, isMetarStale, metarAgeS } from "@/lib/format";
 import { ErrorNote } from "./logs/ErrorNote";
 import { RAW_BULLETIN_LABEL, RAW_BULLETIN_TITLE } from "@/lib/time";
 import { KstTime } from "./KstTime";
-import { WX_UNREADABLE } from "@/lib/airport-wx";
+import { fmtTempPair, fmtVisSm, fmtWind, WX_UNREADABLE } from "@/lib/airport-wx";
 
 /**
  * 공항 기상 카드(FR-22). 실링은 ceiling_state 로 "실링 없음"(구름 자료 있음·실링층 없음)과 "—"(모름)을 구분한다(GAP-16).

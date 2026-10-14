@@ -207,3 +207,25 @@ def test_v5_linear_userinfo_and_jwt_rules_give_the_same_output_as_the_backtracki
     for _ in range(20_000):
         text = "".join(rnd.choice(parts) for _ in range(rnd.randint(0, 40)))
         assert mask(text, None) == _old_mask(text), repr(text)
+
+
+def test_qa_1140_mask_head_masks_before_it_cuts_and_drops_a_secret_cut_by_an_earlier_cut():
+    """QA-1140: 자른 뒤 가리면 경계에 걸친 키의 앞부분이 남는다 — mask_head 는 가린 뒤 자르고, 이미 잘린 원문(cut=True · SCAN_MAX 초과)이면
+    끝에 걸친 등록 비밀값 조각을 먼저 지운다."""
+    from wakeline_collector import masking
+
+    key = "Qa1140UnitTestKey0123456789"
+    masking.register_secrets(key)
+    try:
+        text = "E" * 110 + key + " tail"
+        assert masking.mask_head(text, 120) == "E" * 110 + "***" + " tail"[:7]
+        assert masking.mask_head('{"x":"' + "E" * 90 + '","authKey":"' + key + '"}', 120).endswith('"authKey":"***"}')
+        assert masking.drop_cut_secret("abc " + key[:9]) == "abc "
+        assert masking.drop_cut_secret("abc " + key) == "abc " + key  # 온전한 값은 mask 가 가린다
+        assert masking.mask_head("abc " + key[:12], 50, cut=True) == "abc "
+        long = "E" * (masking.SCAN_MAX - 5) + key  # 앞부분만 가리는 상한에 걸린 키
+        out = masking.mask_head(long, masking.SCAN_MAX)
+        assert key[:5] not in out and out == "E" * (masking.SCAN_MAX - 5)
+        assert masking.mask_head(None, 10) == ""
+    finally:
+        masking._SECRETS.discard(key)

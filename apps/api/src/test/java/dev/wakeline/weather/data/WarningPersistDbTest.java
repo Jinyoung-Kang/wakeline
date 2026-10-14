@@ -89,7 +89,8 @@ class WarningPersistDbTest {
 
     /**
      * QA 2026-10-release 보고 §7-1 · AWS 리뷰 B-4: 수집기는 해석하지 못한 줄을 목록에서 빼고 수(dropped)만 보낸다. 그 목록에 없는 특보를 '끝남'으로
-     * 닫으면, 줄만 버려졌을 뿐 아직 발효 중인 특보가 그 시각에 끝난 것으로 이력에 남았다 — 줄을 버린 목록에서는 끝내지 않는다(다음 온전한 목록이 닫는다).
+     * 닫으면, 줄만 버려졌을 뿐 아직 발효 중인 특보가 그 시각에 끝난 것으로 이력에 남았다 — 줄을 버린 목록에서는 곧바로 끝내지 않는다.
+     * 다음 온전한 목록에도 없으면 처음 빠진 목록의 시각으로 끝낸다(계약 v5 §G49 'ended_at = 목록에서 빠진 시각' — QA-1203: 예전에는 그 온전한 목록의 시각).
      */
     @Test
     void aListWithDroppedLinesDoesNotEndTheWarningsItLacks() {
@@ -98,7 +99,32 @@ class WarningPersistDbTest {
         receive(T, a, b);
         receiveDropped(T.plusSeconds(300), 1, a); // b 의 줄이 해석되지 않아 빠졌다
         assertThat(row("L1100100").get("ended_at")).isNull();
-        receive(T.plusSeconds(600), a); // 온전한 목록에도 없다 — 그때 끝
-        assertThat(dev.wakeline.platform.data.Sql.toInstant(row("L1100100").get("ended_at"))).isEqualTo(T.plusSeconds(600));
+        receive(T.plusSeconds(600), a); // 온전한 목록에도 없다 — 처음 빠진 목록의 시각으로 끝
+        assertThat(dev.wakeline.platform.data.Sql.toInstant(row("L1100100").get("ended_at"))).isEqualTo(T.plusSeconds(300));
+    }
+
+    /**
+     * QA-1203 경계: 줄을 버린 목록이 이어지면 처음 빠진 뒤 {@link WarningRepository#MISSING_END_AFTER}(1 h)가 될 때까지는 열어 두고, 그 목록에서 처음 빠진
+     * 시각으로 끝낸다. 다시 나타나면 다시 열고, 다시 빠지면 그때부터 새로 센다.
+     */
+    @Test
+    void aWarningMissingFromDroppedListsForAnHourEndsAtTheFirstMissingList() {
+        Instant iss = Instant.parse("2026-10-09T07:00:00Z");
+        WarningRecord a = w("S1312020", "풍랑", "예비", iss, null), b = w("L1100100", "호우", "주의보", iss, null);
+        receive(T, a, b);
+        Instant gone = T.plusSeconds(300);
+        receiveDropped(gone, 1, a);
+        receiveDropped(gone.plus(WarningRepository.MISSING_END_AFTER).minusSeconds(1), 1, a);
+        assertThat(row("L1100100").get("ended_at")).as("missing for 1 h − 1 s in lists with dropped lines — kept open").isNull();
+        receiveDropped(gone.plus(WarningRepository.MISSING_END_AFTER), 1, a);
+        assertThat(dev.wakeline.platform.data.Sql.toInstant(row("L1100100").get("ended_at"))).as("missing for 1 h — ended when it left the list").isEqualTo(gone);
+        assertThat(row("S1312020").get("ended_at")).isNull();
+
+        Instant back = gone.plus(WarningRepository.MISSING_END_AFTER).plusSeconds(300);
+        receive(back, a, b); // 다시 나타남 — 다시 연다
+        assertThat(row("L1100100").get("ended_at")).isNull();
+        receiveDropped(back.plusSeconds(300), 1, a); // 다시 빠짐 — 새로 센다
+        receive(back.plusSeconds(600), a);
+        assertThat(dev.wakeline.platform.data.Sql.toInstant(row("L1100100").get("ended_at"))).isEqualTo(back.plusSeconds(300));
     }
 }

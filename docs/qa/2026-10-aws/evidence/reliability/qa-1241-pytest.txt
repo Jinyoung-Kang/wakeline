@@ -1,0 +1,19 @@
+.F                                                                       [100%]
+=================================== FAILURES ===================================
+_ test_qa_1241_overnight_gap_is_recorded_even_if_redis_answers_after_ais_start _
+
+    async def test_qa_1241_overnight_gap_is_recorded_even_if_redis_answers_after_ais_start():
+        gaps = await _overnight(redis_late_at_boot=True)
+>       assert _covers_the_stop(gaps), (
+            f"Redis 가 ais 기동 1 s 뒤에 답했을 뿐인데 밤새 정지({iso_ms(STOP)} → {iso_ms(BOOT)})의 공백이 기록되지 않았다 — 발행된 ais_gap: {gaps}"
+        )
+E       AssertionError: Redis 가 ais 기동 1 s 뒤에 답했을 뿐인데 밤새 정지(2027-01-15T08:01:00.000Z → 2027-01-15T23:00:00.000Z)의 공백이 기록되지 않았다 — 발행된 ais_gap: []
+E       assert False
+E        +  where False = _covers_the_stop([])
+
+tests/qa/test_qa_1241_ais_restart_gap_lost_when_redis_is_late.py:137: AssertionError
+------------------------------ Captured log call -------------------------------
+WARNING  ais.sink:sink.py:430 previous ais status unavailable (ConnectionError) — no gap carried over
+=========================== short test summary info ============================
+FAILED tests/qa/test_qa_1241_ais_restart_gap_lost_when_redis_is_late.py::test_qa_1241_overnight_gap_is_recorded_even_if_redis_answers_after_ais_start
+1 failed, 1 passed in 0.31s

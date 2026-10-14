@@ -1,0 +1,90 @@
+{
+  "ready": {
+    "fir": {
+      "state": "ready",
+      "top": 73.3,
+      "height": 281
+    },
+    "hazard": {
+      "state": "ready",
+      "top": 73.3,
+      "height": 281
+    },
+    "traffic": {
+      "state": "ready",
+      "top": 364,
+      "height": 293.8
+    },
+    "alerts": {
+      "state": "ready",
+      "top": 364,
+      "height": 293.8
+    }
+  },
+  "loading": {
+    "fir": {
+      "state": "loading",
+      "top": 73.3,
+      "height": 281
+    },
+    "hazard": {
+      "state": "loading",
+      "top": 73.3,
+      "height": 281
+    },
+    "traffic": {
+      "state": "loading",
+      "top": 364,
+      "height": 293.8
+    },
+    "alerts": {
+      "state": "loading",
+      "top": 364,
+      "height": 293.8
+    }
+  },
+  "empty": {
+    "fir": {
+      "state": "empty",
+      "top": 73.3,
+      "height": 281
+    },
+    "hazard": {
+      "state": "empty",
+      "top": 73.3,
+      "height": 281
+    },
+    "traffic": {
+      "state": "empty",
+      "top": 364,
+      "height": 293.8
+    },
+    "alerts": {
+      "state": "empty",
+      "top": 364,
+      "height": 293.8
+    }
+  },
+  "error": {
+    "fir": {
+      "state": "error",
+      "top": 73.3,
+      "height": 281
+    },
+    "hazard": {
+      "state": "error",
+      "top": 73.3,
+      "height": 281
+    },
+    "traffic": {
+      "state": "error",
+      "top": 364,
+      "height": 293.8
+    },
+    "alerts": {
+      "state": "error",
+      "top": 364,
+      "height": 293.8
+    }
+  }
+}

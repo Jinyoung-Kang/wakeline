@@ -1,0 +1,36 @@
+== GET /
+HTTP/2 401 
+content-type: application/json; charset=utf-8
+content-length: 88
+cache-control: no-store
+referrer-policy: same-origin
+strict-transport-security: max-age=31536000
+x-content-type-options: nosniff
+x-robots-tag: noindex, nofollow
+alt-svc: h3=":443"; ma=86400
+
+-- body(      88B): {"error": "locked", "message": "접근 코드가 필요합니다", "unlock": "/__gate/"}
+== GET /api/v1/status
+HTTP/2 401 
+content-type: application/json; charset=utf-8
+content-length: 88
+cache-control: no-store
+referrer-policy: same-origin
+strict-transport-security: max-age=31536000
+x-content-type-options: nosniff
+x-robots-tag: noindex, nofollow
+alt-svc: h3=":443"; ma=86400
+
+-- body(      88B): {"error": "locked", "message": "접근 코드가 필요합니다", "unlock": "/__gate/"}
+== GET /_next/static/x.js
+HTTP/2 401 
+content-type: application/json; charset=utf-8
+content-length: 88
+cache-control: no-store
+referrer-policy: same-origin
+strict-transport-security: max-age=31536000
+x-content-type-options: nosniff
+x-robots-tag: noindex, nofollow
+alt-svc: h3=":443"; ma=86400
+
+-- body(      88B): {"error": "locked", "message": "접근 코드가 필요합니다", "unlock": "/__gate/"}

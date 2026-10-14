@@ -63,11 +63,14 @@ def paths(base: str) -> list[str]:
         "/api/v1/radar/frames", "/api/v1/radar/kr", "/api/v1/airports?bbox=124,33,132,39", "/api/v1/airports/RKSI/wx",
         f"/api/v1/replay?at={iso(now - timedelta(minutes=5))}&bbox=124,33,132,39",
         f"/api/v1/stats/sigmet?from={day}&to={day}", f"/api/v1/stats/traffic?day={day}", f"/api/v1/stats/alerts?from={day}&to={day}",
+        # AWS QA 2026-10-14(api-live): 빠졌던 경로 — 공역 · 특보 · 특보 이력 · 관심 대상 · 알림 한 건 · 레이더 영상 · OpenAPI
+        "/api/v1/airspace", "/api/v1/warnings", f"/api/v1/warnings/history?from={iso(now - timedelta(days=7))}",
+        "/api/v1/watch?aircraft={hex}&ships={mmsi}&airports=RKSI", "/api/v1/alerts/{alert}", "/api/v1/radar/kr/{radar_tm}.png", "/api/v1/openapi",
     ]
 
 
 def samples(base: str) -> dict[str, str]:
-    s = {"hex": "71bf50", "mmsi": "440095870", "sigmet": "x"}
+    s = {"hex": "71bf50", "mmsi": "440095870", "sigmet": "x", "alert": "1", "radar_tm": "202601010000"}
     try:
         a = json.loads(urllib.request.urlopen(urllib.request.Request(base + "/api/v1/aircraft?bbox=124,33,132,39", headers={"Accept": ACCEPT}), timeout=10).read())
         s["hex"] = a["features"][0]["properties"]["hex"]
@@ -75,6 +78,12 @@ def samples(base: str) -> dict[str, str]:
         s["mmsi"] = sh["features"][0]["properties"]["mmsi"]
         sg = json.loads(urllib.request.urlopen(urllib.request.Request(base + "/api/v1/sigmets", headers={"Accept": ACCEPT}), timeout=10).read())
         s["sigmet"] = quote(sg["features"][0]["properties"]["id"], safe="")
+        hist = json.loads(urllib.request.urlopen(urllib.request.Request(base + "/api/v1/alerts/history", headers={"Accept": ACCEPT}), timeout=10).read())
+        if hist.get("items"):
+            s["alert"] = str(hist["items"][0]["id"])
+        kr = json.loads(urllib.request.urlopen(urllib.request.Request(base + "/api/v1/radar/kr", headers={"Accept": ACCEPT}), timeout=10).read())
+        if kr.get("frames"):
+            s["radar_tm"] = kr["frames"][0]["tm"]
     except Exception:  # noqa: BLE001 — 장애 중이면 기본값
         pass
     return s

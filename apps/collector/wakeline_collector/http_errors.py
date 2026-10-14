@@ -8,6 +8,10 @@ from __future__ import annotations
 
 import httpx
 
+from wakeline_collector.masking import mask_head
+
+BODY_HEAD_MAX = 200  # 예외 글 · body_head 에 싣는 오류 본문 앞부분(가린 뒤 자른다 — QA-1140)
+
 
 class HostNotAllowed(RuntimeError):
     pass
@@ -34,9 +38,13 @@ class ProviderHttpError(RuntimeError):
         latency_ms: int | None = None,
         pause_s: float | None = None,
     ):
-        super().__init__(f"HTTP {status}: {body_head[:200]}")
+        # body_head: 오류 본문의 앞부분(가리기 전이어도 된다 — 여기서 가린 뒤 자른다). 원문을 미리 잘라 넘기면 끝에 걸친 비밀값 조각을 먼저
+        # 지운다(HttpClient 는 masking.mask_head(…, cut=True) 로 가린 앞부분을 넘긴다). 자른 뒤 가리면 경계에 걸친 키의 앞부분이 str(e) ·
+        # 트레이스백 · 로그 · /ops 에 남았다(QA-1140)
+        head = mask_head(body_head, BODY_HEAD_MAX)
+        super().__init__(f"HTTP {status}: {head}")
         self.status = status
-        self.body_head = body_head[:200]  # 오류 응답의 모양 판별용(예: adsbdb 404 "unknown callsign")
+        self.body_head = head  # 오류 응답의 모양 판별용(예: adsbdb 404 "unknown callsign")
         self.headers = headers or {}
         self.latency_ms = latency_ms
         self.pause_s = pause_s  # 429 로 그 호스트를 막은 초(RateLimiter.penalize 의 반환값). 429 가 아니면 None

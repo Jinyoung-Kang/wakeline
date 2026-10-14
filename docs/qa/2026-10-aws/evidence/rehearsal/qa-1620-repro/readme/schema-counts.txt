@@ -1,0 +1,3 @@
+indexes	1
+constraints	3
+functions	0

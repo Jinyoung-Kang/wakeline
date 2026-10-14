@@ -1,0 +1,32 @@
+> Task :compileJava UP-TO-DATE
+> Task :processResources UP-TO-DATE
+> Task :classes UP-TO-DATE
+> Task :compileTestJava UP-TO-DATE
+> Task :processTestResources UP-TO-DATE
+> Task :testClasses UP-TO-DATE
+
+> Task :test
+
+Qa1240PartitionEnsureNotRetriedAfterLateDbDbTest > afterALongStopTodaysPartitionIsCreatedSoonAfterALateDbAnswers() FAILED
+    java.lang.AssertionError: [DB 가 기동 40 s 뒤에 답한 뒤 5분 안에 오늘(UTC) 파티션이 있어야 한다 — 없으면 그동안 항적 · 선박 위치 행은 23514 로 버려진다. 예약 작업 실행: [+5s ensurePartitions (db down), +60s catchUpTick, +120s catchUpTick, +180s catchUpTick, +240s catchUpTick, +300s catchUpTick] · ensurePartitions 주기 PT6H] 
+    Expecting empty but was: ["track_point_20261013", "ship_position_20261013"]
+        at dev.wakeline.qa.Qa1240PartitionEnsureNotRetriedAfterLateDbDbTest.afterALongStopTodaysPartitionIsCreatedSoonAfterALateDbAnswers(Qa1240PartitionEnsureNotRetriedAfterLateDbDbTest.java:99)
+
+1 test completed, 1 failed
+
+> Task :test FAILED
+
+FAILURE: Build failed with an exception.
+
+* What went wrong:
+Execution failed for task ':test' (registered by plugin 'org.gradle.jvm-test-suite').
+> java.nio.file.NoSuchFileException: /Users/jinyoung/Projects/wakeline/apps/api/build/test-results/test/binary/in-progress-results-generic.bin
+
+* Try:
+> Run with --stacktrace option to get the stack trace.
+> Run with --info or --debug option to get more log output.
+> Run with --scan to get full insights from a Build Scan (powered by Develocity).
+> Get more help at https://help.gradle.org.
+
+BUILD FAILED in 15s
+5 actionable tasks: 1 executed, 4 up-to-date

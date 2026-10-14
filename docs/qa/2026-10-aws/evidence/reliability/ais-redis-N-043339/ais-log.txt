@@ -1,0 +1,3 @@
+2026-10-13 19:35:40,634 WARNING ais.sink: ships xadd failed (ConnectionError) — holding the first position of each minute per ship until redis answers (54 held, cap 100000)
+2026-10-13 19:37:50,643 WARNING ais.sink: ships backfill xadd failed (ConnectionError) — 616 held positions kept
+2026-10-13 19:39:40,648 INFO ais.sink: published 1100 per-minute positions held during the redis outage (2 entries)

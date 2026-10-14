@@ -1,0 +1,251 @@
+{
+ "base": "http://localhost:8701",
+ "started": "2026-10-13T20:47:05.690867+00:00",
+ "phase1_normal_db": [
+  {
+   "n": 10,
+   "wall_s": 0.068,
+   "counts": {
+    "200": 10
+   },
+   "p50_s": 0.062,
+   "max_s": 0.067,
+   "non200": []
+  },
+  {
+   "n": 20,
+   "wall_s": 0.121,
+   "counts": {
+    "200": 20
+   },
+   "p50_s": 0.092,
+   "max_s": 0.12,
+   "non200": []
+  },
+  {
+   "n": 30,
+   "wall_s": 0.161,
+   "counts": {
+    "200": 30
+   },
+   "p50_s": 0.124,
+   "max_s": 0.159,
+   "non200": []
+  }
+ ],
+ "phase2_locked_stats_daily": {
+  "lock_s": 8,
+  "stats_traffic_x10": {
+   "counts": {
+    "503/UNAVAILABLE RA=10": 10
+   },
+   "p50_s": 1.078,
+   "max_s": 3.055,
+   "items": [
+    {
+     "path": "/api/v1/stats/traffic?day=2026-10-14",
+     "status": 503,
+     "retry_after": "10",
+     "s": 3.055,
+     "code": "UNAVAILABLE",
+     "detail": "data store temporarily unavailable; retry later",
+     "ctype": "application/problem+json"
+    },
+    {
+     "path": "/api/v1/stats/traffic?day=2026-10-14",
+     "status": 503,
+     "retry_after": "10",
+     "s": 3.054,
+     "code": "UNAVAILABLE",
+     "detail": "data store temporarily unavailable; retry later",
+     "ctype": "application/problem+json"
+    },
+    {
+     "path": "/api/v1/stats/traffic?day=2026-10-14",
+     "status": 503,
+     "retry_after": "10",
+     "s": 1.079,
+     "code": "UNAVAILABLE",
+     "detail": "data store temporarily unavailable; retry later",
+     "ctype": "application/problem+json"
+    },
+    {
+     "path": "/api/v1/stats/traffic?day=2026-10-14",
+     "status": 503,
+     "retry_after": "10",
+     "s": 1.078,
+     "code": "UNAVAILABLE",
+     "detail": "data store temporarily unavailable; retry later",
+     "ctype": "application/problem+json"
+    },
+    {
+     "path": "/api/v1/stats/traffic?day=2026-10-14",
+     "status": 503,
+     "retry_after": "10",
+     "s": 1.078,
+     "code": "UNAVAILABLE",
+     "detail": "data store temporarily unavailable; retry later",
+     "ctype": "application/problem+json"
+    },
+    {
+     "path": "/api/v1/stats/traffic?day=2026-10-14",
+     "status": 503,
+     "retry_after": "10",
+     "s": 3.054,
+     "code": "UNAVAILABLE",
+     "detail": "data store temporarily unavailable; retry later",
+     "ctype": "application/problem+json"
+    },
+    {
+     "path": "/api/v1/stats/traffic?day=2026-10-14",
+     "status": 503,
+     "retry_after": "10",
+     "s": 1.077,
+     "code": "UNAVAILABLE",
+     "detail": "data store temporarily unavailable; retry later",
+     "ctype": "application/problem+json"
+    },
+    {
+     "path": "/api/v1/stats/traffic?day=2026-10-14",
+     "status": 503,
+     "retry_after": "10",
+     "s": 1.077,
+     "code": "UNAVAILABLE",
+     "detail": "data store temporarily unavailable; retry later",
+     "ctype": "application/problem+json"
+    },
+    {
+     "path": "/api/v1/stats/traffic?day=2026-10-14",
+     "status": 503,
+     "retry_after": "10",
+     "s": 1.076,
+     "code": "UNAVAILABLE",
+     "detail": "data store temporarily unavailable; retry later",
+     "ctype": "application/problem+json"
+    },
+    {
+     "path": "/api/v1/stats/traffic?day=2026-10-14",
+     "status": 503,
+     "retry_after": "10",
+     "s": 1.075,
+     "code": "UNAVAILABLE",
+     "detail": "data store temporarily unavailable; retry later",
+     "ctype": "application/problem+json"
+    }
+   ]
+  },
+  "other_public_reads_during": {
+   "counts": {
+    "503/UNAVAILABLE RA=10": 4,
+    "200": 1
+   },
+   "p50_s": 1.02,
+   "max_s": 1.021,
+   "items": [
+    {
+     "path": "/api/v1/alerts/history?limit=50",
+     "status": 503,
+     "retry_after": "10",
+     "s": 1.021,
+     "code": "UNAVAILABLE",
+     "detail": "data store temporarily unavailable; retry later",
+     "ctype": "application/problem+json"
+    },
+    {
+     "path": "/api/v1/airports/RKSI/wx",
+     "status": 503,
+     "retry_after": "10",
+     "s": 1.02,
+     "code": "UNAVAILABLE",
+     "detail": "data store temporarily unavailable; retry later",
+     "ctype": "application/problem+json"
+    },
+    {
+     "path": "/api/v1/ships/search?q=KO",
+     "status": 200,
+     "retry_after": null,
+     "s": 1.02,
+     "code": null
+    },
+    {
+     "path": "/api/v1/aircraft/780de6/track",
+     "status": 503,
+     "retry_after": "10",
+     "s": 1.02,
+     "code": "UNAVAILABLE",
+     "detail": "data store temporarily unavailable; retry later",
+     "ctype": "application/problem+json"
+    },
+    {
+     "path": "/api/v1/warnings/history",
+     "status": 503,
+     "retry_after": "10",
+     "s": 1.018,
+     "code": "UNAVAILABLE",
+     "detail": "data store temporarily unavailable; retry later",
+     "ctype": "application/problem+json"
+    }
+   ]
+  },
+  "live_paths_during": {
+   "counts": {
+    "200": 5
+   },
+   "p50_s": 0.018,
+   "max_s": 0.024,
+   "items": [
+    {
+     "path": "/api/v1/aircraft?bbox=120,30,135,45",
+     "status": 200,
+     "retry_after": null,
+     "s": 0.018,
+     "code": null
+    },
+    {
+     "path": "/api/v1/status",
+     "status": 200,
+     "retry_after": null,
+     "s": 0.014,
+     "code": null
+    },
+    {
+     "path": "/healthz",
+     "status": 200,
+     "retry_after": null,
+     "s": 0.011,
+     "code": null
+    },
+    {
+     "path": "/api/v1/alerts",
+     "status": 200,
+     "retry_after": null,
+     "s": 0.024,
+     "code": null
+    },
+    {
+     "path": "/api/v1/sigmets",
+     "status": 200,
+     "retry_after": null,
+     "s": 0.024,
+     "code": null
+    }
+   ]
+  },
+  "after_unlock": [
+   {
+    "path": "/api/v1/alerts/history?limit=50",
+    "status": 200,
+    "retry_after": null,
+    "s": 0.044,
+    "code": null
+   },
+   {
+    "path": "/api/v1/stats/traffic?day=2026-10-14",
+    "status": 200,
+    "retry_after": null,
+    "s": 0.027,
+    "code": null
+   }
+  ]
+ }
+}

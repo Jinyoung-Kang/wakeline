@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
 import path from "node:path";
+import { opsCredentials } from "./qa-helpers";
 
 /**
  * QA 보안 점검(계획 §3.1 XSS) — 격리 스택(8701 · 8702)에서만. 저장형: 브라우저 오류 수집(POST /api/v1/client-errors 의 message · stack · component · path),
@@ -13,8 +13,6 @@ import path from "node:path";
  */
 const BASE = process.env.E2E_BASE_URL ?? "http://localhost:8701";
 if (!["8701", "8702"].includes(new URL(BASE).port)) throw new Error(`QA 는 격리 스택만: ${BASE}`);
-const CREDS = process.env.QA_CREDS ?? "/private/tmp/claude-501/-Users-jinyoung-Projects-wakeline/75437490-c65b-4783-9ac0-e224c92a9bab/scratchpad/qa-creds.json";
-const password = (u: string): string => JSON.parse(readFileSync(CREDS, "utf8")).users[u];
 const REPO = path.resolve(__dirname, "../../../..");
 
 const P = [
@@ -43,7 +41,7 @@ async function assertClean(page: Page, csp: string[], label: string) {
 }
 
 async function login(page: Page, user: string) {
-  const r = await page.request.post(`${BASE}/api/v1/ops/session`, { data: { username: user, password: password(user) } });
+  const r = await page.request.post(`${BASE}/api/v1/ops/session`, { data: opsCredentials(user) });
   expect(r.status(), "login").toBe(200);
 }
 

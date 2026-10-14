@@ -22,8 +22,10 @@ const RAW_TITLE = "원본 그대로(바꾸지 않음) — 안의 시각은 수�
  * 받는 동안 '다시 불러오기' · '더 보기'는 aria-disabled(누름은 busyRef 가 막는다) — disabled 면 누른 단추의 초점이 body 로 떨어졌다(QA-304).
  * 끝 쪽을 받아 '더 보기'가 사라지면 초점을 이 목록(영역)으로 옮긴다(lib/use-focus-rescue — 잃었을 때만).
  */
-export function OpsRunsDrill({ id, k, since, onClose, onAuthMiss }: {
+export function OpsRunsDrill({ id, k, since, onClose, onAuthMiss, opener }: {
   id: string; k: RunKey; since: string | null; onClose: () => void; onAuthMiss: (e: unknown) => void;
+  /** 이 목록을 연 요소(요약 행의 '실행' 단추) — 키보드로 연 그 자리에서 Esc 가 닫는다(QA-1423) */
+  opener?: () => Element | null;
 }) {
   const [items, setItems] = useState<Any[] | null>(null);
   const [next, setNext] = useState<number | null>(null);
@@ -32,7 +34,7 @@ export function OpsRunsDrill({ id, k, since, onClose, onAuthMiss }: {
   const busyRef = useRef(false);
   const [err, setErr] = useState<unknown>(null);
   const region = useRef<HTMLDivElement>(null);
-  useEscapeClose(true, onClose, { panel: region }); // Esc 로 닫기(lib/escape-stack) — 초점은 onClose 가 연 단추로 돌린다
+  useEscapeClose(true, onClose, { panel: region, opener: opener ?? (() => null) }); // Esc 로 닫기(lib/escape-stack) — 연 단추 위의 Esc 도. 초점은 onClose 가 연 단추로 돌린다
   const rescue = useFocusRescue(10_000);
   /** 요청 번호 — 다시 불러오기 · 닫기 뒤에 온 옛 응답은 버린다 */
   const seq = useRef(0);

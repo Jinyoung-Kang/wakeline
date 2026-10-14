@@ -22,6 +22,10 @@ Redis 장애(ADR-033 · 계약 v5 §G46): 선박 변경분은 '바뀜' 표시를
 DB 에서 빠졌다(QA 2026-10: redis 150 s pause 에서 분당 선박 행 244–284 → 116 · 137, 공백 기록 0). 상한을 넘어 모으지 못한 구간은 최신값까지 보낸 뒤
 ais_gap(구역 없음 — 모든 선박, reason 'redis unavailable …')으로 남긴다. 프로세스가 장애 중에 멈추면 모은 위치는 메모리와 함께 사라진다(이어받지 않는다).
 공백 이벤트는 구역마다 순서대로 최대 1,000건 보관했다가 다시 보낸다(api 는 (source, scope, started_at) 로 중복을 막는다).
+
+이전 실행의 상태(재시작 공백 이어받기): main 이 기동 때 read_previous_status 로 한 번 읽는다. 그때 Redis 가 연결 · 적재 중 오류로 답하지 않으면
+(부팅 때 ais 가 Redis 보다 먼저 · Redis 장애 중 재시작) 이 태스크가 공백을 보내거나 상태를 쓰기 전에 다시 읽어 이어받는다(ShardSet.carry_over_late
+— QA-1241). 읽기 전에는 상태 해시를 쓰지 않는다 — 쓰면 이전 실행의 기록이 덮여 정지 공백(마지막 수신 → 이번 첫 수신)을 되살릴 수 없다.
 """
 
 from __future__ import annotations
@@ -36,7 +40,9 @@ from typing import Any
 
 import orjson
 from redis.asyncio import Redis
+from redis.exceptions import ConnectionError as RedisConnectionError
 from redis.exceptions import RedisError
+from redis.exceptions import TimeoutError as RedisTimeoutError
 
 from wakeline_collector.ais.book import ShipBook
 from wakeline_collector.ais.client import PING_TIMEOUT_S, WS_MAX_QUEUE
@@ -124,6 +130,9 @@ class AisSink:
         self._held_gaps: deque[dict[str, str]] = deque()  # 모으지 못한 구간의 공백(구역 없음) — 구역 공백과 같은 길로 보낸다
         self._gap_lock = asyncio.Lock()  # 발행 루프와 final() 이 같은 공백을 동시에 보내지 않게
         self._loop_lag = loop_lag  # 이벤트 루프 지연 측정(main 이 띄운다) — 없으면 진단 값은 모름
+        self._status_written = False  # 이 프로세스가 상태 해시를 쓴 적이 있다(그 뒤의 해시는 이전 실행의 것이 아니다)
+        # 기동 때 이전 상태를 Redis 가 답하지 않아 읽지 못했다 — 첫 상태 쓰기 전에 다시 읽는다(QA-1241)
+        self._previous_unread = False
 
     def _warn(self, msg: str, *args: object) -> None:
         now = self._mono()
@@ -303,6 +312,7 @@ class AisSink:
         """보관한 닫힌 공백을 구역마다 순서대로 보낸다. 보낸 그 이벤트만 지운다 — 보내는 사이 보관 상한 때문에 밀려났으면 지우지 않는다.
         XADD 가 실패하면 그 틱은 멈춘다(다음 틱에 다시)."""
         async with self._gap_lock:
+            await self._read_previous_late()  # 이어받을 공백이 있으면 보낼 공백에 먼저 넣는다
             n = 0
             for pending in (*self.shards.pending_queues(), self._held_gaps):
                 sent, ok = await self._publish_queue(pending)
@@ -414,8 +424,13 @@ class AisSink:
 
     async def write_status(self) -> bool:
         self._last_status = self._mono()
+        if not await self._read_previous_late():  # 이전 실행의 상태를 아직 읽지 못했다 — 덮지 않는다(QA-1241)
+            self.status_errors += 1
+            self._warn("ais status write deferred — previous status not read yet (redis unavailable)")
+            return False
         try:
             await self._r.hset(STATUS_KEY, mapping=self.status_fields())  # type: ignore[arg-type]
+            self._status_written = True
             return True
         except (RedisError, OSError) as e:
             self.status_errors += 1
@@ -423,16 +438,38 @@ class AisSink:
             return False
 
     async def read_previous_status(self) -> dict[str, str]:
-        """기동 때 한 번: 이전 실행이 남긴 상태(공백 이어받기용). Redis 오류면 빈 dict."""
+        """기동 때 한 번: 이전 실행이 남긴 상태(공백 이어받기용). Redis 오류면 빈 dict. 연결 · 적재 중 오류(Redis 가 아직 답하지 않음)면
+        첫 상태 쓰기 전에 다시 읽어 이어받는다(_read_previous_late — QA-1241)."""
         try:
-            h = await self._r.hgetall(STATUS_KEY)
-        except (RedisError, OSError) as e:
+            return _decoded(await self._r.hgetall(STATUS_KEY))
+        except (RedisConnectionError, RedisTimeoutError, OSError) as e:
+            if not self._status_written:
+                self._previous_unread = True
+            log.warning(
+                "previous ais status unavailable (%s) — will read it again before the first status write", type(e).__name__
+            )
+            return {}
+        except RedisError as e:
             log.warning("previous ais status unavailable (%s) — no gap carried over", type(e).__name__)
             return {}
-        # decode_responses=True 라 str 이지만, bytes 가 와도 안전하게 문자열로 맞춘다
-        return {
-            (k.decode() if isinstance(k, bytes) else k): (v.decode() if isinstance(v, bytes) else v) for k, v in (h or {}).items()
-        }
+
+    async def _read_previous_late(self) -> bool:
+        """기동 때 읽지 못한 이전 상태를 다시 읽어 잇는다(QA-1241). 상태 해시를 써도 되면 True — 읽을 것이 없거나 읽었거나 다시 읽어도 소용없는
+        오류(형식 등)일 때. Redis 가 아직 답하지 않으면 False(다음 틱에 다시)."""
+        if not self._previous_unread:
+            return True
+        try:
+            prev = _decoded(await self._r.hgetall(STATUS_KEY))
+        except (RedisConnectionError, RedisTimeoutError, OSError):
+            return False
+        except RedisError as e:
+            self._previous_unread = False
+            log.warning("previous ais status unavailable (%s) — no gap carried over", type(e).__name__)
+            return True
+        self._previous_unread = False
+        log.info("previous ais status read after start (redis answered late) — carrying over its gaps")
+        self.shards.carry_over_late(prev)
+        return True
 
     # ── 루프 ─────────────────────────────────────────────────────
 
@@ -470,6 +507,13 @@ class AisSink:
             self.publish_errors += 1
             log.exception("ais final publish failed")
         await self.write_status()
+
+
+def _decoded(h: Any) -> dict[str, str]:
+    # decode_responses=True 라 str 이지만, bytes 가 와도 안전하게 문자열로 맞춘다
+    return {
+        (k.decode() if isinstance(k, bytes) else k): (v.decode() if isinstance(v, bytes) else v) for k, v in (h or {}).items()
+    }
 
 
 async def _wait_any(stop: asyncio.Event, changed: asyncio.Event, wait_s: float) -> None:

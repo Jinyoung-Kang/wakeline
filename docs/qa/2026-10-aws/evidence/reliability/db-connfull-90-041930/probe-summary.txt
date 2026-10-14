@@ -1,0 +1,19 @@
+/api/v1/ships?bbox=120,30,135,40
+      0.1s ..    16.2s  n=  5  max_ms=    35  status=200
+     20.2s ..    24.2s  n=  2  max_ms=  2084  status=502 retry-after=10 code=BAD_GATEWAY
+     28.2s ..   152.4s  n= 32  max_ms=    69  status=200
+/healthz
+      0.1s ..    16.2s  n=  5  max_ms=    35  status=200 health=ok
+     20.2s ..    24.2s  n=  2  max_ms=  2086  status=502 retry-after=10 health=502
+     28.2s ..    84.3s  n= 15  max_ms=    58  status=200 health=ok
+     88.3s ..   108.3s  n=  6  max_ms=    18  status=200 health=degraded reasons=['writer_backlog']
+    112.3s ..   152.4s  n= 11  max_ms=    30  status=200 health=ok
+/api/v1/aircraft?bbox=124,33,132,39
+      0.1s ..    16.2s  n=  5  max_ms=    35  status=200
+     20.2s ..    24.2s  n=  2  max_ms=  2086  status=502 retry-after=10 code=BAD_GATEWAY
+     28.2s ..   152.4s  n= 32  max_ms=    73  status=200
+/api/v1/alerts/history
+      0.1s ..    16.2s  n=  5  max_ms=    38  status=200
+     20.2s ..    24.2s  n=  2  max_ms=  2084  status=502 retry-after=10 code=BAD_GATEWAY
+     28.2s ..   104.3s  n= 20  max_ms=  6350  status=503 retry-after=10 code=UNAVAILABLE
+    108.3s ..   152.4s  n= 12  max_ms=    97  status=200

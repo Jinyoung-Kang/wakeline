@@ -168,6 +168,50 @@ class MaintenanceJobsDbTest {
         assertThat(admin.sql("SELECT count(*) FROM track_point_1m WHERE hex = 'e00001'").query(Long.class).single()).isEqualTo(1L);
     }
 
+    /**
+     * QA-1240: 파티션 보장이 실패하면(기동 순간 RDS 가 아직 답하지 않음) 다음 틱(1분)에 다시 하고, 이어지면 1 · 2 · 4 · … 30분으로 물러난다.
+     * 성공하면 다시 매 틱 보장한다(가볍다). 예전에는 실패해도 6 h 뒤에야 다시 했다.
+     */
+    @Test
+    void aFailedPartitionEnsureIsRetriedOnTheNextTickThenBacksOff() {
+        java.util.concurrent.atomic.AtomicBoolean down = new java.util.concurrent.atomic.AtomicBoolean(true);
+        java.util.concurrent.atomic.AtomicInteger connections = new java.util.concurrent.atomic.AtomicInteger();
+        javax.sql.DataSource ds = new org.springframework.jdbc.datasource.DelegatingDataSource(DbTestSupport.apiDataSource()) {
+            @Override public java.sql.Connection getConnection() throws java.sql.SQLException {
+                connections.incrementAndGet();
+                if (down.get()) throw new java.sql.SQLException("Connection refused (RDS not ready yet)", "08001");
+                return super.getConnection();
+            }
+        };
+        Instant[] now = {Instant.now()};
+        java.time.Clock clock = new java.time.Clock() {
+            @Override public java.time.ZoneId getZone() { return java.time.ZoneOffset.UTC; }
+            @Override public java.time.Clock withZone(java.time.ZoneId z) { return this; }
+            @Override public Instant instant() { return now[0]; }
+        };
+        MaintenanceJobs jobs = new MaintenanceJobs(JdbcClient.create(ds), PROPS, null, null, MaintenanceJobs.DEFAULT_ALERT_RETENTION_DAYS, clock);
+        List<Integer> attempts = new java.util.ArrayList<>();
+        for (int minute = 0; minute <= 92; minute++) { // 1분 틱(@Scheduled fixedDelay)
+            int before = connections.get();
+            jobs.ensurePartitions();
+            if (connections.get() > before) attempts.add(minute);
+            now[0] = now[0].plusSeconds(60);
+        }
+        assertThat(attempts).containsExactly(0, 1, 3, 7, 15, 31, 61, 91);
+
+        down.set(false);
+        List<Integer> afterUp = new java.util.ArrayList<>();
+        for (int tick = 0; tick <= 32; tick++) {
+            int before = connections.get();
+            jobs.ensurePartitions();
+            if (connections.get() > before) afterUp.add(tick);
+        }
+        assertThat(afterUp).as("ticks with an ensure after the DB answers: the backed-off attempt (within 30 min), then every tick").isNotEmpty();
+        assertThat(afterUp.getFirst()).isBetween(0, 30);
+        assertThat(afterUp.subList(1, afterUp.size())).as("every tick after a success")
+                .isEqualTo(java.util.stream.IntStream.rangeClosed(afterUp.getFirst() + 1, 32).boxed().toList());
+    }
+
     @Test
     void retentionCanDeleteCollectorTables() {
         admin.sql("INSERT INTO radar_frame (frame_time, host, path, fetched_at) VALUES (now() - interval '8 days', 'h', '/p', now())").update();

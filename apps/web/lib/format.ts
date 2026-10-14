@@ -2,6 +2,7 @@
  * 표시 규칙(순수 함수). 값이 없으면 "—" — 0/false/"없음" 으로 채우지 않는다(데이터 정직성).
  * 색은 지도 레이어(maplayers.ts)·범례(MapLegend)·카드가 이 한 곳을 공유한다.
  */
+import { frontNotice } from "./front-answer";
 
 /**
  * SIGMET 위험 유형 색. TC(빨강)와 IFR(분홍)은 서로 다른 색(GAP-13). 목록에 없는 유형은 HAZARD_DEFAULT_COLOR.
@@ -211,33 +212,6 @@ export function band(base: number | null | undefined, top: number | null | undef
 
 // ---- METAR(공항) ----
 
-/**
- * 시정(DH-7): AWC METAR JSON 의 visib 는 법정마일(SM) — 원문 9999(10 km 이상)가 "6+"(6.2 SM 이상)로 온다(2026-09-28 RKSI·RKPC 실응답 대조).
- * "N+" 는 "N SM 이상"(하한). 숫자·분수 형식이 아니면 원문 그대로(단위를 붙이지 않는다). 없으면 "—".
- */
-export function fmtVisSm(raw: string | number | null | undefined) {
-  if (raw == null || raw === "") return "—";
-  const v = String(raw).trim();
-  const m = /^(\d+(?:\.\d+)?|\d+\/\d+|\d+ \d+\/\d+)(\+)?$/.exec(v);
-  if (!m) return v;
-  return m[2] ? `${m[1]} SM 이상` : `${m[1]} SM`;
-}
-
-const finiteNum = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
-/** 바람 "270° 10 kt"(METAR 보고값). 모르는 부분은 "—" 만(단위를 붙이지 않는다 — "—° — kt" 는 잰 값처럼 읽힌다). 둘 다 모르면 "—" */
-export function fmtWind(dir: number | null | undefined, kt: number | null | undefined): string {
-  const d = finiteNum(dir), k = finiteNum(kt);
-  if (d == null && k == null) return "—";
-  return `${d == null ? "—" : `${d}°`} ${k == null ? "—" : `${k} kt`}`;
-}
-/** 기온/이슬점 "18 °C / 12 °C". 모르는 쪽은 "—" 만, 둘 다 모르면 "—" */
-export function fmtTempPair(t: number | null | undefined, dew: number | null | undefined): string {
-  const a = finiteNum(t), b = finiteNum(dew);
-  if (a == null && b == null) return "—";
-  const c = (v: number | null) => (v == null ? "—" : `${v} °C`);
-  return `${c(a)} / ${c(b)}`;
-}
-
 /** METAR 가 이보다 오래되면 "오래됨"(계약서 §2 stale: obs_age_s > 7200) */
 export const METAR_STALE_S = 7200;
 export type CeilingState = "measured" | "none" | "unknown";
@@ -294,17 +268,6 @@ export function isKrRadarStale(kr: { meta?: { stale?: boolean | null; fetched_at
 // ---- 운영 ----
 
 /**
- * 공급자 일일 예산 한도(DH-14). 0 은 설정상 "한도 없음"(budget.py: limit > 0 일 때만 검사) → "∞".
- * 값이 없으면(아직 성공한 적 없는 공급자는 status 에 한도를 쓰지 않는다) "—" — 모르는 한도를 무제한으로 보이게 하지 않는다.
- */
-export function fmtBudgetLimit(v: unknown) {
-  if (v == null || v === "") return "—";
-  const n = Number(v);
-  if (!Number.isFinite(n) || n < 0) return "—";
-  return n > 0 ? String(n) : "∞";
-}
-
-/**
  * 지연(ms) 칸: "420 ms". 숫자 또는 숫자 문자열(Redis 해시 값)만 값 — 모르면(null·없음·형식 오류·음수) "—".
  * 단위만 붙은 "— ms" 로 보이지 않게(값을 모르는데 단위가 있으면 측정값처럼 읽힌다).
  */
@@ -313,10 +276,15 @@ export function fmtLatencyMs(v: unknown): string {
   return Number.isFinite(n) && n >= 0 ? `${n.toLocaleString("en-US")} ms` : "—";
 }
 
-/** 공항 기상 이력 화면의 오류 → 한국어(R-56: 서버 영문 detail 을 그대로 보이지 않는다) */
+/**
+ * 공항 기상 이력 화면의 오류 → 한국어(R-56: 서버 영문 detail 을 그대로 보이지 않는다).
+ * 앞단(AWS 데모)이 답한 오류(잠금 만료 · 원본에 닿지 못함)는 숫자 대신 그 안내를 싣는다(QA-1301 — lib/front-answer frontNotice).
+ */
 export function airportErrorText(e: unknown, icao: string): string {
   const status = typeof e === "object" && e !== null && typeof (e as { status?: unknown }).status === "number" ? (e as { status: number }).status : null;
   if (status == null) return "서버에 연결할 수 없습니다(네트워크) — 기상 이력을 불러오지 못했습니다.";
+  const front = frontNotice(e);
+  if (front) return `기상 이력을 불러오지 못했습니다(HTTP ${status}) · ${front}`;
   if (status === 404) return `감시 공항 목록에 없는 코드입니다: ${icao} — 감시 공항만 기상 이력을 보관합니다.`;
   if (status === 400) return `공항 코드 형식이 올바르지 않습니다: ${icao}`;
   return `기상 이력을 불러오지 못했습니다(HTTP ${status}).`;

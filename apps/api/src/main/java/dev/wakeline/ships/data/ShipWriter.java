@@ -37,7 +37,8 @@ import java.util.function.Consumer;
  *       덮는다(계약 v5 §G19 — ShipRepository.STATIC_SQL). 받은 필드를 싣지 않은 정적 정보(이전 수집기 — 배포 전환 중)는 값이 있는 필드만 덮고
  *       wakeline_ship_static_unknown_fields_total 로 센다.</li>
  *   <li>큐 상한 100,000 행 — 넘치면 오래된 것부터 버리고 result=dropped 로 센다. 실패는 TrackWriter 와 같다: 일시 장애는 같은 배치를 백오프(2 s → 30 s)로
- *       재시도, 영구 오류(SQLState 21·22·23·42)와 SQLState 없는 결함은 3회 뒤 버리고 result=failed — 배치 하나가 저장기를 멈추지 못한다.</li>
+ *       재시도, 영구 오류(SQLState 21·22·23·42)와 SQLState 없는 결함은 3회 뒤 버리고 result=failed — 배치 하나가 저장기를 멈추지 못한다.
+ *       '파티션 없음'(23514)이면 다시 쓰기 전에 일 파티션을 만든다(QA-1240).</li>
  *   <li>at-least-once(API-CONC-8): 메시지의 행이 모두 커밋(또는 버림)된 뒤 영수증을 놓는다 → XACK. 공백은 순서 큐(OrderedWriter)가 같은 규칙으로.</li>
  *   <li>종료: 스트림 소비·WS 뒤(phase) 워커가 진행 중 배치를 끝내고 <b>스스로</b> 남은 행을 쓴다(DB 를 쓰는 스레드는 종료 때도 하나 — 조사 2026-10-01
  *       종료 F3: 예전에는 stop 이 2 s 기다린 뒤 다른 스레드가 flush 해, 느린 쓰기와 같은 배치를 동시에 쓰고 쓰지 못한 배치의 영수증을 놓을 수 있었다).
@@ -355,11 +356,24 @@ public class ShipWriter implements StreamPrerequisite, WriteBacklog {
                     continue;
                 } else {
                     log.info("ship batch failed (attempt {}/{}), retry in {} ms: {}", permanentFailures, PERMANENT_ATTEMPTS, backoff, e.toString());
+                    if (DbErrors.mayBeMissingPartition(e)) ensurePartitions();
                 }
                 if (transientError) recovery.pause(backoff, () -> running); // DB 가 다시 답하면 일찍 깬다
                 else sleepWhileRunning(backoff);
                 backoff = Math.min(backoffMaxMs, backoff * 2);
             }
+        }
+    }
+
+    /**
+     * '파티션 없음'(23514)일 수 있는 실패 뒤, 다시 쓰기 전에 선박 위치의 일 파티션을 만든다(QA-1240 — TrackWriter 와 같다). 실패해도 그대로 — 다음 시도가 드러낸다.
+     */
+    private void ensurePartitions() {
+        try {
+            int n = repo.ensurePartitions();
+            if (n > 0) log.warn("created {} ship_position partition(s) after a 'no partition' write failure — the batch is retried", n);
+        } catch (RuntimeException e) {
+            log.warn("ensure ship_position partitions before the retry failed: {}", e.toString());
         }
     }
 

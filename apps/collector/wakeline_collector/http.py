@@ -33,6 +33,7 @@ from wakeline_collector.http_errors import ProviderHttpError as ProviderHttpErro
 from wakeline_collector.http_errors import RequestTimedOut as RequestTimedOut
 from wakeline_collector.http_errors import ResponseTooLarge as ResponseTooLarge
 from wakeline_collector.http_errors import SendCancelled as SendCancelled
+from wakeline_collector.masking import SCAN_MAX, mask_head
 from wakeline_collector.ratelimit import PRIORITY_FIXED, RateLimiter, default_limiter
 from wakeline_collector.send_outcome import SendOutcome as SendOutcome
 from wakeline_collector.send_outcome import classify_send as classify_send
@@ -215,7 +216,9 @@ class HttpClient:
             target = _redirect_target(headers.get("location", ""), host)
             raise ProviderHttpError(status, f"redirect to {target} — not followed", headers, latency)
         if status >= 400:
-            raise ProviderHttpError(status, body[:200].decode("utf-8", "replace"), headers, latency, pause)
+            # 가린 뒤 자른다(QA-1140): 앞 SCAN_MAX 바이트를 가리고(그보다 길면 끝에 걸친 비밀값 조각을 지운다) ProviderHttpError 가 200 글자로 자른다
+            head = mask_head(body[:SCAN_MAX].decode("utf-8", "replace"), SCAN_MAX, cut=len(body) > SCAN_MAX)
+            raise ProviderHttpError(status, head, headers, latency, pause)
         return FetchResponse(body, status, headers, datetime.now(UTC), latency)
 
     async def _send(self, method: str, url: str, **kw) -> tuple[bytes, int, dict[str, str]]:

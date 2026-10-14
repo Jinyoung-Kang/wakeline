@@ -1,0 +1,266 @@
+# security_gate.sh — QA 이미지(:qa) · 2026-10-13T18:42:38Z 시작
+$ SECURITY_OWN_IMAGES="wakeline-api:qa wakeline-collector:qa wakeline-web:qa wakeline-db:qa wakeline-edge:qa" bash tools/security_gate.sh
+trivy DB: {"Version":2,"NextUpdate":"2026-10-14T13:06:33.602530891Z","UpdatedAt":"2026-10-13T13:06:33.602531196Z","DownloadedAt":"2026-10-13T18:42:59.076216716Z"}
+trivy java DB: {"Version":1,"NextUpdate":"2026-10-16T01:09:47.998142983Z","UpdatedAt":"2026-10-13T01:09:47.998143143Z","DownloadedAt":"2026-10-13T18:43:43.470881584Z"}
+
+== gitleaks (git 이력 전체, .gitleaksignore 적용)
+6:42PM INF Unknown SCM platform. Use --platform to include links in findings. host=
+6:42PM INF 1403 commits scanned.
+6:42PM INF scanned ~24356243 bytes (24.36 MB) in 7.16s
+6:42PM INF no leaks found
+PASS  gitleaks
+== trivy 자체 이미지 (HIGH·CRITICAL, 고칠 수 있는 것만, 차단)
+
+Report Summary
+
+┌────────────────────────────────────┬────────┬─────────────────┐
+│               Target               │  Type  │ Vulnerabilities │
+├────────────────────────────────────┼────────┼─────────────────┤
+│ /in/image-15693.tar (ubuntu 26.04) │ ubuntu │        0        │
+├────────────────────────────────────┼────────┼─────────────────┤
+│ app/app.jar                        │  jar   │        0        │
+└────────────────────────────────────┴────────┴─────────────────┘
+Legend:
+- '-': Not scanned
+- '0': Clean (no security findings detected)
+
+PASS  trivy wakeline-api:qa
+
+Report Summary
+
+┌──────────────────────────────────────────────────────────────────────────────────┬────────────┬─────────────────┐
+│                                      Target                                      │    Type    │ Vulnerabilities │
+├──────────────────────────────────────────────────────────────────────────────────┼────────────┼─────────────────┤
+│ /in/image-15693.tar (debian 13.7)                                                │   debian   │        0        │
+├──────────────────────────────────────────────────────────────────────────────────┼────────────┼─────────────────┤
+│ app/.venv/lib/python3.13/site-packages/annotated_types-0.8.0.dist-info/METADATA  │ python-pkg │        0        │
+├──────────────────────────────────────────────────────────────────────────────────┼────────────┼─────────────────┤
+│ app/.venv/lib/python3.13/site-packages/anyio-4.15.1.dist-info/METADATA           │ python-pkg │        0        │
+├──────────────────────────────────────────────────────────────────────────────────┼────────────┼─────────────────┤
+│ app/.venv/lib/python3.13/site-packages/asyncpg-0.31.0.dist-info/METADATA         │ python-pkg │        0        │
+├──────────────────────────────────────────────────────────────────────────────────┼────────────┼─────────────────┤
+│ app/.venv/lib/python3.13/site-packages/attrs-26.1.0.dist-info/METADATA           │ python-pkg │        0        │
+├──────────────────────────────────────────────────────────────────────────────────┼────────────┼─────────────────┤
+│ app/.venv/lib/python3.13/site-packages/certifi-2026.7.22.dist-info/METADATA      │ python-pkg │        0        │
+├──────────────────────────────────────────────────────────────────────────────────┼────────────┼─────────────────┤
+│ app/.venv/lib/python3.13/site-packages/h11-0.16.0.dist-info/METADATA             │ python-pkg │        0        │
+├──────────────────────────────────────────────────────────────────────────────────┼────────────┼─────────────────┤
+│ app/.venv/lib/python3.13/site-packages/httpcore-1.0.9.dist-info/METADATA         │ python-pkg │        0        │
+├──────────────────────────────────────────────────────────────────────────────────┼────────────┼─────────────────┤
+│ app/.venv/lib/python3.13/site-packages/httpx-0.28.1.dist-info/METADATA           │ python-pkg │        0        │
+├──────────────────────────────────────────────────────────────────────────────────┼────────────┼─────────────────┤
+│ app/.venv/lib/python3.13/site-packages/idna-3.20.dist-info/METADATA              │ python-pkg │        0        │
+├──────────────────────────────────────────────────────────────────────────────────┼────────────┼─────────────────┤
+│ app/.venv/lib/python3.13/site-packages/jsonschema-4.26.0.dist-info/METADATA      │ python-pkg │        0        │
+├──────────────────────────────────────────────────────────────────────────────────┼────────────┼─────────────────┤
+│ app/.venv/lib/python3.13/site-packages/jsonschema_specifications-2025.9.1.dist-- │ python-pkg │        0        │
+│ info/METADATA                                                                    │            │                 │
+├──────────────────────────────────────────────────────────────────────────────────┼────────────┼─────────────────┤
+│ app/.venv/lib/python3.13/site-packages/numpy-2.5.3.dist-info/METADATA            │ python-pkg │        0        │
+├──────────────────────────────────────────────────────────────────────────────────┼────────────┼─────────────────┤
+│ app/.venv/lib/python3.13/site-packages/orjson-3.12.0.dist-info/METADATA          │ python-pkg │        0        │
+├──────────────────────────────────────────────────────────────────────────────────┼────────────┼─────────────────┤
+│ app/.venv/lib/python3.13/site-packages/pillow-12.3.0.dist-info/METADATA          │ python-pkg │        0        │
+├──────────────────────────────────────────────────────────────────────────────────┼────────────┼─────────────────┤
+│ app/.venv/lib/python3.13/site-packages/pydantic-2.13.5.dist-info/METADATA        │ python-pkg │        0        │
+├──────────────────────────────────────────────────────────────────────────────────┼────────────┼─────────────────┤
+│ app/.venv/lib/python3.13/site-packages/pydantic_core-2.46.5.dist-info/METADATA   │ python-pkg │        0        │
+├──────────────────────────────────────────────────────────────────────────────────┼────────────┼─────────────────┤
+│ app/.venv/lib/python3.13/site-packages/pydantic_settings-2.15.0.dist-info/METAD- │ python-pkg │        0        │
+│ ATA                                                                              │            │                 │
+├──────────────────────────────────────────────────────────────────────────────────┼────────────┼─────────────────┤
+│ app/.venv/lib/python3.13/site-packages/pyproj-3.8.0.dist-info/METADATA           │ python-pkg │        0        │
+├──────────────────────────────────────────────────────────────────────────────────┼────────────┼─────────────────┤
+│ app/.venv/lib/python3.13/site-packages/python_dotenv-1.2.3.dist-info/METADATA    │ python-pkg │        0        │
+├──────────────────────────────────────────────────────────────────────────────────┼────────────┼─────────────────┤
+│ app/.venv/lib/python3.13/site-packages/redis-8.1.0.dist-info/METADATA            │ python-pkg │        0        │
+├──────────────────────────────────────────────────────────────────────────────────┼────────────┼─────────────────┤
+│ app/.venv/lib/python3.13/site-packages/referencing-0.37.0.dist-info/METADATA     │ python-pkg │        0        │
+├──────────────────────────────────────────────────────────────────────────────────┼────────────┼─────────────────┤
+│ app/.venv/lib/python3.13/site-packages/rpds_py-2026.6.3.dist-info/METADATA       │ python-pkg │        0        │
+├──────────────────────────────────────────────────────────────────────────────────┼────────────┼─────────────────┤
+│ app/.venv/lib/python3.13/site-packages/shapely-2.1.2.dist-info/METADATA          │ python-pkg │        0        │
+├──────────────────────────────────────────────────────────────────────────────────┼────────────┼─────────────────┤
+│ app/.venv/lib/python3.13/site-packages/typing_extensions-4.16.0.dist-info/METAD- │ python-pkg │        0        │
+│ ATA                                                                              │            │                 │
+├──────────────────────────────────────────────────────────────────────────────────┼────────────┼─────────────────┤
+│ app/.venv/lib/python3.13/site-packages/typing_inspection-0.4.4.dist-info/METADA- │ python-pkg │        0        │
+│ TA                                                                               │            │                 │
+├──────────────────────────────────────────────────────────────────────────────────┼────────────┼─────────────────┤
+│ app/.venv/lib/python3.13/site-packages/wakeline_collector-0.2.0.dist-info/METAD- │ python-pkg │        0        │
+│ ATA                                                                              │            │                 │
+├──────────────────────────────────────────────────────────────────────────────────┼────────────┼─────────────────┤
+│ app/.venv/lib/python3.13/site-packages/websockets-17.1.dist-info/METADATA        │ python-pkg │        0        │
+└──────────────────────────────────────────────────────────────────────────────────┴────────────┴─────────────────┘
+Legend:
+- '-': Not scanned
+- '0': Clean (no security findings detected)
+
+PASS  trivy wakeline-collector:qa
+
+Report Summary
+
+┌───────────────────────────────────────────────────────────────────────────┬──────────┬─────────────────┐
+│                                  Target                                   │   Type   │ Vulnerabilities │
+├───────────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ /in/image-15693.tar (alpine 3.24.2)                                       │  alpine  │        0        │
+├───────────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/@img/colour/package.json                                 │ node-pkg │        0        │
+├───────────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/@img/sharp-libvips-linux-arm64/package.json              │ node-pkg │        0        │
+├───────────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/@img/sharp-libvips-linuxmusl-arm64/package.json          │ node-pkg │        0        │
+├───────────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/@img/sharp-linux-arm64/package.json                      │ node-pkg │        0        │
+├───────────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/@img/sharp-linuxmusl-arm64/package.json                  │ node-pkg │        0        │
+├───────────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/@next/env/package.json                                   │ node-pkg │        0        │
+├───────────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/@swc/helpers/package.json                                │ node-pkg │        0        │
+├───────────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/client-only/package.json                                 │ node-pkg │        0        │
+├───────────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/detect-libc/package.json                                 │ node-pkg │        0        │
+├───────────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/next/dist/compiled/@edge-runtime/cookies/package.json    │ node-pkg │        0        │
+├───────────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/next/dist/compiled/@edge-runtime/ponyfill/package.json   │ node-pkg │        0        │
+├───────────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/next/dist/compiled/@edge-runtime/primitives/package.json │ node-pkg │        0        │
+├───────────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/next/dist/compiled/react-is/package.json                 │ node-pkg │        0        │
+├───────────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/next/dist/compiled/regenerator-runtime/package.json      │ node-pkg │        0        │
+├───────────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/next/package.json                                        │ node-pkg │        0        │
+├───────────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/react-dom/package.json                                   │ node-pkg │        0        │
+├───────────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/react/package.json                                       │ node-pkg │        0        │
+├───────────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/semver/package.json                                      │ node-pkg │        0        │
+├───────────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/sharp/node_modules/semver/package.json                   │ node-pkg │        0        │
+├───────────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/sharp/package.json                                       │ node-pkg │        0        │
+├───────────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/styled-jsx/package.json                                  │ node-pkg │        0        │
+├───────────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/package.json                                                          │ node-pkg │        0        │
+└───────────────────────────────────────────────────────────────────────────┴──────────┴─────────────────┘
+Legend:
+- '-': Not scanned
+- '0': Clean (no security findings detected)
+
+PASS  trivy wakeline-web:qa
+
+Report Summary
+
+┌───────────────────────────────────┬────────┬─────────────────┐
+│              Target               │  Type  │ Vulnerabilities │
+├───────────────────────────────────┼────────┼─────────────────┤
+│ /in/image-15693.tar (debian 13.7) │ debian │        0        │
+└───────────────────────────────────┴────────┴─────────────────┘
+Legend:
+- '-': Not scanned
+- '0': Clean (no security findings detected)
+
+PASS  trivy wakeline-db:qa
+
+Report Summary
+
+┌─────────────────────────────────────┬────────┬─────────────────┐
+│               Target                │  Type  │ Vulnerabilities │
+├─────────────────────────────────────┼────────┼─────────────────┤
+│ /in/image-15693.tar (alpine 3.24.2) │ alpine │        0        │
+└─────────────────────────────────────┴────────┴─────────────────┘
+Legend:
+- '-': Not scanned
+- '0': Clean (no security findings detected)
+
+PASS  trivy wakeline-edge:qa
+== trivy 제3자 이미지 (ci.yml third-party-images 행렬의 blocking 그대로)
+
+Report Summary
+
+┌─────────────────────────────────────┬────────┬─────────────────┐
+│               Target                │  Type  │ Vulnerabilities │
+├─────────────────────────────────────┼────────┼─────────────────┤
+│ /in/image-15693.tar (alpine 3.23.6) │ alpine │        0        │
+└─────────────────────────────────────┴────────┴─────────────────┘
+Legend:
+- '-': Not scanned
+- '0': Clean (no security findings detected)
+
+PASS  trivy redis (redis:8-alpine@sha256:3811787313eba226a2ef38658c6ccb91cd5e110edc89c37767de373120a0e5a0)
+
+Report Summary
+
+┌─────────────────────────────────────┬──────────┬─────────────────┐
+│               Target                │   Type   │ Vulnerabilities │
+├─────────────────────────────────────┼──────────┼─────────────────┤
+│ /in/image-15693.tar (alpine 3.24.1) │  alpine  │        2        │
+├─────────────────────────────────────┼──────────┼─────────────────┤
+│ usr/bin/k6                          │ gobinary │        4        │
+└─────────────────────────────────────┴──────────┴─────────────────┘
+Legend:
+- '-': Not scanned
+- '0': Clean (no security findings detected)
+
+
+/in/image-15693.tar (alpine 3.24.1)
+===================================
+Total: 2 (HIGH: 2, CRITICAL: 0)
+
+┌────────────┬────────────────┬──────────┬────────┬───────────────────┬───────────────┬──────────────────────────────────────────────────────────┐
+│  Library   │ Vulnerability  │ Severity │ Status │ Installed Version │ Fixed Version │                          Title                           │
+├────────────┼────────────────┼──────────┼────────┼───────────────────┼───────────────┼──────────────────────────────────────────────────────────┤
+│ libcrypto3 │ CVE-2026-14456 │ HIGH     │ fixed  │ 3.5.7-r0          │ 3.5.8-r0      │ openssl: OpenSSL: Denial of Service via unbounded memory │
+│            │                │          │        │                   │               │ growth in QUIC server...                                 │
+│            │                │          │        │                   │               │ https://avd.aquasec.com/nvd/cve-2026-14456               │
+├────────────┤                │          │        │                   │               │                                                          │
+│ libssl3    │                │          │        │                   │               │                                                          │
+│            │                │          │        │                   │               │                                                          │
+│            │                │          │        │                   │               │                                                          │
+└────────────┴────────────────┴──────────┴────────┴───────────────────┴───────────────┴──────────────────────────────────────────────────────────┘
+
+usr/bin/k6 (gobinary)
+=====================
+Total: 4 (HIGH: 4, CRITICAL: 0)
+
+┌──────────────────┬────────────────┬──────────┬────────┬───────────────────┬────────────────┬──────────────────────────────────────────────────────────────┐
+│     Library      │ Vulnerability  │ Severity │ Status │ Installed Version │ Fixed Version  │                            Title                             │
+├──────────────────┼────────────────┼──────────┼────────┼───────────────────┼────────────────┼──────────────────────────────────────────────────────────────┤
+│ golang.org/x/net │ CVE-2026-78669 │ HIGH     │ fixed  │ v0.58.0           │ 0.60.0         │ net/http: net/http/internal/http2: golang:                   │
+│                  │                │          │        │                   │                │ golang.org/x/net/http2: net/http: Denial of Service via      │
+│                  │                │          │        │                   │                │ excessive HTTP/2 SETTINGS...                                 │
+│                  │                │          │        │                   │                │ https://avd.aquasec.com/nvd/cve-2026-78669                   │
+├──────────────────┼────────────────┤          │        ├───────────────────┼────────────────┼──────────────────────────────────────────────────────────────┤
+│ stdlib           │ CVE-2026-78667 │          │        │ v1.27.1           │ 1.26.9, 1.27.2 │ net/http: golang: golang: Denial of Service via crafted HTTP │
+│                  │                │          │        │                   │                │ Range headers                                                │
+│                  │                │          │        │                   │                │ https://avd.aquasec.com/nvd/cve-2026-78667                   │
+│                  ├────────────────┤          │        │                   │                ├──────────────────────────────────────────────────────────────┤
+│                  │ CVE-2026-78669 │          │        │                   │                │ net/http: net/http/internal/http2: golang:                   │
+│                  │                │          │        │                   │                │ golang.org/x/net/http2: net/http: Denial of Service via      │
+│                  │                │          │        │                   │                │ excessive HTTP/2 SETTINGS...                                 │
+│                  │                │          │        │                   │                │ https://avd.aquasec.com/nvd/cve-2026-78669                   │
+│                  ├────────────────┤          │        │                   │                ├──────────────────────────────────────────────────────────────┤
+│                  │ CVE-2026-97031 │          │        │                   │                │ crypto/tls: golang: crypto/tls: Denial of Service via        │
+│                  │                │          │        │                   │                │ multiple ECH outer extension references...                   │
+│                  │                │          │        │                   │                │ https://avd.aquasec.com/nvd/cve-2026-97031                   │
+└──────────────────┴────────────────┴──────────┴────────┴───────────────────┴────────────────┴──────────────────────────────────────────────────────────────┘
+WARN  trivy k6 (grafana/k6:2.3.0@sha256:9c2dee7f8ed74d317e4027c06a10f169b625638189de8d4555d0b3486a5aeb34) (보고만)
+== 의존성 감사 (ci.yml 의 npm audit · pip-audit 와 같은 명령 — 레지스트리 · 취약점 DB 에 묻는다)
+-- npm audit (apps/web, High 이상 — 기한부 예외 npm-audit-allow.json)
+NOTE  예외 GHSA-vfj7-8cjw-p6xm braces (high, 개발 의존성만) — 기한 2026-11-02: braces <=3.0.3(공개된 모든 판)의 깊게 중첩된 패턴 스택 소진 — 고친 판 없음. eslint-config-next → @next/eslint-plugin-next → fast-glob → micromatch 로만 들어오는 개발 도구(ESLint)이고 웹 이미지에는 없다. 패턴은 저장소의 설정에서만 온다. npm 의 해결책은 eslint-config-next 14 로 낮추기라 쓰지 않는다
+npm audit: High 이상 0 건(기한부 예외 1건 — 개발 의존성만)
+PASS  npm audit (apps/web, High 이상)
+-- pip-audit 2.10.1 (apps/collector 런타임 의존성, uv.lock 해시 고정)
+Resolved 43 packages in 15ms
+Installed 29 packages in 129ms
+No known vulnerabilities found
+PASS  pip-audit (apps/collector 런타임)
+security gate: PASS
+exit=0
+2026-10-13T18:44:25Z

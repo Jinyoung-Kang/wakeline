@@ -1,0 +1,9 @@
+
+Running 2 tests using 1 worker
+
+QA-1461 guide claims=[]
+  ✓  1 e2e/qa/qa-1461-demo-guide-claims-0330-run.spec.ts:12:5 › QA-1461 public demo /guide does not promise the 03:30 KST daily run either (682ms)
+QA-1461 claims=[]
+  ✓  2 e2e/qa/qa-1461-demo-stats-claims-0330-run.spec.ts:13:5 › QA-1461 public demo /stats does not claim the 03:30 KST daily run that AWS never runs (4.2s)
+
+  2 passed (5.5s)

@@ -1,0 +1,161 @@
+package dev.wakeline.qa;
+
+import dev.wakeline.it.IntegrationTest;
+import dev.wakeline.it.ItStack;
+import dev.wakeline.ops.OpsUserService;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledIf;
+import org.springframework.beans.factory.annotation.Autowired;
+
+import java.nio.charset.StandardCharsets;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.TreeMap;
+
+/** 임시 탐침(api-sec) — 결과만 출력한다. 결함 재현 시험이 아니다(증거를 뽑은 뒤 지운다). */
+@EnabledIf("dev.wakeline.DbTestSupport#dockerAvailable")
+class QaApiSecProbeIT extends IntegrationTest {
+    @Autowired OpsUserService users;
+
+    static void p(String s) { System.out.println("QAPROBE " + s); }
+
+    static String c1(String s) { return s; }
+
+    @BeforeEach
+    void clear() { ItStack.deleteKeys("rl:*"); }
+
+    @Test
+    void probe() throws Exception {
+        // ---- 1. 익명 운영 요청과 요청 제한 ----
+        Map<Integer, Integer> st = new TreeMap<>();
+        QaRawHttp.Res last = null;
+        for (int i = 0; i < 125; i++) {
+            last = QaRawHttp.get(port, "/api/v1/ops/providers");
+            st.merge(last.status(), 1, Integer::sum);
+        }
+        p("anon GET ops x125 statuses=" + st + " lastRateLimitHeader=" + last.header("X-RateLimit-Limit"));
+        p("rl keys after anon ops=" + ItStack.admin().keys("rl:*"));
+        ItStack.deleteKeys("rl:*");
+        st.clear();
+        for (int i = 0; i < 125; i++) {
+            last = QaRawHttp.send(port, "PUT", "/api/v1/ops/settings/region_poll_s", Map.of("Content-Type", "application/json"), "{}".getBytes());
+            st.merge(last.status(), 1, Integer::sum);
+        }
+        p("anon PUT ops (no csrf) x125 statuses=" + st + " body=" + last.body());
+        st.clear();
+        for (int i = 0; i < 5; i++) {
+            last = QaRawHttp.send(port, "POST", "/api/v1/ops/providers/opensky/disable", Map.of("Origin", "http://evil.example"), new byte[0]);
+            st.merge(last.status(), 1, Integer::sum);
+        }
+        p("anon POST ops (bad origin) statuses=" + st + " body=" + last.body());
+        p("rl keys after anon ops writes=" + ItStack.admin().keys("rl:*"));
+        ItStack.deleteKeys("rl:*");
+
+        // ---- 2. 헤더 값의 C1 제어 문자 ----
+        String c1 = "\"\u0085\"";
+        var r = QaRawHttp.get(port, "/api/v1/sigmets", Map.of("If-None-Match", c1));
+        p("sigmets If-None-Match C1 -> " + r.status() + " " + r.body());
+        r = QaRawHttp.get(port, "/api/v1/status", Map.of("Accept", "application/json\u0085"));
+        p("status Accept C1 -> " + r.status() + " " + r.body());
+        r = QaRawHttp.get(port, "/api/v1/status", Map.of("X-Qa", "a\u0085b"));
+        p("status X-Qa C1 -> " + r.status());
+        r = QaRawHttp.get(port, "/api/v1/sigmets/ABCDEFG", Map.of("Accept", "\u0085"));
+        p("sigmets/{id} Accept C1 -> " + r.status() + " " + r.body());
+        r = QaRawHttp.get(port, "/api/v1/nope-qa-x", Map.of("Accept", "\u0085"));
+        p("unknown path Accept C1 -> " + r.status() + " " + r.body());
+        r = QaRawHttp.get(port, "/api/v1/aircraft?bbox=126,37,127,38", Map.of("If-None-Match", "\u009f"));
+        p("aircraft If-None-Match C1 -> " + r.status() + " " + r.body());
+        r = QaRawHttp.get(port, "/api/v1/status", Map.of("If-None-Match", "\u007f"));
+        p("status If-None-Match DEL -> " + r.status());
+        String ce = "{\"message\":\"qa probe\",\"path\":\"/\",\"ts\":\"2026-10-14T00:00:00Z\"}";
+        r = QaRawHttp.send(port, "POST", "/api/v1/client-errors", Map.of("Content-Type", "application/json", "User-Agent", "Mozilla\u0085"), ce.getBytes(StandardCharsets.UTF_8));
+        p("client-errors UA C1 -> " + r.status() + " " + r.body());
+        String login = "{\"username\":\"nobody-qa\",\"password\":\"whatever-pass\"}";
+        r = QaRawHttp.send(port, "POST", "/api/v1/ops/session", Map.of("Content-Type", "application/json", "X-Qa", "\u0085"), login.getBytes(StandardCharsets.UTF_8));
+        p("login X-Qa C1 -> " + r.status() + " " + r.body());
+        r = QaRawHttp.send(port, "GET", "/ws/v1", Map.of("Upgrade", "websocket", "Connection", "Upgrade", "Sec-WebSocket-Version", "13",
+                "Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==", "X-Qa", "\u0085"), null);
+        p("ws handshake X-Qa C1 -> " + r.status() + " " + r.body());
+        p("logs stream XLEN=" + ItStack.admin().opsForStream().size("wakeline:logs"));
+
+        // ---- 3. 로그인 사용자 이름의 NUL ----
+        r = QaRawHttp.send(port, "POST", "/api/v1/ops/session", Map.of("Content-Type", "application/json"),
+                "{\"username\":\"qa\\u0000x\",\"password\":\"whatever-pass\"}".getBytes(StandardCharsets.UTF_8));
+        p("login username NUL -> " + r.status() + " " + r.body());
+
+        // ---- 4. strip() 이 지우는 제어 문자 ----
+        for (String q : new String[]{"/api/v1/alerts/history?hex=71be01%1F", "/api/v1/alerts/history?hex=71be01%09", "/api/v1/alerts/history?hex=71be01%00",
+                "/api/v1/alerts/history?hex=%1C71be01", "/api/v1/alerts/history?limit=10%1F", "/api/v1/alerts/history?limit=10%00",
+                "/api/v1/airports/RKSI%1F/wx", "/api/v1/airports/RKSI%09/wx", "/api/v1/aircraft/71be01%1F", "/api/v1/alerts?kind=observed%1F",
+                "/api/v1/stats/sigmet?group=fir%1F", "/api/v1/ships/440123456%1F", "/api/v1/ships/440123456%09", "/api/v1/stats/traffic?day=2026-10-01%1F"}) {
+            r = QaRawHttp.get(port, q);
+            p("strip " + q + " -> " + r.status() + " " + (r.status() >= 400 ? r.body() : ""));
+        }
+
+        // ---- 5. 경로 변형(익명) ----
+        for (String q : new String[]{"/api/v1/%6Fps/providers", "/API/v1/ops/providers", "//api/v1/ops/providers", "/api/v1/ops;x/providers",
+                "/api/v1/./ops/providers", "/api/v1/ops/../ops/providers", "/api/v1/ops%2Fproviders", "/api/v1/ops/providers/", "/api/v1/Ops/providers",
+                "/api/v1/o%70s/providers", "/api/v1/ops%20/providers", "/api/v1/ops/providers%3B", "/api/v1/%2e/ops/providers", "/api/v1/ops/providers.json",
+                "/%61pi/v1/ops/providers", "/api/v1/ops/%70roviders", "/api//v1/ops/providers", "/api/v1/ops/providers?x=%00"}) {
+            r = QaRawHttp.get(port, q);
+            p("path " + q + " -> " + r.status() + " " + r.body().replaceAll("\"request_id\":\"[^\"]+\"", ""));
+        }
+
+        // ---- 6. 운영자 세션으로 경로 변형 · CSRF ----
+        users.upsert("qa-sec-probe", "qa-sec-probe-password");
+        Map<String, String> jar = new LinkedHashMap<>();
+        r = QaRawHttp.send(port, "POST", "/api/v1/ops/session", Map.of("Content-Type", "application/json"),
+                "{\"username\":\"qa-sec-probe\",\"password\":\"qa-sec-probe-password\"}".getBytes(StandardCharsets.UTF_8));
+        for (String sc : r.headers("Set-Cookie")) { String nv = sc.split(";", 2)[0]; jar.put(nv.substring(0, nv.indexOf('=')), nv.substring(nv.indexOf('=') + 1)); }
+        p("login -> " + r.status() + " cookies=" + jar.keySet());
+        String cookie = "WAKELINE_SESSION=" + jar.get("WAKELINE_SESSION") + "; WAKELINE_CSRF=" + jar.get("WAKELINE_CSRF");
+        for (String q : new String[]{"/api/v1/ops/providers", "/api/v1/%6Fps/providers", "/API/v1/ops/providers", "/api/v1/ops/providers/", "/api/v1/Ops/providers"}) {
+            r = QaRawHttp.get(port, q, Map.of("Cookie", cookie));
+            p("authed path " + q + " -> " + r.status());
+        }
+        for (String q : new String[]{"/api/v1/%6Fps/stats/aggregate?day=2026-10-01", "/api/v1/ops/stats/aggregate/?day=2026-10-01"}) {
+            r = QaRawHttp.send(port, "POST", q, Map.of("Cookie", cookie), new byte[0]);
+            p("authed POST no csrf " + q + " -> " + r.status() + " " + r.body().replaceAll("\"request_id\":\"[^\"]+\"", ""));
+        }
+        // 세션 갱신: /client-errors 가 세션을 건드리는가
+        String key = "wakeline:session:sessions:" + new String(java.util.Base64.getDecoder().decode(jar.get("WAKELINE_SESSION")), StandardCharsets.UTF_8);
+        Object before = ItStack.admin().opsForHash().get(key, "lastAccessedTime");
+        Long ttlBefore = ItStack.admin().getExpire(key);
+        Thread.sleep(1500);
+        r = QaRawHttp.send(port, "POST", "/api/v1/client-errors", Map.of("Content-Type", "application/json", "Cookie", cookie), ce.getBytes(StandardCharsets.UTF_8));
+        Object after = ItStack.admin().opsForHash().get(key, "lastAccessedTime");
+        p("client-errors with session cookie -> " + r.status() + " lastAccessed changed=" + !java.util.Objects.equals(before, after)
+                + " ttlBefore=" + ttlBefore + " ttlAfter=" + ItStack.admin().getExpire(key) + " set-cookie=" + r.headers("Set-Cookie"));
+        r = QaRawHttp.get(port, "/api/v1/status", Map.of("Cookie", cookie));
+        Object after2 = ItStack.admin().opsForHash().get(key, "lastAccessedTime");
+        p("status with session cookie -> " + r.status() + " lastAccessed changed=" + !java.util.Objects.equals(after, after2));
+
+        // ---- 7. 본문 크기(api 직접) ----
+        ItStack.deleteKeys("rl:*");
+        byte[] big = new byte[20 * 1024 * 1024 + 64];
+        java.util.Arrays.fill(big, (byte) ' ');
+        byte[] tail = login.getBytes(StandardCharsets.UTF_8);
+        System.arraycopy(tail, 0, big, big.length - tail.length, tail.length);
+        long t0 = System.nanoTime();
+        r = QaRawHttp.send(port, "POST", "/api/v1/ops/session", Map.of("Content-Type", "application/json"), big);
+        p("login 20MiB body -> " + r.status() + " in " + (System.nanoTime() - t0) / 1_000_000 + " ms " + r.body().replaceAll("\"request_id\":\"[^\"]+\"", ""));
+        StringBuilder pw = new StringBuilder("{\"username\":\"nobody-qa\",\"password\":\"");
+        pw.append("A".repeat(15 * 1024 * 1024)).append("\"}");
+        t0 = System.nanoTime();
+        r = QaRawHttp.send(port, "POST", "/api/v1/ops/session", Map.of("Content-Type", "application/json"), pw.toString().getBytes(StandardCharsets.UTF_8));
+        p("login 15MiB password -> " + r.status() + " in " + (System.nanoTime() - t0) / 1_000_000 + " ms " + r.body().replaceAll("\"request_id\":\"[^\"]+\"", ""));
+        byte[] bigCe = new byte[9000];
+        java.util.Arrays.fill(bigCe, (byte) ' ');
+        r = QaRawHttp.send(port, "POST", "/api/v1/client-errors", Map.of("Content-Type", "application/json"), bigCe);
+        p("client-errors 9000 B -> " + r.status());
+
+        // ---- 8. openapi servers ----
+        r = QaRawHttp.get(port, "/api/v1/openapi", Map.of());
+        int i = r.body().indexOf("\"servers\"");
+        p("openapi servers -> " + (i < 0 ? "none" : r.body().substring(i, Math.min(r.body().length(), i + 160))));
+        r = QaRawHttp.get(port, "/api/v1/status");
+        p("status keys -> " + r.body().substring(0, Math.min(600, r.body().length())));
+        p("server header=" + r.header("Server") + " x-powered=" + r.header("X-Powered-By"));
+    }
+}

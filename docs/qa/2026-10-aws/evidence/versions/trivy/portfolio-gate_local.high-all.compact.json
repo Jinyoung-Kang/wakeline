@@ -1,0 +1,503 @@
+{
+ "ArtifactName": "/in/image-20862.tar",
+ "CreatedAt": "2026-10-13T18:53:41.12559493Z",
+ "OS": {
+  "Family": "debian",
+  "Name": "13.7"
+ },
+ "ImageID": "sha256:e2cf77e6597fc7bcc17da22be5e3fcd755768d541e88a19b0ea8003a6b4acde3",
+ "Results": [
+  {
+   "Target": "/in/image-20862.tar (debian 13.7)",
+   "Type": "debian",
+   "Vulnerabilities": [
+    {
+     "VulnerabilityID": "CVE-2026-76642",
+     "Severity": "HIGH",
+     "PkgName": "bsdutils",
+     "InstalledVersion": "1:2.41.5-0+deb13u1",
+     "FixedVersion": null,
+     "Status": "affected",
+     "Title": "util-linux: util-linux: failed external mount helper still runs privileged X-mount post-hooks",
+     "PublishedDate": "2026-09-03T13:06:08.44Z"
+    },
+    {
+     "VulnerabilityID": "CVE-2026-78408",
+     "Severity": "HIGH",
+     "PkgName": "bsdutils",
+     "InstalledVersion": "1:2.41.5-0+deb13u1",
+     "FixedVersion": null,
+     "Status": "affected",
+     "Title": "util-linux: util-linux: nsenter --join-cgroup leaks root cgroup migration authority",
+     "PublishedDate": "2026-09-02T16:17:23.687Z"
+    },
+    {
+     "VulnerabilityID": "CVE-2026-78409",
+     "Severity": "HIGH",
+     "PkgName": "bsdutils",
+     "InstalledVersion": "1:2.41.5-0+deb13u1",
+     "FixedVersion": null,
+     "Status": "affected",
+     "Title": "util-linux: util-linux: X-mount.subdir detached-tree resolution can escape via intermediate symlinks",
+     "PublishedDate": "2026-09-02T16:17:23.833Z"
+    },
+    {
+     "VulnerabilityID": "CVE-2026-78410",
+     "Severity": "HIGH",
+     "PkgName": "bsdutils",
+     "InstalledVersion": "1:2.41.5-0+deb13u1",
+     "FixedVersion": null,
+     "Status": "affected",
+     "Title": "util-linux: util-linux: restricted bind mounts do not pin the source, allowing X-mount.owner/group/mode redirection",
+     "PublishedDate": "2026-09-02T16:17:23.983Z"
+    },
+    {
+     "VulnerabilityID": "CVE-2026-54369",
+     "Severity": "HIGH",
+     "PkgName": "libacl1",
+     "InstalledVersion": "2.3.2-2+b1",
+     "FixedVersion": null,
+     "Status": "affected",
+     "Title": "acl: Symlink traversal privilege escalation via libacl functions",
+     "PublishedDate": "2026-06-29T14:16:57.487Z"
+    },
+    {
+     "VulnerabilityID": "CVE-2026-76642",
+     "Severity": "HIGH",
+     "PkgName": "libblkid1",
+     "InstalledVersion": "2.41.5-0+deb13u1",
+     "FixedVersion": null,
+     "Status": "affected",
+     "Title": "util-linux: util-linux: failed external mount helper still runs privileged X-mount post-hooks",
+     "PublishedDate": "2026-09-03T13:06:08.44Z"
+    },
+    {
+     "VulnerabilityID": "CVE-2026-78408",
+     "Severity": "HIGH",
+     "PkgName": "libblkid1",
+     "InstalledVersion": "2.41.5-0+deb13u1",
+     "FixedVersion": null,
+     "Status": "affected",
+     "Title": "util-linux: util-linux: nsenter --join-cgroup leaks root cgroup migration authority",
+     "PublishedDate": "2026-09-02T16:17:23.687Z"
+    },
+    {
+     "VulnerabilityID": "CVE-2026-78409",
+     "Severity": "HIGH",
+     "PkgName": "libblkid1",
+     "InstalledVersion": "2.41.5-0+deb13u1",
+     "FixedVersion": null,
+     "Status": "affected",
+     "Title": "util-linux: util-linux: X-mount.subdir detached-tree resolution can escape via intermediate symlinks",
+     "PublishedDate": "2026-09-02T16:17:23.833Z"
+    },
+    {
+     "VulnerabilityID": "CVE-2026-78410",
+     "Severity": "HIGH",
+     "PkgName": "libblkid1",
+     "InstalledVersion": "2.41.5-0+deb13u1",
+     "FixedVersion": null,
+     "Status": "affected",
+     "Title": "util-linux: util-linux: restricted bind mounts do not pin the source, allowing X-mount.owner/group/mode redirection",
+     "PublishedDate": "2026-09-02T16:17:23.983Z"
+    },
+    {
+     "VulnerabilityID": "CVE-2026-76642",
+     "Severity": "HIGH",
+     "PkgName": "liblastlog2-2",
+     "InstalledVersion": "2.41.5-0+deb13u1",
+     "FixedVersion": null,
+     "Status": "affected",
+     "Title": "util-linux: util-linux: failed external mount helper still runs privileged X-mount post-hooks",
+     "PublishedDate": "2026-09-03T13:06:08.44Z"
+    },
+    {
+     "VulnerabilityID": "CVE-2026-78408",
+     "Severity": "HIGH",
+     "PkgName": "liblastlog2-2",
+     "InstalledVersion": "2.41.5-0+deb13u1",
+     "FixedVersion": null,
+     "Status": "affected",
+     "Title": "util-linux: util-linux: nsenter --join-cgroup leaks root cgroup migration authority",
+     "PublishedDate": "2026-09-02T16:17:23.687Z"
+    },
+    {
+     "VulnerabilityID": "CVE-2026-78409",
+     "Severity": "HIGH",
+     "PkgName": "liblastlog2-2",
+     "InstalledVersion": "2.41.5-0+deb13u1",
+     "FixedVersion": null,
+     "Status": "affected",
+     "Title": "util-linux: util-linux: X-mount.subdir detached-tree resolution can escape via intermediate symlinks",
+     "PublishedDate": "2026-09-02T16:17:23.833Z"
+    },
+    {
+     "VulnerabilityID": "CVE-2026-78410",
+     "Severity": "HIGH",
+     "PkgName": "liblastlog2-2",
+     "InstalledVersion": "2.41.5-0+deb13u1",
+     "FixedVersion": null,
+     "Status": "affected",
+     "Title": "util-linux: util-linux: restricted bind mounts do not pin the source, allowing X-mount.owner/group/mode redirection",
+     "PublishedDate": "2026-09-02T16:17:23.983Z"
+    },
+    {
+     "VulnerabilityID": "CVE-2026-76642",
+     "Severity": "HIGH",
+     "PkgName": "libmount1",
+     "InstalledVersion": "2.41.5-0+deb13u1",
+     "FixedVersion": null,
+     "Status": "affected",
+     "Title": "util-linux: util-linux: failed external mount helper still runs privileged X-mount post-hooks",
+     "PublishedDate": "2026-09-03T13:06:08.44Z"
+    },
+    {
+     "VulnerabilityID": "CVE-2026-78408",
+     "Severity": "HIGH",
+     "PkgName": "libmount1",
+     "InstalledVersion": "2.41.5-0+deb13u1",
+     "FixedVersion": null,
+     "Status": "affected",
+     "Title": "util-linux: util-linux: nsenter --join-cgroup leaks root cgroup migration authority",
+     "PublishedDate": "2026-09-02T16:17:23.687Z"
+    },
+    {
+     "VulnerabilityID": "CVE-2026-78409",
+     "Severity": "HIGH",
+     "PkgName": "libmount1",
+     "InstalledVersion": "2.41.5-0+deb13u1",
+     "FixedVersion": null,
+     "Status": "affected",
+     "Title": "util-linux: util-linux: X-mount.subdir detached-tree resolution can escape via intermediate symlinks",
+     "PublishedDate": "2026-09-02T16:17:23.833Z"
+    },
+    {
+     "VulnerabilityID": "CVE-2026-78410",
+     "Severity": "HIGH",
+     "PkgName": "libmount1",
+     "InstalledVersion": "2.41.5-0+deb13u1",
+     "FixedVersion": null,
+     "Status": "affected",
+     "Title": "util-linux: util-linux: restricted bind mounts do not pin the source, allowing X-mount.owner/group/mode redirection",
+     "PublishedDate": "2026-09-02T16:17:23.983Z"
+    },
+    {
+     "VulnerabilityID": "CVE-2025-69720",
+     "Severity": "HIGH",
+     "PkgName": "libncursesw6",
+     "InstalledVersion": "6.5+20250216-2",
+     "FixedVersion": null,
+     "Status": "affected",
+     "Title": "ncurses: ncurses: Buffer overflow vulnerability may lead to arbitrary code execution.",
+     "PublishedDate": "2026-03-19T15:16:21.293Z"
+    },
+    {
+     "VulnerabilityID": "CVE-2026-76642",
+     "Severity": "HIGH",
+     "PkgName": "libsmartcols1",
+     "InstalledVersion": "2.41.5-0+deb13u1",
+     "FixedVersion": null,
+     "Status": "affected",
+     "Title": "util-linux: util-linux: failed external mount helper still runs privileged X-mount post-hooks",
+     "PublishedDate": "2026-09-03T13:06:08.44Z"
+    },
+    {
+     "VulnerabilityID": "CVE-2026-78408",
+     "Severity": "HIGH",
+     "PkgName": "libsmartcols1",
+     "InstalledVersion": "2.41.5-0+deb13u1",
+     "FixedVersion": null,
+     "Status": "affected",
+     "Title": "util-linux: util-linux: nsenter --join-cgroup leaks root cgroup migration authority",
+     "PublishedDate": "2026-09-02T16:17:23.687Z"
+    },
+    {
+     "VulnerabilityID": "CVE-2026-78409",
+     "Severity": "HIGH",
+     "PkgName": "libsmartcols1",
+     "InstalledVersion": "2.41.5-0+deb13u1",
+     "FixedVersion": null,
+     "Status": "affected",
+     "Title": "util-linux: util-linux: X-mount.subdir detached-tree resolution can escape via intermediate symlinks",
+     "PublishedDate": "2026-09-02T16:17:23.833Z"
+    },
+    {
+     "VulnerabilityID": "CVE-2026-78410",
+     "Severity": "HIGH",
+     "PkgName": "libsmartcols1",
+     "InstalledVersion": "2.41.5-0+deb13u1",
+     "FixedVersion": null,
+     "Status": "affected",
+     "Title": "util-linux: util-linux: restricted bind mounts do not pin the source, allowing X-mount.owner/group/mode redirection",
+     "PublishedDate": "2026-09-02T16:17:23.983Z"
+    },
+    {
+     "VulnerabilityID": "CVE-2026-16742",
+     "Severity": "HIGH",
+     "PkgName": "libsystemd0",
+     "InstalledVersion": "257.13-1~deb13u1",
+     "FixedVersion": null,
+     "Status": "affected",
+     "Title": "systemd: systemd-homed: Local privilege escalation via missing home-record signature verification",
+     "PublishedDate": "2026-08-10T14:17:21.277Z"
+    },
+    {
+     "VulnerabilityID": "CVE-2025-69720",
+     "Severity": "HIGH",
+     "PkgName": "libtinfo6",
+     "InstalledVersion": "6.5+20250216-2",
+     "FixedVersion": null,
+     "Status": "affected",
+     "Title": "ncurses: ncurses: Buffer overflow vulnerability may lead to arbitrary code execution.",
+     "PublishedDate": "2026-03-19T15:16:21.293Z"
+    },
+    {
+     "VulnerabilityID": "CVE-2026-16742",
+     "Severity": "HIGH",
+     "PkgName": "libudev1",
+     "InstalledVersion": "257.13-1~deb13u1",
+     "FixedVersion": null,
+     "Status": "affected",
+     "Title": "systemd: systemd-homed: Local privilege escalation via missing home-record signature verification",
+     "PublishedDate": "2026-08-10T14:17:21.277Z"
+    },
+    {
+     "VulnerabilityID": "CVE-2026-76642",
+     "Severity": "HIGH",
+     "PkgName": "libuuid1",
+     "InstalledVersion": "2.41.5-0+deb13u1",
+     "FixedVersion": null,
+     "Status": "affected",
+     "Title": "util-linux: util-linux: failed external mount helper still runs privileged X-mount post-hooks",
+     "PublishedDate": "2026-09-03T13:06:08.44Z"
+    },
+    {
+     "VulnerabilityID": "CVE-2026-78408",
+     "Severity": "HIGH",
+     "PkgName": "libuuid1",
+     "InstalledVersion": "2.41.5-0+deb13u1",
+     "FixedVersion": null,
+     "Status": "affected",
+     "Title": "util-linux: util-linux: nsenter --join-cgroup leaks root cgroup migration authority",
+     "PublishedDate": "2026-09-02T16:17:23.687Z"
+    },
+    {
+     "VulnerabilityID": "CVE-2026-78409",
+     "Severity": "HIGH",
+     "PkgName": "libuuid1",
+     "InstalledVersion": "2.41.5-0+deb13u1",
+     "FixedVersion": null,
+     "Status": "affected",
+     "Title": "util-linux: util-linux: X-mount.subdir detached-tree resolution can escape via intermediate symlinks",
+     "PublishedDate": "2026-09-02T16:17:23.833Z"
+    },
+    {
+     "VulnerabilityID": "CVE-2026-78410",
+     "Severity": "HIGH",
+     "PkgName": "libuuid1",
+     "InstalledVersion": "2.41.5-0+deb13u1",
+     "FixedVersion": null,
+     "Status": "affected",
+     "Title": "util-linux: util-linux: restricted bind mounts do not pin the source, allowing X-mount.owner/group/mode redirection",
+     "PublishedDate": "2026-09-02T16:17:23.983Z"
+    },
+    {
+     "VulnerabilityID": "CVE-2026-76642",
+     "Severity": "HIGH",
+     "PkgName": "login",
+     "InstalledVersion": "1:4.16.0-2+really2.41.5-0+deb13u1",
+     "FixedVersion": null,
+     "Status": "affected",
+     "Title": "util-linux: util-linux: failed external mount helper still runs privileged X-mount post-hooks",
+     "PublishedDate": "2026-09-03T13:06:08.44Z"
+    },
+    {
+     "VulnerabilityID": "CVE-2026-78408",
+     "Severity": "HIGH",
+     "PkgName": "login",
+     "InstalledVersion": "1:4.16.0-2+really2.41.5-0+deb13u1",
+     "FixedVersion": null,
+     "Status": "affected",
+     "Title": "util-linux: util-linux: nsenter --join-cgroup leaks root cgroup migration authority",
+     "PublishedDate": "2026-09-02T16:17:23.687Z"
+    },
+    {
+     "VulnerabilityID": "CVE-2026-78409",
+     "Severity": "HIGH",
+     "PkgName": "login",
+     "InstalledVersion": "1:4.16.0-2+really2.41.5-0+deb13u1",
+     "FixedVersion": null,
+     "Status": "affected",
+     "Title": "util-linux: util-linux: X-mount.subdir detached-tree resolution can escape via intermediate symlinks",
+     "PublishedDate": "2026-09-02T16:17:23.833Z"
+    },
+    {
+     "VulnerabilityID": "CVE-2026-78410",
+     "Severity": "HIGH",
+     "PkgName": "login",
+     "InstalledVersion": "1:4.16.0-2+really2.41.5-0+deb13u1",
+     "FixedVersion": null,
+     "Status": "affected",
+     "Title": "util-linux: util-linux: restricted bind mounts do not pin the source, allowing X-mount.owner/group/mode redirection",
+     "PublishedDate": "2026-09-02T16:17:23.983Z"
+    },
+    {
+     "VulnerabilityID": "CVE-2026-76642",
+     "Severity": "HIGH",
+     "PkgName": "mount",
+     "InstalledVersion": "2.41.5-0+deb13u1",
+     "FixedVersion": null,
+     "Status": "affected",
+     "Title": "util-linux: util-linux: failed external mount helper still runs privileged X-mount post-hooks",
+     "PublishedDate": "2026-09-03T13:06:08.44Z"
+    },
+    {
+     "VulnerabilityID": "CVE-2026-78408",
+     "Severity": "HIGH",
+     "PkgName": "mount",
+     "InstalledVersion": "2.41.5-0+deb13u1",
+     "FixedVersion": null,
+     "Status": "affected",
+     "Title": "util-linux: util-linux: nsenter --join-cgroup leaks root cgroup migration authority",
+     "PublishedDate": "2026-09-02T16:17:23.687Z"
+    },
+    {
+     "VulnerabilityID": "CVE-2026-78409",
+     "Severity": "HIGH",
+     "PkgName": "mount",
+     "InstalledVersion": "2.41.5-0+deb13u1",
+     "FixedVersion": null,
+     "Status": "affected",
+     "Title": "util-linux: util-linux: X-mount.subdir detached-tree resolution can escape via intermediate symlinks",
+     "PublishedDate": "2026-09-02T16:17:23.833Z"
+    },
+    {
+     "VulnerabilityID": "CVE-2026-78410",
+     "Severity": "HIGH",
+     "PkgName": "mount",
+     "InstalledVersion": "2.41.5-0+deb13u1",
+     "FixedVersion": null,
+     "Status": "affected",
+     "Title": "util-linux: util-linux: restricted bind mounts do not pin the source, allowing X-mount.owner/group/mode redirection",
+     "PublishedDate": "2026-09-02T16:17:23.983Z"
+    },
+    {
+     "VulnerabilityID": "CVE-2025-69720",
+     "Severity": "HIGH",
+     "PkgName": "ncurses-base",
+     "InstalledVersion": "6.5+20250216-2",
+     "FixedVersion": null,
+     "Status": "affected",
+     "Title": "ncurses: ncurses: Buffer overflow vulnerability may lead to arbitrary code execution.",
+     "PublishedDate": "2026-03-19T15:16:21.293Z"
+    },
+    {
+     "VulnerabilityID": "CVE-2025-69720",
+     "Severity": "HIGH",
+     "PkgName": "ncurses-bin",
+     "InstalledVersion": "6.5+20250216-2",
+     "FixedVersion": null,
+     "Status": "affected",
+     "Title": "ncurses: ncurses: Buffer overflow vulnerability may lead to arbitrary code execution.",
+     "PublishedDate": "2026-03-19T15:16:21.293Z"
+    },
+    {
+     "VulnerabilityID": "CVE-2026-9538",
+     "Severity": "HIGH",
+     "PkgName": "perl-base",
+     "InstalledVersion": "5.40.1-6+deb13u1",
+     "FixedVersion": null,
+     "Status": "fix_deferred",
+     "Title": "perl-Archive-Tar: perl-Archive-Tar: Denial of Service via crafted tar header with large entry size",
+     "PublishedDate": "2026-05-26T02:16:41.15Z"
+    },
+    {
+     "VulnerabilityID": "CVE-2026-76642",
+     "Severity": "HIGH",
+     "PkgName": "util-linux",
+     "InstalledVersion": "2.41.5-0+deb13u1",
+     "FixedVersion": null,
+     "Status": "affected",
+     "Title": "util-linux: util-linux: failed external mount helper still runs privileged X-mount post-hooks",
+     "PublishedDate": "2026-09-03T13:06:08.44Z"
+    },
+    {
+     "VulnerabilityID": "CVE-2026-78408",
+     "Severity": "HIGH",
+     "PkgName": "util-linux",
+     "InstalledVersion": "2.41.5-0+deb13u1",
+     "FixedVersion": null,
+     "Status": "affected",
+     "Title": "util-linux: util-linux: nsenter --join-cgroup leaks root cgroup migration authority",
+     "PublishedDate": "2026-09-02T16:17:23.687Z"
+    },
+    {
+     "VulnerabilityID": "CVE-2026-78409",
+     "Severity": "HIGH",
+     "PkgName": "util-linux",
+     "InstalledVersion": "2.41.5-0+deb13u1",
+     "FixedVersion": null,
+     "Status": "affected",
+     "Title": "util-linux: util-linux: X-mount.subdir detached-tree resolution can escape via intermediate symlinks",
+     "PublishedDate": "2026-09-02T16:17:23.833Z"
+    },
+    {
+     "VulnerabilityID": "CVE-2026-78410",
+     "Severity": "HIGH",
+     "PkgName": "util-linux",
+     "InstalledVersion": "2.41.5-0+deb13u1",
+     "FixedVersion": null,
+     "Status": "affected",
+     "Title": "util-linux: util-linux: restricted bind mounts do not pin the source, allowing X-mount.owner/group/mode redirection",
+     "PublishedDate": "2026-09-02T16:17:23.983Z"
+    }
+   ]
+  },
+  {
+   "Target": "Python",
+   "Type": "python-pkg",
+   "Vulnerabilities": [
+    {
+     "VulnerabilityID": "GHSA-6v7p-g79w-8964",
+     "Severity": "HIGH",
+     "PkgName": "msgpack",
+     "InstalledVersion": "1.1.2",
+     "FixedVersion": "1.2.1",
+     "Status": "fixed",
+     "Title": "MessagePack for Python: Out-of-bounds read / crash on Unpacker reuse after a caught error",
+     "PublishedDate": "2026-06-19T21:42:55Z"
+    },
+    {
+     "VulnerabilityID": "CVE-2025-47273",
+     "Severity": "HIGH",
+     "PkgName": "setuptools",
+     "InstalledVersion": "70.3.0",
+     "FixedVersion": "78.1.1",
+     "Status": "fixed",
+     "Title": "setuptools: Path Traversal Vulnerability in setuptools PackageIndex",
+     "PublishedDate": "2025-05-17T16:15:19.11Z"
+    },
+    {
+     "VulnerabilityID": "CVE-2026-97687",
+     "Severity": "HIGH",
+     "PkgName": "urllib3",
+     "InstalledVersion": "2.7.0",
+     "FixedVersion": "2.8.0",
+     "Status": "fixed",
+     "Title": "urllib3: urllib3: Traffic interception via HTTPS proxy TLS configuration override",
+     "PublishedDate": "2026-09-29T16:17:18.517Z"
+    },
+    {
+     "VulnerabilityID": "CVE-2026-97689",
+     "Severity": "HIGH",
+     "PkgName": "urllib3",
+     "InstalledVersion": "2.7.0",
+     "FixedVersion": "2.8.0",
+     "Status": "fixed",
+     "Title": "urllib3: urllib3: Denial of Service via unbounded memory allocation in chunk parser",
+     "PublishedDate": "2026-09-29T16:17:18.837Z"
+    }
+   ]
+  }
+ ]
+}

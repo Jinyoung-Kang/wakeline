@@ -137,7 +137,7 @@ class CiPolicyTest(unittest.TestCase):
                 self.assertRegex(s, r'severity:\s*"HIGH,CRITICAL"')
 
     def test_gitleaks_allowlist_is_exact_fingerprints_only(self):
-        """허용 목록은 시험용 가짜 값 · 비밀이 아닌 예시 15건(값마다 가짜임을 확인 — .gitleaksignore 주석)의 정확한 지문뿐 — 정규식·경로 허용(.gitleaks.toml allowlist)은 없다."""
+        """허용 목록은 시험용 가짜 값 · 비밀이 아닌 예시 34건(값마다 가짜임을 확인 — .gitleaksignore 주석)의 정확한 지문뿐 — 정규식·경로 허용(.gitleaks.toml allowlist)은 없다."""
         ignore = ROOT / ".gitleaksignore"
         self.assertTrue(ignore.exists(), ".gitleaksignore 없음 — gitleaks 가 시험용 가짜 값에서 실패한다")
         entries = [ln.strip() for ln in ignore.read_text().splitlines() if ln.strip() and not ln.lstrip().startswith("#")]
@@ -160,6 +160,26 @@ class CiPolicyTest(unittest.TestCase):
             "469b66f2b60585b9008a0654a8723d2e895d99a5:tools/qa/write_probe.py:generic-api-key:270",
             "469b66f2b60585b9008a0654a8723d2e895d99a5:tools/qa/write_probe.py:generic-api-key:271",
             "60c961f0bdec7659a56dd100d34c4dad2e809981:tools/qa/perf_jvm_run.sh:generic-api-key:68",
+            # QA 2026-10 AWS 증거 — 컨테이너 상태 글 18줄 · RFC 6455 예시 Sec-WebSocket-Key 1(.gitleaksignore 주석)
+            "31c864cffff2c5f7025d4798a8ba733d606807b4:docs/qa/2026-10-aws/evidence/api-sec/probes/QaApiSecProbeIT.java.txt:generic-api-key:78",
+            "cf7772bb43b0d670ebb652e6f98fb0213ec60860:docs/qa/2026-10-aws/evidence/rehearsal/conn/boot-long-probe.txt:generic-api-key:1",
+            "cf7772bb43b0d670ebb652e6f98fb0213ec60860:docs/qa/2026-10-aws/evidence/rehearsal/conn/boot-long-probe.txt:generic-api-key:10",
+            "cf7772bb43b0d670ebb652e6f98fb0213ec60860:docs/qa/2026-10-aws/evidence/rehearsal/conn/boot-long-probe.txt:generic-api-key:11",
+            "cf7772bb43b0d670ebb652e6f98fb0213ec60860:docs/qa/2026-10-aws/evidence/rehearsal/conn/boot-long-probe.txt:generic-api-key:12",
+            "cf7772bb43b0d670ebb652e6f98fb0213ec60860:docs/qa/2026-10-aws/evidence/rehearsal/conn/boot-long-probe.txt:generic-api-key:13",
+            "cf7772bb43b0d670ebb652e6f98fb0213ec60860:docs/qa/2026-10-aws/evidence/rehearsal/conn/boot-long-probe.txt:generic-api-key:14",
+            "cf7772bb43b0d670ebb652e6f98fb0213ec60860:docs/qa/2026-10-aws/evidence/rehearsal/conn/boot-long-probe.txt:generic-api-key:15",
+            "cf7772bb43b0d670ebb652e6f98fb0213ec60860:docs/qa/2026-10-aws/evidence/rehearsal/conn/boot-long-probe.txt:generic-api-key:16",
+            "cf7772bb43b0d670ebb652e6f98fb0213ec60860:docs/qa/2026-10-aws/evidence/rehearsal/conn/boot-long-probe.txt:generic-api-key:17",
+            "cf7772bb43b0d670ebb652e6f98fb0213ec60860:docs/qa/2026-10-aws/evidence/rehearsal/conn/boot-long-probe.txt:generic-api-key:18",
+            "cf7772bb43b0d670ebb652e6f98fb0213ec60860:docs/qa/2026-10-aws/evidence/rehearsal/conn/boot-long-probe.txt:generic-api-key:2",
+            "cf7772bb43b0d670ebb652e6f98fb0213ec60860:docs/qa/2026-10-aws/evidence/rehearsal/conn/boot-long-probe.txt:generic-api-key:3",
+            "cf7772bb43b0d670ebb652e6f98fb0213ec60860:docs/qa/2026-10-aws/evidence/rehearsal/conn/boot-long-probe.txt:generic-api-key:4",
+            "cf7772bb43b0d670ebb652e6f98fb0213ec60860:docs/qa/2026-10-aws/evidence/rehearsal/conn/boot-long-probe.txt:generic-api-key:5",
+            "cf7772bb43b0d670ebb652e6f98fb0213ec60860:docs/qa/2026-10-aws/evidence/rehearsal/conn/boot-long-probe.txt:generic-api-key:6",
+            "cf7772bb43b0d670ebb652e6f98fb0213ec60860:docs/qa/2026-10-aws/evidence/rehearsal/conn/boot-long-probe.txt:generic-api-key:7",
+            "cf7772bb43b0d670ebb652e6f98fb0213ec60860:docs/qa/2026-10-aws/evidence/rehearsal/conn/boot-long-probe.txt:generic-api-key:8",
+            "cf7772bb43b0d670ebb652e6f98fb0213ec60860:docs/qa/2026-10-aws/evidence/rehearsal/conn/boot-long-probe.txt:generic-api-key:9",
         })
         self.assertFalse((ROOT / ".gitleaks.toml").exists(), "넓은 허용 규칙 파일을 두지 않는다")
 

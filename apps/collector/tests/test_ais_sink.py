@@ -292,6 +292,32 @@ async def test_status_hash_fields():
     assert await sink.read_previous_status() == {}
 
 
+async def test_previous_status_unread_at_start_is_read_before_the_first_status_write():
+    """QA-1241: 기동 때 Redis 가 답하지 않으면 이전 상태를 첫 상태 쓰기 전에 다시 읽는다 — 그때까지 상태 해시를 쓰지 않는다(덮으면 이전
+    실행의 정지 공백을 되살릴 수 없다). 다시 읽은 공백은 첫 데이터 시각에 닫혀 다음 공백 발행에 실린다."""
+    r = FakeRedis()
+    stopped = time.time() - 15 * 3600
+    prev = {"provider": "aisstream", "gap_open_since": iso_ms(stopped), "gap_reason": "ais process stopped", "state": "stopped"}
+    await r.hset(STATUS_KEY, mapping=prev)
+    r.down = True
+    _r, _q, _book, feed, _w, sink = _setup(r=r)
+    sink.shards.load_previous(await sink.read_previous_status())
+    sink.shards.restore_leftover()
+    feed.on_subscribed("", deflate=None, state="receiving")
+    first = time.time()
+    feed.on_message(first)
+    assert await sink.write_status() is False and r.kv[STATUS_KEY]["state"] == "stopped"  # 아직 덮지 않았다
+    r.down = False
+    assert await sink.publish_gaps() == 1
+    (gap,) = [decode(f) for _, f in r.streams[STREAM_SHIPS] if f["kind"] == "ais_gap"]
+    assert gap == {"started_at": iso_ms(stopped), "ended_at": iso_ms(first), "reason": "ais process stopped"}
+    assert await sink.write_status() is True and r.kv[STATUS_KEY]["state"] == "receiving"
+    r.down = True  # 이 프로세스가 쓴 뒤의 읽기 실패는 이전 상태가 아니다 — 다시 읽지 않는다
+    assert await sink.read_previous_status() == {}
+    r.down = False
+    assert await sink.write_status() is True
+
+
 async def test_run_loop_flushes_on_schedule_and_writes_status_on_change():
     r, _q, _book, feed, w, sink = _setup(flush_s=0.2)
     stop = asyncio.Event()

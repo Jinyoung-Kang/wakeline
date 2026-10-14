@@ -1,0 +1,13 @@
+
+Running 4 tests using 1 worker
+
+QA-1500 mobile cls=0.000 shifts=[]
+  ✓  1 e2e/qa/qa-1500-stats-mobile-cls.spec.ts:63:5 › QA-1500 /stats mobile CLS stays ≤ 0.1 when AWS-scale stats arrive after the loading panels (4.0s)
+QA-1500 mobile 412 places={"ready":{"fir":[89.8,169.8],"hazard":[269.3,281],"traffic":[560,216.4],"alerts":[786.1,216]},"loading":{"fir":[89.8,169.8],"hazard":[269.3,281],"traffic":[560,216.4],"alerts":[786.1,129.8]},"empty":{"fir":[89.8,169.8],"hazard":[269.3,281],"traffic":[560,216.4],"alerts":[786.1,98.5]},"error":{"fir":[89.8,169.8],"hazard":[269.3,281],"traffic":[560,216.4],"alerts":[786.1,167.1]}}
+  ✓  2 e2e/qa/qa-1500-stats-mobile-cls.spec.ts:104:7 › QA-1500 /stats panels keep their place in loading · empty · error (mobile 412) (4.3s)
+QA-1500 tablet 768 places={"ready":{"fir":[73.3,281],"hazard":[364,281],"traffic":[654.8,304.3],"alerts":[968.8,216]},"loading":{"fir":[73.3,281],"hazard":[364,281],"traffic":[654.8,304.3],"alerts":[968.8,129.8]},"empty":{"fir":[73.3,281],"hazard":[364,281],"traffic":[654.8,304.3],"alerts":[968.8,98.5]},"error":{"fir":[73.3,281],"hazard":[364,281],"traffic":[654.8,304.3],"alerts":[968.8,149.6]}}
+  ✓  3 e2e/qa/qa-1500-stats-mobile-cls.spec.ts:104:7 › QA-1500 /stats panels keep their place in loading · empty · error (tablet 768) (4.1s)
+QA-1500 desktop 1350 places={"ready":{"fir":[73.3,281],"hazard":[73.3,281],"traffic":[364,293.8],"alerts":[364,293.8]},"loading":{"fir":[73.3,281],"hazard":[73.3,281],"traffic":[364,293.8],"alerts":[364,293.8]},"empty":{"fir":[73.3,281],"hazard":[73.3,281],"traffic":[364,293.8],"alerts":[364,293.8]},"error":{"fir":[73.3,281],"hazard":[73.3,281],"traffic":[364,293.8],"alerts":[364,293.8]}}
+  ✓  4 e2e/qa/qa-1500-stats-mobile-cls.spec.ts:104:7 › QA-1500 /stats panels keep their place in loading · empty · error (desktop 1350) (4.4s)
+
+  4 passed (18.3s)

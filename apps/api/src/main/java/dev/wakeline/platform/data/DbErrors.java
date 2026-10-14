@@ -35,7 +35,8 @@ public final class DbErrors {
 
     /**
      * 재시도해도 같은 결과인 오류: SQLState 21(카디널리티 — 한 문장이 같은 행을 두 번 upsert)·22(데이터)·23(제약 — 파티션 없음 포함)·
-     * 42(문법·권한). 파티션 없음은 3회 재시도 사이에 ensurePartitions 가 만들 수 있어 바로 버리지 않는다. 연결·자원 오류는 일시 장애로 본다.
+     * 42(문법·권한). 파티션 없음({@link #mayBeMissingPartition})이면 저장기가 다시 쓰기 전에 파티션을 만든다 — 그래서 바로 버리지 않는다(3회 시도).
+     * 연결·자원 오류는 일시 장애로 본다.
      */
     public static boolean isPermanent(Throwable e) {
         if (isTransient(e)) return false;
@@ -45,6 +46,17 @@ public final class DbErrors {
                 return st.startsWith("21") || st.startsWith("22") || st.startsWith("23") || st.startsWith("42");
             }
         }
+        return false;
+    }
+
+    /**
+     * 행이 들어갈 파티션이 없을 수 있는 오류: SQLState 23514(check_violation) — PostgreSQL 은 'no partition of relation … found for row' 를 이 부호로
+     * 낸다. 진짜 CHECK 위반도 같은 부호지만 그때 파티션 보장은 아무것도 만들지 않아(카탈로그 확인 몇 번) 결과가 같다 — 서버 로캘을 따르는 메시지 글자에
+     * 기대지 않는다. 항적 · 선박 저장기가 이것이면 다시 쓰기 전에 파티션을 만든다(QA-1240: 오늘(UTC) 파티션이 없던 동안의 행을 모두 버렸다).
+     */
+    public static boolean mayBeMissingPartition(Throwable e) {
+        for (Throwable c = e; c != null; c = c.getCause() == c ? null : c.getCause())
+            if (c instanceof SQLException s && s.getSQLState() != null) return "23514".equals(s.getSQLState());
         return false;
     }
 

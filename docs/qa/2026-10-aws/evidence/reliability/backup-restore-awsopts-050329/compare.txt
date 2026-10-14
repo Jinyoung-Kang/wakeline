@@ -1,0 +1,42 @@
+ok   aircraft: rows 127 -> 127  md5 same
+ok   airport: rows 13 -> 13  md5 same
+ok   airspace: rows 20 -> 20  md5 same
+ok   airspace_edition: rows 1 -> 1  md5 same
+ok   alert_event: rows 1670 -> 1670  md5 same
+ok   app_setting: rows 12 -> 12  md5 same
+ok   audit_log: rows 14 -> 14  md5 same
+ok   flyway_schema_history: rows 21 -> 21  md5 same
+ok   ingest_gap: rows 7 -> 7  md5 same
+ok   ingest_run: rows 731 -> 731  md5 same
+ok   kst_day_cutover: rows 1 -> 1  md5 same
+ok   marine_grid4: rows 0 -> 0  md5 same
+ok   metar_obs: rows 39 -> 39  md5 same
+ok   ops_resolution: rows 0 -> 0  md5 same
+ok   ops_user: rows 1 -> 1  md5 same
+ok   port_call: rows 0 -> 0  md5 same
+ok   port_call_coverage: rows 0 -> 0  md5 same
+ok   provider_budget_day: rows 12 -> 12  md5 same
+ok   provider_switch: rows 12 -> 12  md5 same
+ok   quality_event: rows 0 -> 0  md5 same
+ok   quality_rule_count: rows 0 -> 0  md5 same
+ok   quality_rule_count_utc_legacy: rows 0 -> 0  md5 same
+ok   radar_frame: rows 22 -> 22  md5 same
+ok   retained_track: rows 0 -> 0  md5 same
+ok   ship: rows 405 -> 405  md5 same
+ok   ship_position_20261012: 0 -> 0 (원해상도 — 기본 백업은 행을 담지 않는다)
+DIFF ship_position_20261013: 190 -> 190 (원해상도 — 기본 백업은 행을 담지 않는다)
+ok   ship_position_20261014: 0 -> 0 (원해상도 — 기본 백업은 행을 담지 않는다)
+ok   ship_position_20261015: 0 -> 0 (원해상도 — 기본 백업은 행을 담지 않는다)
+ok   ship_position_20261016: 0 -> 0 (원해상도 — 기본 백업은 행을 담지 않는다)
+ok   sigmet: rows 3036 -> 3036  md5 same
+ok   stats_daily: rows 46 -> 46  md5 same
+ok   stats_daily_utc_legacy: rows 0 -> 0  md5 same
+ok   track_point_1m: rows 11649 -> 11649  md5 same
+ok   track_point_20261010: 0 -> 0 (원해상도 — 기본 백업은 행을 담지 않는다)
+ok   track_point_20261011: 0 -> 0 (원해상도 — 기본 백업은 행을 담지 않는다)
+ok   track_point_20261012: 0 -> 0 (원해상도 — 기본 백업은 행을 담지 않는다)
+DIFF track_point_20261013: 635 -> 635 (원해상도 — 기본 백업은 행을 담지 않는다)
+ok   track_point_20261014: 0 -> 0 (원해상도 — 기본 백업은 행을 담지 않는다)
+ok   track_point_20261015: 0 -> 0 (원해상도 — 기본 백업은 행을 담지 않는다)
+ok   track_point_20261016: 0 -> 0 (원해상도 — 기본 백업은 행을 담지 않는다)
+ok   wx_warning: rows 9 -> 9  md5 same

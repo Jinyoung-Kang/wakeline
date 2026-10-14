@@ -1,0 +1,28 @@
+        relname         |  size   | est_rows 
+------------------------+---------+----------
+ track_point_20261013   | 1524 MB |  8928021
+ track_point_20261012   | 1524 MB |  8928021
+ alert_event            | 1476 MB |  1179791
+ track_point_1m         | 1288 MB |  8533448
+ retained_track         | 621 MB  |  3455822
+ ship_position_20261013 | 568 MB  |  3322796
+ ship_position_20261012 | 567 MB  |  3313397
+ track_point_20261014   | 487 MB  |  2989547
+ ship_position_20261014 | 185 MB  |  1114038
+ sigmet                 | 113 MB  |   200528
+ ingest_run             | 107 MB  |   377606
+ wx_warning             | 33 MB   |   112003
+ aircraft               | 31 MB   |   200127
+ ship                   | 13 MB   |    40404
+ quality_event          | 11 MB   |    65931
+ spatial_ref_sys        | 7144 kB |     8500
+ metar_obs              | 5328 kB |    18382
+ stats_daily            | 4976 kB |    32464
+(18 rows)
+
+   db    
+---------
+ 8580 MB
+(1 row)
+
+db_size_end_max=8736 MB

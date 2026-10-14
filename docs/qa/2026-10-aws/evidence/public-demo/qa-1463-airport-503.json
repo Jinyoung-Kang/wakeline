@@ -1,0 +1,6 @@
+{
+  "requests": 1,
+  "error": "기상 이력을 불러오지 못했습니다(HTTP 503).\n요청 id\nqa1463aaaabbbbccccddddeeeeffff00\n복사",
+  "retryButtons": [],
+  "hasMetar": false
+}

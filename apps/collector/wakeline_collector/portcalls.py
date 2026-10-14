@@ -17,7 +17,7 @@ import xml.etree.ElementTree as ET  # noqa: S405 — DOCTYPE·ENTITY 가 있는 
 from dataclasses import dataclass, fields
 from datetime import UTC, date, datetime, timedelta
 
-from wakeline_collector.masking import mask
+from wakeline_collector.masking import SCAN_MAX, mask, mask_head
 from wakeline_collector.textutil import clean_text
 from wakeline_collector.timeutil import kst_date
 
@@ -141,8 +141,17 @@ def _xml_text(body: bytes) -> str:
 
 
 def _leaf_text(root: ET.Element) -> str:
-    parts = [t for t in (clean_text(e.text, _ERROR_TEXT_MAX) for e in root.iter()) if t]
-    return " ".join(parts)[:_ERROR_TEXT_MAX]
+    parts: list[str] = []
+    size = 0
+    # 가리기 전에는 자르지 않는다(QA-1140) — 가릴 앞부분(SCAN_MAX)을 넘게 모으면 멈추고, mask_head 가 끝의 비밀값 조각을 지운 뒤 가리고 자른다
+    for e in root.iter():
+        t = clean_text(e.text, SCAN_MAX + 1)
+        if t:
+            parts.append(t)
+            size += len(t) + 1
+            if size > SCAN_MAX:
+                break
+    return mask_head(" ".join(parts), _ERROR_TEXT_MAX)
 
 
 # ---- 입출항 색인(ADR-022 개정 — clsgn 이 거르지 않아 호출부호 없이 항만청 · 날짜별로 모두 받는다) ------------------------------------------
@@ -337,7 +346,8 @@ def _checked_body(body: bytes) -> tuple[ET.Element | None, int]:
     if code is None:
         raise PortCallParseError("resultCode missing")
     if code != "00":
-        raise PortCallApiError(code, _text(header, "resultMsg", _ERROR_TEXT_MAX))
+        message = mask_head(_text(header, "resultMsg", SCAN_MAX + 1), _ERROR_TEXT_MAX)  # 가린 뒤 자른다(QA-1140)
+        raise PortCallApiError(code, message or None)
     body_el = _child(root, "body")
     total_raw = _text(body_el, "totalCount", 16)
     if total_raw is None or not total_raw.isdigit():

@@ -2,6 +2,7 @@ package dev.wakeline.ships.web;
 
 import dev.wakeline.geo.Bbox;
 import dev.wakeline.platform.config.AppProperties;
+import dev.wakeline.platform.support.Spaces;
 import dev.wakeline.platform.web.BboxParam;
 import dev.wakeline.platform.web.Etags;
 import dev.wakeline.platform.web.Meta;
@@ -506,7 +507,7 @@ public class ShipController {
     }
 
     static String normalizeMmsi(String mmsi) {
-        String m = mmsi == null ? "" : mmsi.trim();
+        String m = mmsi == null ? "" : Spaces.strip(mmsi); // 공백 글자만 — trim() 은 제어 문자(U+0000–U+001F)도 지웠다(QA-1103)
         if (!MMSI.matcher(m).matches()) throw Problem.badRequest("BAD_MMSI", "mmsi must be 9 digits");
         return m;
     }

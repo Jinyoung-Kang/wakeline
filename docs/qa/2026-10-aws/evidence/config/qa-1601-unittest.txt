@@ -1,0 +1,30 @@
+FAIL
+
+======================================================================
+FAIL: test_qa_1601_one_ip_gets_at_most_five_guesses_even_when_concurrent (test_qa_1601_gate_limiter_race.Qa1601GateLimiterRaceTest.test_qa_1601_one_ip_gets_at_most_five_guesses_even_when_concurrent)
+기대: 한 IP 의 틀린 코드는 15분에 5회까지만 확인(401), 나머지는 429. 실제(고치기 전): 동시에 보낸 20회가 모두 확인된다.
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jinyoung/Projects/wakeline/infra/tests/test_qa_1601_gate_limiter_race.py", line 104, in test_qa_1601_one_ip_gets_at_most_five_guesses_even_when_concurrent
+    self.assertLessEqual(got[401], self.gate.IP_MAX_FAILS,
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                         f"한 IP 가 동시에 보낸 {BURST}회 중 코드를 실제로 맞혀 본(401) 수 — 응답 {dict(got)}")
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 20 not less than or equal to 5 : 한 IP 가 동시에 보낸 20회 중 코드를 실제로 맞혀 본(401) 수 — 응답 {401: 20}
+
+======================================================================
+FAIL: test_qa_1601_whole_gate_checks_at_most_thirty_codes_per_hour_even_when_concurrent (test_qa_1601_gate_limiter_race.Qa1601GateLimiterRaceTest.test_qa_1601_whole_gate_checks_at_most_thirty_codes_per_hour_even_when_concurrent)
+기대: 전체로 틀린 코드 30회가 차면 그 뒤 시도는 잠김(429). 실제(고치기 전): 서로 다른 IP 40개가 동시에 보내면 40회 모두 확인된다.
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jinyoung/Projects/wakeline/infra/tests/test_qa_1601_gate_limiter_race.py", line 112, in test_qa_1601_whole_gate_checks_at_most_thirty_codes_per_hour_even_when_concurrent
+    self.assertLessEqual(got[401], self.gate.GLOBAL_MAX_FAILS,
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                         f"서로 다른 IP {len(ips)}개가 동시에 보낸 요청 중 코드를 맞혀 본(401) 수 — 응답 {dict(got)}")
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 40 not less than or equal to 30 : 서로 다른 IP 40개가 동시에 보낸 요청 중 코드를 맞혀 본(401) 수 — 응답 {401: 40}
+
+----------------------------------------------------------------------
+Ran 2 tests in 1.662s
+
+FAILED (failures=2)

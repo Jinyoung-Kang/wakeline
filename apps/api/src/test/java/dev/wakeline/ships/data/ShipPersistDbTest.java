@@ -319,6 +319,7 @@ class ShipPersistDbTest {
         jobs.ensurePartitions();
         String ahead = "ship_position_" + LocalDate.now(ZoneOffset.UTC).plusDays(3).format(DateTimeFormatter.BASIC_ISO_DATE);
         assertThat(admin.sql("SELECT count(*) FROM pg_class WHERE relname = :n").param("n", ahead).query(Long.class).single()).isEqualTo(1L);
+        jobs.catchUp(); // 기동 뒤 첫 따라잡기가 끝난 뒤(그 전에는 선박 위치 파티션도 지우지 않는다 — Qa1201ShipPartitionHeldUntilFirstCatchUpDbTest)
         jobs.dropOldPartitions();
         assertThat(admin.sql("SELECT count(*) FROM pg_class WHERE relname = :n").param("n", old).query(Long.class).single()).isZero();
         Map<String, Object> fn = admin.sql("SELECT count(*) n FROM pg_proc WHERE proname LIKE 'ship_position_%' AND prosecdef").query().singleRow();

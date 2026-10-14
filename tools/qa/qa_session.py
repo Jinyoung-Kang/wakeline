@@ -28,9 +28,22 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-def password(user: str) -> str:
+def _creds() -> dict:
     with open(CREDS) as f:
-        return json.load(f)["users"][user]
+        return json.load(f)
+
+
+def account(user: str) -> tuple[str, str]:
+    """(로그인 이름, 비밀번호). QA_CREDS 가 계정 하나 모양({"username", "password"} — AWS QA 2026-10-14 의 ops-A.json · ops-B.json)이면
+    어떤 이름을 부탁하든 그 계정을 쓴다(도구들이 qa-a · qa-b 를 고정해 두었다). 아니면 {"users": {이름: 비밀번호}}."""
+    c = _creds()
+    if "username" in c and "password" in c:
+        return c["username"], c["password"]
+    return user, c["users"][user]
+
+
+def password(user: str) -> str:
+    return account(user)[1]
 
 
 class OpsSession:
@@ -46,7 +59,9 @@ class OpsSession:
         self.request("GET", "/api/v1/status")  # 첫 응답이 CSRF 쿠키를 준다(ops 경로가 아니어도 같은 저장소)
         self.request("GET", "/api/v1/ops/session")
         if user and login:
-            st, _, body = self.request("POST", "/api/v1/ops/session", {"username": user, "password": password(user)})
+            name, pw = account(user)
+            self.user = name
+            st, _, body = self.request("POST", "/api/v1/ops/session", {"username": name, "password": pw})
             if st != 200:
                 raise RuntimeError(f"login failed for {user}: {st} {body[:200]!r}")
 

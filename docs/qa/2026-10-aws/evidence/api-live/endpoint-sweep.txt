@@ -1,0 +1,32 @@
+api-live     200       3 ms  /healthz                                                               health=['ok', None]
+api-live     200      11 ms  /api/v1/status                                                         
+api-live     200      11 ms  /api/v1/aircraft?bbox=124,33,132,39                                    
+api-live     200       9 ms  /api/v1/aircraft/search?q=B-                                           
+api-live     200      10 ms  /api/v1/aircraft/71aa64                                                
+api-live     200      15 ms  /api/v1/aircraft/71aa64/track                                          
+api-live     200       7 ms  /api/v1/ships?bbox=120,30,135,40                                       
+api-live     200       9 ms  /api/v1/ships/search?q=44                                              
+api-live     200       9 ms  /api/v1/ships/440095870                                                
+api-live     200       7 ms  /api/v1/ships/440095870/track                                          
+api-live     200       7 ms  /api/v1/ships/coverage                                                 
+api-live     200      10 ms  /api/v1/ais/gaps?from=2026-10-13T14%3A00%3A01Z                         
+api-live     200      12 ms  /api/v1/traffic/grid                                                   stale=True
+api-live     200       7 ms  /api/v1/sigmets                                                        
+api-live     200       8 ms  /api/v1/sigmets/GVSC%3A1%3A1791919784                                  
+api-live     200      14 ms  /api/v1/alerts                                                         
+api-live     200       9 ms  /api/v1/alerts/history                                                 
+api-live     200      11 ms  /api/v1/radar/frames                                                   
+api-live     200       8 ms  /api/v1/radar/kr                                                       stale=True
+api-live     200       5 ms  /api/v1/airports?bbox=124,33,132,39                                    
+api-live     200       9 ms  /api/v1/airports/RKSI/wx                                               
+api-live     200      15 ms  /api/v1/replay?at=2026-10-13T19%3A55%3A01Z&bbox=124,33,132,39          
+api-live     200       9 ms  /api/v1/stats/sigmet?from=2026-10-13&to=2026-10-13                     
+api-live     200      13 ms  /api/v1/stats/traffic?day=2026-10-13                                   
+api-live     200       5 ms  /api/v1/stats/alerts?from=2026-10-13&to=2026-10-13                     
+api-live     200       8 ms  /api/v1/airspace                                                       
+api-live     200       9 ms  /api/v1/warnings                                                       
+api-live     200      17 ms  /api/v1/warnings/history?from=2026-10-06T20%3A00%3A01Z                 
+api-live     200      16 ms  /api/v1/watch?aircraft=71aa64&ships=440095870&airports=RKSI            
+api-live     200      12 ms  /api/v1/alerts/1791921591013008                                        
+api-live     404      10 ms  /api/v1/radar/kr/202601010000.png                                      code=NOT_FOUND
+api-live     200     344 ms  /api/v1/openapi                                                        

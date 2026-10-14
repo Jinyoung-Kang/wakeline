@@ -50,7 +50,9 @@ import java.util.function.Supplier;
  *       선택이 없고 줌 ≥ 7 이며 화면 중심이 고정 관심 지역 원 밖이면 핫 리전(hot) 수요(셀 키는 {@link HotCell#forViewport}).
  *       원 안이면 covered_by_region(임대 없음). 같은 hex·셀은 세션끼리 임대 하나를 나눈다.</li>
  *   <li>한 세션이 같은 hex 를 30분 넘게 연속 선택하면(비용 상한) 수요를 내지 않고 expired_session_cap 을 알린다. 다시 선택하면 새로 시작.</li>
- *   <li>상한: hot 6 셀 · focus 50 hex(세션 수 많은 순 → 먼저 요청된 순). 상한 밖 세션에는 throttled.</li>
+ *   <li>상한: hot 6 셀 · focus 50 hex(세션 수 많은 순 → 먼저 요청된 순). 상한 밖 세션에는 throttled.
+ *       hot 은 IP 당 몫이 있다(ADR-013 개정 2026-10-14 · QA-1350): 다른 IP 가 셀을 원하는 동안 한 IP 만 원하는 셀은 그 IP 마다 3 셀(전체의 절반)까지만
+ *       임대하고, 남는 자리가 있을 때만 몫을 넘겨 쥔다({@link #chooseHot}).</li>
  *   <li>focus 메타의 callsign(계약 v4 §G A-1): 화면이 보는 병합 뷰의 그 hex 콜사인을 노선 읽기와 같은 규칙({@link RouteReader#normalizeCallsign})으로
  *       정규화한 값 — 수집기는 이 콜사인으로 노선을 조회한다(api 가 읽는 캐시 키와 같다). 콜사인을 모르거나 형식이 틀리면 키 없음.</li>
  *   <li>세션 제한(계약 v3 §C — 남용 방지): 한 세션이 새로 올리는 hex·셀은 60 s 창에 각각 6개까지만 임대에 반영한다. 넘으면 그 세션의 직전
@@ -75,6 +77,12 @@ public class DemandService implements SmartLifecycle {
     public static final long FOCUS_SESSION_CAP_MS = 30 * 60_000L;
     public static final int HOT_MIN_ZOOM = 7;
     public static final int MAX_HOT_CELLS = 6;
+    /**
+     * 핫 리전 셀의 IP 당 몫(QA-1350 · ADR-013 개정 2026-10-14 — 사용자 결정 '전체의 절반'): 다른 IP 가 원하는 셀이 상한 안에 들지 못하는 동안 한 IP 만
+     * 원하는 셀은 IP 마다 이만큼까지만 임대한다. IP 당 WS 연결 상한(5)이 전체 셀 상한(6)과 거의 같아, 몫이 없으면 먼저 연결한 한 IP 가 연결을 유지하는 한
+     * 6 셀 중 5 셀을 쥐고 뒤에 온 방문자의 곳은 throttled 였다.
+     */
+    public static final int MAX_HOT_CELLS_PER_IP = MAX_HOT_CELLS / 2;
     public static final int MAX_FOCUS_HEXES = 50;
     /** 세션 제한(계약 v3 §C): 새 hex·새 셀은 각각 이 창(60 s)에 이 수(6)까지. */
     public static final int SESSION_NEW_KEYS_MAX = 6;
@@ -224,6 +232,7 @@ public class DemandService implements SmartLifecycle {
         // 임대에 올리는 것은 세션 제한을 거친 수요(demandHeld) — 제한에 걸린 세션은 직전 임대를 유지한다
         Map<String, Integer> hotCount = new LinkedHashMap<>(), focusCount = new LinkedHashMap<>();
         Map<String, HotCell> cells = new HashMap<>();
+        Map<String, Set<String>> hotIps = new HashMap<>(); // 셀 → 그 셀을 원하는 세션들의 IP(IP 당 몫 — chooseHot)
         Set<WsSession> limited = new HashSet<>();
         for (Want w : wants) {
             if (!admit(w, nowMs)) limited.add(w.session());
@@ -232,11 +241,12 @@ public class DemandService implements SmartLifecycle {
             if (h.kind() == Kind.HOT) {
                 hotCount.merge(h.key(), 1, Integer::sum);
                 cells.putIfAbsent(h.key(), h.cell());
+                hotIps.computeIfAbsent(h.key(), k -> new HashSet<>()).add(String.valueOf(w.session().ip));
             } else {
                 focusCount.merge(h.key(), 1, Integer::sum);
             }
         }
-        List<String> hot = choose(hotCount, hotFirstAt, MAX_HOT_CELLS, nowMs);
+        List<String> hot = chooseHot(hotCount, hotIps, hotFirstAt, MAX_HOT_CELLS, MAX_HOT_CELLS_PER_IP, nowMs);
         List<String> focus = choose(focusCount, focusFirstAt, MAX_FOCUS_HEXES, nowMs);
 
         List<DemandLeases.Lease> hotLeases = new ArrayList<>(hot.size());
@@ -327,6 +337,33 @@ public class DemandService implements SmartLifecycle {
         List<String> keys = new ArrayList<>(counts.keySet());
         keys.sort(Comparator.<String>comparingInt(k -> -counts.get(k)).thenComparingLong(firstAt::get).thenComparing(Comparator.naturalOrder()));
         return keys.size() > cap ? List.copyOf(keys.subList(0, cap)) : List.copyOf(keys);
+    }
+
+    /**
+     * 핫 리전 셀 고르기(QA-1350 · ADR-013 개정 2026-10-14): {@link #choose} 와 같은 순위(세션 수 많은 순 → 먼저 요청된 순 → 키 순)로 고르되, 한 IP 만 원하는
+     * 셀은 IP 마다 perIp 개까지만 먼저 넣고 나머지는 미룬다. 여러 IP 가 함께 보는 셀은 누구의 몫으로도 세지 않는다(나눠 쓰는 칸 — 그 IP 들 모두에게 득).
+     * 자리가 남으면 미룬 셀을 같은 순위로 채운다 — 다른 IP 가 원하는 셀이 모두 들어간 뒤에야 한 IP 가 몫을 넘겨 쥐므로, 혼자 쓰는 방문자는 예전처럼 6 셀까지
+     * 쓰고 남는 자리를 버리지 않는다. 몫을 넘긴 셀은 새 IP 가 오면 다음 계산(≤ 1 s 모음 · 10 s 주기)에 밀려난다(throttled).
+     */
+    static List<String> chooseHot(Map<String, Integer> counts, Map<String, Set<String>> ips, Map<String, Long> firstAt, int cap, int perIp, long nowMs) {
+        List<String> out = new ArrayList<>(), deferred = new ArrayList<>();
+        Map<String, Integer> held = new HashMap<>();
+        for (String k : choose(counts, firstAt, Integer.MAX_VALUE, nowMs)) {
+            if (out.size() >= cap) break;
+            Set<String> by = ips.getOrDefault(k, Set.of());
+            String only = by.size() == 1 ? by.iterator().next() : null;
+            if (only != null && held.getOrDefault(only, 0) >= perIp) {
+                deferred.add(k);
+                continue;
+            }
+            out.add(k);
+            if (only != null) held.merge(only, 1, Integer::sum);
+        }
+        for (String k : deferred) {
+            if (out.size() >= cap) break;
+            out.add(k);
+        }
+        return List.copyOf(out);
     }
 
     private String hotMeta(HotCell c, int sessions, long firstAtMs) {

@@ -1,0 +1,185 @@
+Timing is on.
+SET
+Time: 0.108 ms
+SET
+Time: 0.018 ms
+== alerts.history 첫 쪽 — 기본 24 h
+                                                      QUERY PLAN                                                       
+-----------------------------------------------------------------------------------------------------------------------
+ Limit (actual time=0.242..0.342 rows=51.00 loops=1)
+   Buffers: shared hit=45
+   ->  Incremental Sort (actual time=0.241..0.336 rows=51.00 loops=1)
+         Sort Key: e.entered_at DESC, e.id DESC
+         Presorted Key: e.entered_at
+         Full-sort Groups: 2  Sort Methods: top-N heapsort, quicksort  Average Memory: 73kB  Peak Memory: 73kB
+         Buffers: shared hit=45
+         ->  Nested Loop (actual time=0.038..0.253 rows=70.00 loops=1)
+               Buffers: shared hit=36
+               ->  Index Scan using alert_event_entered on alert_event e (actual time=0.007..0.031 rows=70.00 loops=1)
+                     Index Cond: ((entered_at >= (now() - '1 day'::interval)) AND (entered_at <= now()))
+                     Index Searches: 1
+                     Buffers: shared hit=17
+               ->  Memoize (actual time=0.001..0.001 rows=1.00 loops=70)
+                     Cache Key: e.sigmet_id
+                     Cache Mode: logical
+                     Hits: 64  Misses: 6  Evictions: 0  Overflows: 0  Memory Usage: 1kB
+                     Buffers: shared hit=19
+                     ->  Index Scan using sigmet_pkey on sigmet s (actual time=0.007..0.007 rows=1.00 loops=6)
+                           Index Cond: (id = e.sigmet_id)
+                           Index Searches: 6
+                           Buffers: shared hit=19
+ Planning:
+   Buffers: shared hit=504
+ Planning Time: 0.697 ms
+ Execution Time: 0.388 ms
+(26 rows)
+
+Time: 1.973 ms
+== alerts.history 첫 쪽 — 25일 전 1 h(QA-401 의 오래된 창)
+                                                                         QUERY PLAN                                                                         
+------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit (actual time=0.007..0.007 rows=0.00 loops=1)
+   Buffers: shared hit=2
+   ->  Incremental Sort (actual time=0.007..0.007 rows=0.00 loops=1)
+         Sort Key: e.entered_at DESC, e.id DESC
+         Presorted Key: e.entered_at
+         Full-sort Groups: 1  Sort Method: quicksort  Average Memory: 25kB  Peak Memory: 25kB
+         Buffers: shared hit=2
+         ->  Nested Loop (actual time=0.005..0.005 rows=0.00 loops=1)
+               Buffers: shared hit=2
+               ->  Index Scan using alert_event_entered on alert_event e (actual time=0.005..0.005 rows=0.00 loops=1)
+                     Index Cond: ((entered_at >= (now() - '25 days'::interval)) AND (entered_at <= ((now() - '25 days'::interval) + '01:00:00'::interval)))
+                     Index Searches: 1
+                     Buffers: shared hit=2
+               ->  Index Scan using sigmet_pkey on sigmet s (never executed)
+                     Index Cond: (id = e.sigmet_id)
+                     Index Searches: 0
+ Planning:
+   Buffers: shared hit=13
+ Planning Time: 0.190 ms
+ Execution Time: 0.023 ms
+(20 rows)
+
+Time: 0.385 ms
+== alerts.history 첫 쪽 — 29일 전 1 h
+                                                                         QUERY PLAN                                                                         
+------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit (actual time=0.004..0.005 rows=0.00 loops=1)
+   Buffers: shared hit=2
+   ->  Incremental Sort (actual time=0.004..0.004 rows=0.00 loops=1)
+         Sort Key: e.entered_at DESC, e.id DESC
+         Presorted Key: e.entered_at
+         Full-sort Groups: 1  Sort Method: quicksort  Average Memory: 25kB  Peak Memory: 25kB
+         Buffers: shared hit=2
+         ->  Nested Loop (actual time=0.003..0.003 rows=0.00 loops=1)
+               Buffers: shared hit=2
+               ->  Index Scan using alert_event_entered on alert_event e (actual time=0.003..0.003 rows=0.00 loops=1)
+                     Index Cond: ((entered_at >= (now() - '29 days'::interval)) AND (entered_at <= ((now() - '29 days'::interval) + '01:00:00'::interval)))
+                     Index Searches: 1
+                     Buffers: shared hit=2
+               ->  Index Scan using sigmet_pkey on sigmet s (never executed)
+                     Index Cond: (id = e.sigmet_id)
+                     Index Searches: 0
+ Planning:
+   Buffers: shared hit=13
+ Planning Time: 0.169 ms
+ Execution Time: 0.018 ms
+(20 rows)
+
+Time: 0.336 ms
+== alerts.history 커서 쪽(둘째 쪽) — 25일 전 1 h
+Time: 0.165 ms
+Time: 0.151 ms
+== alerts.history 첫 쪽 — 30일 창 전체 · hex f10000
+no rows returned for \gset
+ERROR:  syntax error at or near ":"
+LINE 8: ...LECT c.entered_at FROM alert_event c WHERE c.id = :cur), :cu...
+                                                             ^
+                                                  QUERY PLAN                                                   
+---------------------------------------------------------------------------------------------------------------
+ Limit (actual time=0.719..0.724 rows=32.00 loops=1)
+   Buffers: shared hit=86 read=21
+   ->  Sort (actual time=0.718..0.720 rows=32.00 loops=1)
+         Sort Key: e.entered_at DESC, e.id DESC
+         Sort Method: quicksort  Memory: 57kB
+         Buffers: shared hit=86 read=21
+         ->  Nested Loop (actual time=0.125..0.692 rows=32.00 loops=1)
+               Buffers: shared hit=86 read=21
+               ->  Bitmap Heap Scan on alert_event e (actual time=0.089..0.208 rows=32.00 loops=1)
+                     Recheck Cond: (hex = 'f10000'::bpchar)
+                     Filter: ((entered_at <= now()) AND (entered_at >= (now() - '30 days'::interval)))
+                     Heap Blocks: exact=9
+                     Buffers: shared hit=3 read=8
+                     ->  Bitmap Index Scan on alert_event_hex_id (actual time=0.080..0.080 rows=32.00 loops=1)
+                           Index Cond: (hex = 'f10000'::bpchar)
+                           Index Searches: 1
+                           Buffers: shared hit=1 read=1
+               ->  Index Scan using sigmet_pkey on sigmet s (actual time=0.012..0.012 rows=1.00 loops=32)
+                     Index Cond: (id = e.sigmet_id)
+                     Index Searches: 32
+                     Buffers: shared hit=83 read=13
+ Planning:
+   Buffers: shared hit=13
+ Planning Time: 0.260 ms
+ Execution Time: 0.748 ms
+(25 rows)
+
+Time: 1.299 ms
+== 일반 계획(force_generic_plan) — 25일 전 1 h 첫 쪽 · 30일 창 첫 쪽
+PREPARE
+Time: 0.242 ms
+SET
+Time: 0.088 ms
+                                                      QUERY PLAN                                                      
+----------------------------------------------------------------------------------------------------------------------
+ Limit (actual time=0.006..0.007 rows=0.00 loops=1)
+   Buffers: shared hit=2
+   ->  Incremental Sort (actual time=0.006..0.006 rows=0.00 loops=1)
+         Sort Key: e.entered_at DESC, e.id DESC
+         Presorted Key: e.entered_at
+         Full-sort Groups: 1  Sort Method: quicksort  Average Memory: 25kB  Peak Memory: 25kB
+         Buffers: shared hit=2
+         ->  Nested Loop (actual time=0.004..0.004 rows=0.00 loops=1)
+               Buffers: shared hit=2
+               ->  Index Scan using alert_event_entered on alert_event e (actual time=0.003..0.004 rows=0.00 loops=1)
+                     Index Cond: ((entered_at >= $1) AND (entered_at <= $2))
+                     Index Searches: 1
+                     Buffers: shared hit=2
+               ->  Index Scan using sigmet_pkey on sigmet s (never executed)
+                     Index Cond: (id = e.sigmet_id)
+                     Index Searches: 0
+ Planning:
+   Buffers: shared hit=5
+ Planning Time: 0.197 ms
+ Execution Time: 0.026 ms
+(20 rows)
+
+Time: 0.427 ms
+                                                      QUERY PLAN                                                       
+-----------------------------------------------------------------------------------------------------------------------
+ Limit (actual time=0.253..0.356 rows=51.00 loops=1)
+   Buffers: shared hit=227
+   ->  Incremental Sort (actual time=0.252..0.352 rows=51.00 loops=1)
+         Sort Key: e.entered_at DESC, e.id DESC
+         Presorted Key: e.entered_at
+         Full-sort Groups: 2  Sort Methods: top-N heapsort, quicksort  Average Memory: 73kB  Peak Memory: 73kB
+         Buffers: shared hit=227
+         ->  Nested Loop (actual time=0.020..0.317 rows=70.00 loops=1)
+               Buffers: shared hit=227
+               ->  Index Scan using alert_event_entered on alert_event e (actual time=0.009..0.027 rows=70.00 loops=1)
+                     Index Cond: ((entered_at >= $1) AND (entered_at <= $2))
+                     Index Searches: 1
+                     Buffers: shared hit=17
+               ->  Index Scan using sigmet_pkey on sigmet s (actual time=0.002..0.002 rows=1.00 loops=70)
+                     Index Cond: (id = e.sigmet_id)
+                     Index Searches: 70
+                     Buffers: shared hit=210
+ Planning Time: 0.008 ms
+ Execution Time: 0.372 ms
+(19 rows)
+
+Time: 0.482 ms
+RESET
+Time: 0.065 ms
+DEALLOCATE
+Time: 0.096 ms

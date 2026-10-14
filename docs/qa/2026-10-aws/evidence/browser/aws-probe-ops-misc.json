@@ -1,0 +1,26 @@
+{
+  "grid": {
+    "activedescendant": "log-row-client-1791920095731-0",
+    "detail": true
+  },
+  "afterEsc": {
+    "detail": true,
+    "focus": {
+      "tag": "table",
+      "name": "로그 목록 — ↑/↓ 이동 · Enter 상세 · c 텍스트 복사",
+      "visible": true,
+      "outline": "solid 2px rgb(76, 144, 240)",
+      "testid": "log-grid",
+      "inViewport": true
+    }
+  },
+  "errors": {
+    "console": [
+      "Failed to load resource: the server responded with a status of 404 ()"
+    ],
+    "page": [],
+    "bad": [
+      "404 http://localhost:8701/api/v1/ops/session"
+    ]
+  }
+}

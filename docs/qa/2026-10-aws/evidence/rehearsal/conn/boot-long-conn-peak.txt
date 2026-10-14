@@ -1,0 +1,10 @@
+*                      *                            max  76 at 03:23:24
+-                      *                            max   1 at 03:23:24
+-                      -                            max   1 at 03:23:24
+buildrisk              *                            max   7 at 03:23:19
+buildrisk              wlqa-holder-buildrisk        max   7 at 03:23:19
+macro                  *                            max  63 at 03:23:19
+macro                  wlqa-holder-macro            max  63 at 03:23:19
+postgres               *                            max   5 at 03:23:19
+postgres               psql                         max   5 at 03:23:19
+samples 487
