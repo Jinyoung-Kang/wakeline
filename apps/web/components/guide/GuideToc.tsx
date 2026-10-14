@@ -29,7 +29,7 @@ export function currentSection(order: readonly string[], tops: readonly (number 
 }
 
 /**
- * 설명서 목차(이 화면의 유일한 클라이언트 코드 — 목록 자체는 서버가 그린다):
+ * 설명서 목차(이 화면의 클라이언트 코드 — 그 밖에는 스크린샷 받기 GuideImageLoader 뿐, 목록 자체는 서버가 그린다):
  * - 넓은 화면(≥ 900 px): 왼쪽에 붙어 있는 목록(sticky). 지금 읽는 절에 aria-current="location".
  * - 좁은 화면: 위에 붙는 선택 상자 — 고르면 그 절로 옮기고 제목에 초점(키보드 · 화면 읽기 프로그램이 이어서 읽는다), 주소의 #절 도 바꾼다.
  * 절 위치: 스크롤 영역([data-guide-scroll])의 scroll 이벤트(passive)를 프레임당 한 번(requestAnimationFrame)만 처리해 절 22개의 위쪽 가장자리를 잰다.

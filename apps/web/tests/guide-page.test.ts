@@ -2,6 +2,7 @@
  * 설명서 화면(/guide) — 서버 렌더 결과로 확인한다(정적 렌더 · 클라이언트 자바스크립트는 목차의 현재 위치 표시와 좁은 화면 선택 상자뿐).
  * - 목차(넓은 화면 목록 · 좁은 화면 선택 상자)의 앵커와 절 id 가 같다(순서까지).
  * - 스크린샷: 결과(manifest)가 있으면 <img>(대체 글 · width · height · loading=lazy · decoding=async), 없으면 "스크린샷 준비 중" 자리표시.
+ *   src 는 화면 가까이 왔을 때 넣는다(data-guide-src — GuideImageLoader, QA-1501). 스크립트가 없을 때를 위해 noscript 에 같은 그림.
  * - 번호: 그림 위 번호(HTML 겹침 — 이미지에 굽지 않음)마다 같은 번호의 설명 항목이 있고, 설명 목록은 1..n. 찍을 때 보이지 않은 번호는 목록에 그렇다고 적는다.
  * - 시각이 나오는 예는 KST 만 적는다(계약 v5 §G20 — 공유 형식기 lib/time 의 글자, 원문 토큰만 발표 그대로). 출처는 하단 출처 줄과 같은 목록(lib/attribution)에서.
  */
@@ -106,9 +107,10 @@ describe("screenshots", () => {
       expect(f).not.toContain("data-callout-marker");
     });
   });
-  it("every image has alt · width · height · lazy loading · async decoding and a /guide/ source", () => {
+  it("every image has alt · width · height · lazy loading · async decoding and a /guide/ source the loader puts in when near (QA-1501)", () => {
     const html = render(FULL);
-    const imgs = tags(html, "img").map(attrs);
+    const NOSCRIPT = /<noscript>([\s\S]*?)<\/noscript>/g;
+    const imgs = tags(html.replace(NOSCRIPT, ""), "img").map(attrs);
     expect(imgs).toHaveLength(PLAN.shots.length);
     imgs.forEach((a, i) => {
       expect(a.alt?.length).toBeGreaterThan(0);
@@ -117,8 +119,14 @@ describe("screenshots", () => {
       expect(a.height).toBe("900");
       expect(a.loading).toBe("lazy");
       expect(a.decoding).toBe("async");
-      expect(a.src).toBe(`/guide/${FULL.shots[PLAN.shots[i].id].file}`);
+      // 첫 그리기 전에 받지 않게 src 는 비워 두고(첫 화면 밖 그림이 첫 문단과 망을 나눴다), 화면 가까이 오면 GuideImageLoader 가 넣는다
+      expect(a.src).toBeUndefined();
+      expect(a["data-guide-src"]).toBe(`/guide/${FULL.shots[PLAN.shots[i].id].file}`);
     });
+    // 스크립트가 없으면 같은 그림(대체 글은 위 그림에 한 번만 — 여기는 빈 alt)
+    const fallback = [...html.matchAll(NOSCRIPT)].map((m) => attrs(tags(m[1], "img")[0] ?? ""));
+    expect(fallback.map((a) => a.src)).toEqual(PLAN.shots.map((s) => `/guide/${FULL.shots[s.id].file}`));
+    expect(fallback.every((a) => a.alt === "" && a.loading === "lazy")).toBe(true);
     expect(html).not.toContain("스크린샷 준비 중");
   });
   it("callout numbers over the image match the numbered list; numbers not seen at capture are said so in the list", () => {

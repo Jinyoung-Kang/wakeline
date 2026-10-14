@@ -1,0 +1,30 @@
+{
+  "vh": 823,
+  "lcpMs": 272,
+  "lcpEl": "P.g-p",
+  "offscreen": [
+    "dashboard",
+    "world",
+    "traffic",
+    "search",
+    "aircraft",
+    "hot",
+    "ship",
+    "reception",
+    "port-calls",
+    "alerts",
+    "radar",
+    "replay",
+    "stats",
+    "airport",
+    "ops",
+    "logs"
+  ],
+  "beforeScroll": [],
+  "afterScroll": [
+    {
+      "t": 2901,
+      "file": "/guide/dashboard.983c6efd68.webp"
+    }
+  ]
+}

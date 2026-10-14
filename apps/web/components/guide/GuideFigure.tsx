@@ -7,6 +7,9 @@ import type { GuideShot, ShotView } from "@/lib/guide";
  *   번호 글자는 장식(aria-hidden)이고, 같은 번호의 설명 목록이 내용이다(대체 글 + 목록으로 이미지 없이도 읽힌다).
  * - 결과가 없으면 자리표시("스크린샷 준비 중") + 그 화면의 설명 — 깨진 이미지를 보이지 않는다.
  * - 이미지: 명시 width · height(비율 예약), loading="lazy", decoding="async". 원본 크기 링크.
+ *   src 는 화면 가까이 왔을 때 넣는다(data-guide-src — GuideImageLoader · lib/guide-image-loading, QA-1501): loading="lazy" 만으로는 휴대폰 첫 화면 밖의
+ *   그림이 첫 그리기 전에 요청되어 첫 문단(LCP)과 망을 나눴다. 그 전에는 자리(비율)와 대체 글만 있다 — 대체 글 글자는 그리지 않는다(text-transparent).
+ *   스크립트가 없으면 noscript 의 같은 그림이 그 자리를 덮는다(대체 글은 위 그림에 한 번만).
  * - 모양은 globals.css 의 .g-* (번호 칸 .g-num 등) — 그림 11장 · 번호 50여 개에 같은 긴 클래스 글자를 싣지 않는다.
  */
 export function GuideFigure({ shot, view, no }: { shot: GuideShot; view: ShotView; no: number }) {
@@ -22,7 +25,9 @@ export function GuideFigure({ shot, view, no }: { shot: GuideShot; view: ShotVie
           <>
             {/* next/image 를 쓰지 않는다: 이미지 최적화가 꺼져 있고(next.config images.unoptimized) 클라이언트 컴포넌트라 이 정적 화면에 스크립트만 늘린다 */}
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={view.src} alt={shot.alt} width={view.width} height={view.height} loading="lazy" decoding="async" className="block h-auto w-full" />
+            <img data-guide-src={view.src} alt={shot.alt} width={view.width} height={view.height} loading="lazy" decoding="async" className="block h-auto w-full text-transparent" />
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <noscript><img src={view.src} alt="" width={view.width} height={view.height} loading="lazy" decoding="async" className="absolute inset-0 block h-full w-full" /></noscript>
             {view.markers.map((m) => (
               <span key={m.n} aria-hidden="true" data-callout-marker={m.n} style={{ left: `${m.x}%`, top: `${m.y}%` }} className="g-num g-mark">{m.n}</span>
             ))}

@@ -31,10 +31,11 @@ import { RECEPTION_BINS, RECEPTION_LAYER_LABEL } from "@/lib/reception-meta";
 import { GLOBAL_STALE_S, REGION_STALE_S, RX_DEAD_MS, RX_FRESH_MS } from "@/lib/ws-protocol";
 import { HOT_MIN_ZOOM } from "@/lib/viewport";
 import { GuideFigure } from "./GuideFigure";
+import { GuideImageLoader } from "./GuideImageLoader";
 import { GuideToc } from "./GuideToc";
 
 /*
- * 설명서(/guide) 본문 — 서버 컴포넌트(정적 내용, 데이터 요청 없음). 클라이언트 코드는 목차(GuideToc)뿐.
+ * 설명서(/guide) 본문 — 서버 컴포넌트(정적 내용, 데이터 요청 없음). 클라이언트 코드는 목차(GuideToc)와 스크린샷 받기(GuideImageLoader — 그리는 것 없음, QA-1501)뿐.
  * 숫자 · 문구는 가능한 한 화면 코드가 쓰는 상수를 그대로 가져온다(lib/*) — 동작이 바뀌면 설명도 같이 바뀐다.
  * 출처 목록은 하단 출처 줄과 같은 lib/attribution 에서. 시각은 화면 전체의 공유 형식기(lib/time · components/KstTime — 계약 v5 §G20, KST 만)로만 그린다
  * (7장의 예가 화면과 글자까지 같다). 예는 정해 둔 순간(아래 상수)에서 계산한다.
@@ -131,6 +132,7 @@ export function GuideView({ manifest, dropped }: { manifest: GuideManifest; drop
     <ScrollRegion label="설명서 본문" main className="h-full overflow-y-auto" data-testid="guide" data-guide-scroll="">
       <div className="mx-auto grid max-w-[1320px] grid-cols-1 gap-x-8 px-4 pb-16 min-[900px]:grid-cols-[236px_minmax(0,1fr)] min-[900px]:px-6">
         <GuideToc items={GUIDE_TOC} />
+        <GuideImageLoader />
         {/* 글줄은 읽기 좋은 폭(860 px)까지, 그림 · 표는 더 넓게 — 스크린샷의 작은 글자가 덜 줄어들게 */}
         <article className="g-doc min-w-0 max-w-[1120px] pt-4 text-[13px] leading-relaxed">
           <header className="mb-2 pb-4">

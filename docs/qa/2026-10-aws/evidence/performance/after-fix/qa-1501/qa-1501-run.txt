@@ -1,0 +1,7 @@
+
+Running 1 test using 1 worker
+
+QA-1501 vh=823 lcp=272ms P.g-p offscreenFigures=16 imageRequestsBeforeScroll=[]
+  ✓  1 e2e/qa/qa-1501-guide-offscreen-images.spec.ts:15:5 › QA-1501 /guide on a phone does not fetch off-screen screenshots while the first screen loads (3.2s)
+
+  1 passed (3.7s)
