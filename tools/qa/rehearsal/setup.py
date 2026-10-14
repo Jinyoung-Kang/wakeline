@@ -188,7 +188,8 @@ def main(argv: list[str]) -> int:
     wl = R / "wakeline.env"
     subprocess.run([sys.executable, "-B", str(ROOT / "tools/qa/make_qa_env.py"), str(wl), "--force"], check=True, capture_output=True)
     with wl.open("a", encoding="utf-8") as f:
-        f.write(f"\n# 리허설(R) — RDS 흉내 · 앞단\nRDS_HOST={RDS_NAME}\nRDS_PORT=55432\nPUBLIC_ORIGIN=http://localhost:8103\n")
+        f.write(f"\n# 리허설(R) — RDS 흉내 · 앞단\nRDS_HOST={RDS_NAME}\nRDS_PORT=55432\nPUBLIC_ORIGIN=http://localhost:8103\n"
+                "# 리허설 앞단은 http — 운영 쿠키 Secure(QA-1600 뒤 AWS 기본 true)를 끈다\nAWS_COOKIE_SECURE=false\n")
     wl.chmod(0o600)
 
     apps = R / "apps"

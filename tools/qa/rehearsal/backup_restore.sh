@@ -38,7 +38,7 @@ backup)
   log "덤프 목차 → dump-toc.txt"
   ;;
 restore)
-  mode=${1:?readme · master · keepacl · aclfix}; OUT=${2:?증거 폴더}; mkdir -p "$OUT"
+  mode=${1:?documented · readme · owner · master · keepacl · aclfix}; OUT=${2:?증거 폴더}; mkdir -p "$OUT"
   SRC="$(dirname "$OUT")"   # backup 의 증거 폴더(rows-source.json · acl-source.txt)
   log "=== restore mode=$mode"
   "$RS" aws down -v > /dev/null 2>&1
@@ -62,11 +62,13 @@ restore)
       tools "$MIG_PW pg_restore -d $AS_MIG --no-owner --no-privileges -j 2 $AWS_FILE" > "$OUT/restore.txt" 2>&1 ;;
     master)
       tools "pg_restore -d $AS_MASTER --no-owner --no-privileges -j 2 $AWS_FILE" > "$OUT/restore.txt" 2>&1 ;;
+    documented)   # aws-deploy README '백업에서 복원'(QA-1620 고친 뒤): 소유자 · 권한을 담고 postgis 를 뺀 backup.sh 덤프를 마스터로 한 트랜잭션에
+      tools "pg_restore -d $AS_MASTER --exit-on-error --single-transaction $AWS_FILE" > "$OUT/restore.txt" 2>&1 ;;
     keepacl)
       tools "pg_restore -l $DUMP_KEEP/wakeline.dump | $EXT_OUT > /tmp/list && pg_restore -d $AS_MASTER --exit-on-error --single-transaction -L /tmp/list $DUMP_KEEP/wakeline.dump" > "$OUT/restore.txt" 2>&1 ;;
     aclfix)
       tools "pg_restore -l $AWS_FILE | $EXT_OUT > /tmp/list && $MIG_PW pg_restore -d $AS_MIG --no-owner --no-privileges --exit-on-error --single-transaction -L /tmp/list $AWS_FILE" > "$OUT/restore.txt" 2>&1 ;;
-    *) echo "방식: readme · owner · master · keepacl · aclfix" >&2; exit 2 ;;
+    *) echo "방식: documented · readme · owner · master · keepacl · aclfix" >&2; exit 2 ;;
   esac
   rrc=$?; log "pg_restore rc=$rrc: $(grep -cE 'error|ERROR' "$OUT/restore.txt") error lines — $(grep -E 'error|ERROR' "$OUT/restore.txt" | head -3 | tr '\n' ' ' | cut -c1-300)"
   if [ "$mode" = aclfix ]; then

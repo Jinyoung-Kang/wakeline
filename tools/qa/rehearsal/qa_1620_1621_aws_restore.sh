@@ -5,7 +5,7 @@
 #   QA-1621  README '데이터 이전' 의 복원 옵션(--exit-on-error) → 첫 항목(COMMENT ON EXTENSION postgis)에서 멈춰 0행, 이어서 up 하면 빈 스키마로 정상처럼 뜸
 # 대조(통과해야 함): keepacl(소유자 · 권한을 담아 받은 덤프) · aclfix(받은 덤프 + 같은 판 migrate 의 ACL 덧입히기).
 #
-#   tools/qa/rehearsal/qa_1620_1621_aws_restore.sh [증거 폴더]     # 결함이 있으면 종료 코드 1(지금은 1), 고쳐지면 0
+#   tools/qa/rehearsal/qa_1620_1621_aws_restore.sh [증거 폴더]     # 결함이 있으면 종료 코드 1, 고쳐지면 0(aws-deploy 의 backup.sh 를 그대로 쓴다)
 # 쓰는 것: setup.py 가 만든 세션 임시 폴더의 시험 비밀값 · CA, 프로젝트 wlqa-rds · wlqa-aws(둘 다 down -v 로 새로 시작한다), 이미지 wakeline-*:qa.
 # 걸리는 시간: 약 15분. aws-deploy 는 읽기만(backup.sh · bootstrap.sh 를 읽기 전용 마운트로 그대로 실행).
 set -uo pipefail
@@ -29,14 +29,19 @@ python3 -B "$HERE/app_probe.py" probe --wait 30 --json "$OUT/source-probe.json" 
 log "원본 정상(probe 통과) → 백업"
 "$HERE/backup_restore.sh" backup "$OUT" > /dev/null
 
-for m in owner master readme keepacl aclfix; do   # macOS bash 3.2 — 연관 배열 없이 rc_<방식>
+# 판정(고친 뒤 — aws-deploy fix/qa-aws-2026-10 55ccc4c): 지금의 backup.sh 덤프가 ① 권한(ACL) 항목을 담고 postgis 확장 항목을 빼며
+# ② README '백업에서 복원' 절차(documented)로 복원한 뒤 wakeline 이 정상이어야 한다. 옛 절차(owner · master · readme)는 옛 덤프의 재현이라
+# 여기서는 돌리지 않는다(증거: evidence/rehearsal/qa-1620-repro — 고치기 전 실행). aclfix(옛 덤프 절차)는 대조로 남긴다.
+toc=$("$RS" rds run --rm -T tools -c "f=\$(ls -1t /backups/aws/wakeline-*.dump | head -1); echo acl=\$(pg_restore -l \"\$f\" | grep -c ' ACL '); echo ext=\$(pg_restore -l \"\$f\" | grep -cE ' EXTENSION - postgis | COMMENT - EXTENSION postgis ')" 2>/dev/null | tr '\n' ' ')
+log "backup.sh 덤프 목차: $toc"
+for m in documented aclfix; do
   "$HERE/backup_restore.sh" restore "$m" "$OUT/$m" > /dev/null 2>&1; eval "rc_$m=$?"
   log "restore $m → $(grep 'verdict mode' "$OUT/$m/run.log" | tail -1 | sed 's/^\[[^]]*\] //') (rc=$(eval echo \$rc_$m))"
 done
 fail=0
-[ "$rc_owner" = 0 ] || { log "QA-1620 재현: 소유 역할 복원 뒤 wakeline 이 정상이 아님 — $(tail -1 "$OUT/owner/probe.txt" | cut -c1-220)"; fail=1; }
-[ "$rc_master" = 0 ] || { log "QA-1620 재현: 마스터 복원 뒤 wakeline 이 정상이 아님 — $(grep -E 'up rc' "$OUT/master/run.log" | cut -c1-220)"; fail=1; }
-[ "$rc_readme" = 0 ] || { log "QA-1621 재현: README 옵션 복원 — $(grep -E 'rows:' "$OUT/readme/run.log" | cut -c1-200) / $(grep -E 'up rc' "$OUT/readme/run.log" | cut -c1-160)"; fail=1; }
-[ "$rc_keepacl" = 0 ] && [ "$rc_aclfix" = 0 ] && log "대조: keepacl · aclfix 통과(제안 절차는 동작)" || log "대조 실패: keepacl=$rc_keepacl aclfix=$rc_aclfix"
-log "결과: $([ $fail = 0 ] && echo '결함 없음' || echo '결함 재현(종료 코드 1)')"
+case "$toc" in *"acl=0"*) log "QA-1620: backup.sh 덤프에 권한 항목이 없다"; fail=1 ;; esac
+case "$toc" in *"ext=0"*) ;; *) log "QA-1621: backup.sh 덤프에 postgis 확장 항목이 남아 있다"; fail=1 ;; esac
+[ "$rc_documented" = 0 ] || { log "QA-1620: README 절차로 복원한 뒤 wakeline 이 정상이 아님 — $(tail -1 "$OUT/documented/probe.txt" 2>/dev/null | cut -c1-220)"; fail=1; }
+[ "$rc_aclfix" = 0 ] && log "대조: aclfix(옛 덤프 절차) 통과" || log "대조 실패: aclfix=$rc_aclfix"
+log "결과: $([ $fail = 0 ] && echo '결함 없음(종료 0)' || echo '결함 재현(종료 코드 1)')"
 exit $fail
