@@ -102,15 +102,50 @@ public class MaintenanceJobs {
     /** 이 잡의 시계로 본 오늘(KST 날짜) */
     LocalDate todayKst() { return LocalDate.ofInstant(clock.instant(), DAY_ZONE); }
 
-    @Scheduled(initialDelay = 5_000, fixedDelay = 6 * 3600_000)
+    /** 파티션 보장이 성공한 뒤 다시 하기까지 — 어제 ~ +3일을 만들므로 하루 몇 번이면 된다 */
+    static final Duration PARTITIONS_EVERY = Duration.ofHours(6);
+    /** 마지막으로 두 표의 파티션 보장이 모두 성공한 때(없으면 기동 뒤 아직) */
+    private volatile Instant partitionsOkAt;
+    /** 이어진 보장 실패 수 · 다음 시도까지 건너뛸 틱(1분) 수 — 예약 작업 스레드만 바꾼다 */
+    private volatile int partitionFailures;
+    private volatile int partitionSkipTicks;
+
+    /**
+     * 항적 · 선박 위치의 일(UTC) 파티션(어제 ~ +3일)을 만든다 — 기동 5 s 뒤, 성공하면 {@link #PARTITIONS_EVERY} 뒤에 다시. 실패하면 다음 틱(1분 뒤)에 다시
+     * 하고, 이어서 실패하면 건너뛰는 틱을 두 배씩 늘린다(따라잡기와 같은 물러남 — 1 · 2 · 4 · … 분, {@link #CATCH_UP_RETRY_MAX} 상한). 틱을 세어 물러난다
+     * (시계가 아니라 — 실패 뒤 첫 다시 시도는 늘 바로 다음 틱이다).
+     * 예전에는 6 h 고정 주기였다(QA-1240): 3일 넘게 멈춘 뒤(연휴 — 마지막 보장의 +3일이 오늘에 닿지 않는다) 기동하면 오늘(UTC) 파티션이 없는데, 기동 순간
+     * DB 가 아직 답하지 않으면(RDS 준비 전 · 공유 RDS 연결 고갈 53300) 6 h 동안 다시 만들지 않아 그동안 들어온 항적 · 선박 위치가 '파티션 없음'(23514)으로
+     * 모두 버려지고 ACK 됐다. 저장기도 23514 로 실패한 배치는 파티션을 만든 뒤 다시 쓴다(TrackWriter · ShipWriter) — 이 작업은 들어오는 행이 없어도
+     * 앞날의 파티션을 미리 만든다. 보장은 카탈로그 확인 몇 번이라 1분마다 다시 해도 가볍다.
+     */
+    @Scheduled(initialDelay = 5_000, fixedDelay = 60_000)
     public void ensurePartitions() {
+        Instant ok = partitionsOkAt;
+        if (ok != null && clock.instant().isBefore(ok.plus(PARTITIONS_EVERY))) return;
+        if (partitionSkipTicks > 0) {
+            partitionSkipTicks--;
+            return;
+        }
+        int failures = partitionFailures + 1; // 이번에 실패하면
+        long retryMinutes = Math.min(CATCH_UP_RETRY_FIRST.toMinutes() << Math.min(failures - 1, 10), CATCH_UP_RETRY_MAX.toMinutes());
+        boolean done = true;
         for (String table : new String[]{"track_point", "ship_position"}) { // 하나가 실패해도 다른 것은 만든다
             try {
                 Integer n = db.sql("SELECT " + table + "_ensure_partitions(3)").query(Integer.class).single();
                 if (n > 0) log.info("created {} {} partitions", n, table);
             } catch (RuntimeException e) {
-                log.warn("ensure {} partitions failed: {}", table, e.toString());
+                done = false;
+                log.warn("ensure {} partitions failed (retry in {} min): {}", table, retryMinutes, e.toString());
             }
+        }
+        if (done) {
+            if (partitionFailures > 0) log.info("partitions ensured after {} failed attempt(s)", partitionFailures);
+            partitionsOkAt = clock.instant();
+            partitionFailures = 0;
+        } else {
+            partitionFailures = failures;
+            partitionSkipTicks = (int) retryMinutes - 1; // 1분 틱 — 다음 시도는 retryMinutes 틱 뒤
         }
     }
 

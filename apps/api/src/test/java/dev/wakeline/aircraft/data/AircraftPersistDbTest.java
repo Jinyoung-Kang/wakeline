@@ -131,6 +131,34 @@ class AircraftPersistDbTest {
         assertThat(acked.get()).as("re-processing cannot fix a permanent error — the message is acknowledged").isEqualTo(1);
     }
 
+    /**
+     * QA-1240: 오늘(UTC) 파티션이 없을 때(3일 넘는 정지 뒤 기동 · 기동 순간 파티션 보장 실패) 들어온 행은 '파티션 없음'(23514)이다 — 세 번 뒤 버리고 ACK
+     * 하지 않고, 파티션을 만든 뒤 다시 쓴다.
+     */
+    @Test
+    void rowsOfADayWithoutAPartitionAreWrittenAfterTheWriterCreatesIt() throws Exception {
+        java.time.LocalDate day = java.time.LocalDate.now(java.time.ZoneOffset.UTC);
+        String partition = "track_point_" + day.format(java.time.format.DateTimeFormatter.BASIC_ISO_DATE);
+        DbTestSupport.exec("wakeline", "DROP TABLE IF EXISTS " + partition);
+        try {
+            TrackWriter tw = new TrackWriter(DbTestSupport.apiJdbc(), new AircraftRepository(api, DbTestSupport.JSON), meters, 5, 10);
+            tw.start();
+            java.util.concurrent.atomic.AtomicInteger acked = new java.util.concurrent.atomic.AtomicInteger();
+            dev.wakeline.platform.support.Receipt r = new dev.wakeline.platform.support.Receipt(acked::incrementAndGet);
+            tw.enqueue(List.of(ac("f20001", 36, 127, day.atStartOfDay(java.time.ZoneOffset.UTC).toInstant().plusSeconds(60), null)), r);
+            r.release();
+            long deadline = System.currentTimeMillis() + 10_000;
+            while (System.currentTimeMillis() < deadline && acked.get() == 0) Thread.sleep(20);
+            tw.stop();
+            assertThat(acked.get()).isEqualTo(1);
+            assertThat(admin.sql("SELECT count(*) FROM track_point WHERE hex = 'f20001'").query(Long.class).single()).isEqualTo(1L);
+            assertThat(meters.counter("wakeline_track_rows_total", "result", "written").count()).isEqualTo(1.0);
+            assertThat(meters.counter("wakeline_track_rows_total", "result", "failed").count()).isZero();
+        } finally {
+            DbTestSupport.exec("wakeline", "SELECT track_point_ensure_partitions(3), ship_position_ensure_partitions(3)");
+        }
+    }
+
     /** API-CONC-8: 항적 메시지의 영수증은 그 행이 커밋된 뒤에만 풀린다 — DB 장애 중에는 ACK 되지 않고, 종료 때 못 쓴 메시지는 끝까지 ACK 되지 않는다. */
     @Test
     void trackReceiptsAreReleasedOnlyAfterTheirRowsAreDurable() throws Exception {

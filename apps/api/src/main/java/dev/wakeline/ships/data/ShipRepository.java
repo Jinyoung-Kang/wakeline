@@ -74,6 +74,15 @@ public class ShipRepository {
         this.db = db;
     }
 
+    /**
+     * 선박 위치의 일(UTC) 파티션(어제 ~ +3일 — MaintenanceJobs.ensurePartitions 와 같은 SECURITY DEFINER 함수 · 범위)을 만든다. 저장기가 '파티션 없음'
+     * 뒤 다시 쓰기 전에 부른다(QA-1240). @return 새로 만든 파티션 수
+     */
+    public int ensurePartitions() {
+        Integer n = jdbc.queryForObject("SELECT ship_position_ensure_partitions(3)", Integer.class);
+        return n == null ? 0 : n;
+    }
+
     /** 위치 배치(60 s 창 가드 포함). */
     public void writePositions(List<ShipState> rows) {
         if (rows.isEmpty()) return;

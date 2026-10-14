@@ -23,4 +23,14 @@ class DbErrorsTest {
         assertThat(DbErrors.isPermanent(new RuntimeException(new SQLException("cannot affect row a second time", "21000")))).isTrue();
         assertThat(DbErrors.isPermanent(new CannotGetJdbcConnectionException("x"))).isFalse();
     }
+
+    /** QA-1240: 저장기가 다시 쓰기 전에 파티션을 만들 오류 — SQLState 23514 만(메시지 글자에 기대지 않는다) */
+    @Test
+    void missingPartitionIsCheckViolation() {
+        assertThat(DbErrors.mayBeMissingPartition(new DataIntegrityViolationException("batch",
+                new java.sql.BatchUpdateException("no partition of relation \"track_point\" found for row", "23514", 0, new int[0])))).isTrue();
+        assertThat(DbErrors.mayBeMissingPartition(new DataIntegrityViolationException("fk", new SQLException("fk", "23503")))).isFalse();
+        assertThat(DbErrors.mayBeMissingPartition(new CannotGetJdbcConnectionException("x"))).isFalse();
+        assertThat(DbErrors.mayBeMissingPartition(new IllegalStateException("no SQLState"))).isFalse();
+    }
 }
