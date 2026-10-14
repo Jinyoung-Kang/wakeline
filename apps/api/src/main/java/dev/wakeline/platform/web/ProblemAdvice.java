@@ -2,6 +2,7 @@ package dev.wakeline.platform.web;
 
 import dev.wakeline.platform.support.LogMasker;
 import io.lettuce.core.RedisLoadingException;
+import org.apache.tomcat.util.http.InvalidParameterException;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -53,7 +54,8 @@ import java.util.regex.Pattern;
  *       Redis 가 기동하며 데이터를 읽는 동안의 LOADING 답도 분류되지 않은 RedisSystemException 으로 오지만 같은 503 이다.</li>
  *   <li>Spring MVC 가 이미 상태를 아는 예외(405·406·415 등, {@link ErrorResponse}) → 그 상태 그대로, 헤더(Allow 등) 유지.
  *       4xx 는 INFO 한 줄 — 익명 요청으로 ERROR 스택을 쏟아내게 할 수 없다(SEC-10).</li>
- *   <li>서블릿 층이 받지 않은 클라이언트 입력(컨트롤러가 읽은 헤더 값을 방화벽이 거절 — QA-1101) → 400 BAD_REQUEST, INFO 한 줄(입력 원문 없음).</li>
+ *   <li>서블릿 층이 받지 않은 클라이언트 입력(컨트롤러가 읽은 헤더 값을 방화벽이 거절 — QA-1101 · Tomcat 이 해석하지 못한 질의 문자열 — QA-1312)
+ *       → 400 BAD_REQUEST, INFO 한 줄(입력 원문 없음).</li>
  *   <li>그 밖의 예외만 500 + ERROR(스택).</li>
  * </ul>
  * 모든 컨트롤러가 이 advice 를 받으므로 요청 파라미터의 공통 입력 규칙도 여기서 바인더에 단다: 시각 · 날짜 파라미터의 범위({@link TimeParams} —
@@ -108,6 +110,20 @@ public class ProblemAdvice {
     ResponseEntity<ProblemDetail> requestRejected(RequestRejectedException e, HttpServletRequest req) {
         logRejectedInput(HttpStatus.BAD_REQUEST, "header value rejected by the firewall", req);
         return build(HttpStatus.BAD_REQUEST, "BAD_REQUEST", "bad request", "request rejected", req);
+    }
+
+    /**
+     * Tomcat 이 질의 문자열(· 폼 본문)을 해석하지 못함(QA-1312): 잘못된 퍼센트 인코딩({@code %zz} · 끝의 {@code %} · UTF-8 이 아닌 {@code %FF}) ·
+     * 파라미터 수 상한(Connector maxParameterCount, 1,000) 초과 · 폼 본문 크기 상한. Tomcat 은 getParameter* 를 부르는 쪽(파라미터를 읽는 모든 컨트롤러 —
+     * {@link SingleValueParams} · @RequestParam)에 InvalidParameterException 을 던진다 — 예전에는 {@link #other} 가 500 + ERROR 스택(예외 메시지에
+     * 파라미터 이름 · 값 원문)으로 받아 익명 요청이 서버 로그 스트림을 채웠다. Tomcat 이 정한 상태(400 — 폼 본문 크기면 413)로 답하고 INFO 한 줄만 남긴다.
+     */
+    @ExceptionHandler(InvalidParameterException.class)
+    ResponseEntity<ProblemDetail> invalidParameters(InvalidParameterException e, HttpServletRequest req) {
+        HttpStatus st = HttpStatus.resolve(e.getErrorCode());
+        if (st == null || !st.is4xxClientError()) st = HttpStatus.BAD_REQUEST;
+        logRejectedInput(st, "request parameters could not be parsed", req);
+        return build(st, st.name(), st.getReasonPhrase().toLowerCase(Locale.ROOT), "request parameters could not be parsed", req);
     }
 
     /**

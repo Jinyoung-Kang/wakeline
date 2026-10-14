@@ -90,6 +90,14 @@ class ProblemAdviceTest {
         @GetMapping("/unavailable") String unavailable() { throw Problem.unavailable("try later"); }
         @GetMapping("/limited") String limited() { throw Problem.tooManyRequests("slow down", 42); }
         @GetMapping("/boom") String boom() { throw new IllegalStateException("bug"); }
+        // Tomcat 이 질의 문자열 · 폼 본문을 해석하지 못하면 getParameter* 가 이것을 던진다(QA-1312) — 메시지에 클라이언트가 보낸 원문이 있다
+        @GetMapping("/bad-query") String badQuery() {
+            throw new org.apache.tomcat.util.http.InvalidParameterException("Character decoding failed. Parameter [x] with value [secret-%zz] has been ignored.");
+        }
+        @PostMapping("/form-too-large") String formTooLarge() {
+            throw new org.apache.tomcat.util.http.InvalidParameterException("Parameters were not parsed because the size of the posted data was too big", 413);
+        }
+        @GetMapping("/odd-code") String oddCode() { throw new org.apache.tomcat.util.http.InvalidParameterException("odd", 500); }
         // 배포 뒤 로그(2026-09-30): 응답을 쓰는 중 브라우저가 떠나면 Spring 이 이 모양으로 던진다 — /ships/{mmsi}/track 에서 'unhandled error' ERROR 4건
         @GetMapping("/gone") String gone() {
             throw new HttpMessageNotWritableException("Could not write JSON: ServletOutputStream failed to write: java.io.IOException: Broken pipe",
@@ -244,6 +252,23 @@ class ProblemAdviceTest {
         org.assertj.core.api.Assertions.assertThat(out.getAll()).doesNotContain("unhandled error").doesNotContain("ERROR");
         mvc.perform(get("/boom")); // 진짜 결함은 여전히 ERROR
         org.assertj.core.api.Assertions.assertThat(out.getAll()).contains("unhandled error");
+    }
+
+    /**
+     * QA-1312: Tomcat 이 해석하지 못한 질의 문자열은 클라이언트 입력 — Tomcat 이 정한 4xx(400 · 폼 본문 크기 413)로 답하고 INFO 한 줄만 남긴다(ERROR · 스택 ·
+     * 예외 메시지의 원문 없음). 4xx 가 아닌 오류 코드는 400 으로.
+     */
+    @Test
+    void aQueryStringTomcatCannotParseIsAClientError(CapturedOutput out) throws Exception {
+        mvc.perform(get("/bad-query?x=1&bbox=124,33,132,39")).andExpect(status().isBadRequest())
+                .andExpect(content().contentTypeCompatibleWith("application/problem+json"))
+                .andExpect(content().string(containsString("\"code\":\"BAD_REQUEST\"")))
+                .andExpect(content().string(org.hamcrest.Matchers.not(containsString("secret"))));
+        mvc.perform(post("/form-too-large")).andExpect(status().is(413)).andExpect(content().string(containsString("\"status\":413")));
+        mvc.perform(get("/odd-code")).andExpect(status().isBadRequest());
+        org.assertj.core.api.Assertions.assertThat(out.getAll()).contains("client error 400 GET /bad-query query=\"x=1&bbox=124,33,132,39\" request_id=-: ")
+                .contains("request parameters could not be parsed").doesNotContain("secret-%zz").doesNotContain("unhandled error")
+                .doesNotContain("InvalidParameterException");
     }
 
     @Test
