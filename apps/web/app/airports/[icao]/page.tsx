@@ -54,7 +54,7 @@ export default function AirportPage({ params }: { params: Promise<{ icao: string
           </section>
           <section className="panel p-3"><div className="label mb-1" title={RAW_BULLETIN_TITLE}>TAF ({RAW_BULLETIN_LABEL})</div><pre className="mono whitespace-pre-wrap text-[11px]" title={RAW_BULLETIN_TITLE} data-raw="bulletin">{m.taf_raw ?? "—"}</pre></section>
         </div> : <div className="text-fg-3">METAR 없음</div>}
-        <section className="panel mt-3 p-3"><div className="label mb-2">History (latest 24)</div>
+        <section className="panel mt-3 p-3"><div className="label mb-2" lang="en">History (latest 24)</div>
           <table><thead><tr><th scope="col" title="관측 시각 — 한국 표준시(칸에 마우스를 올리면 연도 · ms 까지)">obs (KST)</th><th scope="col">cat</th><th scope="col">wind</th><th scope="col">vis (sm)</th><th scope="col">ceiling (ft)</th><th scope="col">temp (°C)</th></tr></thead>
             <tbody>{wx.history.map((h) => <tr key={h.obs_time}>
               <td className="whitespace-nowrap"><KstTime v={h.obs_time} variant="cell" /></td>

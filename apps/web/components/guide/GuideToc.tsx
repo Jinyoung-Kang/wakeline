@@ -108,7 +108,7 @@ export function GuideToc({ items }: { items: readonly TocItem[] }) {
         </select>
       </div>
       <nav aria-label="설명서 목차" className="hidden max-h-[calc(100dvh-6.5rem)] overflow-y-auto py-4 min-[900px]:block">
-        <div className="label mb-2 pl-2">Contents</div>
+        <div className="label mb-2 pl-2" lang="en">Contents</div>
         <ol className="space-y-px">
           {items.map((t) => (
             <li key={t.id}>

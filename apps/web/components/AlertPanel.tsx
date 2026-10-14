@@ -58,7 +58,7 @@ function AlertPanelBody() {
   return (
     <>
       <div className="row">
-        <span className="label">Alerts</span>
+        <span className="label" lang="en">Alerts</span>
         <div className="flex items-center gap-2">
           <button className="btn" aria-pressed={scope === "region"} onClick={() => setScope("region")} data-testid="alerts-scope-region">관심 지역</button>
           <button className="btn" aria-pressed={scope === "world"} onClick={() => setScope("world")} data-testid="alerts-scope-world">전세계 {alertsVersion != null ? all.length : "—"}</button>

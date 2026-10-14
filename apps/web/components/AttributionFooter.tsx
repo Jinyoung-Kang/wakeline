@@ -9,7 +9,7 @@ import { creditGroups } from "@/lib/attribution";
 export function AttributionFooter() {
   return (
     <footer className="shrink-0 border-t border-line bg-bg-1 px-3 py-[3px] text-[10px] leading-[1.5] text-fg-3" data-testid="attribution" aria-label="데이터 출처">
-      <span className="label mr-2 text-[9px]">Sources</span>
+      <span className="label mr-2 text-[9px]" lang="en">Sources</span>
       {creditGroups().map((g, gi) => (
         <span key={g.role} className="inline-block max-w-full">
           {gi > 0 ? <span aria-hidden className="mx-1.5 text-line-2">|</span> : null}

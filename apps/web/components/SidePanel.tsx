@@ -106,7 +106,7 @@ export function SidePanelView({ panel, hex, sigmet, airport, ship = null, shipsO
     <>
       <div className="flex border-b border-line">
         {(["alerts", "aircraft", "ship", "sigmet", "airport", "wx", "watch"] as const).map((p) => (
-          <button key={p} className="btn flex-1 border-0 border-r border-line" aria-pressed={panel === p} onClick={() => setPanel(p)} data-testid={`tab-${p}`}>{p}</button>
+          <button key={p} className="btn flex-1 border-0 border-r border-line" lang="en" aria-pressed={panel === p} onClick={() => setPanel(p)} data-testid={`tab-${p}`}>{p}</button>
         ))}
       </div>
       <div ref={content} className="min-h-0 flex-1 focus-visible:-outline-offset-2" role="region" aria-label={`${PANEL_NAME[panel]}${id ? " 상세" : ""}`} tabIndex={-1}

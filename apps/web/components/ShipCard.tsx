@@ -151,7 +151,7 @@ export function ShipCardView({ mmsi, detail: d, error: err, now }: { mmsi: strin
   return (
     <div ref={root} className="flex h-full flex-col" data-testid="ship-card">
       <div className="row">
-        <span className="label">Ship</span>
+        <span className="label" lang="en">Ship</span>
         <div className="flex flex-wrap items-center justify-end gap-1">
           {gone && !notLive ? <span className="badge warn" data-testid="ship-gone">실시간 목록에 없음 · 30분 넘게 수신 없음</span> : null}
           {notLive ? <span className="badge warn normal-case!" data-testid="ship-not-live" title={`실시간 선박 목록(AIS)에 없습니다 — 지도에 위치를 그리지 않습니다. 마지막 수신 기록 ${fmtKstTitle(d?.last_seen_at)} · 마지막 저장 위치 시각 ${fmtKstTitle(d?.last_position_at)}`}>

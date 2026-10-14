@@ -38,7 +38,7 @@ export function WatchPanel() {
   };
   return (
     <div ref={root} tabIndex={-1} className="flex h-full flex-col text-[11px] outline-none" data-testid="watch-panel">
-      <div className="row"><span className="label">Watchlist</span><span className="text-fg-3">{targets.length}/{WATCH_MAX} · 이 브라우저에만</span></div>
+      <div className="row"><span className="label" lang="en">Watchlist</span><span className="text-fg-3">{targets.length}/{WATCH_MAX} · 이 브라우저에만</span></div>
       {storage === "unavailable" ? <div className="border-b border-line px-2.5 py-1 text-warn" role="status">이 브라우저에 저장할 수 없음 — 이번 접속 동안만 유지합니다</div> : null}
       {storage === "corrupt" ? <div className="border-b border-line px-2.5 py-1 text-warn" role="status">저장된 목록 일부가 깨져 버렸습니다</div> : null}
       <div className="flex items-center gap-2 border-b border-line px-2.5 py-1">

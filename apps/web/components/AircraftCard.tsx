@@ -230,7 +230,7 @@ export function AircraftCard({ hex }: { hex: string }) {
         {d?.inside_airspace ? <AirspaceRow v={d.inside_airspace} /> : null}
         {activeAlerts.length ? (
           <div className="mt-2 space-y-1">
-            <div className="label">Active alerts</div>
+            <div className="label" lang="en">Active alerts</div>
             {activeAlerts.map((a) => <EvidenceCard key={a.id} a={a} />)}
           </div>
         ) : <div className="mt-2 text-[11px] text-fg-3">활성 알림 없음</div>}

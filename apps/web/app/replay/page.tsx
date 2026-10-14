@@ -106,7 +106,7 @@ export default function ReplayPage() {
       */}
       <div className="shrink-0 border-b border-line bg-bg-1 text-[11px]">
         <div className="flex min-h-9 flex-wrap items-center gap-x-3 gap-y-1 px-3 py-1 whitespace-nowrap" data-testid="replay-controls">
-          <span className="label">Replay</span>
+          <span className="label" lang="en">Replay</span>
           {/* 행동 단추: 이름이 지금 할 일(재생 · 정지)이라 aria-pressed 는 쓰지 않는다 — 둘을 함께 쓰면 "정지, 눌림"으로 읽혔다(QA 2026-10 화면 개선 제안 2) */}
           <button className="btn min-w-[4.5em]" onClick={() => setPlaying(!playing)}>{playing ? "정지" : "재생"}</button>
           <div className="flex gap-1" role="group" aria-label="재생 속도">
