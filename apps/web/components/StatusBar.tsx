@@ -34,6 +34,7 @@ const NONE: ReadonlySet<string> = new Set();
 export function StatusBar() {
   const conn = useServerData((x) => x.conn);
   const reconnectAttempt = useServerData((x) => x.reconnectAttempt);
+  const connIssue = useServerData((x) => x.connIssue);
   const lastRxAt = useServerData((x) => x.lastRxAt);
   const feeds = useServerData((x) => x.feeds);
   const aircraftCount = useServerData((x) => x.aircraftCount);
@@ -47,8 +48,8 @@ export function StatusBar() {
   const inv = useServerData((x) => x.wsInvalid);
   const now = useNow(1000);
   const input = useMemo(() => statusInput(
-    { conn, reconnectAttempt, lastRxAt, feeds, aircraftCount, status, sigmetsProvider, sigmetsFetchedAt, radar, radarKr, ais, snapshotVersion }, now, now ? serverNowMs(now) : 0,
-  ), [conn, reconnectAttempt, lastRxAt, now, feeds, aircraftCount, status, sigmetsProvider, sigmetsFetchedAt, radar, radarKr, ais, snapshotVersion]);
+    { conn, reconnectAttempt, connIssue, lastRxAt, feeds, aircraftCount, status, sigmetsProvider, sigmetsFetchedAt, radar, radarKr, ais, snapshotVersion }, now, now ? serverNowMs(now) : 0,
+  ), [conn, reconnectAttempt, connIssue, lastRxAt, now, feeds, aircraftCount, status, sigmetsProvider, sigmetsFetchedAt, radar, radarKr, ais, snapshotVersion]);
   return <StatusBarView input={input} inv={inv} />;
 }
 

@@ -4,8 +4,8 @@
  * 알아본 오류에는 브라우저가 code 를 붙인다(서버가 준 code 가 아니다): ACCESS_LOCKED · ORIGIN_UNREACHABLE.
  */
 
-const LOCKED_TEXT = "접근 코드가 만료됨 — 새로고침하면 접근 코드를 다시 묻습니다";
-const UNREACHABLE_TEXT = "서버에 닿지 못함 — 서버가 꺼져 있거나(운영 시간 밖) 다시 시작하는 중일 수 있습니다 · 잠시 뒤 다시 시도하세요";
+export const FRONT_LOCKED_TEXT = "접근 코드가 만료됨 — 새로고침하면 접근 코드를 다시 묻습니다";
+export const FRONT_UNREACHABLE_TEXT = "서버에 닿지 못함 — 서버가 꺼져 있거나(운영 시간 밖) 다시 시작하는 중일 수 있습니다 · 잠시 뒤 다시 시도하세요";
 
 /** 앞단 잠금 만료(gateLockedText)로 분류한 오류의 code */
 export const ACCESS_LOCKED = "ACCESS_LOCKED";
@@ -17,7 +17,7 @@ export const ORIGIN_UNREACHABLE = "ORIGIN_UNREACHABLE";
  * 그 밖의 응답이면 null.
  */
 export function gateLockedText(status: number, body: unknown): string | null {
-  return status === 401 && (body as { error?: unknown } | null)?.error === "locked" ? LOCKED_TEXT : null;
+  return status === 401 && (body as { error?: unknown } | null)?.error === "locked" ? FRONT_LOCKED_TEXT : null;
 }
 
 /**
@@ -26,7 +26,7 @@ export function gateLockedText(status: number, body: unknown): string | null {
  * HTML 5xx 는 앞단의 페이지뿐이다 — 숫자("503") 대신 무엇이 일어났는지와 할 일을 알리는 글. 그 밖의 응답이면 null(본문 없는 5xx 는 까닭을 모른다).
  */
 export function frontUnreachableText(status: number, contentType: string | null | undefined): string | null {
-  return status >= 500 && /^\s*text\/html\b/i.test(contentType ?? "") ? UNREACHABLE_TEXT : null;
+  return status >= 500 && /^\s*text\/html\b/i.test(contentType ?? "") ? FRONT_UNREACHABLE_TEXT : null;
 }
 
 /**
@@ -35,5 +35,5 @@ export function frontUnreachableText(status: number, contentType: string | null 
  */
 export function frontNotice(e: unknown): string | null {
   const code = typeof e === "object" && e !== null ? (e as { code?: unknown }).code : null;
-  return code === ACCESS_LOCKED ? LOCKED_TEXT : code === ORIGIN_UNREACHABLE ? UNREACHABLE_TEXT : null;
+  return code === ACCESS_LOCKED ? FRONT_LOCKED_TEXT : code === ORIGIN_UNREACHABLE ? FRONT_UNREACHABLE_TEXT : null;
 }

@@ -10,6 +10,7 @@ import { fmtEta } from "@/lib/format";
 import { alertListState, alertsInScope, alertZone, EVENT_LABEL, etaRemainingS, eventBannerVisible, type AlertListState } from "@/lib/alerts";
 import { aircraftPos, panIfOutside } from "@/lib/focus";
 import { AltStack } from "./UnitStack";
+import { CONN_ISSUE } from "@/lib/conn-issue";
 
 /**
  * 알림 패널(FR-10): 관측(경보 안)·예측(추정)을 구분해 목록으로. 행을 누르면 목록 안에서 근거 카드를 펼치고(선택하지 않음),
@@ -17,6 +18,7 @@ import { AltStack } from "./UnitStack";
  * 예측 ETA 는 eta_at 에서 1 s 마다 줄어든다(추정). 배너는 진입·이탈·신호 끊김·진입 예상만(예측 갱신/해제는 목록에만 반영).
  * 목록을 아직 받지 못했으면 "없음"이라고 하지 않고 "수신 대기", 연결이 끊겼으면 마지막 목록임을 밝히고 ETA 를 멈춘다(DH-9).
  * 이 연결의 목록에 빠진 것이 있으면(계약 v5 §E2 — 형식 오류로 버린 알림 메시지 · 배치 틈) 수는 "—", "일부 누락"을 밝히고 ETA 를 멈춘다.
+ * 끊긴 까닭을 알면(스토어 connIssue — lib/conn-issue, QA-1300) '연결 끊김' · '수신 대기' 줄에 함께 적는다.
  * 예측 행의 고도는 진입 시 고도 추정값 — 보라 점선 밑줄(추정 표기)로 관측 고도와 구분한다(DH-15). 고도 칸 둘째 줄은 m(계약 v5 §A2).
  * active = 이 패널이 보이는가(상황판 오른쪽 패널의 탭). 다른 탭을 보는 동안에도 마운트된 채 남지만(R-08 — 펼친 근거 · 범위 · 스크롤을 지킨다) 내용은
  * React <Activity mode="hidden"> 아래에 둔다: 상태 · DOM 은 남고 효과(1 s 시계 · 스토어 구독)는 떼어 숨긴 동안 다시 그리지 않으며, 다시 보이면 그 순간의 값으로
@@ -36,7 +38,10 @@ function AlertPanelBody() {
   const conn = useServerData((d) => d.conn);
   const alertsVersion = useServerData((d) => d.alertsVersion);
   const incomplete = useServerData((d) => d.alertsIncomplete);
+  const connIssue = useServerData((d) => d.connIssue);
   const listState = alertListState(conn, alertsVersion, useRxFresh(), incomplete);
+  // 끊긴 동안만(열림 · 일시정지에서는 지난 까닭을 말하지 않는다)
+  const issue = conn !== "open" && conn !== "paused" && connIssue ? CONN_ISSUE[connIssue] : null;
   const select = useUi((s) => s.select);
   const [open, setOpen] = useState<number | null>(null);
   const [scope, setScope] = useState<"region" | "world">("region");
@@ -74,7 +79,7 @@ function AlertPanelBody() {
             : listState === "incomplete" ? "알림 목록 일부 누락(형식이 틀린 알림 메시지를 버림) — 수 모름 · ETA 멈춤 · 전체 목록을 다시 받으면 바로잡힘"
             : listState === "paused" ? "일시정지(탭 숨김) — 마지막으로 받은 목록 · 갱신 안 됨"
             : listState === "silent" ? "수신 없음(연결은 열림) — 마지막으로 받은 목록 · 갱신 안 됨 · ETA 멈춤"
-            : "연결 끊김 — 마지막으로 받은 목록 · 갱신 안 됨 · ETA 멈춤"}
+            : `연결 끊김 — ${issue ? `${issue.why} — ` : ""}마지막으로 받은 목록 · 갱신 안 됨 · ETA 멈춤`}
         </div>
       ) : null}
       <div className="min-h-0 flex-1 overflow-y-auto">
@@ -86,7 +91,11 @@ function AlertPanelBody() {
             {listState === "live" ? "" : "마지막으로 받은 목록 기준: "}{scope === "region" ? regionText : ""}현재 SIGMET 안에 있거나 10분 내 진입이 예상되는 항공기가 없습니다.
           </div>
         ) : null}
-        {list.length === 0 && alertsVersion == null ? <div className="p-3 text-[11px] text-fg-3" data-testid="alerts-waiting">알림 목록 수신 대기 중 — 아직 “없음”을 뜻하지 않습니다.</div> : null}
+        {list.length === 0 && alertsVersion == null ? (
+          <div className="p-3 text-[11px] text-fg-3" data-testid="alerts-waiting">
+            알림 목록 수신 대기 중 — 아직 “없음”을 뜻하지 않습니다.{issue ? <span className="text-warn" data-testid="alerts-conn-issue"> 실시간 연결 끊김: {issue.why}</span> : null}
+          </div>
+        ) : null}
         {list.map((a) => { const z = alertZone(a); return (
             <div key={a.id} className="border-b border-line" data-testid="alert-item" data-kind={a.kind} data-zone={a.zone_type ?? "sigmet"}>
               <button className="flex w-full items-center gap-2 px-2 py-1.5 text-left hover:bg-bg-2" aria-expanded={open === a.id} aria-controls={open === a.id ? `evidence-${a.id}` : undefined}

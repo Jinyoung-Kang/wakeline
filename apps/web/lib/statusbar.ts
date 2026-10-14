@@ -21,6 +21,7 @@ import { isKrRadarStale, KR_RADAR_STALE_S, fmtAgeS, ageS, fmtDuration } from "./
 import { krComposite, krMissing } from "./kr-radar";
 import { aisBadge, AIS_GAP_SHOW_MS, AIS_LAG_WARN_S, fmtShardScope, openGapShards, shardConnText, type AisStatus } from "./ships";
 import type { ConnState, ServerData } from "./store";
+import { CONN_ISSUE, type ConnIssue } from "./conn-issue";
 import { fmtKst, fmtKstRange, fmtTimeTitle, kstWallMs, timeParts, type TimeIn } from "./time";
 import type { FeedInfo, KrRadar, PublicStatus, RadarFrames } from "./types";
 import { connTone, feedLag, GLOBAL_STALE_S, isRxFresh, lagTone, REGION_STALE_S, RX_DEAD_MS, RX_FRESH_MS } from "./ws-protocol";
@@ -64,6 +65,8 @@ export interface ConnChip { text: string; tone: "ok" | "warn" | "bad"; title: st
 export interface StatusInput {
   conn: ConnState;
   reconnectAttempt: number;
+  /** 연결이 이어지지 않는 까닭(lib/conn-issue — 브라우저가 알아낸 것만). 없거나 모르면 null */
+  connIssue?: ConnIssue | null;
   lastRxAt: number | null;
   /** 브라우저 시각(ms) — 0 = 아직 모름(첫 렌더) */
   nowMs: number;
@@ -81,11 +84,12 @@ export interface StatusInput {
 }
 
 /** 상태 바가 보는 스토어 값 */
-export type StatusSource = Pick<ServerData, "conn" | "reconnectAttempt" | "lastRxAt" | "feeds" | "aircraftCount" | "status" | "sigmetsProvider" | "sigmetsFetchedAt" | "radar" | "radarKr" | "ais" | "snapshotVersion">;
+export type StatusSource = Pick<ServerData, "conn" | "reconnectAttempt" | "lastRxAt" | "feeds" | "aircraftCount" | "status" | "sigmetsProvider" | "sigmetsFetchedAt" | "radar" | "radarKr" | "ais" | "snapshotVersion">
+  & Partial<Pick<ServerData, "connIssue">>;
 /** 스토어 값 + 시계 → 입력(nowMs = 브라우저 시각, srvNowMs = 서버 기준 시각 — 모르면 0) */
 export function statusInput(d: StatusSource, nowMs: number, srvNowMs: number): StatusInput {
   return {
-    conn: d.conn, reconnectAttempt: d.reconnectAttempt, lastRxAt: d.lastRxAt, nowMs, srvNowMs, feeds: d.feeds, aircraftCount: d.aircraftCount, status: d.status,
+    conn: d.conn, reconnectAttempt: d.reconnectAttempt, connIssue: d.connIssue ?? null, lastRxAt: d.lastRxAt, nowMs, srvNowMs, feeds: d.feeds, aircraftCount: d.aircraftCount, status: d.status,
     sigmetsProvider: d.sigmetsProvider, sigmetsFetchedAt: d.sigmetsFetchedAt, radar: d.radar, radarKr: d.radarKr, ais: d.ais, snapshotVersion: d.snapshotVersion,
   };
 }
@@ -195,17 +199,20 @@ const toneHealth = (t: "ok" | "warn" | "bad" | "muted"): Health => (t === "muted
 /**
  * 연결 칩. "paused" 는 탭이 숨겨져 서버에 일시정지(pause)를 보낸 상태다(components/MapView visibilitychange → lib/ws pause) — 그동안 서버는 이 탭에
  * 갱신을 보내지 않는다. 그렇게 적는다("WS paused · 탭 숨김").
+ * 끊긴 동안 까닭을 알면(connIssue — 앞단 잠금 만료 · 원본에 닿지 못함, QA-1300) 짧은 낱말을 줄에, 할 일을 title 앞에 적는다.
  */
-export function connChip(i: Pick<StatusInput, "conn" | "reconnectAttempt" | "lastRxAt" | "nowMs">): ConnChip {
+export function connChip(i: Pick<StatusInput, "conn" | "reconnectAttempt" | "lastRxAt" | "nowMs" | "connIssue">): ConnChip {
   const live = isRxFresh(i.conn, i.lastRxAt, i.nowMs);
   const silent = i.conn === "open" && !live;
   const retry = i.conn !== "open" && i.reconnectAttempt > 0 ? ` · retry ${i.reconnectAttempt}` : "";
-  const text = `WS ${i.conn}${silent ? " · 수신 없음" : ""}${i.conn === "paused" ? " · 탭 숨김" : ""}${retry}`;
-  const title = silent ? `연결은 열려 있지만 ${RX_FRESH_MS / 1000} s 넘게 아무것도 받지 못함 — ${RX_DEAD_MS / 1000} s 가 되면 다시 연결`
+  const issue = i.conn !== "open" && i.conn !== "paused" && i.connIssue ? CONN_ISSUE[i.connIssue] : null;
+  const text = `WS ${i.conn}${silent ? " · 수신 없음" : ""}${i.conn === "paused" ? " · 탭 숨김" : ""}${issue ? ` · ${issue.word}` : ""}${retry}`;
+  const base = silent ? `연결은 열려 있지만 ${RX_FRESH_MS / 1000} s 넘게 아무것도 받지 못함 — ${RX_DEAD_MS / 1000} s 가 되면 다시 연결`
     : i.conn === "paused" ? "탭이 숨겨져 서버에 일시정지(pause)를 보냈습니다 — 그동안 서버는 이 탭에 갱신을 보내지 않아 화면 값이 멈춰 있습니다. 탭이 다시 보이면 resume 으로 전체 초기 세트(스냅샷 · 알림 · SIGMET · 레이더 · status)를 다시 받습니다"
     : i.conn === "open" ? `실시간 연결(/ws/v1) — 서버 ping 은 30 s 마다, ${RX_FRESH_MS / 1000} s 넘게 아무것도 받지 못하면 '수신 없음'`
     : i.conn === "connecting" ? (i.reconnectAttempt > 0 ? `끊겨서 다시 연결하는 중 — ${i.reconnectAttempt}번째 시도(지수 백오프, 최대 30 s)` : "처음 연결하는 중")
     : i.reconnectAttempt > 0 ? `연결 끊김 — ${i.reconnectAttempt}번째 재연결을 기다리는 중(지수 백오프, 최대 30 s)` : "연결 끊김";
+  const title = issue ? `${issue.why}\n${base}` : base;
   return { text, tone: connTone(i.conn, silent, i.reconnectAttempt), title, live };
 }
 
