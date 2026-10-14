@@ -1,0 +1,162 @@
+{
+ "at": "2026-10-14T03:34:53Z",
+ "healthz": [
+  "ERR URLError",
+  ""
+ ],
+ "public": {
+  "/api/v1/status": "ERR URLError",
+  "/api/v1/aircraft?bbox=124,33,132,39": "ERR URLError",
+  "/api/v1/ships?bbox=124,33,132,39": "ERR URLError",
+  "/api/v1/warnings": "ERR URLError",
+  "/api/v1/warnings/history": "ERR URLError",
+  "/api/v1/airspace": "ERR URLError",
+  "/api/v1/alerts/history?limit=5": "ERR URLError",
+  "/api/v1/stats/traffic": "ERR URLError",
+  "/api/v1/sigmets": "ERR URLError"
+ },
+ "ops_login": "ERR URLError",
+ "ops": {
+  "/api/v1/ops/providers": "ERR URLError",
+  "/api/v1/ops/settings": "ERR URLError",
+  "/api/v1/ops/audit": "ERR URLError"
+ },
+ "writes": {
+  "track_point": [
+   22479,
+   22479
+  ],
+  "ship_position": [
+   10495,
+   10495
+  ],
+  "aircraft": [
+   127,
+   127
+  ],
+  "ship": [
+   404,
+   404
+  ],
+  "ingest_run": [
+   196,
+   196
+  ],
+  "provider_budget_day": [
+   12,
+   12
+  ]
+ },
+ "partitions": [
+  [
+   "ship_position",
+   "ship_position_20261014",
+   "rdsmaster"
+  ],
+  [
+   "ship_position",
+   "ship_position_20261015",
+   "rdsmaster"
+  ],
+  [
+   "ship_position",
+   "ship_position_20261016",
+   "rdsmaster"
+  ],
+  [
+   "ship_position",
+   "ship_position_20261017",
+   "rdsmaster"
+  ],
+  [
+   "track_point",
+   "track_point_20261014",
+   "rdsmaster"
+  ],
+  [
+   "track_point",
+   "track_point_20261015",
+   "rdsmaster"
+  ],
+  [
+   "track_point",
+   "track_point_20261016",
+   "rdsmaster"
+  ],
+  [
+   "track_point",
+   "track_point_20261017",
+   "rdsmaster"
+  ]
+ ],
+ "functions": [
+  [
+   "ship_position_drop_old",
+   "rdsmaster",
+   "true",
+   "",
+   "true",
+   "true"
+  ],
+  [
+   "ship_position_ensure_partitions",
+   "rdsmaster",
+   "true",
+   "",
+   "true",
+   "true"
+  ],
+  [
+   "track_point_drop_old",
+   "rdsmaster",
+   "true",
+   "",
+   "true",
+   "true"
+  ],
+  [
+   "track_point_ensure_partitions",
+   "rdsmaster",
+   "true",
+   "",
+   "true",
+   "true"
+  ]
+ ],
+ "perm_errors:wlqa-aws-api-1": {
+  "count": 0,
+  "sample": []
+ },
+ "perm_errors:wlqa-aws-collector-1": {
+  "count": 0,
+  "sample": []
+ },
+ "fail": [
+  "healthz ERR URLError",
+  "GET /api/v1/status → ERR URLError",
+  "GET /api/v1/aircraft?bbox=124,33,132,39 → ERR URLError",
+  "GET /api/v1/ships?bbox=124,33,132,39 → ERR URLError",
+  "GET /api/v1/warnings → ERR URLError",
+  "GET /api/v1/warnings/history → ERR URLError",
+  "GET /api/v1/airspace → ERR URLError",
+  "GET /api/v1/alerts/history?limit=5 → ERR URLError",
+  "GET /api/v1/stats/traffic → ERR URLError",
+  "GET /api/v1/sigmets → ERR URLError",
+  "ops login → ERR URLError",
+  "GET /api/v1/ops/providers → ERR URLError",
+  "GET /api/v1/ops/settings → ERR URLError",
+  "GET /api/v1/ops/audit → ERR URLError",
+  "track_point 가 60s 동안 늘지 않음 (22479 → 22479)",
+  "ship_position 가 60s 동안 늘지 않음 (10495 → 10495)",
+  "ingest_run 가 60s 동안 늘지 않음 (196 → 196)",
+  "함수 ship_position_drop_old: 소유자 rdsmaster · SECURITY DEFINER true",
+  "함수 ship_position_drop_old: wakeline_collector 도 실행할 수 있음(최소 권한 아님)",
+  "함수 ship_position_ensure_partitions: 소유자 rdsmaster · SECURITY DEFINER true",
+  "함수 ship_position_ensure_partitions: wakeline_collector 도 실행할 수 있음(최소 권한 아님)",
+  "함수 track_point_drop_old: 소유자 rdsmaster · SECURITY DEFINER true",
+  "함수 track_point_drop_old: wakeline_collector 도 실행할 수 있음(최소 권한 아님)",
+  "함수 track_point_ensure_partitions: 소유자 rdsmaster · SECURITY DEFINER true",
+  "함수 track_point_ensure_partitions: wakeline_collector 도 실행할 수 있음(최소 권한 아님)"
+ ]
+}
+FAIL: healthz ERR URLError | GET /api/v1/status → ERR URLError | GET /api/v1/aircraft?bbox=124,33,132,39 → ERR URLError | GET /api/v1/ships?bbox=124,33,132,39 → ERR URLError | GET /api/v1/warnings → ERR URLError | GET /api/v1/warnings/history → ERR URLError | GET /api/v1/airspace → ERR URLError | GET /api/v1/alerts/history?limit=5 → ERR URLError | GET /api/v1/stats/traffic → ERR URLError | GET /api/v1/sigmets → ERR URLError | ops login → ERR URLError | GET /api/v1/ops/providers → ERR URLError | GET /api/v1/ops/settings → ERR URLError | GET /api/v1/ops/audit → ERR URLError | track_point 가 60s 동안 늘지 않음 (22479 → 22479) | ship_position 가 60s 동안 늘지 않음 (10495 → 10495) | ingest_run 가 60s 동안 늘지 않음 (196 → 196) | 함수 ship_position_drop_old: 소유자 rdsmaster · SECURITY DEFINER true | 함수 ship_position_drop_old: wakeline_collector 도 실행할 수 있음(최소 권한 아님) | 함수 ship_position_ensure_partitions: 소유자 rdsmaster · SECURITY DEFINER true | 함수 ship_position_ensure_partitions: wakeline_collector 도 실행할 수 있음(최소 권한 아님) | 함수 track_point_drop_old: 소유자 rdsmaster · SECURITY DEFINER true | 함수 track_point_drop_old: wakeline_collector 도 실행할 수 있음(최소 권한 아님) | 함수 track_point_ensure_partitions: 소유자 rdsmaster · SECURITY DEFINER true | 함수 track_point_ensure_partitions: wakeline_collector 도 실행할 수 있음(최소 권한 아님)

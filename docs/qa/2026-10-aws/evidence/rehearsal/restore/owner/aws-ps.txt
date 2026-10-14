@@ -1,0 +1,7 @@
+wlqa-aws-edge-1 Up 10 seconds (healthy)
+wlqa-aws-collector-1 Up 21 seconds (healthy)
+wlqa-aws-api-1 Up 21 seconds (healthy)
+wlqa-aws-migrate-1 Exited (0) 24 seconds ago
+wlqa-aws-ais-1 Up 21 seconds (healthy)
+wlqa-aws-redis-1 Up 27 seconds (healthy)
+wlqa-aws-web-1 Up 28 seconds (healthy)

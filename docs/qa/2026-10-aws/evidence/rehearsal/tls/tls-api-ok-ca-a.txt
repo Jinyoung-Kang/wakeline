@@ -1,0 +1,9 @@
+# api ok-ca-a — 03:01:36Z 다시 만든 뒤 75 s
+state: running restarts=0 health=healthy
+edge /healthz: {"status":"ok","region_lag_s":3,"snapshot_version":10} [200]
+GET /api/v1/alerts/history?limit=1: 200
+--- TLS 관련 로그(앞 12줄)
+--- TLS 관련 로그 줄 수: 0
+--- 서버 쪽 TLS 세션(같은 계정 · application_name)
+wakeline_api	wakeline-api	t	TLSv1.3	6
+wakeline_collector	wakeline-collector	t	TLSv1.3	1

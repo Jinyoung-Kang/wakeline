@@ -1,0 +1,165 @@
+{
+ "at": "2026-10-14T03:53:29Z",
+ "healthz": [
+  200,
+  "{\"status\":\"ok\",\"region_lag_s\":10,\"snapshot_version\":6}"
+ ],
+ "public": {
+  "/api/v1/status": 200,
+  "/api/v1/aircraft?bbox=124,33,132,39": 200,
+  "/api/v1/ships?bbox=124,33,132,39": 200,
+  "/api/v1/warnings": 200,
+  "/api/v1/warnings/history": 500,
+  "/api/v1/airspace": 200,
+  "/api/v1/alerts/history?limit=5": 500,
+  "/api/v1/stats/traffic": 500,
+  "/api/v1/sigmets": 200
+ },
+ "ops_login": 500,
+ "ops": {
+  "/api/v1/ops/providers": 404,
+  "/api/v1/ops/settings": 404,
+  "/api/v1/ops/audit": 404
+ },
+ "writes": {
+  "track_point": [
+   1905,
+   1905
+  ],
+  "ship_position": [
+   663,
+   663
+  ],
+  "aircraft": [
+   127,
+   127
+  ],
+  "ship": [
+   404,
+   404
+  ],
+  "ingest_run": [
+   23,
+   23
+  ],
+  "provider_budget_day": [
+   12,
+   12
+  ]
+ },
+ "partitions": [
+  [
+   "ship_position",
+   "ship_position_20261014",
+   "wakeline_migrator"
+  ],
+  [
+   "ship_position",
+   "ship_position_20261015",
+   "wakeline_migrator"
+  ],
+  [
+   "ship_position",
+   "ship_position_20261016",
+   "wakeline_migrator"
+  ],
+  [
+   "ship_position",
+   "ship_position_20261017",
+   "wakeline_migrator"
+  ],
+  [
+   "track_point",
+   "track_point_20261014",
+   "wakeline_migrator"
+  ],
+  [
+   "track_point",
+   "track_point_20261015",
+   "wakeline_migrator"
+  ],
+  [
+   "track_point",
+   "track_point_20261016",
+   "wakeline_migrator"
+  ],
+  [
+   "track_point",
+   "track_point_20261017",
+   "wakeline_migrator"
+  ]
+ ],
+ "functions": [
+  [
+   "ship_position_drop_old",
+   "wakeline_migrator",
+   "true",
+   "(NULL = PUBLIC EXECUTE)",
+   "true",
+   "true"
+  ],
+  [
+   "ship_position_ensure_partitions",
+   "wakeline_migrator",
+   "true",
+   "(NULL = PUBLIC EXECUTE)",
+   "true",
+   "true"
+  ],
+  [
+   "track_point_drop_old",
+   "wakeline_migrator",
+   "true",
+   "(NULL = PUBLIC EXECUTE)",
+   "true",
+   "true"
+  ],
+  [
+   "track_point_ensure_partitions",
+   "wakeline_migrator",
+   "true",
+   "(NULL = PUBLIC EXECUTE)",
+   "true",
+   "true"
+  ]
+ ],
+ "perm_errors:wlqa-aws-api-1": {
+  "count": 4,
+  "sample": [
+   "Caused by: org.postgresql.util.PSQLException: ERROR: permission denied for table wx_warning",
+   "Caused by: org.postgresql.util.PSQLException: ERROR: permission denied for table airspace",
+   "Caused by: org.postgresql.util.PSQLException: ERROR: permission denied for table stats_daily",
+   "Caused by: org.postgresql.util.PSQLException: ERROR: permission denied for table ops_user"
+  ]
+ },
+ "perm_errors:wlqa-aws-collector-1": {
+  "count": 32,
+  "sample": [
+   "2026-10-14 03:53:08,607 WARNING db: db: ingest_run(region) rejected (InsufficientPrivilegeError: permission denied for table ingest_run) — dropped",
+   "2026-10-14 03:53:09,584 WARNING db: db: ingest_run(sigmet) rejected (InsufficientPrivilegeError: permission denied for table ingest_run) — dropped",
+   "2026-10-14 03:53:10,552 WARNING db: db: radar_frame rejected (InsufficientPrivilegeError: permission denied for table radar_frame) — dropped",
+   "2026-10-14 03:53:10,569 WARNING db: db: ingest_run(radar) rejected (InsufficientPrivilegeError: permission denied for table ingest_run) — dropped",
+   "2026-10-14 03:53:11,565 WARNING db: db: airport rejected (InsufficientPrivilegeError: permission denied for table airport) — dropped",
+   "2026-10-14 03:53:11,575 WARNING db: db: metar_obs rejected (InsufficientPrivilegeError: permission denied for table metar_obs) — dropped"
+  ]
+ },
+ "fail": [
+  "GET /api/v1/warnings/history → 500",
+  "GET /api/v1/alerts/history?limit=5 → 500",
+  "GET /api/v1/stats/traffic → 500",
+  "ops login → 500",
+  "GET /api/v1/ops/providers → 404",
+  "GET /api/v1/ops/settings → 404",
+  "GET /api/v1/ops/audit → 404",
+  "track_point 가 60s 동안 늘지 않음 (1905 → 1905)",
+  "ship_position 가 60s 동안 늘지 않음 (663 → 663)",
+  "ingest_run 가 60s 동안 늘지 않음 (23 → 23)",
+  "함수 ship_position_drop_old: wakeline_collector 도 실행할 수 있음(최소 권한 아님)",
+  "함수 ship_position_ensure_partitions: wakeline_collector 도 실행할 수 있음(최소 권한 아님)",
+  "함수 track_point_drop_old: wakeline_collector 도 실행할 수 있음(최소 권한 아님)",
+  "함수 track_point_ensure_partitions: wakeline_collector 도 실행할 수 있음(최소 권한 아님)",
+  "wlqa-aws-api-1 권한 오류 4줄",
+  "wlqa-aws-collector-1 권한 오류 32줄"
+ ]
+}
+FAIL: GET /api/v1/warnings/history → 500 | GET /api/v1/alerts/history?limit=5 → 500 | GET /api/v1/stats/traffic → 500 | ops login → 500 | GET /api/v1/ops/providers → 404 | GET /api/v1/ops/settings → 404 | GET /api/v1/ops/audit → 404 | track_point 가 60s 동안 늘지 않음 (1905 → 1905) | ship_position 가 60s 동안 늘지 않음 (663 → 663) | ingest_run 가 60s 동안 늘지 않음 (23 → 23) | 함수 ship_position_drop_old: wakeline_collector 도 실행할 수 있음(최소 권한 아님) | 함수 ship_position_ensure_partitions: wakeline_collector 도 실행할 수 있음(최소 권한 아님) | 함수 track_point_drop_old: wakeline_collector 도 실행할 수 있음(최소 권한 아님) | 함수 track_point_ensure_partitions: wakeline_collector 도 실행할 수 있음(최소 권한 아님) | wlqa-aws-api-1 권한 오류 4줄 | wlqa-aws-collector-1 권한 오류 32줄

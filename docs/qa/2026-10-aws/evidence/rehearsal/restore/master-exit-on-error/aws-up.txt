@@ -1,0 +1,57 @@
+ Network wlqa-aws_egress Creating 
+ Network wlqa-aws_egress Creating 
+ Volume wlqa-aws_raw Creating 
+ Volume wlqa-aws_raw Creating 
+ Volume wlqa-aws_redis_data Creating 
+ Volume wlqa-aws_redis_data Creating 
+ Network wlqa-aws_public Creating 
+ Network wlqa-aws_public Creating 
+ Network wlqa-aws_rds Creating 
+ Network wlqa-aws_rds Creating 
+ Network wlqa-aws_wakeline Creating 
+ Network wlqa-aws_wakeline Creating 
+ Volume wlqa-aws_raw Created 
+ Volume wlqa-aws_raw Created 
+ Volume wlqa-aws_redis_data Created 
+ Volume wlqa-aws_redis_data Created 
+ Network wlqa-aws_public Created 
+ Network wlqa-aws_public Created 
+ Network wlqa-aws_rds Created 
+ Network wlqa-aws_rds Created 
+ Network wlqa-aws_egress Created 
+ Network wlqa-aws_egress Created 
+ Network wlqa-aws_wakeline Created 
+ Network wlqa-aws_wakeline Created 
+ Container wlqa-aws-migrate-1 Creating 
+ Container wlqa-aws-web-1 Creating 
+ Container wlqa-aws-redis-1 Creating 
+ Container wlqa-aws-web-1 Created 
+ Container wlqa-aws-migrate-1 Created 
+ Container wlqa-aws-redis-1 Created 
+ Container wlqa-aws-ais-1 Creating 
+ Container wlqa-aws-collector-1 Creating 
+ Container wlqa-aws-api-1 Creating 
+ Container wlqa-aws-collector-1 Created 
+ Container wlqa-aws-ais-1 Created 
+ Container wlqa-aws-api-1 Created 
+ Container wlqa-aws-edge-1 Creating 
+ Container wlqa-aws-edge-1 Created 
+ Container wlqa-aws-redis-1 Starting 
+ Container wlqa-aws-migrate-1 Starting 
+ Container wlqa-aws-web-1 Starting 
+ Container wlqa-aws-redis-1 Started 
+ Container wlqa-aws-redis-1 Waiting 
+ Container wlqa-aws-migrate-1 Started 
+ Container wlqa-aws-migrate-1 Waiting 
+ Container wlqa-aws-redis-1 Waiting 
+ Container wlqa-aws-migrate-1 Waiting 
+ Container wlqa-aws-redis-1 Waiting 
+ Container wlqa-aws-web-1 Started 
+ Container wlqa-aws-migrate-1 Error service "migrate" didn't complete successfully: exit 1
+ Container wlqa-aws-migrate-1 Error service "migrate" didn't complete successfully: exit 1
+ Container wlqa-aws-redis-1 Error dependency redis failed to start
+ Container wlqa-aws-redis-1 Error dependency redis failed to start
+ Container wlqa-aws-redis-1 Healthy 
+ Container wlqa-aws-ais-1 Starting 
+ Container wlqa-aws-ais-1 Started 
+service "migrate" didn't complete successfully: exit 1

@@ -1,0 +1,15 @@
+ Container wlqa-rds-tools-run-85a93297c507 Creating 
+ Container wlqa-rds-tools-run-85a93297c507 Created 
+2; 3079 16388 EXTENSION - postgis 
+4917; 0 0 COMMENT - EXTENSION postgis 
+4924; 0 0 COMMENT public TABLE kst_day_cutover wakeline_migrator
+4928; 0 0 COMMENT public TABLE quality_rule_count wakeline_migrator
+4929; 0 0 COMMENT public TABLE quality_rule_count_utc_legacy wakeline_migrator
+4930; 0 0 COMMENT public TABLE stats_daily wakeline_migrator
+4931; 0 0 COMMENT public TABLE stats_daily_utc_legacy wakeline_migrator
+--- entries:
+259
+--- ACL entries:
+0
+--- keepacl ACL entries:
+46

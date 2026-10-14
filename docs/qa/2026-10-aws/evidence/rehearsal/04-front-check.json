@@ -1,0 +1,1499 @@
+{
+ "checks": [
+  {
+   "check": "비밀 헤더 없음 GET / → 403",
+   "ok": true,
+   "status": 403
+  },
+  {
+   "check": "잠금 쿠키 없음 GET /api/v1/status → 401",
+   "ok": true,
+   "status": 401,
+   "body": "{\"error\": \"locked\", \"message\": \"접근 코드가 필요합니다\", \"unlock\": \"/_"
+  },
+  {
+   "check": "잠금 쿠키 없음 GET /ops → 401 잠금화면",
+   "ok": true,
+   "status": 401
+  },
+  {
+   "check": "잠금 해제 POST /__gate/unlock → 303 + 쿠키",
+   "ok": true,
+   "status": 303,
+   "cookie_name": "pf_gate"
+  },
+  {
+   "check": "GET /ops → 404 (Caddy 가 닫음)",
+   "ok": true,
+   "status": 404,
+   "content_type": "application/json",
+   "body": "{\"error\":\"데모에서는 쓸 수 없는 경로입니다\"}",
+   "headers": {
+    "strict-transport-security": [
+     "max-age=31536000"
+    ],
+    "x-robots-tag": [
+     "noindex, nofollow"
+    ]
+   }
+  },
+  {
+   "check": "GET /ops/ → 404 (Caddy 가 닫음)",
+   "ok": true,
+   "status": 404,
+   "content_type": "application/json",
+   "body": "{\"error\":\"데모에서는 쓸 수 없는 경로입니다\"}",
+   "headers": {
+    "strict-transport-security": [
+     "max-age=31536000"
+    ],
+    "x-robots-tag": [
+     "noindex, nofollow"
+    ]
+   }
+  },
+  {
+   "check": "GET /ops/settings → 404 (Caddy 가 닫음)",
+   "ok": true,
+   "status": 404,
+   "content_type": "application/json",
+   "body": "{\"error\":\"데모에서는 쓸 수 없는 경로입니다\"}",
+   "headers": {
+    "strict-transport-security": [
+     "max-age=31536000"
+    ],
+    "x-robots-tag": [
+     "noindex, nofollow"
+    ]
+   }
+  },
+  {
+   "check": "GET /logs → 404 (Caddy 가 닫음)",
+   "ok": true,
+   "status": 404,
+   "content_type": "application/json",
+   "body": "{\"error\":\"데모에서는 쓸 수 없는 경로입니다\"}",
+   "headers": {
+    "strict-transport-security": [
+     "max-age=31536000"
+    ],
+    "x-robots-tag": [
+     "noindex, nofollow"
+    ]
+   }
+  },
+  {
+   "check": "GET /logs/abc → 404 (Caddy 가 닫음)",
+   "ok": true,
+   "status": 404,
+   "content_type": "application/json",
+   "body": "{\"error\":\"데모에서는 쓸 수 없는 경로입니다\"}",
+   "headers": {
+    "strict-transport-security": [
+     "max-age=31536000"
+    ],
+    "x-robots-tag": [
+     "noindex, nofollow"
+    ]
+   }
+  },
+  {
+   "check": "GET /api/v1/ops/session → 404 (Caddy 가 닫음)",
+   "ok": true,
+   "status": 404,
+   "content_type": "application/json",
+   "body": "{\"error\":\"데모에서는 쓸 수 없는 경로입니다\"}",
+   "headers": {
+    "strict-transport-security": [
+     "max-age=31536000"
+    ],
+    "x-robots-tag": [
+     "noindex, nofollow"
+    ]
+   }
+  },
+  {
+   "check": "GET /api/v1/ops/providers → 404 (Caddy 가 닫음)",
+   "ok": true,
+   "status": 404,
+   "content_type": "application/json",
+   "body": "{\"error\":\"데모에서는 쓸 수 없는 경로입니다\"}",
+   "headers": {
+    "strict-transport-security": [
+     "max-age=31536000"
+    ],
+    "x-robots-tag": [
+     "noindex, nofollow"
+    ]
+   }
+  },
+  {
+   "check": "POST /api/v1/ops/session → 404 (Caddy 가 닫음)",
+   "ok": true,
+   "status": 404,
+   "content_type": "application/json",
+   "body": "{\"error\":\"데모에서는 쓸 수 없는 경로입니다\"}",
+   "headers": {
+    "strict-transport-security": [
+     "max-age=31536000"
+    ],
+    "x-robots-tag": [
+     "noindex, nofollow"
+    ]
+   }
+  },
+  {
+   "check": "GET /api/v1/ops → 404 (Caddy 가 닫음)",
+   "ok": true,
+   "status": 404,
+   "content_type": "application/json",
+   "body": "{\"error\":\"데모에서는 쓸 수 없는 경로입니다\"}",
+   "headers": {
+    "strict-transport-security": [
+     "max-age=31536000"
+    ],
+    "x-robots-tag": [
+     "noindex, nofollow"
+    ]
+   }
+  },
+  {
+   "check": "GET / → 통과 200",
+   "ok": true,
+   "edge": 200
+  },
+  {
+   "check": "GET /: 보안 헤더가 한 번씩만",
+   "ok": true,
+   "duplicated": {},
+   "headers": {
+    "strict-transport-security": [
+     "max-age=31536000"
+    ],
+    "content-security-policy": [
+     "default-src 'self'; script-src 'self' 'nonce-ZPnyfPeWYGRiOyx…"
+    ],
+    "x-frame-options": [
+     "DENY"
+    ],
+    "x-content-type-options": [
+     "nosniff"
+    ],
+    "referrer-policy": [
+     "strict-origin-when-cross-origin"
+    ],
+    "x-robots-tag": [
+     "noindex, nofollow"
+    ],
+    "permissions-policy": [
+     "geolocation=(), camera=(), microphone=()"
+    ],
+    "cross-origin-opener-policy": [
+     "same-origin"
+    ]
+   }
+  },
+  {
+   "check": "GET /: HSTS 한 번 · Server 없음 · X-Robots-Tag 한 번",
+   "ok": true,
+   "hsts": [
+    "max-age=31536000"
+   ],
+   "server": null
+  },
+  {
+   "check": "GET /: CSP 한 번 · frame-ancestors 'none' · X-Frame-Options DENY 한 번",
+   "ok": true,
+   "csp_count": 1,
+   "xfo": [
+    "DENY"
+   ]
+  },
+  {
+   "check": "GET /: nosniff · Referrer-Policy 한 번",
+   "ok": true,
+   "nosniff": [
+    "nosniff"
+   ],
+   "referrer": [
+    "strict-origin-when-cross-origin"
+   ]
+  },
+  {
+   "check": "GET /replay → 통과 200",
+   "ok": true,
+   "edge": 200
+  },
+  {
+   "check": "GET /replay: 보안 헤더가 한 번씩만",
+   "ok": true,
+   "duplicated": {},
+   "headers": {
+    "strict-transport-security": [
+     "max-age=31536000"
+    ],
+    "content-security-policy": [
+     "default-src 'self'; script-src 'self' 'nonce-SmzS0ZpOLpaHpvP…"
+    ],
+    "x-frame-options": [
+     "DENY"
+    ],
+    "x-content-type-options": [
+     "nosniff"
+    ],
+    "referrer-policy": [
+     "strict-origin-when-cross-origin"
+    ],
+    "x-robots-tag": [
+     "noindex, nofollow"
+    ],
+    "permissions-policy": [
+     "geolocation=(), camera=(), microphone=()"
+    ],
+    "cross-origin-opener-policy": [
+     "same-origin"
+    ]
+   }
+  },
+  {
+   "check": "GET /replay: HSTS 한 번 · Server 없음 · X-Robots-Tag 한 번",
+   "ok": true,
+   "hsts": [
+    "max-age=31536000"
+   ],
+   "server": null
+  },
+  {
+   "check": "GET /replay: CSP 한 번 · frame-ancestors 'none' · X-Frame-Options DENY 한 번",
+   "ok": true,
+   "csp_count": 1,
+   "xfo": [
+    "DENY"
+   ]
+  },
+  {
+   "check": "GET /replay: nosniff · Referrer-Policy 한 번",
+   "ok": true,
+   "nosniff": [
+    "nosniff"
+   ],
+   "referrer": [
+    "strict-origin-when-cross-origin"
+   ]
+  },
+  {
+   "check": "GET /stats → 통과 200",
+   "ok": true,
+   "edge": 200
+  },
+  {
+   "check": "GET /stats: 보안 헤더가 한 번씩만",
+   "ok": true,
+   "duplicated": {},
+   "headers": {
+    "strict-transport-security": [
+     "max-age=31536000"
+    ],
+    "content-security-policy": [
+     "default-src 'self'; script-src 'self' 'nonce-FLVc5DDfOi3ykPc…"
+    ],
+    "x-frame-options": [
+     "DENY"
+    ],
+    "x-content-type-options": [
+     "nosniff"
+    ],
+    "referrer-policy": [
+     "strict-origin-when-cross-origin"
+    ],
+    "x-robots-tag": [
+     "noindex, nofollow"
+    ],
+    "permissions-policy": [
+     "geolocation=(), camera=(), microphone=()"
+    ],
+    "cross-origin-opener-policy": [
+     "same-origin"
+    ]
+   }
+  },
+  {
+   "check": "GET /stats: HSTS 한 번 · Server 없음 · X-Robots-Tag 한 번",
+   "ok": true,
+   "hsts": [
+    "max-age=31536000"
+   ],
+   "server": null
+  },
+  {
+   "check": "GET /stats: CSP 한 번 · frame-ancestors 'none' · X-Frame-Options DENY 한 번",
+   "ok": true,
+   "csp_count": 1,
+   "xfo": [
+    "DENY"
+   ]
+  },
+  {
+   "check": "GET /stats: nosniff · Referrer-Policy 한 번",
+   "ok": true,
+   "nosniff": [
+    "nosniff"
+   ],
+   "referrer": [
+    "strict-origin-when-cross-origin"
+   ]
+  },
+  {
+   "check": "GET /about → 통과 200",
+   "ok": true,
+   "edge": 200
+  },
+  {
+   "check": "GET /about: 보안 헤더가 한 번씩만",
+   "ok": true,
+   "duplicated": {},
+   "headers": {
+    "strict-transport-security": [
+     "max-age=31536000"
+    ],
+    "content-security-policy": [
+     "default-src 'self'; script-src 'self' 'nonce-MIQ4ZNWcqKHrJwW…"
+    ],
+    "x-frame-options": [
+     "DENY"
+    ],
+    "x-content-type-options": [
+     "nosniff"
+    ],
+    "referrer-policy": [
+     "strict-origin-when-cross-origin"
+    ],
+    "x-robots-tag": [
+     "noindex, nofollow"
+    ],
+    "permissions-policy": [
+     "geolocation=(), camera=(), microphone=()"
+    ],
+    "cross-origin-opener-policy": [
+     "same-origin"
+    ]
+   }
+  },
+  {
+   "check": "GET /about: HSTS 한 번 · Server 없음 · X-Robots-Tag 한 번",
+   "ok": true,
+   "hsts": [
+    "max-age=31536000"
+   ],
+   "server": null
+  },
+  {
+   "check": "GET /about: CSP 한 번 · frame-ancestors 'none' · X-Frame-Options DENY 한 번",
+   "ok": true,
+   "csp_count": 1,
+   "xfo": [
+    "DENY"
+   ]
+  },
+  {
+   "check": "GET /about: nosniff · Referrer-Policy 한 번",
+   "ok": true,
+   "nosniff": [
+    "nosniff"
+   ],
+   "referrer": [
+    "strict-origin-when-cross-origin"
+   ]
+  },
+  {
+   "check": "GET /guide → 통과 200",
+   "ok": true,
+   "edge": 200
+  },
+  {
+   "check": "GET /guide: 보안 헤더가 한 번씩만",
+   "ok": true,
+   "duplicated": {},
+   "headers": {
+    "strict-transport-security": [
+     "max-age=31536000"
+    ],
+    "content-security-policy": [
+     "default-src 'self'; script-src 'self' 'nonce-eCl8jQDd/nm6Wz6…"
+    ],
+    "x-frame-options": [
+     "DENY"
+    ],
+    "x-content-type-options": [
+     "nosniff"
+    ],
+    "referrer-policy": [
+     "strict-origin-when-cross-origin"
+    ],
+    "x-robots-tag": [
+     "noindex, nofollow"
+    ],
+    "permissions-policy": [
+     "geolocation=(), camera=(), microphone=()"
+    ],
+    "cross-origin-opener-policy": [
+     "same-origin"
+    ]
+   }
+  },
+  {
+   "check": "GET /guide: HSTS 한 번 · Server 없음 · X-Robots-Tag 한 번",
+   "ok": true,
+   "hsts": [
+    "max-age=31536000"
+   ],
+   "server": null
+  },
+  {
+   "check": "GET /guide: CSP 한 번 · frame-ancestors 'none' · X-Frame-Options DENY 한 번",
+   "ok": true,
+   "csp_count": 1,
+   "xfo": [
+    "DENY"
+   ]
+  },
+  {
+   "check": "GET /guide: nosniff · Referrer-Policy 한 번",
+   "ok": true,
+   "nosniff": [
+    "nosniff"
+   ],
+   "referrer": [
+    "strict-origin-when-cross-origin"
+   ]
+  },
+  {
+   "check": "GET /m → 통과 200",
+   "ok": true,
+   "edge": 200
+  },
+  {
+   "check": "GET /m: 보안 헤더가 한 번씩만",
+   "ok": true,
+   "duplicated": {},
+   "headers": {
+    "strict-transport-security": [
+     "max-age=31536000"
+    ],
+    "content-security-policy": [
+     "default-src 'self'; script-src 'self' 'nonce-p3Jua7HmJbw7MFB…"
+    ],
+    "x-frame-options": [
+     "DENY"
+    ],
+    "x-content-type-options": [
+     "nosniff"
+    ],
+    "referrer-policy": [
+     "strict-origin-when-cross-origin"
+    ],
+    "x-robots-tag": [
+     "noindex, nofollow"
+    ],
+    "permissions-policy": [
+     "geolocation=(), camera=(), microphone=()"
+    ],
+    "cross-origin-opener-policy": [
+     "same-origin"
+    ]
+   }
+  },
+  {
+   "check": "GET /m: HSTS 한 번 · Server 없음 · X-Robots-Tag 한 번",
+   "ok": true,
+   "hsts": [
+    "max-age=31536000"
+   ],
+   "server": null
+  },
+  {
+   "check": "GET /m: CSP 한 번 · frame-ancestors 'none' · X-Frame-Options DENY 한 번",
+   "ok": true,
+   "csp_count": 1,
+   "xfo": [
+    "DENY"
+   ]
+  },
+  {
+   "check": "GET /m: nosniff · Referrer-Policy 한 번",
+   "ok": true,
+   "nosniff": [
+    "nosniff"
+   ],
+   "referrer": [
+    "strict-origin-when-cross-origin"
+   ]
+  },
+  {
+   "check": "GET /airports/RKSI → 통과 200",
+   "ok": true,
+   "edge": 200
+  },
+  {
+   "check": "GET /airports/RKSI: 보안 헤더가 한 번씩만",
+   "ok": true,
+   "duplicated": {},
+   "headers": {
+    "strict-transport-security": [
+     "max-age=31536000"
+    ],
+    "content-security-policy": [
+     "default-src 'self'; script-src 'self' 'nonce-/9iX2zVJMJMdkT9…"
+    ],
+    "x-frame-options": [
+     "DENY"
+    ],
+    "x-content-type-options": [
+     "nosniff"
+    ],
+    "referrer-policy": [
+     "strict-origin-when-cross-origin"
+    ],
+    "x-robots-tag": [
+     "noindex, nofollow"
+    ],
+    "permissions-policy": [
+     "geolocation=(), camera=(), microphone=()"
+    ],
+    "cross-origin-opener-policy": [
+     "same-origin"
+    ]
+   }
+  },
+  {
+   "check": "GET /airports/RKSI: HSTS 한 번 · Server 없음 · X-Robots-Tag 한 번",
+   "ok": true,
+   "hsts": [
+    "max-age=31536000"
+   ],
+   "server": null
+  },
+  {
+   "check": "GET /airports/RKSI: CSP 한 번 · frame-ancestors 'none' · X-Frame-Options DENY 한 번",
+   "ok": true,
+   "csp_count": 1,
+   "xfo": [
+    "DENY"
+   ]
+  },
+  {
+   "check": "GET /airports/RKSI: nosniff · Referrer-Policy 한 번",
+   "ok": true,
+   "nosniff": [
+    "nosniff"
+   ],
+   "referrer": [
+    "strict-origin-when-cross-origin"
+   ]
+  },
+  {
+   "check": "GET /api/v1/status → 통과 200",
+   "ok": true,
+   "edge": 200
+  },
+  {
+   "check": "GET /api/v1/status: 보안 헤더가 한 번씩만",
+   "ok": true,
+   "duplicated": {},
+   "headers": {
+    "strict-transport-security": [
+     "max-age=31536000"
+    ],
+    "content-security-policy": [
+     "default-src 'none'; frame-ancestors 'none'…"
+    ],
+    "x-frame-options": [
+     "DENY"
+    ],
+    "x-content-type-options": [
+     "nosniff"
+    ],
+    "referrer-policy": [
+     "strict-origin-when-cross-origin"
+    ],
+    "x-robots-tag": [
+     "noindex, nofollow"
+    ],
+    "permissions-policy": [
+     "geolocation=(), camera=(), microphone=()"
+    ],
+    "cross-origin-opener-policy": [
+     "same-origin"
+    ]
+   }
+  },
+  {
+   "check": "GET /api/v1/status: HSTS 한 번 · Server 없음 · X-Robots-Tag 한 번",
+   "ok": true,
+   "hsts": [
+    "max-age=31536000"
+   ],
+   "server": null
+  },
+  {
+   "check": "GET /api/v1/status: nosniff · Referrer-Policy 한 번",
+   "ok": true,
+   "nosniff": [
+    "nosniff"
+   ],
+   "referrer": [
+    "strict-origin-when-cross-origin"
+   ]
+  },
+  {
+   "check": "GET /api/v1/aircraft?bbox=124,33,132,39 → 통과 200",
+   "ok": true,
+   "edge": 200
+  },
+  {
+   "check": "GET /api/v1/aircraft?bbox=124,33,132,39: 보안 헤더가 한 번씩만",
+   "ok": true,
+   "duplicated": {},
+   "headers": {
+    "strict-transport-security": [
+     "max-age=31536000"
+    ],
+    "content-security-policy": [
+     "default-src 'none'; frame-ancestors 'none'…"
+    ],
+    "x-frame-options": [
+     "DENY"
+    ],
+    "x-content-type-options": [
+     "nosniff"
+    ],
+    "referrer-policy": [
+     "strict-origin-when-cross-origin"
+    ],
+    "x-robots-tag": [
+     "noindex, nofollow"
+    ],
+    "permissions-policy": [
+     "geolocation=(), camera=(), microphone=()"
+    ],
+    "cross-origin-opener-policy": [
+     "same-origin"
+    ]
+   }
+  },
+  {
+   "check": "GET /api/v1/aircraft?bbox=124,33,132,39: HSTS 한 번 · Server 없음 · X-Robots-Tag 한 번",
+   "ok": true,
+   "hsts": [
+    "max-age=31536000"
+   ],
+   "server": null
+  },
+  {
+   "check": "GET /api/v1/aircraft?bbox=124,33,132,39: nosniff · Referrer-Policy 한 번",
+   "ok": true,
+   "nosniff": [
+    "nosniff"
+   ],
+   "referrer": [
+    "strict-origin-when-cross-origin"
+   ]
+  },
+  {
+   "check": "GET /api/v1/warnings → 통과 200",
+   "ok": true,
+   "edge": 200
+  },
+  {
+   "check": "GET /api/v1/warnings: 보안 헤더가 한 번씩만",
+   "ok": true,
+   "duplicated": {},
+   "headers": {
+    "strict-transport-security": [
+     "max-age=31536000"
+    ],
+    "content-security-policy": [
+     "default-src 'none'; frame-ancestors 'none'…"
+    ],
+    "x-frame-options": [
+     "DENY"
+    ],
+    "x-content-type-options": [
+     "nosniff"
+    ],
+    "referrer-policy": [
+     "strict-origin-when-cross-origin"
+    ],
+    "x-robots-tag": [
+     "noindex, nofollow"
+    ],
+    "permissions-policy": [
+     "geolocation=(), camera=(), microphone=()"
+    ],
+    "cross-origin-opener-policy": [
+     "same-origin"
+    ]
+   }
+  },
+  {
+   "check": "GET /api/v1/warnings: HSTS 한 번 · Server 없음 · X-Robots-Tag 한 번",
+   "ok": true,
+   "hsts": [
+    "max-age=31536000"
+   ],
+   "server": null
+  },
+  {
+   "check": "GET /api/v1/warnings: nosniff · Referrer-Policy 한 번",
+   "ok": true,
+   "nosniff": [
+    "nosniff"
+   ],
+   "referrer": [
+    "strict-origin-when-cross-origin"
+   ]
+  },
+  {
+   "check": "GET /healthz → 통과 200",
+   "ok": true,
+   "edge": 200
+  },
+  {
+   "check": "GET /healthz: 보안 헤더가 한 번씩만",
+   "ok": true,
+   "duplicated": {},
+   "headers": {
+    "strict-transport-security": [
+     "max-age=31536000"
+    ],
+    "content-security-policy": [
+     "default-src 'none'; frame-ancestors 'none'…"
+    ],
+    "x-frame-options": [
+     "DENY"
+    ],
+    "x-content-type-options": [
+     "nosniff"
+    ],
+    "referrer-policy": [
+     "strict-origin-when-cross-origin"
+    ],
+    "x-robots-tag": [
+     "noindex, nofollow"
+    ],
+    "permissions-policy": [
+     "geolocation=(), camera=(), microphone=()"
+    ],
+    "cross-origin-opener-policy": [
+     "same-origin"
+    ]
+   }
+  },
+  {
+   "check": "GET /healthz: HSTS 한 번 · Server 없음 · X-Robots-Tag 한 번",
+   "ok": true,
+   "hsts": [
+    "max-age=31536000"
+   ],
+   "server": null
+  },
+  {
+   "check": "GET /_next/static/chunks/1ca_d3tijhqim.js → 통과 200",
+   "ok": true,
+   "edge": 200
+  },
+  {
+   "check": "GET /_next/static/chunks/1ca_d3tijhqim.js: 보안 헤더가 한 번씩만",
+   "ok": true,
+   "duplicated": {},
+   "headers": {
+    "strict-transport-security": [
+     "max-age=31536000"
+    ],
+    "x-frame-options": [
+     "DENY"
+    ],
+    "x-content-type-options": [
+     "nosniff"
+    ],
+    "referrer-policy": [
+     "strict-origin-when-cross-origin"
+    ],
+    "x-robots-tag": [
+     "noindex, nofollow"
+    ],
+    "permissions-policy": [
+     "geolocation=(), camera=(), microphone=()"
+    ],
+    "cross-origin-opener-policy": [
+     "same-origin"
+    ]
+   }
+  },
+  {
+   "check": "GET /_next/static/chunks/1ca_d3tijhqim.js: HSTS 한 번 · Server 없음 · X-Robots-Tag 한 번",
+   "ok": true,
+   "hsts": [
+    "max-age=31536000"
+   ],
+   "server": null
+  },
+  {
+   "check": "GET /_next/static/chunks/1ca_d3tijhqim.js: nosniff · Referrer-Policy 한 번",
+   "ok": true,
+   "nosniff": [
+    "nosniff"
+   ],
+   "referrer": [
+    "strict-origin-when-cross-origin"
+   ]
+  },
+  {
+   "compare_front_vs_edge": [
+    {
+     "path": "/",
+     "front": 200,
+     "edge": 200,
+     "front_headers": {
+      "strict-transport-security": [
+       "max-age=31536000"
+      ],
+      "content-security-policy": [
+       "default-src 'self'; script-src 'self' 'nonce-ZPnyfPeWYGRiOyx…"
+      ],
+      "x-frame-options": [
+       "DENY"
+      ],
+      "x-content-type-options": [
+       "nosniff"
+      ],
+      "referrer-policy": [
+       "strict-origin-when-cross-origin"
+      ],
+      "x-robots-tag": [
+       "noindex, nofollow"
+      ],
+      "permissions-policy": [
+       "geolocation=(), camera=(), microphone=()"
+      ],
+      "cross-origin-opener-policy": [
+       "same-origin"
+      ]
+     },
+     "edge_headers": {
+      "content-security-policy": [
+       "default-src 'self'; script-src 'self' 'nonce-sEzxvke06idkQpG…"
+      ],
+      "x-frame-options": [
+       "DENY"
+      ],
+      "x-content-type-options": [
+       "nosniff"
+      ],
+      "referrer-policy": [
+       "strict-origin-when-cross-origin"
+      ],
+      "server": [
+       "nginx"
+      ],
+      "permissions-policy": [
+       "geolocation=(), camera=(), microphone=()"
+      ],
+      "cross-origin-opener-policy": [
+       "same-origin"
+      ]
+     }
+    },
+    {
+     "path": "/replay",
+     "front": 200,
+     "edge": 200,
+     "front_headers": {
+      "strict-transport-security": [
+       "max-age=31536000"
+      ],
+      "content-security-policy": [
+       "default-src 'self'; script-src 'self' 'nonce-SmzS0ZpOLpaHpvP…"
+      ],
+      "x-frame-options": [
+       "DENY"
+      ],
+      "x-content-type-options": [
+       "nosniff"
+      ],
+      "referrer-policy": [
+       "strict-origin-when-cross-origin"
+      ],
+      "x-robots-tag": [
+       "noindex, nofollow"
+      ],
+      "permissions-policy": [
+       "geolocation=(), camera=(), microphone=()"
+      ],
+      "cross-origin-opener-policy": [
+       "same-origin"
+      ]
+     },
+     "edge_headers": {
+      "content-security-policy": [
+       "default-src 'self'; script-src 'self' 'nonce-hm0CLJEyi6PCZTY…"
+      ],
+      "x-frame-options": [
+       "DENY"
+      ],
+      "x-content-type-options": [
+       "nosniff"
+      ],
+      "referrer-policy": [
+       "strict-origin-when-cross-origin"
+      ],
+      "server": [
+       "nginx"
+      ],
+      "permissions-policy": [
+       "geolocation=(), camera=(), microphone=()"
+      ],
+      "cross-origin-opener-policy": [
+       "same-origin"
+      ]
+     }
+    },
+    {
+     "path": "/stats",
+     "front": 200,
+     "edge": 200,
+     "front_headers": {
+      "strict-transport-security": [
+       "max-age=31536000"
+      ],
+      "content-security-policy": [
+       "default-src 'self'; script-src 'self' 'nonce-FLVc5DDfOi3ykPc…"
+      ],
+      "x-frame-options": [
+       "DENY"
+      ],
+      "x-content-type-options": [
+       "nosniff"
+      ],
+      "referrer-policy": [
+       "strict-origin-when-cross-origin"
+      ],
+      "x-robots-tag": [
+       "noindex, nofollow"
+      ],
+      "permissions-policy": [
+       "geolocation=(), camera=(), microphone=()"
+      ],
+      "cross-origin-opener-policy": [
+       "same-origin"
+      ]
+     },
+     "edge_headers": {
+      "content-security-policy": [
+       "default-src 'self'; script-src 'self' 'nonce-E9NOFeyZnxmlUkw…"
+      ],
+      "x-frame-options": [
+       "DENY"
+      ],
+      "x-content-type-options": [
+       "nosniff"
+      ],
+      "referrer-policy": [
+       "strict-origin-when-cross-origin"
+      ],
+      "server": [
+       "nginx"
+      ],
+      "permissions-policy": [
+       "geolocation=(), camera=(), microphone=()"
+      ],
+      "cross-origin-opener-policy": [
+       "same-origin"
+      ]
+     }
+    },
+    {
+     "path": "/about",
+     "front": 200,
+     "edge": 200,
+     "front_headers": {
+      "strict-transport-security": [
+       "max-age=31536000"
+      ],
+      "content-security-policy": [
+       "default-src 'self'; script-src 'self' 'nonce-MIQ4ZNWcqKHrJwW…"
+      ],
+      "x-frame-options": [
+       "DENY"
+      ],
+      "x-content-type-options": [
+       "nosniff"
+      ],
+      "referrer-policy": [
+       "strict-origin-when-cross-origin"
+      ],
+      "x-robots-tag": [
+       "noindex, nofollow"
+      ],
+      "permissions-policy": [
+       "geolocation=(), camera=(), microphone=()"
+      ],
+      "cross-origin-opener-policy": [
+       "same-origin"
+      ]
+     },
+     "edge_headers": {
+      "content-security-policy": [
+       "default-src 'self'; script-src 'self' 'nonce-e4BF1Fk4Tj6UzcK…"
+      ],
+      "x-frame-options": [
+       "DENY"
+      ],
+      "x-content-type-options": [
+       "nosniff"
+      ],
+      "referrer-policy": [
+       "strict-origin-when-cross-origin"
+      ],
+      "server": [
+       "nginx"
+      ],
+      "permissions-policy": [
+       "geolocation=(), camera=(), microphone=()"
+      ],
+      "cross-origin-opener-policy": [
+       "same-origin"
+      ]
+     }
+    },
+    {
+     "path": "/guide",
+     "front": 200,
+     "edge": 200,
+     "front_headers": {
+      "strict-transport-security": [
+       "max-age=31536000"
+      ],
+      "content-security-policy": [
+       "default-src 'self'; script-src 'self' 'nonce-eCl8jQDd/nm6Wz6…"
+      ],
+      "x-frame-options": [
+       "DENY"
+      ],
+      "x-content-type-options": [
+       "nosniff"
+      ],
+      "referrer-policy": [
+       "strict-origin-when-cross-origin"
+      ],
+      "x-robots-tag": [
+       "noindex, nofollow"
+      ],
+      "permissions-policy": [
+       "geolocation=(), camera=(), microphone=()"
+      ],
+      "cross-origin-opener-policy": [
+       "same-origin"
+      ]
+     },
+     "edge_headers": {
+      "content-security-policy": [
+       "default-src 'self'; script-src 'self' 'nonce-Xo3UsB4Horb7HD/…"
+      ],
+      "x-frame-options": [
+       "DENY"
+      ],
+      "x-content-type-options": [
+       "nosniff"
+      ],
+      "referrer-policy": [
+       "strict-origin-when-cross-origin"
+      ],
+      "server": [
+       "nginx"
+      ],
+      "permissions-policy": [
+       "geolocation=(), camera=(), microphone=()"
+      ],
+      "cross-origin-opener-policy": [
+       "same-origin"
+      ]
+     }
+    },
+    {
+     "path": "/m",
+     "front": 200,
+     "edge": 200,
+     "front_headers": {
+      "strict-transport-security": [
+       "max-age=31536000"
+      ],
+      "content-security-policy": [
+       "default-src 'self'; script-src 'self' 'nonce-p3Jua7HmJbw7MFB…"
+      ],
+      "x-frame-options": [
+       "DENY"
+      ],
+      "x-content-type-options": [
+       "nosniff"
+      ],
+      "referrer-policy": [
+       "strict-origin-when-cross-origin"
+      ],
+      "x-robots-tag": [
+       "noindex, nofollow"
+      ],
+      "permissions-policy": [
+       "geolocation=(), camera=(), microphone=()"
+      ],
+      "cross-origin-opener-policy": [
+       "same-origin"
+      ]
+     },
+     "edge_headers": {
+      "content-security-policy": [
+       "default-src 'self'; script-src 'self' 'nonce-61unTehhuhVsCbm…"
+      ],
+      "x-frame-options": [
+       "DENY"
+      ],
+      "x-content-type-options": [
+       "nosniff"
+      ],
+      "referrer-policy": [
+       "strict-origin-when-cross-origin"
+      ],
+      "server": [
+       "nginx"
+      ],
+      "permissions-policy": [
+       "geolocation=(), camera=(), microphone=()"
+      ],
+      "cross-origin-opener-policy": [
+       "same-origin"
+      ]
+     }
+    },
+    {
+     "path": "/airports/RKSI",
+     "front": 200,
+     "edge": 200,
+     "front_headers": {
+      "strict-transport-security": [
+       "max-age=31536000"
+      ],
+      "content-security-policy": [
+       "default-src 'self'; script-src 'self' 'nonce-/9iX2zVJMJMdkT9…"
+      ],
+      "x-frame-options": [
+       "DENY"
+      ],
+      "x-content-type-options": [
+       "nosniff"
+      ],
+      "referrer-policy": [
+       "strict-origin-when-cross-origin"
+      ],
+      "x-robots-tag": [
+       "noindex, nofollow"
+      ],
+      "permissions-policy": [
+       "geolocation=(), camera=(), microphone=()"
+      ],
+      "cross-origin-opener-policy": [
+       "same-origin"
+      ]
+     },
+     "edge_headers": {
+      "content-security-policy": [
+       "default-src 'self'; script-src 'self' 'nonce-B2eh8B89dhjr2EX…"
+      ],
+      "x-frame-options": [
+       "DENY"
+      ],
+      "x-content-type-options": [
+       "nosniff"
+      ],
+      "referrer-policy": [
+       "strict-origin-when-cross-origin"
+      ],
+      "server": [
+       "nginx"
+      ],
+      "permissions-policy": [
+       "geolocation=(), camera=(), microphone=()"
+      ],
+      "cross-origin-opener-policy": [
+       "same-origin"
+      ]
+     }
+    },
+    {
+     "path": "/api/v1/status",
+     "front": 200,
+     "edge": 200,
+     "front_headers": {
+      "strict-transport-security": [
+       "max-age=31536000"
+      ],
+      "content-security-policy": [
+       "default-src 'none'; frame-ancestors 'none'…"
+      ],
+      "x-frame-options": [
+       "DENY"
+      ],
+      "x-content-type-options": [
+       "nosniff"
+      ],
+      "referrer-policy": [
+       "strict-origin-when-cross-origin"
+      ],
+      "x-robots-tag": [
+       "noindex, nofollow"
+      ],
+      "permissions-policy": [
+       "geolocation=(), camera=(), microphone=()"
+      ],
+      "cross-origin-opener-policy": [
+       "same-origin"
+      ]
+     },
+     "edge_headers": {
+      "content-security-policy": [
+       "default-src 'none'; frame-ancestors 'none'…"
+      ],
+      "x-frame-options": [
+       "DENY"
+      ],
+      "x-content-type-options": [
+       "nosniff"
+      ],
+      "referrer-policy": [
+       "strict-origin-when-cross-origin"
+      ],
+      "server": [
+       "nginx"
+      ],
+      "permissions-policy": [
+       "geolocation=(), camera=(), microphone=()"
+      ],
+      "cross-origin-opener-policy": [
+       "same-origin"
+      ]
+     }
+    },
+    {
+     "path": "/api/v1/aircraft?bbox=124,33,132,39",
+     "front": 200,
+     "edge": 200,
+     "front_headers": {
+      "strict-transport-security": [
+       "max-age=31536000"
+      ],
+      "content-security-policy": [
+       "default-src 'none'; frame-ancestors 'none'…"
+      ],
+      "x-frame-options": [
+       "DENY"
+      ],
+      "x-content-type-options": [
+       "nosniff"
+      ],
+      "referrer-policy": [
+       "strict-origin-when-cross-origin"
+      ],
+      "x-robots-tag": [
+       "noindex, nofollow"
+      ],
+      "permissions-policy": [
+       "geolocation=(), camera=(), microphone=()"
+      ],
+      "cross-origin-opener-policy": [
+       "same-origin"
+      ]
+     },
+     "edge_headers": {
+      "content-security-policy": [
+       "default-src 'none'; frame-ancestors 'none'…"
+      ],
+      "x-frame-options": [
+       "DENY"
+      ],
+      "x-content-type-options": [
+       "nosniff"
+      ],
+      "referrer-policy": [
+       "strict-origin-when-cross-origin"
+      ],
+      "server": [
+       "nginx"
+      ],
+      "permissions-policy": [
+       "geolocation=(), camera=(), microphone=()"
+      ],
+      "cross-origin-opener-policy": [
+       "same-origin"
+      ]
+     }
+    },
+    {
+     "path": "/api/v1/warnings",
+     "front": 200,
+     "edge": 200,
+     "front_headers": {
+      "strict-transport-security": [
+       "max-age=31536000"
+      ],
+      "content-security-policy": [
+       "default-src 'none'; frame-ancestors 'none'…"
+      ],
+      "x-frame-options": [
+       "DENY"
+      ],
+      "x-content-type-options": [
+       "nosniff"
+      ],
+      "referrer-policy": [
+       "strict-origin-when-cross-origin"
+      ],
+      "x-robots-tag": [
+       "noindex, nofollow"
+      ],
+      "permissions-policy": [
+       "geolocation=(), camera=(), microphone=()"
+      ],
+      "cross-origin-opener-policy": [
+       "same-origin"
+      ]
+     },
+     "edge_headers": {
+      "content-security-policy": [
+       "default-src 'none'; frame-ancestors 'none'…"
+      ],
+      "x-frame-options": [
+       "DENY"
+      ],
+      "x-content-type-options": [
+       "nosniff"
+      ],
+      "referrer-policy": [
+       "strict-origin-when-cross-origin"
+      ],
+      "server": [
+       "nginx"
+      ],
+      "permissions-policy": [
+       "geolocation=(), camera=(), microphone=()"
+      ],
+      "cross-origin-opener-policy": [
+       "same-origin"
+      ]
+     }
+    },
+    {
+     "path": "/healthz",
+     "front": 200,
+     "edge": 200,
+     "front_headers": {
+      "strict-transport-security": [
+       "max-age=31536000"
+      ],
+      "content-security-policy": [
+       "default-src 'none'; frame-ancestors 'none'…"
+      ],
+      "x-frame-options": [
+       "DENY"
+      ],
+      "x-content-type-options": [
+       "nosniff"
+      ],
+      "referrer-policy": [
+       "strict-origin-when-cross-origin"
+      ],
+      "x-robots-tag": [
+       "noindex, nofollow"
+      ],
+      "permissions-policy": [
+       "geolocation=(), camera=(), microphone=()"
+      ],
+      "cross-origin-opener-policy": [
+       "same-origin"
+      ]
+     },
+     "edge_headers": {
+      "content-security-policy": [
+       "default-src 'none'; frame-ancestors 'none'…"
+      ],
+      "x-frame-options": [
+       "DENY"
+      ],
+      "x-content-type-options": [
+       "nosniff"
+      ],
+      "referrer-policy": [
+       "strict-origin-when-cross-origin"
+      ],
+      "server": [
+       "nginx"
+      ],
+      "permissions-policy": [
+       "geolocation=(), camera=(), microphone=()"
+      ],
+      "cross-origin-opener-policy": [
+       "same-origin"
+      ]
+     }
+    },
+    {
+     "path": "/_next/static/chunks/1ca_d3tijhqim.js",
+     "front": 200,
+     "edge": 200,
+     "front_headers": {
+      "strict-transport-security": [
+       "max-age=31536000"
+      ],
+      "x-frame-options": [
+       "DENY"
+      ],
+      "x-content-type-options": [
+       "nosniff"
+      ],
+      "referrer-policy": [
+       "strict-origin-when-cross-origin"
+      ],
+      "x-robots-tag": [
+       "noindex, nofollow"
+      ],
+      "permissions-policy": [
+       "geolocation=(), camera=(), microphone=()"
+      ],
+      "cross-origin-opener-policy": [
+       "same-origin"
+      ]
+     },
+     "edge_headers": {
+      "x-frame-options": [
+       "DENY"
+      ],
+      "x-content-type-options": [
+       "nosniff"
+      ],
+      "referrer-policy": [
+       "strict-origin-when-cross-origin"
+      ],
+      "server": [
+       "nginx"
+      ],
+      "permissions-policy": [
+       "geolocation=(), camera=(), microphone=()"
+      ],
+      "cross-origin-opener-policy": [
+       "same-origin"
+      ]
+     }
+    }
+   ]
+  }
+ ],
+ "fail": []
+}

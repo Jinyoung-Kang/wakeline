@@ -1,0 +1,7 @@
+wlqa-aws-edge-1 Created
+wlqa-aws-api-1 Created
+wlqa-aws-ais-1 Up Less than a second (health: starting)
+wlqa-aws-collector-1 Created
+wlqa-aws-redis-1 Up 5 seconds (healthy)
+wlqa-aws-migrate-1 Exited (1) 1 second ago
+wlqa-aws-web-1 Up 5 seconds (health: starting)

@@ -10,6 +10,7 @@
 | QA-1202 | 높음 | api-data | 정시 요약(:05) 뒤에 늦게 쓰인 그 시간의 원해상도 행은 따라잡기가 영영 요약하지 않는다(72 h 뒤 재생에서 그 분들만 빈다) | 재현됨 · 시험 실패 확인 | 검증자 의견 반영 — 조건부 데이터 손실은 기준상 높음 |
 | QA-1240 | 높음 | reliability | 3일 넘게 멈췄다 켤 때 DB 가 api 보다 늦게 준비되면(또는 연결이 꽉 차면) 오늘(UTC) 항적 · 선박 파티션을 6 h 동안 만들지 않아 그동안 모든 행이 버려지고 ACK 된다(영구 손실, /healthz 는 ok) | 재현됨 · 시험 실패 확인 |  |
 | QA-1602 | 높음 | config | 익명 동시 잠금 해제 요청이 공유 gate(96 MiB)를 메모리 고갈로 죽이고(세 프로젝트 502) 무차별 대입 잠금을 초기화한다 — aws-deploy(공유) | aws-deploy(공유) — 보고만, 고치기는 사용자 결정 · 독립 재현 미완 |  |
+| QA-1620 | 높음 | rehearsal | AWS 백업(aws-deploy backup.sh — --no-owner --no-privileges)으로 받은 wakeline 덤프를 새 RDS(bootstrap)에 복원하면 소유자 · 권한이 사라져, 소유 역할로 복원하면 DB 읽기 500 · 운영 로그인 500 · api/collector 쓰기를 권한 오류로 버리고(/healthz ok · 파티션 함수 PUBLIC 실행), 마스터로 복원하면 migrate 가 실패해 api · collector 가 뜨지 않는다 — aws-deploy(공유) + wakeline(권한이 마이그레이션 때만) | 재현됨 · 재현 스크립트 실패 확인(독립 검증 전) | aws-deploy(공유) — 보고만. '보통' 의견 가능(덤프 자체는 온전) |
 | QA-1101 | 보통 | api-sec | 공개 경로가 읽는 헤더(If-None-Match · User-Agent)의 C1 제어 문자 → 익명 500 + ERROR 스택, 서버 로그 스트림을 익명 요청으로 채울 수 있음 | 재현됨 · 시험 실패 확인 |  |
 | QA-1203 | 보통 | api-data | 줄을 버린(dropped>0) 특보 목록이 이어지는 동안 해제된 특보가 이력에서 끝나지 않고 무기한 '발효 중'으로 남으며, 끝난 시각도 실제보다 늦게 영구 기록된다 | 재현됨 · 시험 실패 확인 | 사용자가 결함으로 정함(보통). 검증자는 발동 조건이 드물어 낮음 의견 |
 | QA-1312 | 보통 | api-live | 질의 해석 실패(잘못된 % 인코딩 · 파라미터 1,000개 초과)로 파라미터를 읽는 공개 GET 18곳이 익명 500 + ERROR 스택, 서버 로그 스트림을 채움 | 재현됨 · 시험 실패 확인 |  |
@@ -17,6 +18,7 @@
 | QA-1420 | 보통 | browser | 상황판 오른쪽 패널 탭 줄이 넘쳐 데스크톱(≥900 px)에서 'watch'(관심) 탭이 창 밖에 숨고, 키보드로 가면 화면 전체가 옆으로 밀린다 | 재현됨 · 시험 실패 확인 |  |
 | QA-1600 | 보통 | config | AWS 공개 HTTPS 판 api 의 세션·CSRF 쿠키 Secure 가 꺼진 채 배포된다(.env.example 의 COOKIE_SECURE=false 가 compose.aws.yml 기본값 true 를 이긴다) | 재현됨 · 시험 실패 확인 |  |
 | QA-1601 | 보통 | config | 앞단 잠금(gate) 시도 제한이 동시 요청 경쟁(check-then-act)으로 우회된다 — aws-deploy(공유) | aws-deploy(공유) — 보고만, 고치기는 사용자 결정 |  |
+| QA-1621 | 보통 | rehearsal | README 의 복원 옵션(--exit-on-error)으로 wakeline 덤프를 복원하면 첫 항목(COMMENT ON EXTENSION postgis)에서 멈춰 0행인데, 이어서 띄우면 migrate 가 빈 스키마를 만들어 정상처럼 뜬다(운영 로그인 401 뿐) — aws-deploy(공유) | 재현됨 · 재현 스크립트 실패 확인(독립 검증 전) | aws-deploy(공유) — 보고만 |
 | QA-1100 | 낮음 | api-sec | 보안 체인이 끝낸 익명 운영 요청(404 · CSRF 403 · Origin 403)이 공개 요청 제한(IP당 분당 120)에 세지지 않음 | 재현됨 · 시험 실패 확인 |  |
 | QA-1102 | 낮음 | api-sec | 익명 로그인(POST /api/v1/ops/session)의 username 에 NUL → 500 + ERROR(실패한 SQL 포함) | 재현됨 · 시험 실패 확인 |  |
 | QA-1103 | 낮음 | api-sec | strip()/trim() 이 U+001C–U+001F · 탭을 지워 제어 문자가 붙은 hex · icao · mmsi · 정수 · 날짜 · 선택 값을 받아들임(계약 v5 §G43 위반) | 재현됨 · 시험 실패 확인 |  |

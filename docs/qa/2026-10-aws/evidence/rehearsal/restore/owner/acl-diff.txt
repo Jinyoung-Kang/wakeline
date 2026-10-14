@@ -1,0 +1,88 @@
+--- acl-source.txt
++++ owner/acl-restored.txt
+-function	ship_position_drop_old(retention_hours integer)	wakeline_migrator	SECURITY DEFINER wakeline_api=X/wakeline_migrator,wakeline_migrator=X/wakeline_migrator
+-function	ship_position_ensure_partitions(days_ahead integer)	wakeline_migrator	SECURITY DEFINER wakeline_api=X/wakeline_migrator,wakeline_migrator=X/wakeline_migrator
+-function	track_point_drop_old(retention_hours integer)	wakeline_migrator	SECURITY DEFINER wakeline_api=X/wakeline_migrator,wakeline_migrator=X/wakeline_migrator
+-function	track_point_ensure_partitions(days_ahead integer)	wakeline_migrator	SECURITY DEFINER wakeline_api=X/wakeline_migrator,wakeline_migrator=X/wakeline_migrator
+-rel:p	ship_position	wakeline_migrator	wakeline_api=ar/wakeline_migrator,wakeline_migrator=arwdDxtm/wakeline_migrator
+-rel:p	track_point	wakeline_migrator	wakeline_api=arwd/wakeline_migrator,wakeline_migrator=arwdDxtm/wakeline_migrator
+-rel:r	aircraft	wakeline_migrator	wakeline_api=arwd/wakeline_migrator,wakeline_migrator=arwdDxtm/wakeline_migrator
+-rel:r	airport	wakeline_migrator	wakeline_api=r/wakeline_migrator,wakeline_collector=arw/wakeline_migrator,wakeline_migrator=arwdDxtm/wakeline_migrator
+-rel:r	airspace	wakeline_migrator	wakeline_api=r/wakeline_migrator,wakeline_collector=ar/wakeline_migrator,wakeline_migrator=arwdDxtm/wakeline_migrator
+-rel:r	airspace_edition	wakeline_migrator	wakeline_api=r/wakeline_migrator,wakeline_collector=arw/wakeline_migrator,wakeline_migrator=arwdDxtm/wakeline_migrator
+-rel:r	alert_event	wakeline_migrator	wakeline_api=arwd/wakeline_migrator,wakeline_migrator=arwdDxtm/wakeline_migrator
+-rel:r	app_setting	wakeline_migrator	wakeline_api=arwd/wakeline_migrator,wakeline_migrator=arwdDxtm/wakeline_migrator
+-rel:r	audit_log	wakeline_migrator	wakeline_api=ar/wakeline_migrator,wakeline_migrator=arwdDxtm/wakeline_migrator
++function	ship_position_drop_old(retention_hours integer)	wakeline_migrator	SECURITY DEFINER 
++function	ship_position_ensure_partitions(days_ahead integer)	wakeline_migrator	SECURITY DEFINER 
++function	track_point_drop_old(retention_hours integer)	wakeline_migrator	SECURITY DEFINER 
++function	track_point_ensure_partitions(days_ahead integer)	wakeline_migrator	SECURITY DEFINER 
++rel:p	ship_position	wakeline_migrator	(owner only)
++rel:p	track_point	wakeline_migrator	(owner only)
++rel:r	aircraft	wakeline_migrator	(owner only)
++rel:r	airport	wakeline_migrator	(owner only)
++rel:r	airspace	wakeline_migrator	(owner only)
++rel:r	airspace_edition	wakeline_migrator	(owner only)
++rel:r	alert_event	wakeline_migrator	(owner only)
++rel:r	app_setting	wakeline_migrator	(owner only)
++rel:r	audit_log	wakeline_migrator	(owner only)
+-rel:r	ingest_gap	wakeline_migrator	wakeline_api=ar/wakeline_migrator,wakeline_migrator=arwdDxtm/wakeline_migrator
+-rel:r	ingest_run	wakeline_migrator	wakeline_api=rd/wakeline_migrator,wakeline_collector=arw/wakeline_migrator,wakeline_migrator=arwdDxtm/wakeline_migrator
+-rel:r	kst_day_cutover	wakeline_migrator	wakeline_api=r/wakeline_migrator,wakeline_migrator=arwdDxtm/wakeline_migrator
+-rel:r	marine_grid4	wakeline_migrator	wakeline_api=r/wakeline_migrator,wakeline_collector=arw/wakeline_migrator,wakeline_migrator=arwdDxtm/wakeline_migrator
+-rel:r	metar_obs	wakeline_migrator	wakeline_api=rd/wakeline_migrator,wakeline_collector=arw/wakeline_migrator,wakeline_migrator=arwdDxtm/wakeline_migrator
+-rel:r	ops_resolution	wakeline_migrator	wakeline_api=ar/wakeline_migrator,wakeline_migrator=arwdDxtm/wakeline_migrator
+-rel:r	ops_user	wakeline_migrator	wakeline_api=arw/wakeline_migrator,wakeline_migrator=arwdDxtm/wakeline_migrator
+-rel:r	port_call	wakeline_migrator	wakeline_api=r/wakeline_migrator,wakeline_collector=arwd/wakeline_migrator,wakeline_migrator=arwdDxtm/wakeline_migrator
+-rel:r	port_call_coverage	wakeline_migrator	wakeline_api=r/wakeline_migrator,wakeline_collector=arw/wakeline_migrator,wakeline_migrator=arwdDxtm/wakeline_migrator
+-rel:r	provider_budget_day	wakeline_migrator	wakeline_api=r/wakeline_migrator,wakeline_collector=arw/wakeline_migrator,wakeline_migrator=arwdDxtm/wakeline_migrator
+-rel:r	provider_switch	wakeline_migrator	wakeline_api=arw/wakeline_migrator,wakeline_migrator=arwdDxtm/wakeline_migrator
+-rel:r	quality_event	wakeline_migrator	wakeline_api=rd/wakeline_migrator,wakeline_collector=arw/wakeline_migrator,wakeline_migrator=arwdDxtm/wakeline_migrator
+-rel:r	quality_rule_count	wakeline_migrator	wakeline_api=rd/wakeline_migrator,wakeline_collector=arw/wakeline_migrator,wakeline_migrator=arwdDxtm/wakeline_migrator
++rel:r	ingest_gap	wakeline_migrator	(owner only)
++rel:r	ingest_run	wakeline_migrator	(owner only)
++rel:r	kst_day_cutover	wakeline_migrator	(owner only)
++rel:r	marine_grid4	wakeline_migrator	(owner only)
++rel:r	metar_obs	wakeline_migrator	(owner only)
++rel:r	ops_resolution	wakeline_migrator	(owner only)
++rel:r	ops_user	wakeline_migrator	(owner only)
++rel:r	port_call	wakeline_migrator	(owner only)
++rel:r	port_call_coverage	wakeline_migrator	(owner only)
++rel:r	provider_budget_day	wakeline_migrator	(owner only)
++rel:r	provider_switch	wakeline_migrator	(owner only)
++rel:r	quality_event	wakeline_migrator	(owner only)
++rel:r	quality_rule_count	wakeline_migrator	(owner only)
+-rel:r	radar_frame	wakeline_migrator	wakeline_api=rd/wakeline_migrator,wakeline_collector=arw/wakeline_migrator,wakeline_migrator=arwdDxtm/wakeline_migrator
+-rel:r	retained_track	wakeline_migrator	wakeline_api=ard/wakeline_migrator,wakeline_migrator=arwdDxtm/wakeline_migrator
+-rel:r	ship	wakeline_migrator	wakeline_api=arw/wakeline_migrator,wakeline_migrator=arwdDxtm/wakeline_migrator
++rel:r	radar_frame	wakeline_migrator	(owner only)
++rel:r	retained_track	wakeline_migrator	(owner only)
++rel:r	ship	wakeline_migrator	(owner only)
+-rel:r	sigmet	wakeline_migrator	wakeline_api=arwd/wakeline_migrator,wakeline_migrator=arwdDxtm/wakeline_migrator
+-rel:r	stats_daily	wakeline_migrator	wakeline_api=arwd/wakeline_migrator,wakeline_migrator=arwdDxtm/wakeline_migrator
++rel:r	sigmet	wakeline_migrator	(owner only)
++rel:r	stats_daily	wakeline_migrator	(owner only)
+-rel:r	track_point_1m	wakeline_migrator	wakeline_api=arwd/wakeline_migrator,wakeline_migrator=arwdDxtm/wakeline_migrator
++rel:r	track_point_1m	wakeline_migrator	(owner only)
+-rel:r	wx_warning	wakeline_migrator	wakeline_api=arwd/wakeline_migrator,wakeline_migrator=arwdDxtm/wakeline_migrator
+-rel:S	airspace_edition_id_seq	wakeline_migrator	wakeline_collector=U/wakeline_migrator,wakeline_migrator=rwU/wakeline_migrator
+-rel:S	airspace_id_seq	wakeline_migrator	wakeline_collector=U/wakeline_migrator,wakeline_migrator=rwU/wakeline_migrator
+-rel:S	alert_event_id_seq	wakeline_migrator	wakeline_api=rU/wakeline_migrator,wakeline_migrator=rwU/wakeline_migrator
+-rel:S	audit_log_id_seq	wakeline_migrator	wakeline_api=rU/wakeline_migrator,wakeline_migrator=rwU/wakeline_migrator
+-rel:S	ingest_gap_id_seq	wakeline_migrator	wakeline_api=U/wakeline_migrator,wakeline_migrator=rwU/wakeline_migrator
+-rel:S	ingest_run_id_seq	wakeline_migrator	wakeline_api=rU/wakeline_migrator,wakeline_collector=rU/wakeline_migrator,wakeline_migrator=rwU/wakeline_migrator
+-rel:S	ops_resolution_id_seq	wakeline_migrator	wakeline_api=U/wakeline_migrator,wakeline_migrator=rwU/wakeline_migrator
+-rel:S	ops_user_id_seq	wakeline_migrator	wakeline_api=rU/wakeline_migrator,wakeline_migrator=rwU/wakeline_migrator
+-rel:S	quality_event_id_seq	wakeline_migrator	wakeline_api=rU/wakeline_migrator,wakeline_collector=rU/wakeline_migrator,wakeline_migrator=rwU/wakeline_migrator
+-rel:S	wx_warning_id_seq	wakeline_migrator	wakeline_api=U/wakeline_migrator,wakeline_migrator=rwU/wakeline_migrator
++rel:r	wx_warning	wakeline_migrator	(owner only)
++rel:S	airspace_edition_id_seq	wakeline_migrator	(owner only)
++rel:S	airspace_id_seq	wakeline_migrator	(owner only)
++rel:S	alert_event_id_seq	wakeline_migrator	(owner only)
++rel:S	audit_log_id_seq	wakeline_migrator	(owner only)
++rel:S	ingest_gap_id_seq	wakeline_migrator	(owner only)
++rel:S	ingest_run_id_seq	wakeline_migrator	(owner only)
++rel:S	ops_resolution_id_seq	wakeline_migrator	(owner only)
++rel:S	ops_user_id_seq	wakeline_migrator	(owner only)
++rel:S	quality_event_id_seq	wakeline_migrator	(owner only)
++rel:S	wx_warning_id_seq	wakeline_migrator	(owner only)

@@ -1,0 +1,4 @@
+Caused by: org.postgresql.util.PSQLException: ERROR: permission denied for table wx_warning
+Caused by: org.postgresql.util.PSQLException: ERROR: permission denied for table airspace
+Caused by: org.postgresql.util.PSQLException: ERROR: permission denied for table stats_daily
+Caused by: org.postgresql.util.PSQLException: ERROR: permission denied for table ops_user

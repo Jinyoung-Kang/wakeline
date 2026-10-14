@@ -1,0 +1,20 @@
+# api bad-hostname — 03:00:49Z 다시 만든 뒤 75 s
+state: running restarts=0 health=healthy
+edge /healthz: {"status":"degraded","reasons":["writer_backlog"],"region_lag_s":7,"snapshot_version":20} [200]
+GET /api/v1/alerts/history?limit=1: 503
+--- TLS 관련 로그(앞 12줄)
+2026-10-14T02:59:40.595Z ERROR 7 --- [wakeline-api] [dered-db-writer] o.postgresql.ssl.PGjdbcHostnameVerifier  : Server name validation failed: certificate for host host.docker.internal dNSName entries subjectAltName, but none of them match. Assuming server name validation failed
+2026-10-14T02:59:41.625Z ERROR 7 --- [wakeline-api] [           main] o.postgresql.ssl.PGjdbcHostnameVerifier  : Server name validation failed: certificate for host host.docker.internal dNSName entries subjectAltName, but none of them match. Assuming server name validation failed
+2026-10-14T02:59:42.657Z ERROR 7 --- [wakeline-api] [   track-writer] o.postgresql.ssl.PGjdbcHostnameVerifier  : Server name validation failed: certificate for host host.docker.internal dNSName entries subjectAltName, but none of them match. Assuming server name validation failed
+2026-10-14T02:59:43.689Z ERROR 7 --- [wakeline-api] [    ship-writer] o.postgresql.ssl.PGjdbcHostnameVerifier  : Server name validation failed: certificate for host host.docker.internal dNSName entries subjectAltName, but none of them match. Assuming server name validation failed
+2026-10-14T02:59:44.708Z ERROR 7 --- [wakeline-api] [-recovery-probe] o.postgresql.ssl.PGjdbcHostnameVerifier  : Server name validation failed: certificate for host host.docker.internal dNSName entries subjectAltName, but none of them match. Assuming server name validation failed
+2026-10-14T02:59:45.729Z ERROR 7 --- [wakeline-api] [        sched-2] o.postgresql.ssl.PGjdbcHostnameVerifier  : Server name validation failed: certificate for host host.docker.internal dNSName entries subjectAltName, but none of them match. Assuming server name validation failed
+2026-10-14T02:59:46.767Z ERROR 7 --- [wakeline-api] [dered-db-writer] o.postgresql.ssl.PGjdbcHostnameVerifier  : Server name validation failed: certificate for host host.docker.internal dNSName entries subjectAltName, but none of them match. Assuming server name validation failed
+2026-10-14T02:59:47.798Z ERROR 7 --- [wakeline-api] [           main] o.postgresql.ssl.PGjdbcHostnameVerifier  : Server name validation failed: certificate for host host.docker.internal dNSName entries subjectAltName, but none of them match. Assuming server name validation failed
+2026-10-14T02:59:48.820Z ERROR 7 --- [wakeline-api] [        sched-3] o.postgresql.ssl.PGjdbcHostnameVerifier  : Server name validation failed: certificate for host host.docker.internal dNSName entries subjectAltName, but none of them match. Assuming server name validation failed
+2026-10-14T02:59:49.834Z ERROR 7 --- [wakeline-api] [   track-writer] o.postgresql.ssl.PGjdbcHostnameVerifier  : Server name validation failed: certificate for host host.docker.internal dNSName entries subjectAltName, but none of them match. Assuming server name validation failed
+2026-10-14T02:59:50.858Z ERROR 7 --- [wakeline-api] [-recovery-probe] o.postgresql.ssl.PGjdbcHostnameVerifier  : Server name validation failed: certificate for host host.docker.internal dNSName entries subjectAltName, but none of them match. Assuming server name validation failed
+2026-10-14T02:59:51.873Z ERROR 7 --- [wakeline-api] [    ship-writer] o.postgresql.ssl.PGjdbcHostnameVerifier  : Server name validation failed: certificate for host host.docker.internal dNSName entries subjectAltName, but none of them match. Assuming server name validation failed
+--- TLS 관련 로그 줄 수: 67
+--- 서버 쪽 TLS 세션(같은 계정 · application_name)
+wakeline_collector	wakeline-collector	t	TLSv1.3	1

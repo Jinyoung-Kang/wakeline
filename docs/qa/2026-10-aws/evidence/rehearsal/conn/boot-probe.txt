@@ -1,0 +1,3 @@
+03:22:46Z api=running/healthy/r0 healthz=200 alerts_history=200 stats_traffic=200 warnings_history=200
+03:22:51Z api=running/healthy/r0 healthz=200 alerts_history=200 stats_traffic=200 warnings_history=200
+03:22:56Z api=running/healthy/r0 healthz=200 alerts_history=200 stats_traffic=200 warnings_history=200

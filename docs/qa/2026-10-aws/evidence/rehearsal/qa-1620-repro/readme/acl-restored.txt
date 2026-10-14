@@ -1,0 +1,2 @@
+database	wakeline	wakeline_migrator	wakeline_api=c/wakeline_migrator,wakeline_collector=c/wakeline_migrator,wakeline_migrator=CTc/wakeline_migrator
+schema	public	pg_database_owner	pg_database_owner=UC/pg_database_owner,wakeline_api=U/pg_database_owner,wakeline_collector=U/pg_database_owner,wakeline_migrator=UC/pg_database_owner

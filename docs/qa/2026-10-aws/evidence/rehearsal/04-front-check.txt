@@ -1,0 +1,69 @@
+ok   비밀 헤더 없음 GET / → 403  {"status": 403}
+ok   잠금 쿠키 없음 GET /api/v1/status → 401  {"status": 401, "body": "{\"error\": \"locked\", \"message\": \"접근 코드가 필요합니다\", \"unlock\": \"/_"}
+ok   잠금 쿠키 없음 GET /ops → 401 잠금화면  {"status": 401}
+ok   잠금 해제 POST /__gate/unlock → 303 + 쿠키  {"status": 303, "cookie_name": "pf_gate"}
+ok   GET /ops → 404 (Caddy 가 닫음)  {"status": 404, "content_type": "application/json", "body": "{\"error\":\"데모에서는 쓸 수 없는 경로입니다\"}", "headers": {"strict-transport-security": ["max-age=31536000"], "x-robots-tag": ["noindex, nofollow"]}}
+ok   GET /ops/ → 404 (Caddy 가 닫음)  {"status": 404, "content_type": "application/json", "body": "{\"error\":\"데모에서는 쓸 수 없는 경로입니다\"}", "headers": {"strict-transport-security": ["max-age=31536000"], "x-robots-tag": ["noindex, nofollow"]}}
+ok   GET /ops/settings → 404 (Caddy 가 닫음)  {"status": 404, "content_type": "application/json", "body": "{\"error\":\"데모에서는 쓸 수 없는 경로입니다\"}", "headers": {"strict-transport-security": ["max-age=31536000"], "x-robots-tag": ["noindex, nofollow"]}}
+ok   GET /logs → 404 (Caddy 가 닫음)  {"status": 404, "content_type": "application/json", "body": "{\"error\":\"데모에서는 쓸 수 없는 경로입니다\"}", "headers": {"strict-transport-security": ["max-age=31536000"], "x-robots-tag": ["noindex, nofollow"]}}
+ok   GET /logs/abc → 404 (Caddy 가 닫음)  {"status": 404, "content_type": "application/json", "body": "{\"error\":\"데모에서는 쓸 수 없는 경로입니다\"}", "headers": {"strict-transport-security": ["max-age=31536000"], "x-robots-tag": ["noindex, nofollow"]}}
+ok   GET /api/v1/ops/session → 404 (Caddy 가 닫음)  {"status": 404, "content_type": "application/json", "body": "{\"error\":\"데모에서는 쓸 수 없는 경로입니다\"}", "headers": {"strict-transport-security": ["max-age=31536000"], "x-robots-tag": ["noindex, nofollow"]}}
+ok   GET /api/v1/ops/providers → 404 (Caddy 가 닫음)  {"status": 404, "content_type": "application/json", "body": "{\"error\":\"데모에서는 쓸 수 없는 경로입니다\"}", "headers": {"strict-transport-security": ["max-age=31536000"], "x-robots-tag": ["noindex, nofollow"]}}
+ok   POST /api/v1/ops/session → 404 (Caddy 가 닫음)  {"status": 404, "content_type": "application/json", "body": "{\"error\":\"데모에서는 쓸 수 없는 경로입니다\"}", "headers": {"strict-transport-security": ["max-age=31536000"], "x-robots-tag": ["noindex, nofollow"]}}
+ok   GET /api/v1/ops → 404 (Caddy 가 닫음)  {"status": 404, "content_type": "application/json", "body": "{\"error\":\"데모에서는 쓸 수 없는 경로입니다\"}", "headers": {"strict-transport-security": ["max-age=31536000"], "x-robots-tag": ["noindex, nofollow"]}}
+ok   GET / → 통과 200  {"edge": 200}
+ok   GET /: 보안 헤더가 한 번씩만  {"duplicated": {}, "headers": {"strict-transport-security": ["max-age=31536000"], "content-security-policy": ["default-src 'self'; script-src 'self' 'nonce-ZPnyfPeWYGRiOyx…"], "x-frame-options": ["DENY"], "x-content-type-options": ["nosniff"], "referrer-policy": ["strict-origin-when-cross-origin"], 
+ok   GET /: HSTS 한 번 · Server 없음 · X-Robots-Tag 한 번  {"hsts": ["max-age=31536000"], "server": null}
+ok   GET /: CSP 한 번 · frame-ancestors 'none' · X-Frame-Options DENY 한 번  {"csp_count": 1, "xfo": ["DENY"]}
+ok   GET /: nosniff · Referrer-Policy 한 번  {"nosniff": ["nosniff"], "referrer": ["strict-origin-when-cross-origin"]}
+ok   GET /replay → 통과 200  {"edge": 200}
+ok   GET /replay: 보안 헤더가 한 번씩만  {"duplicated": {}, "headers": {"strict-transport-security": ["max-age=31536000"], "content-security-policy": ["default-src 'self'; script-src 'self' 'nonce-SmzS0ZpOLpaHpvP…"], "x-frame-options": ["DENY"], "x-content-type-options": ["nosniff"], "referrer-policy": ["strict-origin-when-cross-origin"], 
+ok   GET /replay: HSTS 한 번 · Server 없음 · X-Robots-Tag 한 번  {"hsts": ["max-age=31536000"], "server": null}
+ok   GET /replay: CSP 한 번 · frame-ancestors 'none' · X-Frame-Options DENY 한 번  {"csp_count": 1, "xfo": ["DENY"]}
+ok   GET /replay: nosniff · Referrer-Policy 한 번  {"nosniff": ["nosniff"], "referrer": ["strict-origin-when-cross-origin"]}
+ok   GET /stats → 통과 200  {"edge": 200}
+ok   GET /stats: 보안 헤더가 한 번씩만  {"duplicated": {}, "headers": {"strict-transport-security": ["max-age=31536000"], "content-security-policy": ["default-src 'self'; script-src 'self' 'nonce-FLVc5DDfOi3ykPc…"], "x-frame-options": ["DENY"], "x-content-type-options": ["nosniff"], "referrer-policy": ["strict-origin-when-cross-origin"], 
+ok   GET /stats: HSTS 한 번 · Server 없음 · X-Robots-Tag 한 번  {"hsts": ["max-age=31536000"], "server": null}
+ok   GET /stats: CSP 한 번 · frame-ancestors 'none' · X-Frame-Options DENY 한 번  {"csp_count": 1, "xfo": ["DENY"]}
+ok   GET /stats: nosniff · Referrer-Policy 한 번  {"nosniff": ["nosniff"], "referrer": ["strict-origin-when-cross-origin"]}
+ok   GET /about → 통과 200  {"edge": 200}
+ok   GET /about: 보안 헤더가 한 번씩만  {"duplicated": {}, "headers": {"strict-transport-security": ["max-age=31536000"], "content-security-policy": ["default-src 'self'; script-src 'self' 'nonce-MIQ4ZNWcqKHrJwW…"], "x-frame-options": ["DENY"], "x-content-type-options": ["nosniff"], "referrer-policy": ["strict-origin-when-cross-origin"], 
+ok   GET /about: HSTS 한 번 · Server 없음 · X-Robots-Tag 한 번  {"hsts": ["max-age=31536000"], "server": null}
+ok   GET /about: CSP 한 번 · frame-ancestors 'none' · X-Frame-Options DENY 한 번  {"csp_count": 1, "xfo": ["DENY"]}
+ok   GET /about: nosniff · Referrer-Policy 한 번  {"nosniff": ["nosniff"], "referrer": ["strict-origin-when-cross-origin"]}
+ok   GET /guide → 통과 200  {"edge": 200}
+ok   GET /guide: 보안 헤더가 한 번씩만  {"duplicated": {}, "headers": {"strict-transport-security": ["max-age=31536000"], "content-security-policy": ["default-src 'self'; script-src 'self' 'nonce-eCl8jQDd/nm6Wz6…"], "x-frame-options": ["DENY"], "x-content-type-options": ["nosniff"], "referrer-policy": ["strict-origin-when-cross-origin"], 
+ok   GET /guide: HSTS 한 번 · Server 없음 · X-Robots-Tag 한 번  {"hsts": ["max-age=31536000"], "server": null}
+ok   GET /guide: CSP 한 번 · frame-ancestors 'none' · X-Frame-Options DENY 한 번  {"csp_count": 1, "xfo": ["DENY"]}
+ok   GET /guide: nosniff · Referrer-Policy 한 번  {"nosniff": ["nosniff"], "referrer": ["strict-origin-when-cross-origin"]}
+ok   GET /m → 통과 200  {"edge": 200}
+ok   GET /m: 보안 헤더가 한 번씩만  {"duplicated": {}, "headers": {"strict-transport-security": ["max-age=31536000"], "content-security-policy": ["default-src 'self'; script-src 'self' 'nonce-p3Jua7HmJbw7MFB…"], "x-frame-options": ["DENY"], "x-content-type-options": ["nosniff"], "referrer-policy": ["strict-origin-when-cross-origin"], 
+ok   GET /m: HSTS 한 번 · Server 없음 · X-Robots-Tag 한 번  {"hsts": ["max-age=31536000"], "server": null}
+ok   GET /m: CSP 한 번 · frame-ancestors 'none' · X-Frame-Options DENY 한 번  {"csp_count": 1, "xfo": ["DENY"]}
+ok   GET /m: nosniff · Referrer-Policy 한 번  {"nosniff": ["nosniff"], "referrer": ["strict-origin-when-cross-origin"]}
+ok   GET /airports/RKSI → 통과 200  {"edge": 200}
+ok   GET /airports/RKSI: 보안 헤더가 한 번씩만  {"duplicated": {}, "headers": {"strict-transport-security": ["max-age=31536000"], "content-security-policy": ["default-src 'self'; script-src 'self' 'nonce-/9iX2zVJMJMdkT9…"], "x-frame-options": ["DENY"], "x-content-type-options": ["nosniff"], "referrer-policy": ["strict-origin-when-cross-origin"], 
+ok   GET /airports/RKSI: HSTS 한 번 · Server 없음 · X-Robots-Tag 한 번  {"hsts": ["max-age=31536000"], "server": null}
+ok   GET /airports/RKSI: CSP 한 번 · frame-ancestors 'none' · X-Frame-Options DENY 한 번  {"csp_count": 1, "xfo": ["DENY"]}
+ok   GET /airports/RKSI: nosniff · Referrer-Policy 한 번  {"nosniff": ["nosniff"], "referrer": ["strict-origin-when-cross-origin"]}
+ok   GET /api/v1/status → 통과 200  {"edge": 200}
+ok   GET /api/v1/status: 보안 헤더가 한 번씩만  {"duplicated": {}, "headers": {"strict-transport-security": ["max-age=31536000"], "content-security-policy": ["default-src 'none'; frame-ancestors 'none'…"], "x-frame-options": ["DENY"], "x-content-type-options": ["nosniff"], "referrer-policy": ["strict-origin-when-cross-origin"], "x-robots-tag": ["
+ok   GET /api/v1/status: HSTS 한 번 · Server 없음 · X-Robots-Tag 한 번  {"hsts": ["max-age=31536000"], "server": null}
+ok   GET /api/v1/status: nosniff · Referrer-Policy 한 번  {"nosniff": ["nosniff"], "referrer": ["strict-origin-when-cross-origin"]}
+ok   GET /api/v1/aircraft?bbox=124,33,132,39 → 통과 200  {"edge": 200}
+ok   GET /api/v1/aircraft?bbox=124,33,132,39: 보안 헤더가 한 번씩만  {"duplicated": {}, "headers": {"strict-transport-security": ["max-age=31536000"], "content-security-policy": ["default-src 'none'; frame-ancestors 'none'…"], "x-frame-options": ["DENY"], "x-content-type-options": ["nosniff"], "referrer-policy": ["strict-origin-when-cross-origin"], "x-robots-tag": ["
+ok   GET /api/v1/aircraft?bbox=124,33,132,39: HSTS 한 번 · Server 없음 · X-Robots-Tag 한 번  {"hsts": ["max-age=31536000"], "server": null}
+ok   GET /api/v1/aircraft?bbox=124,33,132,39: nosniff · Referrer-Policy 한 번  {"nosniff": ["nosniff"], "referrer": ["strict-origin-when-cross-origin"]}
+ok   GET /api/v1/warnings → 통과 200  {"edge": 200}
+ok   GET /api/v1/warnings: 보안 헤더가 한 번씩만  {"duplicated": {}, "headers": {"strict-transport-security": ["max-age=31536000"], "content-security-policy": ["default-src 'none'; frame-ancestors 'none'…"], "x-frame-options": ["DENY"], "x-content-type-options": ["nosniff"], "referrer-policy": ["strict-origin-when-cross-origin"], "x-robots-tag": ["
+ok   GET /api/v1/warnings: HSTS 한 번 · Server 없음 · X-Robots-Tag 한 번  {"hsts": ["max-age=31536000"], "server": null}
+ok   GET /api/v1/warnings: nosniff · Referrer-Policy 한 번  {"nosniff": ["nosniff"], "referrer": ["strict-origin-when-cross-origin"]}
+ok   GET /healthz → 통과 200  {"edge": 200}
+ok   GET /healthz: 보안 헤더가 한 번씩만  {"duplicated": {}, "headers": {"strict-transport-security": ["max-age=31536000"], "content-security-policy": ["default-src 'none'; frame-ancestors 'none'…"], "x-frame-options": ["DENY"], "x-content-type-options": ["nosniff"], "referrer-policy": ["strict-origin-when-cross-origin"], "x-robots-tag": ["
+ok   GET /healthz: HSTS 한 번 · Server 없음 · X-Robots-Tag 한 번  {"hsts": ["max-age=31536000"], "server": null}
+ok   GET /_next/static/chunks/1ca_d3tijhqim.js → 통과 200  {"edge": 200}
+ok   GET /_next/static/chunks/1ca_d3tijhqim.js: 보안 헤더가 한 번씩만  {"duplicated": {}, "headers": {"strict-transport-security": ["max-age=31536000"], "x-frame-options": ["DENY"], "x-content-type-options": ["nosniff"], "referrer-policy": ["strict-origin-when-cross-origin"], "x-robots-tag": ["noindex, nofollow"], "permissions-policy": ["geolocation=(), camera=(), micr
+ok   GET /_next/static/chunks/1ca_d3tijhqim.js: HSTS 한 번 · Server 없음 · X-Robots-Tag 한 번  {"hsts": ["max-age=31536000"], "server": null}
+ok   GET /_next/static/chunks/1ca_d3tijhqim.js: nosniff · Referrer-Policy 한 번  {"nosniff": ["nosniff"], "referrer": ["strict-origin-when-cross-origin"]}
+
+all ok

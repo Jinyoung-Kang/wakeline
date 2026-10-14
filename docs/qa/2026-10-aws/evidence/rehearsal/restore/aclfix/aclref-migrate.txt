@@ -1,0 +1,51 @@
+ Network wlqa-aws_wakeline Creating 
+ Network wlqa-aws_rds Creating 
+ Network wlqa-aws_wakeline Creating 
+ Network wlqa-aws_rds Creating 
+ Network wlqa-aws_rds Created 
+ Network wlqa-aws_rds Created 
+ Network wlqa-aws_wakeline Created 
+ Network wlqa-aws_wakeline Created 
+ Container wlqa-aws-migrate-run-4d3debd08d3a Creating 
+ Container wlqa-aws-migrate-run-4d3debd08d3a Created 
+Picked up JAVA_TOOL_OPTIONS: -XX:+UseG1GC -XX:MaxRAMPercentage=40 -XX:+ExitOnOutOfMemoryError
+03:42:11.140 [main] INFO org.flywaydb.core.FlywayExecutor -- Database: jdbc:postgresql://rds.wlqa.test:55432/wakeline_aclref?ApplicationName=wakeline-migrate&sslmode=verify-full&sslrootcert=%2Fetc%2Fwakeline%2Frds-ca.pem (PostgreSQL 18.6)
+03:42:11.201 [main] INFO org.flywaydb.core.internal.schemahistory.JdbcTableSchemaHistory -- Schema history table "public"."flyway_schema_history" does not exist yet
+03:42:11.204 [main] INFO org.flywaydb.core.internal.command.DbValidate -- Successfully validated 21 migrations (execution time 00:00.022s)
+03:42:11.229 [main] INFO org.flywaydb.core.internal.schemahistory.JdbcTableSchemaHistory -- Creating Schema History table "public"."flyway_schema_history" ...
+03:42:11.289 [main] INFO org.flywaydb.core.internal.command.DbMigrate -- Current version of schema "public": << Empty Schema >>
+03:42:11.310 [main] INFO org.flywaydb.core.internal.command.DbMigrate -- Migrating schema "public" to version "1 - init"
+03:42:11.337 [main] INFO org.flywaydb.core.internal.sqlscript.DefaultSqlScriptExecutor -- +-------------------------------+
+| track_point_ensure_partitions |
++-------------------------------+
+| 5                             |
++-------------------------------+
+
+03:42:11.409 [main] INFO org.flywaydb.core.internal.command.DbMigrate -- Migrating schema "public" to version "2 - partition functions security definer"
+03:42:11.429 [main] INFO org.flywaydb.core.internal.command.DbMigrate -- Migrating schema "public" to version "3 - close reason sigmet withdrawn metar ceiling"
+03:42:11.460 [main] INFO org.flywaydb.core.internal.command.DbMigrate -- Migrating schema "public" to version "4 - review fixes"
+03:42:11.484 [main] INFO org.flywaydb.core.internal.command.DbMigrate -- Migrating schema "public" to version "5 - ships"
+03:42:11.500 [main] INFO org.flywaydb.core.internal.sqlscript.DefaultSqlScriptExecutor -- +---------------------------------+
+| ship_position_ensure_partitions |
++---------------------------------+
+| 5                               |
++---------------------------------+
+
+03:42:11.520 [main] INFO org.flywaydb.core.internal.command.DbMigrate -- Migrating schema "public" to version "6 - ais bboxes setting"
+03:42:11.531 [main] INFO org.flywaydb.core.internal.command.DbMigrate -- Migrating schema "public" to version "7 - position source nullable"
+03:42:11.554 [main] INFO org.flywaydb.core.internal.command.DbMigrate -- Migrating schema "public" to version "8 - ingest gap scope"
+03:42:11.578 [main] INFO org.flywaydb.core.internal.command.DbMigrate -- Migrating schema "public" to version "9 - review v1"
+03:42:11.596 [main] INFO org.flywaydb.core.internal.command.DbMigrate -- Migrating schema "public" to version "10 - ship search indexes"
+03:42:11.608 [main] INFO org.flywaydb.core.internal.command.DbMigrate -- Migrating schema "public" to version "11 - provider switch"
+03:42:11.621 [main] INFO org.flywaydb.core.internal.command.DbMigrate -- Migrating schema "public" to version "12 - ingest run run key"
+03:42:11.635 [main] INFO org.flywaydb.core.internal.command.DbMigrate -- Migrating schema "public" to version "13 - ops resolution"
+03:42:11.659 [main] INFO org.flywaydb.core.internal.command.DbMigrate -- Migrating schema "public" to version "14 - marine grid4"
+03:42:11.684 [main] INFO org.flywaydb.core.internal.command.DbMigrate -- Migrating schema "public" to version "15 - port call index"
+03:42:11.708 [main] INFO org.flywaydb.core.internal.command.DbMigrate -- Migrating schema "public" to version "16 - kst day aggregates"
+03:42:11.735 [main] INFO org.flywaydb.core.internal.command.DbMigrate -- Migrating schema "public" to version "17 - region provider order adsb fi first"
+03:42:11.746 [main] INFO org.flywaydb.core.internal.command.DbMigrate -- Migrating schema "public" to version "18 - airspace"
+03:42:11.766 [main] INFO org.flywaydb.core.internal.command.DbMigrate -- Migrating schema "public" to version "19 - alert zones"
+03:42:11.783 [main] INFO org.flywaydb.core.internal.command.DbMigrate -- Migrating schema "public" to version "20 - wx warning"
+03:42:11.797 [main] INFO org.flywaydb.core.internal.command.DbMigrate -- Migrating schema "public" to version "21 - retained track"
+03:42:11.812 [main] INFO org.flywaydb.core.internal.command.DbMigrate -- Successfully applied 21 migrations to schema "public", now at version v21 (execution time 00:00.288s)
+migrations applied: 21 (schema version 21)

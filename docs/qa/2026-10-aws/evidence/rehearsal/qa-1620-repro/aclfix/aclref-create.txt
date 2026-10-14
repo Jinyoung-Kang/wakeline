@@ -1,0 +1,3 @@
+ Container wlqa-rds-tools-run-50d7187c0139 Creating 
+ Container wlqa-rds-tools-run-50d7187c0139 Created 
+NOTICE:  extension "postgis" already exists, skipping
