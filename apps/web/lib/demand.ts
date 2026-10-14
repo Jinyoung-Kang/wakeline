@@ -89,6 +89,9 @@ export function focusChip(d: DemandInfo | null, hex: string | null, nowMs: numbe
   }
 }
 
+/** 핫 리전 throttled 의 글자(칩 · 화면 낭독기) — 까닭 둘(공급자 호출 상한 · 다른 방문자와 칸 나눔, QA-1350)을 함께 */
+const HOT_THROTTLED = "핫 리전 지연 — 호출 상한 또는 다른 방문자와 칸 나눔";
+
 /** 핫 리전 칩(지도). 선택 항공기가 없고 줌 ≥ 7 일 때 서버가 보내는 hot. */
 export function hotChip(d: DemandInfo | null): Chip | null {
   const h = d?.hot;
@@ -101,7 +104,9 @@ export function hotChip(d: DemandInfo | null): Chip | null {
     case "pending":
       return { kind: "hot", tone: "muted", text: `핫 리전 대기${r ? `(${r})` : ""}`, title: `수집기가 아직 이 지역을 조회하지 않았습니다. ${title}` };
     case "throttled":
-      return { kind: "hot", tone: "warn", text: `핫 리전 호출 상한으로 지연${h.interval_s != null ? ` · ${fmtInterval(h.interval_s)} 간격` : ""}${r ? `(${r})` : ""}`, title: `공급자 호출 상한 때문에 주기를 늘렸거나 이 칸을 건너뛰고 있습니다. ${title}` };
+      // 서버의 throttled 는 두 까닭을 가르지 않는다(ADR-013 개정 2026-10-14 · QA-1350 — 상태 값 · 계약은 그대로): 공급자 호출 상한, 또는 서버 전체 핫 리전 칸 수를
+      // 다른 방문자와 나눠 이 칸이 밀림(다른 IP 가 기다리는 동안 한 IP 는 그 절반까지만 — api DemandService.MAX_HOT_CELLS_PER_IP). 둘 다 말한다
+      return { kind: "hot", tone: "warn", text: `${HOT_THROTTLED}${h.interval_s != null ? ` · ${fmtInterval(h.interval_s)} 간격` : ""}${r ? `(${r})` : ""}`, title: `이 칸의 조회 주기를 늘렸거나 이 칸을 건너뛰고 있습니다 — 공급자 호출 상한 때문이거나, 서버 전체 핫 리전 칸 수를 다른 방문자와 나눠 이 칸이 밀렸습니다(다른 주소(IP)의 방문자가 기다리는 동안 한 주소는 그 절반까지만 씁니다). 서버는 둘 중 어느 쪽인지 알리지 않습니다. ${title}` };
     case "covered_by_region":
       return { kind: "hot", tone: "muted", text: `관심 지역 수집 범위 안${h.interval_s != null ? ` · ${fmtInterval(h.interval_s)} 갱신` : ""}`, title: "화면 중심이 고정 관심 지역 안이라 따로 조회하지 않습니다 — 관심 지역 수집이 이미 이곳을 다룹니다." };
     case "error":
@@ -128,7 +133,7 @@ const FOCUS_STATUS: Record<FocusState, string> = {
   error: "집중 추적 오류", disabled: "집중 추적 중지 · 공급자 꺼짐(운영자)", expired_session_cap: "집중 추적 30분 상한 — 다시 선택하면 이어짐", limited: "추적 변경 제한 — 잠시 뒤 반영",
 };
 const HOT_STATUS: Record<HotState, string> = {
-  active: "핫 리전 갱신 중", pending: "핫 리전 대기", throttled: "핫 리전 호출 상한으로 지연", covered_by_region: "관심 지역 수집 범위 안",
+  active: "핫 리전 갱신 중", pending: "핫 리전 대기", throttled: HOT_THROTTLED, covered_by_region: "관심 지역 수집 범위 안",
   error: "핫 리전 조회 오류", disabled: "핫 리전 중지 · 공급자 꺼짐(운영자)", limited: "핫 리전 변경 제한 — 잠시 뒤 반영",
 };
 /** 지도 수요 칩의 알림 글자 — mapDemandChip 과 같은 고르기(선택 항공기면 그 hex 의 집중 추적, 없으면 핫 리전). 보일 칩이 없으면 "" */

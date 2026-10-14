@@ -482,7 +482,9 @@ describe("demand chips (contract v2 §A3/§B4): only what the server reported", 
     const h = (state: string, extra: Record<string, unknown> = {}) => hotChip(d(null, { cell: "35.5:139.5:150", radius_nm: 150, state, ...extra }))?.text;
     expect(h("active", { interval_s: 30 })).toBe("핫 리전 30초 갱신(반경 150 NM)");
     expect(h("pending")).toBe("핫 리전 대기(반경 150 NM)");
-    expect(h("throttled", { interval_s: 60 })).toBe("핫 리전 호출 상한으로 지연 · 60초 간격(반경 150 NM)");
+    // throttled 는 공급자 호출 상한 · 다른 방문자와 칸 나눔(IP 당 몫 — ADR-013 개정, QA-1350) 둘 다일 수 있다 — 둘 다 말한다
+    expect(h("throttled", { interval_s: 60 })).toBe("핫 리전 지연 — 호출 상한 또는 다른 방문자와 칸 나눔 · 60초 간격(반경 150 NM)");
+    expect(hotChip(d(null, { radius_nm: 150, state: "throttled" }))?.title).toContain("다른 방문자와 나눠");
     expect(h("covered_by_region")).toBe("관심 지역 수집 범위 안");
     const both = d({ hex: "71c123", state: "active", interval_s: 5, since }, { radius_nm: 100, state: "active", interval_s: 30 });
     expect(mapDemandChip(both, "71c123", NOW)?.kind).toBe("focus");
