@@ -1,5 +1,5 @@
 "use client";
-import { use } from "react";
+import { use, useRef } from "react";
 import { ScrollRegion } from "@/components/ScrollRegion";
 import { AlertSheet } from "@/components/AlertSheet";
 import { RequestIdOf } from "@/components/logs/ErrorNote";
@@ -7,6 +7,8 @@ import { alertDetail } from "@/lib/endpoints/alerts";
 import { ApiError } from "@/lib/api";
 import { frontNotice } from "@/lib/front-answer";
 import { routeParam } from "@/lib/route-param";
+import { useRetryAfterOnce } from "@/lib/use-retry-after";
+import { RetryNote } from "@/components/RetryNote";
 import { useApiResource } from "@/lib/use-api-resource";
 
 /**
@@ -30,6 +32,9 @@ export default function AlertPage({ params }: { params: Promise<{ id: string }> 
   const id = routeParam(use(params).id);
   const valid = /^[0-9]{1,18}$/.test(id);
   const res = useApiResource(valid ? id : null, (signal) => alertDetail(id, { signal }));
+  // 일시적 실패(503 + Retry-After)는 한 번 다시 받고, 다시 해 볼 만한 실패에는 '다시 시도'(QA-1463 — 공항 화면과 같은 빈칸, QA-1301 표)
+  const auto = useRetryAfterOnce(valid ? id : null, res.status, res.error, res.retry);
+  const statusBox = useRef<HTMLDivElement>(null);
   const d = res.data;
   const err = !valid ? "알림 번호가 아님 — 숫자만 받습니다"
     : res.status === "failed" ? alertPageErrorText(res.error)
@@ -37,8 +42,11 @@ export default function AlertPage({ params }: { params: Promise<{ id: string }> 
   return (
     <ScrollRegion label={`알림 ${id} 근거`} main className="h-full overflow-y-auto p-4" data-print="sheet">
       <h1 className="label mb-2" lang="en">Alert evidence · #{id}</h1>
-      {err ? <div className="text-bad" role="alert" data-testid="alert-page-error">{err}{res.status === "failed" ? <RequestIdOf error={res.error} /> : null}</div> : null}
-      {!d && !err ? <div className="text-fg-3" role="status">알림 {id} 근거 불러오는 중…</div> : null}
+      <div ref={statusBox} tabIndex={-1} className="outline-none">
+        {err ? <div className="text-bad" role="alert" data-testid="alert-page-error">{err}{res.status === "failed" ? <RequestIdOf error={res.error} /> : null}</div> : null}
+        {res.status === "failed" ? <RetryNote error={res.error} auto={auto} onRetry={() => { statusBox.current?.focus(); res.retry(); }} /> : null}
+        {!d && !err ? <div className="text-fg-3" role="status">알림 {id} 근거 불러오는 중…</div> : null}
+      </div>
       {d ? <AlertSheet d={d} /> : null}
     </ScrollRegion>
   );
