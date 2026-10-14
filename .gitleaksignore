@@ -28,3 +28,25 @@ cd127c0e41eee7309a11cd8a5e5a0727ecf5e854:apps/collector/tests/test_db_writer.py:
 469b66f2b60585b9008a0654a8723d2e895d99a5:tools/qa/write_probe.py:generic-api-key:270
 469b66f2b60585b9008a0654a8723d2e895d99a5:tools/qa/write_probe.py:generic-api-key:271
 60c961f0bdec7659a56dd100d34c4dad2e809981:tools/qa/perf_jvm_run.sh:generic-api-key:68
+# QA 2026-10 AWS 증거(2026-10-14 확인 — 비밀값이 아니다, 값 모양만 규칙에 걸림):
+#  - docs/qa/2026-10-aws/evidence/rehearsal/conn/boot-long-probe.txt (커밋 cf7772bb) 18줄  `api=` 뒤는 컨테이너 상태 글(exited/unhealthy/r…) — 리허설 연결 고갈 점검의 기록
+#  - docs/qa/2026-10-aws/evidence/api-sec/probes/QaApiSecProbeIT.java.txt:78 (커밋 31c864cf)  Sec-WebSocket-Key 는 RFC 6455 의 예시 값(24자) — 헤더 퍼징 시험 입력
+31c864cffff2c5f7025d4798a8ba733d606807b4:docs/qa/2026-10-aws/evidence/api-sec/probes/QaApiSecProbeIT.java.txt:generic-api-key:78
+cf7772bb43b0d670ebb652e6f98fb0213ec60860:docs/qa/2026-10-aws/evidence/rehearsal/conn/boot-long-probe.txt:generic-api-key:1
+cf7772bb43b0d670ebb652e6f98fb0213ec60860:docs/qa/2026-10-aws/evidence/rehearsal/conn/boot-long-probe.txt:generic-api-key:10
+cf7772bb43b0d670ebb652e6f98fb0213ec60860:docs/qa/2026-10-aws/evidence/rehearsal/conn/boot-long-probe.txt:generic-api-key:11
+cf7772bb43b0d670ebb652e6f98fb0213ec60860:docs/qa/2026-10-aws/evidence/rehearsal/conn/boot-long-probe.txt:generic-api-key:12
+cf7772bb43b0d670ebb652e6f98fb0213ec60860:docs/qa/2026-10-aws/evidence/rehearsal/conn/boot-long-probe.txt:generic-api-key:13
+cf7772bb43b0d670ebb652e6f98fb0213ec60860:docs/qa/2026-10-aws/evidence/rehearsal/conn/boot-long-probe.txt:generic-api-key:14
+cf7772bb43b0d670ebb652e6f98fb0213ec60860:docs/qa/2026-10-aws/evidence/rehearsal/conn/boot-long-probe.txt:generic-api-key:15
+cf7772bb43b0d670ebb652e6f98fb0213ec60860:docs/qa/2026-10-aws/evidence/rehearsal/conn/boot-long-probe.txt:generic-api-key:16
+cf7772bb43b0d670ebb652e6f98fb0213ec60860:docs/qa/2026-10-aws/evidence/rehearsal/conn/boot-long-probe.txt:generic-api-key:17
+cf7772bb43b0d670ebb652e6f98fb0213ec60860:docs/qa/2026-10-aws/evidence/rehearsal/conn/boot-long-probe.txt:generic-api-key:18
+cf7772bb43b0d670ebb652e6f98fb0213ec60860:docs/qa/2026-10-aws/evidence/rehearsal/conn/boot-long-probe.txt:generic-api-key:2
+cf7772bb43b0d670ebb652e6f98fb0213ec60860:docs/qa/2026-10-aws/evidence/rehearsal/conn/boot-long-probe.txt:generic-api-key:3
+cf7772bb43b0d670ebb652e6f98fb0213ec60860:docs/qa/2026-10-aws/evidence/rehearsal/conn/boot-long-probe.txt:generic-api-key:4
+cf7772bb43b0d670ebb652e6f98fb0213ec60860:docs/qa/2026-10-aws/evidence/rehearsal/conn/boot-long-probe.txt:generic-api-key:5
+cf7772bb43b0d670ebb652e6f98fb0213ec60860:docs/qa/2026-10-aws/evidence/rehearsal/conn/boot-long-probe.txt:generic-api-key:6
+cf7772bb43b0d670ebb652e6f98fb0213ec60860:docs/qa/2026-10-aws/evidence/rehearsal/conn/boot-long-probe.txt:generic-api-key:7
+cf7772bb43b0d670ebb652e6f98fb0213ec60860:docs/qa/2026-10-aws/evidence/rehearsal/conn/boot-long-probe.txt:generic-api-key:8
+cf7772bb43b0d670ebb652e6f98fb0213ec60860:docs/qa/2026-10-aws/evidence/rehearsal/conn/boot-long-probe.txt:generic-api-key:9
