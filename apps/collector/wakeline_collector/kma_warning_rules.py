@@ -10,6 +10,10 @@
   없고(정확한 시각을 짐작하지 않는다) effective_from · effective_to(그 시간대, UTC)와 effective_text(때 이름)를 싣는다. 표에 없는 부호면 시간대도 모른다.
 - 모르는 모양의 줄(열 수 · 구역 코드 · 시각이 틀림)은 버리고 센다 — 목록 전체를 버리지 않는다. 글자를 풀 수 없는 줄도 같다(QA-1222 — 전에는 본문 전체를
   한 번에 풀어 EUC-KR 밖의 글자(CP949 확장 한글 '똠' · 깨진 바이트) 하나가 목록 전체를 버렸다). 응답 전체가 풀리지 않을 때만 줄마다 따로 푼다.
+- 단, 특보 줄이 있는데 하나도 읽지 못했으면(모든 줄을 버림) 응답 전체의 모양이 틀린 것으로 보고 WarningResponseError — 이번 주기는 발행하지 않는다
+  (QA-1204). 공급자 형식이 바뀌면 모든 줄이 같은 까닭으로 버려지는데, 그것을 빈 목록(dropped = N)으로 보내면 화면은 곧바로 '발효 중 0건'을 보이고 api
+  이력은 1 h 뒤 발효 중인 특보를 모두 끝냈다(QA-1203 의 상한). 발행하지 않으면 화면은 마지막 목록과 그 나이를 보이고 실행 기록에 실패가 남는다.
+  대가: 발효 중인 특보가 하나뿐이고 그 줄이 버려지면 그 주기도 발행하지 않는다(화면은 앞 목록 · 15분 뒤 '오래됨'). 특보가 없는 응답(머리 주석만)은 빈 목록이다.
 """
 
 from __future__ import annotations
@@ -171,7 +175,8 @@ def parse_line(line: str) -> dict[str, Any]:
 
 
 def parse(body: bytes) -> ParsedWarnings:
-    """응답 바이트 → 특보 목록 · 버린 줄. 머리 주석이 없으면 특보현황 응답이 아니다(오류 문서 · 인증 실패 글 등)."""
+    """응답 바이트 → 특보 목록 · 버린 줄. 머리 주석이 없으면 특보현황 응답이 아니다(오류 문서 · 인증 실패 글 등). 특보 줄이 있는데 모두 버렸으면
+    모양이 바뀐 응답이다(QA-1204 — 모듈 설명). 둘 다 WarningResponseError."""
     lines, undecodable = decode_lines(body)
     if not any(line.startswith("#") and "REG_ID" in line for line in lines):
         text = "\n".join(lines)
@@ -185,4 +190,9 @@ def parse(body: bytes) -> ParsedWarnings:
             out.warnings.append(parse_line(line))
         except (ValueError, OverflowError) as e:  # OverflowError: 날짜 계산이 넘침(QA-603) — 그 줄만 버린다
             out.dropped.append({"reason": str(e), "line": line.strip()[:200]})
+    if out.dropped and not out.warnings:
+        # 특보 줄을 하나도 읽지 못했다 — 응답의 모양이 바뀐 것으로 본다(QA-1204). 빈 목록으로 보내면 화면은 '발효 중 0건', api 이력은 1 h 뒤 발효 중인
+        # 특보를 모두 끝낸다(QA-1203 의 상한). 까닭만 싣는다(줄 내용은 싣지 않는다)
+        reason = out.dropped[0]["reason"]
+        raise WarningResponseError(f"every warning line dropped ({len(out.dropped)}; first: {reason})")
     return out
