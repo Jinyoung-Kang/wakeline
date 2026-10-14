@@ -1,0 +1,324 @@
+{
+  "viewport": {
+    "width": 320,
+    "height": 640
+  },
+  "blockedExternal": {
+    "tiles.openfreemap.org": 2,
+    "tilecache.rainviewer.com": 12
+  },
+  "results": [
+    {
+      "route": "/",
+      "title": "Wakeline — 실시간 항공기 · 선박 · 위험기상 상황판",
+      "leak": {
+        "hits": [],
+        "headerLabel": "Aircraft · Ships · Hazardous Weather",
+        "nav": [
+          "상황판",
+          "재생",
+          "통계",
+          "출처·한계",
+          "설명서"
+        ]
+      },
+      "consoleErrors": [],
+      "consoleWarnings": [],
+      "pageErrors": [],
+      "badResponses": [],
+      "failedRequests": [],
+      "duplicates": [],
+      "overflow": {
+        "innerWidth": 320,
+        "scrollWidth": 447,
+        "overflow": true,
+        "offenders": [
+          {
+            "sel": "button[data-testid=tab-airport].btn.flex-1.border-0",
+            "right": 341,
+            "w": 74
+          }
+        ]
+      },
+      "axe": []
+    },
+    {
+      "route": "/m",
+      "title": "모바일 알림 — Wakeline",
+      "leak": {
+        "hits": [],
+        "headerLabel": "Aircraft · Ships · Hazardous Weather",
+        "nav": [
+          "상황판",
+          "재생",
+          "통계",
+          "출처·한계",
+          "설명서"
+        ]
+      },
+      "consoleErrors": [],
+      "consoleWarnings": [],
+      "pageErrors": [],
+      "badResponses": [],
+      "failedRequests": [],
+      "duplicates": [],
+      "overflow": {
+        "innerWidth": 320,
+        "scrollWidth": 320,
+        "overflow": false,
+        "offenders": []
+      },
+      "axe": []
+    },
+    {
+      "route": "/replay",
+      "title": "이력 재생 — Wakeline",
+      "leak": {
+        "hits": [],
+        "headerLabel": "Aircraft · Ships · Hazardous Weather",
+        "nav": [
+          "상황판",
+          "재생",
+          "통계",
+          "출처·한계",
+          "설명서"
+        ]
+      },
+      "consoleErrors": [],
+      "consoleWarnings": [],
+      "pageErrors": [],
+      "badResponses": [],
+      "failedRequests": [],
+      "duplicates": [],
+      "overflow": {
+        "innerWidth": 320,
+        "scrollWidth": 321,
+        "overflow": true,
+        "offenders": []
+      },
+      "axe": []
+    },
+    {
+      "route": "/stats",
+      "title": "통계 — Wakeline",
+      "leak": {
+        "hits": [],
+        "headerLabel": "Aircraft · Ships · Hazardous Weather",
+        "nav": [
+          "상황판",
+          "재생",
+          "통계",
+          "출처·한계",
+          "설명서"
+        ]
+      },
+      "consoleErrors": [],
+      "consoleWarnings": [],
+      "pageErrors": [],
+      "badResponses": [],
+      "failedRequests": [],
+      "duplicates": [],
+      "overflow": {
+        "innerWidth": 320,
+        "scrollWidth": 320,
+        "overflow": false,
+        "offenders": []
+      },
+      "axe": []
+    },
+    {
+      "route": "/airports/RKSI",
+      "title": "공항 기상 이력 — Wakeline",
+      "leak": {
+        "hits": [],
+        "headerLabel": "Aircraft · Ships · Hazardous Weather",
+        "nav": [
+          "상황판",
+          "재생",
+          "통계",
+          "출처·한계",
+          "설명서"
+        ]
+      },
+      "consoleErrors": [],
+      "consoleWarnings": [],
+      "pageErrors": [],
+      "badResponses": [],
+      "failedRequests": [],
+      "duplicates": [],
+      "overflow": {
+        "innerWidth": 320,
+        "scrollWidth": 320,
+        "overflow": false,
+        "offenders": []
+      },
+      "axe": []
+    },
+    {
+      "route": "/alerts/1791925093334000",
+      "title": "알림 근거 — Wakeline",
+      "leak": {
+        "hits": [],
+        "headerLabel": "Aircraft · Ships · Hazardous Weather",
+        "nav": [
+          "상황판",
+          "재생",
+          "통계",
+          "출처·한계",
+          "설명서"
+        ]
+      },
+      "consoleErrors": [],
+      "consoleWarnings": [],
+      "pageErrors": [],
+      "badResponses": [],
+      "failedRequests": [],
+      "duplicates": [],
+      "overflow": {
+        "innerWidth": 320,
+        "scrollWidth": 320,
+        "overflow": false,
+        "offenders": []
+      },
+      "axe": []
+    },
+    {
+      "route": "/ops",
+      "title": "운영 — Wakeline",
+      "leak": "skipped(운영자 화면 자체)",
+      "consoleErrors": [
+        "Failed to load resource: the server responded with a status of 404 ()"
+      ],
+      "consoleWarnings": [],
+      "pageErrors": [],
+      "badResponses": [
+        "404 GET /api/v1/ops/session"
+      ],
+      "failedRequests": [],
+      "duplicates": [],
+      "overflow": {
+        "innerWidth": 320,
+        "scrollWidth": 320,
+        "overflow": false,
+        "offenders": []
+      },
+      "axe": []
+    },
+    {
+      "route": "/logs",
+      "title": "시스템 로그 — Wakeline",
+      "leak": "skipped(운영자 화면 자체)",
+      "consoleErrors": [
+        "Failed to load resource: the server responded with a status of 404 ()"
+      ],
+      "consoleWarnings": [],
+      "pageErrors": [],
+      "badResponses": [
+        "404 GET /api/v1/ops/session"
+      ],
+      "failedRequests": [],
+      "duplicates": [],
+      "overflow": {
+        "innerWidth": 320,
+        "scrollWidth": 320,
+        "overflow": false,
+        "offenders": []
+      },
+      "axe": []
+    },
+    {
+      "route": "/about",
+      "title": "출처·한계 — Wakeline",
+      "leak": {
+        "hits": [
+          {
+            "where": "text",
+            "text": "시각: 화면의 시각은 모두 한국 표준시(KST)입니다 — 예: “09-29 14:02:54 KST”, 상태 바 · 지도 툴팁은 짧게 “14:02 KST”, 표는 머리글 “(KST)” 아래 “09-29 14:02:54”. 시각에 마우스를 올리면 연도 · ms 까지의 같은 순간(KST)이 보입니다. 기상청 레이더 tm 은 기상청이 준 KST 그대로입니다. ME"
+          }
+        ],
+        "headerLabel": "Aircraft · Ships · Hazardous Weather",
+        "nav": [
+          "상황판",
+          "재생",
+          "통계",
+          "출처·한계",
+          "설명서"
+        ]
+      },
+      "consoleErrors": [],
+      "consoleWarnings": [],
+      "pageErrors": [],
+      "badResponses": [],
+      "failedRequests": [],
+      "duplicates": [],
+      "overflow": {
+        "innerWidth": 320,
+        "scrollWidth": 320,
+        "overflow": false,
+        "offenders": []
+      },
+      "axe": []
+    },
+    {
+      "route": "/guide",
+      "title": "설명서 — Wakeline",
+      "leak": {
+        "hits": [
+          {
+            "where": "text",
+            "text": "6.2 운영 화면 — 공급자 · 실행 · 파이프라인"
+          },
+          {
+            "where": "text",
+            "text": "운영(/ops) · 로그(/logs) 화면은 운영자 전용입니다. 로그인하지 않았으면 같은 자리에 로그인 폼이 나오고, 조회 API 도 로그인하지 않은 요청에는 없는 자원(404)으로 답합니다. 공개 데모(AWS)에서는 두 화면을 공개 주소에서 닫아 상단 메뉴에도 없습니다(운영자는 서버에 직접 연결해 주소로 엽니다)."
+          },
+          {
+            "where": "text",
+            "text": "운영 화면 — 공급자 · 실행 · 파이프라인"
+          },
+          {
+            "where": "text",
+            "text": "운영 탭 — providers · runs · quality · settings · audit · dlq · pipeline."
+          },
+          {
+            "where": "text",
+            "text": "해결 기록을 읽지 못하면 운영 화면과 같은 문구로 경고합니다."
+          },
+          {
+            "where": "text",
+            "text": "통계 날짜 · 운영 화면의 격리 수 날짜는 KST 날짜(00:00–24:00 KST)입니다 — 서버가 그 날짜로 셉니다. 공급자 예산은 수집기가 매일 09:00 KST 에 새로 시작하는 창이라 그 창을 KST 로 적습니다(예산 날을 KST 날짜로 이름만 바꾸지 않습니다)."
+          },
+          {
+            "where": "div@aria-label",
+            "text": "표: 운영 탭"
+          },
+          {
+            "where": "table@aria-label",
+            "text": "운영 탭"
+          }
+        ],
+        "headerLabel": "Aircraft · Ships · Hazardous Weather",
+        "nav": [
+          "상황판",
+          "재생",
+          "통계",
+          "출처·한계",
+          "설명서"
+        ]
+      },
+      "consoleErrors": [],
+      "consoleWarnings": [],
+      "pageErrors": [],
+      "badResponses": [],
+      "failedRequests": [],
+      "duplicates": [],
+      "overflow": {
+        "innerWidth": 320,
+        "scrollWidth": 320,
+        "overflow": false,
+        "offenders": []
+      },
+      "axe": []
+    }
+  ]
+}

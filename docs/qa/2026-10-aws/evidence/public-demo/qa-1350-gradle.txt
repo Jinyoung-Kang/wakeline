@@ -1,0 +1,32 @@
+> Task :compileJava UP-TO-DATE
+> Task :processResources UP-TO-DATE
+> Task :classes UP-TO-DATE
+> Task :compileTestJava UP-TO-DATE
+> Task :processTestResources UP-TO-DATE
+> Task :testClasses UP-TO-DATE
+
+> Task :test FAILED
+
+Qa1350OneIpHoldsHotDemandCapTest > oneIpWithFiveConnectionsDoesNotCrowdOutTheNextVisitor() FAILED
+    java.lang.AssertionError: [다른 방문자의 두 곳 — 한 IP(203.0.113.7)가 핫 리전 6 셀 중 5 개를 쥐고 있다: [25.0:121.5:50, 31.0:121.5:50, 34.5:135.5:50, 35.5:139.5:50, 40.0:116.5:50, 14.5:121.0:50]] 
+    Expecting
+      ["pending", "throttled"]
+    not to contain
+      ["throttled"]
+    but found
+      ["throttled"]
+        at dev.wakeline.ws.Qa1350OneIpHoldsHotDemandCapTest.oneIpWithFiveConnectionsDoesNotCrowdOutTheNextVisitor(Qa1350OneIpHoldsHotDemandCapTest.java:60)
+
+1 test completed, 1 failed
+
+FAILURE: Build failed with an exception.
+
+* What went wrong:
+Execution failed for task ':test'.
+> There were failing tests. See the report at: file:///Users/jinyoung/Projects/wakeline/apps/api/build/reports/tests/test/index.html
+
+* Try:
+> Run with --scan to get full insights from a Build Scan (powered by Develocity).
+
+BUILD FAILED in 1s
+5 actionable tasks: 1 executed, 4 up-to-date

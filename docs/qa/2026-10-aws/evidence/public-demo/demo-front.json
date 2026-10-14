@@ -1,0 +1,135 @@
+{
+  "locked": {
+    "before": {
+      "url": "/",
+      "title": "Wakeline — 실시간 항공기 · 선박 · 위험기상 상황판",
+      "h1": [
+        "실시간 상황판 — 항공기·선박·위험기상 지도와 알림"
+      ],
+      "statusbar": [
+        "WS OPEN FIXTURE MODE · 외부 호출 없음 AIRCRAFT 105 REGION ■ lag 1s 정상 WORLD ■ lag 2m 정상 AIS ■ lag 7s 정상 SIGMET ■ age 12s 정상 RADAR ■ age 3s 정상 상세 ▾"
+      ],
+      "alertsBanner": [
+        "WS OPEN"
+      ],
+      "errorNotes": [],
+      "alertsText": [],
+      "lockedHits": [],
+      "http": [],
+      "ws": {
+        "new": 1
+      }
+    },
+    "after": {
+      "url": "/",
+      "title": "Wakeline — 실시간 항공기 · 선박 · 위험기상 상황판",
+      "h1": [
+        "실시간 상황판 — 항공기·선박·위험기상 지도와 알림"
+      ],
+      "statusbar": [
+        "WS OPEN FIXTURE MODE · 외부 호출 없음 AIRCRAFT 103 REGION ■ lag 0s 정상 WORLD ■ lag 57s 정상 AIS ■ lag 4s 정상 SIGMET ■ age 88s 정상 RADAR ■ age 18s 정상 상세 ▾"
+      ],
+      "alertsBanner": [
+        "WS OPEN"
+      ],
+      "errorNotes": [],
+      "alertsText": [],
+      "lockedHits": [],
+      "http": [],
+      "ws": {
+        "new": 1
+      }
+    },
+    "apiAfter": [
+      "401 /api/v1/radar/kr"
+    ],
+    "nav": {
+      "url": "/stats",
+      "title": "접근 코드 — QA 흉내",
+      "h1": [
+        "접근 코드가 필요합니다(QA 흉내 잠금 화면)"
+      ],
+      "statusbar": [],
+      "alertsBanner": [],
+      "errorNotes": [],
+      "alertsText": [],
+      "lockedHits": [
+        "접근 코드가 필요합니다(QA 흉내 잠금 화면)"
+      ],
+      "http": [],
+      "ws": {}
+    },
+    "navReqs": [
+      "GET fetch /stats?_rsc=64EBvAagmAisvzuu",
+      "GET document /stats"
+    ],
+    "pageErrors": []
+  },
+  "offline": {
+    "before": {
+      "url": "/",
+      "title": "Wakeline — 실시간 항공기 · 선박 · 위험기상 상황판",
+      "h1": [
+        "실시간 상황판 — 항공기·선박·위험기상 지도와 알림"
+      ],
+      "statusbar": [
+        "WS OPEN FIXTURE MODE · 외부 호출 없음 AIRCRAFT 103 REGION ■ lag 8s 정상 WORLD ■ lag 86s 정상 AIS ■ lag 6s 정상 SIGMET ■ age 2m 정상 RADAR ■ age 33s 정상 상세 ▾"
+      ],
+      "alertsBanner": [
+        "WS OPEN"
+      ],
+      "errorNotes": [],
+      "alertsText": [],
+      "lockedHits": [],
+      "http": [],
+      "ws": {
+        "new": 1
+      }
+    },
+    "after": {
+      "url": "/",
+      "title": "Wakeline — 실시간 항공기 · 선박 · 위험기상 상황판",
+      "h1": [
+        "실시간 상황판 — 항공기·선박·위험기상 지도와 알림"
+      ],
+      "statusbar": [
+        "WS CLOSED · RETRY 7 FIXTURE MODE · 외부 호출 없음 AIRCRAFT 103 REGION ✕ lag 2m STALE WORLD ■ lag 3m 정상 AIS ■ lag 89s 정상 SIGMET ■ age 3m 정상 RADAR ■ age 2m 정상 상세 ▾"
+      ],
+      "alertsBanner": [
+        "WS CLOSED · RETRY 7",
+        "연결 끊김 — 마지막으로 받은 목록 · 갱신 안 됨 · ETA 멈춤"
+      ],
+      "errorNotes": [],
+      "alertsText": [],
+      "lockedHits": [],
+      "http": [],
+      "ws": {
+        "new": 7,
+        "close4000": 1,
+        "fail1006": 6
+      }
+    },
+    "apiAfter": [
+      "503 /api/v1/radar/kr"
+    ],
+    "nav": {
+      "url": "/stats",
+      "title": "운영 시간 아님 — QA 흉내",
+      "h1": [
+        "지금은 데모 운영 시간이 아닙니다(QA 흉내)"
+      ],
+      "statusbar": [],
+      "alertsBanner": [],
+      "errorNotes": [],
+      "alertsText": [],
+      "lockedHits": [],
+      "http": [],
+      "ws": {}
+    },
+    "navReqs": [
+      "GET fetch /stats?_rsc=64EBvAagmAisvzuu",
+      "GET document /stats"
+    ],
+    "pageErrors": []
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "states": {
+    "stats": {
+      "text": "STATISTICS 매일 03:30 KST 에 전날(KST 날짜) 집계 · 최근 7일 · 빈 칸은 집계 전·자료 없음을 구분해 표시 SIGMET BY FIR (7D, TOP 24) 최근 7일 자료가 없습니다(집계됨 · 해당 기록 없음). SIGMET BY HAZARD (7D) 최근 7일 자료가 없습니다(집계됨 · 해당 기록 없음). DISTINCT AIRCRAFT BY HOUR (KST) 이 날짜에 자료가 없습니다(집계됨 · 해당 기록 없음). ALERTS BY KIND (7D) · AVG DWELL 조회 실패 — data store temporarily unavailable; retry later(HTTP 503 · UNAVAILABLE) 요청 id qa1460aaaabbbbccccddddeeeeffff00 복사 응답을 받지 못해 자료가 있는지 알 수 없습니다(‘자료 없음’이 아님). 다시 시도",
+      "logsLinks": 0,
+      "copyTitle": "요청 id 복사 — 운영자에게 전하면 서버 로그를 찾는다"
+    },
+    "warningsLine": [
+      "특보 목록 수신 전 — 수집기가 아직 보내지 않았거나 꺼져 있음"
+    ]
+  }
+}
