@@ -31,7 +31,7 @@ import java.util.Map;
  * 선박(ADR-014): 위치 ship_position 72 h, 정적 정보·수신 공백 영구.
  * 관심 지역은 런타임 설정(collector 와 같은 값, {@link RegionSettings})에서 읽는다(COR-12).
  * 따라잡기(REL-18): cron 은 놓친 시각을 다시 돌리지 않는다 — 기동 1분 뒤 · 성공 뒤 3시간마다(실패하면 1분부터 두 배씩, 30분 상한) 원본이 남은
- * 시간(보존 − 2 h) 중 요약이 없는 시간과 최근 7일 중 완료 표식이 없는 통계 계열이 있는 날을 채운다(둘 다 멱등, R-46 · AWS 리뷰 B-1 · B-2). 그보다 오래된 날도 원본이 남은 계열(SIGMET · 알림)에 표식이 없으면
+ * 시간(남아 있는 가장 오래된 항적 파티션부터) 중 요약이 없는 시간과 최근 7일 중 완료 표식이 없는 통계 계열이 있는 날을 채운다(둘 다 멱등, R-46 · AWS 리뷰 B-1 · B-2 · QA-1200). 그보다 오래된 날도 원본이 남은 계열(SIGMET · 알림)에 표식이 없으면
  * 채운다({@link #backfillStats} — V16 뒤 KST 날짜로 다시 세기. 원해상도가 지워진 옛 날의 교통량은 V16 이 옛 UTC 시 행에서 옮겨 실었다).
  */
 @org.springframework.context.annotation.Profile("!cli & !migrate")  // CLI(ops-user)·마이그레이션 실행에서는 웹·소비자·잡을 띄우지 않는다
@@ -48,8 +48,6 @@ public class MaintenanceJobs {
 
     /** 오늘(KST 날짜) */
     public static LocalDate today() { return LocalDate.now(DAY_ZONE); }
-    /** 1분 요약 따라잡기 창이 원해상도 보존보다 짧은 만큼(지워지는 중인 파티션을 읽지 않게 — {@link #RETAIN_CATCH_UP_HOURS} 와 같은 규칙) */
-    static final int CATCH_UP_MARGIN_HOURS = 2;
     static final int CATCH_UP_DAYS = 7;
     /** 따라잡기 창 밖의 날을 한 번의 따라잡기에 채우는 최대 일수(backfillStats) — /stats 범위 상한(92일)과 같다 */
     static final int BACKFILL_MAX_DAYS = 92;
@@ -363,16 +361,22 @@ public class MaintenanceJobs {
     }
 
     /**
-     * 원본이 남아 있는 닫힌 시간(원해상도 보존 − {@value #CATCH_UP_MARGIN_HOURS} h) 중 원해상도 항적은 있는데 1분 요약이 하나도 없는 시간을 요약한다.
-     * 창을 보존에 묶는다: 24 h 이던 창은 하루 넘게 꺼져 있다 켠 기동(AWS 데모의 주말 정지 약 63 h — ADR-039)이 넘지 못해, 멈추기 직전 시간의
-     * 요약이 원본 삭제와 함께 영구히 빠졌다(재생은 보존 뒤 1분 요약만 읽는다). 시간마다 작은 EXISTS 두 번(ts BRIN · ts_minute 색인). @return 요약한 시간
+     * 원본이 남아 있는 닫힌 시간 중 원해상도 항적은 있는데 1분 요약이 하나도 없는 시간을 요약한다. 창의 시작 = 남아 있는 가장 오래된 항적 파티션의 시작
+     * ({@link #oldestPartitionStart}) — 1분 요약 보존({@code summaryRetentionDays})보다 오래된 시간은 빼고(요약해도 다음 보존 삭제가 지운다).
+     * 창을 시계로 고정하지 않는다(QA-1200): 24 h 이던 창은 주말 정지(약 63 h — ADR-039)를, 그 뒤의 '원해상도 보존 − 2 h'(70 h)는 그보다 긴 정지(연휴 ·
+     * 기동 실패 — 금 18:00 → 화 09:00 KST 는 87 h)를 넘지 못해, 멈추기 직전 시간의 요약이 원본 삭제와 함께 영구히 빠졌다(재생은 보존 뒤 1분 요약만
+     * 읽는다). 그 원본은 기동 뒤 첫 따라잡기가 끝날 때까지 삭제를 미루므로({@link #DROP_HOLD_MAX}) 파티션이 남아 있다 — 남은 파티션이 곧 요약할 수 있는 범위다.
+     * 지워지는 중인 파티션과 겹쳐도 깨지지 않는다: 파티션 DROP 은 부모의 ACCESS EXCLUSIVE 를 얻을 때까지 이 읽기를 기다리고, 그 뒤의 읽기는 그 시간을 빈
+     * 것으로 본다(예전 2 h 여유는 필요 없다). 시간마다 작은 EXISTS 두 번(ts BRIN · ts_minute 색인) — 평소 창은 가장 오래된 파티션까지 96 h 안팎. @return 요약한 시간
      */
     List<Instant> catchUpSummaries(Instant now) {
         Bbox b = region.current().bbox();
         Instant current = now.truncatedTo(ChronoUnit.HOURS);
+        Instant oldest = oldestPartitionStart("track_point");
+        if (oldest == null) return List.of();
+        Instant first = latest(oldest, current.minus(props.summaryRetentionDays(), ChronoUnit.DAYS));
         List<Instant> done = new ArrayList<>();
-        for (int i = Math.max(1, props.trackRetentionHours() - CATCH_UP_MARGIN_HOURS); i >= 1; i--) {
-            Instant h = current.minus(i, ChronoUnit.HOURS);
+        for (Instant h = first; h.isBefore(current); h = h.plus(1, ChronoUnit.HOURS)) {
             Boolean missing = db.sql("""
                     SELECT NOT EXISTS (SELECT 1 FROM track_point_1m WHERE ts_minute >= :from AND ts_minute < :to)
                        AND EXISTS (SELECT 1 FROM track_point WHERE ts >= :from AND ts < :to
@@ -387,6 +391,20 @@ public class MaintenanceJobs {
         }
         return done;
     }
+
+    /**
+     * 표(track_point · ship_position)의 남아 있는 가장 오래된 일 파티션의 시작(UTC 날 00:00), 없으면 null. 파티션 이름(표_YYYYMMDD)으로 읽는다 —
+     * 파티션 함수 · 보존 삭제(V2 · V5 · V9)와 같은 규칙. 시스템 카탈로그만 읽는다(행을 읽지 않는다).
+     */
+    Instant oldestPartitionStart(String table) {
+        String day = db.sql("""
+                SELECT min(substring(c.relname from '^' || :t || '_([0-9]{8})$'))
+                FROM pg_inherits i JOIN pg_class c ON c.oid = i.inhrelid JOIN pg_class p ON p.oid = i.inhparent
+                WHERE p.relname = :t""").param("t", table).query(String.class).optional().orElse(null);
+        return day == null ? null : LocalDate.parse(day, java.time.format.DateTimeFormatter.BASIC_ISO_DATE).atStartOfDay(ZoneOffset.UTC).toInstant();
+    }
+
+    static Instant latest(Instant a, Instant b) { return a.isAfter(b) ? a : b; }
 
     /**
      * 어제부터 7일 전까지, 원본이 남아 있는 계열 중 완료 표식이 없는 계열이 하나라도 있는 날을 집계한다(R-46: 행이 있는지로 판단하면 자료가
