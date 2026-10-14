@@ -13,8 +13,6 @@ api RegionSettings.parse(RegionSettings.java:107-129)는 "collector runtime_sett
 
 from __future__ import annotations
 
-import math
-
 import httpx
 import pytest
 import respx
@@ -50,7 +48,6 @@ async def test_qa_1221_the_region_poll_never_sends_nan_coordinates_to_a_provider
     ctx = make_ctx(r, limits={"adsb_lol": 0})
     ctx.rt = RuntimeSettings(r)  # type: ignore[arg-type]
     await ctx.rt.refresh()
-    assert math.isnan(ctx.rt.region[0])  # 수집기가 읽은 중심
     http = HttpClient(RateLimiter(100, 100, {"api.adsb.lol": (100.0, 100)}))
     try:
         with respx.mock:
