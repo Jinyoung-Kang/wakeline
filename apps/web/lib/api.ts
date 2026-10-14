@@ -2,6 +2,10 @@
  * 같은 출처(edge) REST 호출. 브라우저는 API 주소·키를 모른다.
  * 부른 쪽의 머리는 형식(객체 · Headers · 배열)과 상관없이 보낸다 — 객체 펼치기는 Headers 인스턴스의 값을 말없이 버렸다(web-review B16). 기본 Accept 는 정하지 않았을 때만.
  */
+import { ACCESS_LOCKED, gateLockedText } from "./front-answer";
+
+export { ACCESS_LOCKED, gateLockedText } from "./front-answer";
+
 export async function apiGet<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers);
   if (!headers.has("Accept")) headers.set("Accept", "application/json, application/geo+json, application/problem+json");
@@ -28,14 +32,7 @@ export const REQUEST_ID_RE = /^[0-9A-Za-z-]{8,64}$/;
 const CODE_RE = /^[A-Za-z0-9_.-]{1,64}$/;
 const pick = (v: unknown, re: RegExp): string | null => (typeof v === "string" && re.test(v) ? v : null);
 
-/**
- * AWS 데모의 앞단 잠금(ADR-039 — 앱 밖의 gate): 접근 코드 쿠키가 만료되면 모든 요청이 401 {"error":"locked"} 다 — 무엇을 할지 알리는 글.
- * 그 밖의 응답이면 null. REST(apiError)와 ETag 조회기(lib/etag-poller)가 함께 쓴다.
- */
-export function gateLockedText(status: number, body: unknown): string | null {
-  return status === 401 && (body as { error?: unknown } | null)?.error === "locked" ? "접근 코드가 만료됨 — 새로고침하면 접근 코드를 다시 묻습니다" : null;
-}
-
+/** 앞단(AWS 데모 — ADR-039)이 api 대신 답한 응답은 lib/front-answer 가 알아본다: 잠금 만료(401 locked → ACCESS_LOCKED). 메시지는 숫자 대신 할 일을 알리는 글이다. */
 async function apiError(res: Response): Promise<ApiError> {
   let detail = `${res.status}`, code: string | null = null, rid: string | null = null;
   try {
@@ -44,7 +41,7 @@ async function apiError(res: Response): Promise<ApiError> {
     code = pick(p.code, CODE_RE);
     rid = pick(p.request_id, REQUEST_ID_RE);
     const locked = gateLockedText(res.status, p);
-    if (locked) [detail, code] = [locked, "ACCESS_LOCKED"];
+    if (locked) [detail, code] = [locked, ACCESS_LOCKED];
   } catch { /* ignore */ }
   const ra = res.headers?.get?.("Retry-After") ?? null;
   const secs = ra != null && /^\d{1,6}$/.test(ra.trim()) ? Number(ra.trim()) : null;
