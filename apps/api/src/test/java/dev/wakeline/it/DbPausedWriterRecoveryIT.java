@@ -34,9 +34,11 @@ class DbPausedWriterRecoveryIT extends IntegrationTest {
     private static String dbContainerId() {
         int mapped = URI.create(DbTestSupport.jdbcUrl(ItStack.DB).substring("jdbc:".length())).getPort();
         DockerClient docker = DockerClientFactory.instance().client();
-        for (Container c : docker.listContainersCmd().exec())
+        for (Container c : docker.listContainersCmd().exec()) {
+            if (c.getPorts() == null) continue; // 포트 정보가 없는 컨테이너(예: 만들어지는 중 · 망 없음)도 목록에 온다(QA-1290)
             for (ContainerPort p : c.getPorts())
                 if (p.getPublicPort() != null && p.getPublicPort() == mapped) return c.getId();
+        }
         throw new IllegalStateException("db test container not found on port " + mapped);
     }
 
