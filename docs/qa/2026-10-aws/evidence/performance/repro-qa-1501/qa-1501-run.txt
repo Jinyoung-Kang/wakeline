@@ -1,0 +1,40 @@
+
+Running 1 test using 1 worker
+
+QA-1501 vh=823 lcp=196ms P.g-p offscreenFigures=16 imageRequestsBeforeScroll=[{"t":186,"file":"/guide/dashboard.983c6efd68.webp"},{"t":186,"file":"/guide/world.3b4f72f4f9.webp"}]
+  ✘  1 e2e/qa/qa-1501-guide-offscreen-images.spec.ts:15:5 › QA-1501 /guide on a phone does not fetch off-screen screenshots while the first screen loads (2.9s)
+
+
+  1) e2e/qa/qa-1501-guide-offscreen-images.spec.ts:15:5 › QA-1501 /guide on a phone does not fetch off-screen screenshots while the first screen loads 
+
+    Error: off-screen screenshots requested while the first screen loads (no scrolling)
+
+    expect(received).toEqual(expected) // deep equality
+
+    - Expected  -  1
+    + Received  + 10
+
+    - Array []
+    + Array [
+    +   Object {
+    +     "file": "/guide/dashboard.983c6efd68.webp",
+    +     "t": 186,
+    +   },
+    +   Object {
+    +     "file": "/guide/world.3b4f72f4f9.webp",
+    +     "t": 186,
+    +   },
+    + ]
+
+      43 |   await ctx.close();
+      44 |   expect(m.offscreen.length, "precondition: the figures start below the first screen on a phone").toBeGreaterThan(0);
+    > 45 |   expect(beforeScroll, "off-screen screenshots requested while the first screen loads (no scrolling)").toEqual([]);
+         |                                                                                                        ^
+      46 | });
+      47 |
+        at /Users/jinyoung/Projects/wakeline/apps/web/e2e/qa/qa-1501-guide-offscreen-images.spec.ts:45:104
+
+    Error Context: test-results/qa/qa-1501-guide-offscreen-im-c8e8d-hile-the-first-screen-loads/error-context.md
+
+  1 failed
+    e2e/qa/qa-1501-guide-offscreen-images.spec.ts:15:5 › QA-1501 /guide on a phone does not fetch off-screen screenshots while the first screen loads 

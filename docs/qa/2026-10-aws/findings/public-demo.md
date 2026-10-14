@@ -69,6 +69,10 @@
 - 의심 원인: `apps/web/lib/stats.ts:16`(STATS_RUN_KST 고정) · `apps/web/app/stats/page.tsx:57` · `lib/stats.ts:91,93,126` · `components/guide/GuideView.tsx:396`
 - 재현 시험: `apps/web/e2e/qa/qa-1461-demo-stats-claims-0330-run.spec.ts` — 1 실패
 
+- 고침: 통계 화면 `b7901193`. **남은 곳(설명서)** — 공개 데모의 설명서 통계 절이 그대로 "매일 03:30 KST"(그림 13 번호 4 설명 · '집계 시각' 첫 문장)였다
+  (재현 `f02ff9c9` — `qa-1461-demo-guide-claims-0330-run.spec.ts`, `evidence/public-demo/qa-1461-guide-run.txt`). `66213d7a`: 설명서도 공개 데모 표시로 집계 방식을 고르고
+  (번호 설명 글의 자리 `{stats-run}` — `lib/stats statsRunPhrase`), 공개 데모에서는 '켜진 뒤 따라잡기'와 통계 그림이 늘 켜 둔 서버에서 찍힌 것임을 적는다(`qa-1461-guide-fix-run.txt` — claims 0).
+
 ## QA-1462 · 낮음 · 화면(WS 연결 상한) — IP 당 WS 상한(5)에 걸린 탭이 까닭 없이 '연결 끊김 · 재연결 대기'만 보인다
 - 환경: A1 · 같은 브라우저 컨텍스트(한 IP) · `lib/ws-protocol.ts` · `lib/ws.ts`
 - 재현 절차: `… npx playwright test -c e2e/qa/playwright.qa.config.ts qa-1462` — 상황판 탭을 3 s 간격으로 6개 연다.
