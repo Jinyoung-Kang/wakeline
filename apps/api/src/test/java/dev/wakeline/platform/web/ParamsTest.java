@@ -48,5 +48,9 @@ class ParamsTest {
         assertThat(Params.choice("group", null, "fir", "fir", "hazard")).isEqualTo("fir");
         assertThatThrownBy(() -> Params.choice("detail", "bogus", "lite", "lite", "full"))
                 .isInstanceOf(Problem.class).hasMessageContaining("detail must be one of lite, full");
+        // QA-1310: 대소문자는 ASCII 로만 — 유니코드 대소문자 변환으로 ASCII 가 되는 글자(ı · İ · ſ · 켈빈 기호 K)는 모르는 값
+        for (String bad : new String[]{"f\u0131r", "f\u0130r", "ob\u017Ferved", "\u212Aind"})
+            assertThatThrownBy(() -> Params.choice("x", bad, null, "fir", "observed", "kind")).isInstanceOfSatisfying(Problem.class,
+                    p -> assertThat(p.code()).isEqualTo("BAD_FILTER"));
     }
 }

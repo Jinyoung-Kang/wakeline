@@ -102,9 +102,12 @@ public class AircraftController {
      */
     @GetMapping("/search")
     public ResponseEntity<Map<String, Object>> search(@RequestParam String q, HttpServletRequest req) {
-        String needle = Spaces.strip(q).toUpperCase(java.util.Locale.ROOT); // 공백 글자만 지운다(§G43 · QA-1103)
-        if (needle.length() < 2 || needle.length() > 10) throw Problem.badRequest("BAD_QUERY", "q must be 2..10 chars");
-        if (!needle.matches("^[A-Z0-9-]+$")) throw Problem.badRequest("BAD_QUERY", "q may contain letters, digits and '-' only");
+        String raw = Spaces.strip(q); // 공백 글자만 지운다(§G43 · QA-1103)
+        if (raw.length() < 2 || raw.length() > 10) throw Problem.badRequest("BAD_QUERY", "q must be 2..10 chars");
+        // ASCII 를 먼저 검사하고 대문자로 바꾼다(QA-1310 — 바꾼 뒤 검사하면 ſ → S · ı → I · ß → SS · ﬀ → FF 처럼 ASCII 가 아닌 글자가 다른 검색어가 됐다.
+        // Params.hex · icao 와 같은 순서)
+        if (!raw.matches("^[A-Za-z0-9-]+$")) throw Problem.badRequest("BAD_QUERY", "q may contain letters, digits and '-' only");
+        String needle = raw.toUpperCase(java.util.Locale.ROOT);
         Instant now = Instant.now();
         SnapshotStore.View view = snapshots.view(now);
         List<Map<String, Object>> out = new ArrayList<>();

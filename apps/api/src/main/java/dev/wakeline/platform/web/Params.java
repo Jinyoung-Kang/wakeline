@@ -34,14 +34,18 @@ public final class Params {
     /**
      * 정해진 값 중 하나를 고르는 필터(계약 v5 §G42 — QA 2026-10 기능 개선 제안 3): 없거나 빈 값이면 def, 맞는 값은 대소문자를 가리지 않고 소문자로 돌려준다.
      * 모르는 값이면 400 BAD_FILTER — 예전에는 경로마다 달랐다(모르는 kind → 관측 + 예측 모두, group → fir, detail → lite). 열린 값(SIGMET hazard 처럼 공급자가 주는
-     * 글자)에는 쓰지 않는다.
+     * 글자)에는 쓰지 않는다. 대소문자는 ASCII 로만 가린다 — ASCII 가 아닌 글자가 있으면 모르는 값(QA-1310: equalsIgnoreCase 는 글자마다 유니코드
+     * 대소문자 변환이라 점 없는 ı → I · 점 있는 İ → i · 긴 s ſ → S 가 맞는 글자로 쳐져 {@code group=fır} 가 fir 로 받아들여졌다).
      */
     public static String choice(String name, String value, String def, String... allowed) {
         String v = value == null ? "" : Spaces.strip(value); // 제어 문자만 있는 값은 빈 값이 아니다 — 아래에서 400(QA-1103)
         if (v.isEmpty()) return def;
-        for (String a : allowed) if (a.equalsIgnoreCase(v)) return a;
+        if (ASCII.matcher(v).matches()) for (String a : allowed) if (a.equalsIgnoreCase(v)) return a; // 둘 다 ASCII — ASCII 대소문자만 같게 본다
         throw Problem.badRequest("BAD_FILTER", name + " must be one of " + String.join(", ", allowed));
     }
+
+    /** ASCII 글자만. */
+    private static final Pattern ASCII = Pattern.compile("\\p{ASCII}*");
 
     /**
      * 공항 ICAO 코드: 앞뒤 공백을 빼고 ASCII 영숫자 4자 — 대문자로 돌려준다. 아니면 400 BAD_ICAO. ASCII 를 먼저 검사한다(QA 2026-10 기능 개선 제안 5 —
