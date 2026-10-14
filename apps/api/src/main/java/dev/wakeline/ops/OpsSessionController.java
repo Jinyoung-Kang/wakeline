@@ -10,6 +10,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -69,7 +70,12 @@ public class OpsSessionController {
     /** 없는 계정으로 실패한 로그인의 감사 target(R-55, ADR-017 §3 — 입력 원문은 저장하지 않는다). */
     static final String UNKNOWN_ACCOUNT = "unknown account";
 
-    public record Login(@NotBlank @Size(max = 64) String username, @NotBlank @Size(min = 8, max = 256) String password) {}
+    /**
+     * 로그인 본문. username 은 제어 문자(유니코드 Cc)를 받지 않는다 — 형식 오류 400(QA-1102): 값이 그대로 SQL 매개변수가 되는데 PostgreSQL 은 NUL 을
+     * 'invalid byte sequence for encoding "UTF8": 0x00'(22021)으로 거절해, 익명 로그인이 500 + ERROR 스택(실패한 SQL 포함)이 됐다. 제어 문자가 든
+     * 계정 이름은 쓰지 않는다(운영 필터의 같은 부류 — Params.filterText, QA-002 · QA-205). 비밀번호는 DB 에 가지 않는다(해시 비교만).
+     */
+    public record Login(@NotBlank @Size(max = 64) @Pattern(regexp = "\\P{Cc}*") String username, @NotBlank @Size(min = 8, max = 256) String password) {}
 
     /**
      * 로그인. 요청 제한은 실패 시 닫힘(Redis 장애면 503 — 제한 없이 무차별 대입을 받지 않는다, SEC-6).
