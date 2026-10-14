@@ -1,11 +1,12 @@
 /**
  * lib/ws 앞단 확인(QA-1300): 열린 적 없는 실패가 2번 이어지면 같은 출처 확인 요청 하나로 까닭을 가리고(스토어 connIssue), 최소 60 s 간격으로만 다시 묻고,
- * 연결이 다시 열리면(welcome) 지운다. 한 번의 실패 · 열린 뒤 닫힘은 묻지 않는다.
+ * 연결이 다시 열리면(welcome) 지운다. 한 번의 실패 · 열린 뒤 닫힘은 묻지 않는다. 서버의 1013(연결 수 상한)은 그 까닭을 그대로 둔다(QA-1462).
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WakelineWsClient } from "@/lib/ws";
 import { ApiError } from "@/lib/api";
 import { getData, resetData } from "@/lib/store";
+import { connChip, statusInput } from "@/lib/statusbar";
 import { FakeSocket } from "./helpers/fake-ws";
 
 beforeEach(() => {
@@ -63,6 +64,24 @@ describe("lib/ws front check (QA-1300)", () => {
     await r.failOpen();
     expect(r.checks).toHaveLength(2);
     expect(getData().connIssue).toBeNull();
+    r.client.close();
+  });
+
+  it("QA-1462: a close 1013 (connection limit) is the cause on the chip until a connection opens again — no front check", async () => {
+    const r = rig(locked);
+    r.client.connect();
+    r.sockets[0].open();
+    r.sockets[0].onclose?.({ code: 1013, reason: "connection limit" });
+    expect(getData().connIssue).toBe("limit");
+    const chip = connChip(statusInput(getData(), Date.now(), Date.now()));
+    expect(chip.text).toContain("연결 수 상한");
+    expect(chip.title).toContain("다른 탭을 닫으면");
+    await vi.advanceTimersByTimeAsync(31_000);
+    expect(getData().connIssue).toBe("limit"); // 다시 붙는 중에도
+    r.sockets.at(-1)!.open();
+    r.sockets.at(-1)!.recv({ type: "welcome", server_time: "2026-10-14T00:06:00Z", limits: {} });
+    expect(getData().connIssue).toBeNull();
+    expect(r.checks).toHaveLength(0);
     r.client.close();
   });
 });

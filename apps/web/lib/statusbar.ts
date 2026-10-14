@@ -199,7 +199,7 @@ const toneHealth = (t: "ok" | "warn" | "bad" | "muted"): Health => (t === "muted
 /**
  * 연결 칩. "paused" 는 탭이 숨겨져 서버에 일시정지(pause)를 보낸 상태다(components/MapView visibilitychange → lib/ws pause) — 그동안 서버는 이 탭에
  * 갱신을 보내지 않는다. 그렇게 적는다("WS paused · 탭 숨김").
- * 끊긴 동안 까닭을 알면(connIssue — 앞단 잠금 만료 · 원본에 닿지 못함, QA-1300) 짧은 낱말을 줄에, 할 일을 title 앞에 적는다.
+ * 끊긴 동안 까닭을 알면(connIssue — 앞단 잠금 만료 · 원본에 닿지 못함 QA-1300, 연결 수 상한 QA-1462) 짧은 낱말을 줄에, 할 일을 title 앞에 적는다.
  */
 export function connChip(i: Pick<StatusInput, "conn" | "reconnectAttempt" | "lastRxAt" | "nowMs" | "connIssue">): ConnChip {
   const live = isRxFresh(i.conn, i.lastRxAt, i.nowMs);

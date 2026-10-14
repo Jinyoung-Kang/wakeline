@@ -20,7 +20,7 @@
  * - 앞단 확인(QA-1300): 브라우저 WebSocket API 는 업그레이드 응답을 보여 주지 않는다(AWS 데모 앞단의 잠금 401 · 오프라인 503 도 close 1006 뿐).
  *   열린 적 없이 끝난 연결이 FRONT_CHECK_AFTER_FAILS 번 이어지면 같은 출처 GET 하나(lib/endpoints/status — 최소 간격 FRONT_CHECK_MIN_GAP_MS)로 가려
  *   스토어 connIssue(lib/conn-issue)에 둔다 — 상태 바 · 알림 패널이 까닭(접근 코드 만료 · 서버에 닿지 못함)을 적는다. 재접속은 그대로 이어 간다
- *   (다른 탭에서 잠금을 풀면 쿠키를 함께 쓰므로 이어진다). 연결이 열리면(welcome) 지운다.
+ *   (다른 탭에서 잠금을 풀면 쿠키를 함께 쓰므로 이어진다). 서버가 연결 수 상한(1013)으로 닫으면 그 까닭(limit — QA-1462)을 둔다. 연결이 열리면(welcome) 지운다.
  * - 수신 검증(계약 v5 §E2 · ADR-020): 모든 메시지를 lib/ws-validate 로 검사한다 — 틀린 원소는 버리고 세고, 봉투가 틀린 메시지는 버린다.
  *   워커에도 검증된 같은 목록을 보낸다(주 스레드와 갈라지지 않게). diff 의 lastSeq(선박 sseq)는 적용이 끝난 뒤에만 오르고(R-93), 처리 중 예외는
  *   잡아서 세고 브라우저 오류로 보고(§C8)한다. 버린·실패한 메시지 뒤에는 그 종류에 맞게 다시 받는다(recoverFrom): 항공기·선박 흐름은 resync,
@@ -34,7 +34,7 @@ import { aircraftStates, clockOffsetMs, getData, observeServerTime, setData, shi
 import { describeThrown, reportClientError, type ClientErrorInput } from "./errorReport";
 import { isMmsi, MAX_SHIPS, parseAisStatus } from "./ships";
 import { validateServerMessage, type ServerMsg } from "./ws-validate";
-import { connIssueOf } from "./conn-issue";
+import { CLOSE_CONNECTION_LIMIT, connIssueOf } from "./conn-issue";
 import { reachPublicStatus } from "./endpoints/status";
 
 export type WorkerLike = { postMessage: (m: unknown) => void };
@@ -231,6 +231,7 @@ export class WakelineWsClient {
     const delay = nextBackoffMs(this.attempt++);
     this.timer = setTimeout(() => this.connect(), delay);
     setData({ reconnectAttempt: this.attempt });
+    if (code === CLOSE_CONNECTION_LIMIT) setData({ connIssue: "limit" }); // 까닭을 서버가 말했다(QA-1462) — 다른 탭을 닫으면 이어진다
     if (!this.opened) { this.failedOpens++; this.maybeCheckFront(); }
   }
 
