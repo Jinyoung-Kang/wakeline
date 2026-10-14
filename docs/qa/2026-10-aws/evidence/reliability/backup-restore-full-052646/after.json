@@ -1,0 +1,183 @@
+{
+ "aircraft": {
+  "rows": 127,
+  "md5": "e3d998a24cdbcc977db7d8513f4cf740"
+ },
+ "airport": {
+  "rows": 13,
+  "md5": "b75915dea26ef141b108fb0fa943394d"
+ },
+ "airspace": {
+  "rows": 20,
+  "md5": "e50e0e4c7cdbdd1edec2f528922d56d3"
+ },
+ "airspace_edition": {
+  "rows": 1,
+  "md5": "9a683ee50f52688e1385640f82dd6ea9"
+ },
+ "alert_event": {
+  "rows": 2132,
+  "md5": "f9085e36308cfa0243b87abf80e3e7c2"
+ },
+ "app_setting": {
+  "rows": 12,
+  "md5": "82a09432670ab514de56329e33b08c7f"
+ },
+ "audit_log": {
+  "rows": 39,
+  "md5": "301d8fcc6bda5b750aadeb37ea6c3c82"
+ },
+ "flyway_schema_history": {
+  "rows": 21,
+  "md5": "ff98de4f73d17eb7ee0456057e4da0c8"
+ },
+ "ingest_gap": {
+  "rows": 10,
+  "md5": "5fcb2945e2af8b9c71a63f754c06b3df"
+ },
+ "ingest_run": {
+  "rows": 897,
+  "md5": "fcd634253aa2cc69e0075bd064068b86"
+ },
+ "kst_day_cutover": {
+  "rows": 1,
+  "md5": "50e4fba5f0aabf412bc80ec8b0dba1b7"
+ },
+ "marine_grid4": {
+  "rows": 0,
+  "md5": "-"
+ },
+ "metar_obs": {
+  "rows": 39,
+  "md5": "9cf0b474fde950585a1069244e6d5a86"
+ },
+ "ops_resolution": {
+  "rows": 6,
+  "md5": "89c95e377884599b0e50b2c38f6697bb"
+ },
+ "ops_user": {
+  "rows": 1,
+  "md5": "668672ef3f0ab75ae63381a27bc21812"
+ },
+ "port_call": {
+  "rows": 0,
+  "md5": "-"
+ },
+ "port_call_coverage": {
+  "rows": 0,
+  "md5": "-"
+ },
+ "provider_budget_day": {
+  "rows": 12,
+  "md5": "5dd78ce6faaf4126b24cbbe31e4c1bca"
+ },
+ "provider_switch": {
+  "rows": 12,
+  "md5": "77f67218f8108000ba8c3f2a40c83f1c"
+ },
+ "quality_event": {
+  "rows": 0,
+  "md5": "-"
+ },
+ "quality_rule_count": {
+  "rows": 0,
+  "md5": "-"
+ },
+ "quality_rule_count_utc_legacy": {
+  "rows": 0,
+  "md5": "-"
+ },
+ "radar_frame": {
+  "rows": 24,
+  "md5": "616a3d3eacc774ce72e7d8ef7de4f5b2"
+ },
+ "retained_track": {
+  "rows": 0,
+  "md5": "-"
+ },
+ "ship": {
+  "rows": 405,
+  "md5": "eb994eb0aeafc1509b60b359e310dfb9"
+ },
+ "ship_position_20261012": {
+  "rows": 0,
+  "md5": "-"
+ },
+ "ship_position_20261013": {
+  "rows": 5217,
+  "md5": "f8b9ba5dd7b209862424c0cd7564166c"
+ },
+ "ship_position_20261014": {
+  "rows": 0,
+  "md5": "-"
+ },
+ "ship_position_20261015": {
+  "rows": 0,
+  "md5": "-"
+ },
+ "ship_position_20261016": {
+  "rows": 0,
+  "md5": "-"
+ },
+ "sigmet": {
+  "rows": 3828,
+  "md5": "adc29fd746e3ceb77dcace417c0d097d"
+ },
+ "stats_daily": {
+  "rows": 17,
+  "md5": "9c4f918734ea662da3d9e93a481873e0"
+ },
+ "stats_daily_utc_legacy": {
+  "rows": 0,
+  "md5": "-"
+ },
+ "track_point_1m": {
+  "rows": 11049,
+  "md5": "4a821b63b5649fce9cf7c23fa2de8859"
+ },
+ "track_point_20261010": {
+  "rows": 0,
+  "md5": "-"
+ },
+ "track_point_20261011": {
+  "rows": 0,
+  "md5": "-"
+ },
+ "track_point_20261012": {
+  "rows": 0,
+  "md5": "-"
+ },
+ "track_point_20261013": {
+  "rows": 16129,
+  "md5": "d0cb8f00ab2cae12437a9e120c14adc3"
+ },
+ "track_point_20261014": {
+  "rows": 0,
+  "md5": "-"
+ },
+ "track_point_20261015": {
+  "rows": 0,
+  "md5": "-"
+ },
+ "track_point_20261016": {
+  "rows": 0,
+  "md5": "-"
+ },
+ "wx_warning": {
+  "rows": 9,
+  "md5": "7490c2e7339eaa10be115d8efef9b0ac"
+ },
+ "_sequences": {
+  "airspace_edition_id_seq": 1,
+  "airspace_id_seq": 20,
+  "alert_event_id_seq": 0,
+  "audit_log_id_seq": 39,
+  "ingest_gap_id_seq": 44,
+  "ingest_run_id_seq": 922,
+  "ops_resolution_id_seq": 6,
+  "ops_user_id_seq": 1,
+  "quality_event_id_seq": 0,
+  "wx_warning_id_seq": 131
+ },
+ "_flyway": "21"
+}

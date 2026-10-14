@@ -1,0 +1,32 @@
+37c37
+< table|quality_rule_count_utc_legacy|wakeline_migrator|wakeline_migrator=arwdDxtm/wakeline_migrator
+---
+> table|quality_rule_count_utc_legacy|wakeline_migrator|
+42,46c42,46
+< table|ship_position_20261012|wakeline_migrator|wakeline_migrator=arwdDxtm/wakeline_migrator
+< table|ship_position_20261013|wakeline_migrator|wakeline_migrator=arwdDxtm/wakeline_migrator
+< table|ship_position_20261014|wakeline_migrator|wakeline_migrator=arwdDxtm/wakeline_migrator
+< table|ship_position_20261015|wakeline_migrator|wakeline_migrator=arwdDxtm/wakeline_migrator
+< table|ship_position_20261016|wakeline_migrator|wakeline_migrator=arwdDxtm/wakeline_migrator
+---
+> table|ship_position_20261012|wakeline_migrator|
+> table|ship_position_20261013|wakeline_migrator|
+> table|ship_position_20261014|wakeline_migrator|
+> table|ship_position_20261015|wakeline_migrator|
+> table|ship_position_20261016|wakeline_migrator|
+49c49
+< table|stats_daily_utc_legacy|wakeline_migrator|wakeline_migrator=arwdDxtm/wakeline_migrator
+---
+> table|stats_daily_utc_legacy|wakeline_migrator|
+54,58c54,58
+< table|track_point_20261012|wakeline_migrator|wakeline_migrator=arwdDxtm/wakeline_migrator
+< table|track_point_20261013|wakeline_migrator|wakeline_migrator=arwdDxtm/wakeline_migrator
+< table|track_point_20261014|wakeline_migrator|wakeline_migrator=arwdDxtm/wakeline_migrator
+< table|track_point_20261015|wakeline_migrator|wakeline_migrator=arwdDxtm/wakeline_migrator
+< table|track_point_20261016|wakeline_migrator|wakeline_migrator=arwdDxtm/wakeline_migrator
+---
+> table|track_point_20261012|wakeline_migrator|
+> table|track_point_20261013|wakeline_migrator|
+> table|track_point_20261014|wakeline_migrator|
+> table|track_point_20261015|wakeline_migrator|
+> table|track_point_20261016|wakeline_migrator|

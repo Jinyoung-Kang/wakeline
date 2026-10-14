@@ -1,0 +1,1 @@
+2026-10-13T19:22:39.033Z  WARN 7 --- [wakeline-api] [cat-handler-177] [rid:72a5a93cc465441b0dd3d5287fea8d6e] dev.wakeline.platform.web.RateLimiter    : rate limiter: Redis failed — the 'api' limit is counted in memory until Redis answers (counted in wakeline_rate_limiter_errors_total): org.springframework.data.redis.RedisSystemException: Redis exception

@@ -1,0 +1,221 @@
+{
+ "window": [
+  1791918600687,
+  1791918776645
+ ],
+ "dlq_in_window": 0,
+ "aircraft": {
+  "entries": 19,
+  "expected_rows": 2159,
+  "missing_rows": 2159,
+  "missing_sample": [
+   [
+    "862d2e",
+    "2026-10-13T19:10:00.898000"
+   ],
+   [
+    "71c003",
+    "2026-10-13T19:10:00.898000"
+   ],
+   [
+    "71c007",
+    "2026-10-13T19:10:00.898000"
+   ],
+   [
+    "71c361",
+    "2026-10-13T19:10:00.898000"
+   ],
+   [
+    "780daa",
+    "2026-10-13T19:10:00.898000"
+   ],
+   [
+    "70400c",
+    "2026-10-13T19:10:00.898000"
+   ],
+   [
+    "71c556",
+    "2026-10-13T19:10:00.898000"
+   ],
+   [
+    "71c742",
+    "2026-10-13T19:10:00.898000"
+   ],
+   [
+    "86d59c",
+    "2026-10-13T19:10:00.898000"
+   ],
+   [
+    "84b73b",
+    "2026-10-13T19:10:00.898000"
+   ]
+  ],
+  "missing_by_second": {
+   "2026-10-13T19:10:00": 127,
+   "2026-10-13T19:10:11": 127,
+   "2026-10-13T19:10:21": 127,
+   "2026-10-13T19:10:31": 127,
+   "2026-10-13T19:10:41": 127,
+   "2026-10-13T19:10:51": 127,
+   "2026-10-13T19:11:02": 127,
+   "2026-10-13T19:11:12": 127,
+   "2026-10-13T19:11:22": 127,
+   "2026-10-13T19:11:33": 127,
+   "2026-10-13T19:11:43": 127,
+   "2026-10-13T19:11:54": 127,
+   "2026-10-13T19:12:04": 127,
+   "2026-10-13T19:12:14": 127,
+   "2026-10-13T19:12:25": 127,
+   "2026-10-13T19:12:35": 127,
+   "2026-10-13T19:12:45": 127
+  }
+ },
+ "ships": {
+  "entries": 17,
+  "expected_windows": 747,
+  "missing_windows": 747,
+  "missing_sample": [
+   [
+    "477995063",
+    "2026-10-13T19:10:00+00:00",
+    "1791918611603-0"
+   ],
+   [
+    "416018804",
+    "2026-10-13T19:10:00+00:00",
+    "1791918611603-0"
+   ],
+   [
+    "256503000",
+    "2026-10-13T19:10:00+00:00",
+    "1791918611603-0"
+   ],
+   [
+    "667001298",
+    "2026-10-13T19:10:00+00:00",
+    "1791918611603-0"
+   ],
+   [
+    "477997080",
+    "2026-10-13T19:10:00+00:00",
+    "1791918611603-0"
+   ],
+   [
+    "477997190",
+    "2026-10-13T19:10:00+00:00",
+    "1791918611603-0"
+   ],
+   [
+    "413244340",
+    "2026-10-13T19:10:00+00:00",
+    "1791918611603-0"
+   ],
+   [
+    "431022896",
+    "2026-10-13T19:10:00+00:00",
+    "1791918611603-0"
+   ],
+   [
+    "431400075",
+    "2026-10-13T19:10:00+00:00",
+    "1791918611603-0"
+   ],
+   [
+    "477519200",
+    "2026-10-13T19:10:00+00:00",
+    "1791918611603-0"
+   ]
+  ],
+  "late_windows": 0,
+  "late_windows_without_row": 0,
+  "duplicate_windows": 0,
+  "duplicate_sample": []
+ },
+ "sigmet": {
+  "entries": 1,
+  "expected_ids": 132,
+  "missing_ids": 0,
+  "missing_sample": []
+ },
+ "ais_gap": {
+  "expected": 1,
+  "missing": 0,
+  "missing_sample": []
+ },
+ "groups": {
+  "wakeline:aircraft": {
+   "pending": 1,
+   "lag": 0,
+   "last_delivered": "1791918787338-0",
+   "old_pending": 0,
+   "old_pending_sample": [],
+   "delivered_past_until": true
+  },
+  "wakeline:sigmet": {
+   "pending": 0,
+   "lag": 0,
+   "last_delivered": "1791918602901-0",
+   "old_pending": 0,
+   "old_pending_sample": [],
+   "delivered_past_until": false
+  },
+  "wakeline:radar": {
+   "pending": 0,
+   "lag": 0,
+   "last_delivered": "1791918784787-0",
+   "old_pending": 0,
+   "old_pending_sample": [],
+   "delivered_past_until": true
+  },
+  "wakeline:ships": {
+   "pending": 1,
+   "lag": 0,
+   "last_delivered": "1791918791600-0",
+   "old_pending": 0,
+   "old_pending_sample": [],
+   "delivered_past_until": true
+  },
+  "wakeline:wxwarn": {
+   "pending": 0,
+   "lag": 0,
+   "last_delivered": "1791918616900-0",
+   "old_pending": 0,
+   "old_pending_sample": [],
+   "delivered_past_until": false
+  }
+ },
+ "metrics": {
+  "wakeline_persist_queue": 0.0,
+  "wakeline_persist_tasks_total{kind=\"ais_gap\",result=\"ok\"}": 1.0,
+  "wakeline_persist_tasks_total{kind=\"alert\",result=\"ok\"}": 105.0,
+  "wakeline_persist_tasks_total{kind=\"alert_reconcile\",result=\"ok\"}": 1.0,
+  "wakeline_persist_tasks_total{kind=\"sigmet_set\",result=\"ok\"}": 1.0,
+  "wakeline_persist_tasks_total{kind=\"wx_warning_set\",result=\"ok\"}": 2.0,
+  "wakeline_ship_queue": 0.0,
+  "wakeline_ship_receipts_forced_total": 0.0,
+  "wakeline_ship_rows_total{result=\"downsampled\"}": 55.0,
+  "wakeline_ship_rows_total{result=\"dropped\"}": 0.0,
+  "wakeline_ship_rows_total{result=\"failed\"}": 862.0,
+  "wakeline_ship_rows_total{result=\"out_of_range\"}": 0.0,
+  "wakeline_ship_rows_total{result=\"written\"}": 0.0,
+  "wakeline_stream_messages_total{result=\"apply_error\"}": 0.0,
+  "wakeline_stream_messages_total{result=\"ok\"}": 47.0,
+  "wakeline_stream_messages_total{result=\"rejected\"}": 0.0,
+  "wakeline_stream_messages_total{result=\"stale_skipped\"}": 4.0,
+  "wakeline_stream_messages_total{result=\"trimmed\"}": 0.0,
+  "wakeline_stream_unacked": 2.0,
+  "wakeline_track_queue": 0.0,
+  "wakeline_track_receipts_forced_total": 0.0,
+  "wakeline_track_rows_total{result=\"dropped\"}": 0.0,
+  "wakeline_track_rows_total{result=\"failed\"}": 2413.0,
+  "wakeline_track_rows_total{result=\"written\"}": 0.0
+ },
+ "defects": {
+  "aircraft_rows_lost": 2159,
+  "ship_windows_lost": 747,
+  "ship_windows_duplicated": 0,
+  "sigmet_ids_lost": 0,
+  "ais_gaps_lost": 0,
+  "groups_not_drained": {}
+ }
+}

@@ -1,0 +1,5 @@
+restoring <BACKUP_DIR>/wlqa-b-20261013T200226Z.dump → wlqa-b (한 트랜잭션)…
+restored: 표 44개, 마지막 마이그레이션 V21 — 다음: make up (migrate 가 이후 마이그레이션을 적용)
+/api/v1/warnings/history 200
+/api/v1/alerts/history?limit=5 200
+/api/v1/stats/traffic 200

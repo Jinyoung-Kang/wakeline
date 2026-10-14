@@ -1,0 +1,11 @@
+# minute | ship_position rows | distinct mmsi (fixture 재생 — 평소 값과 견준다)
+19:33|103|103
+19:34|247|247
+19:35|270|270
+19:36|273|273
+19:37|243|243
+19:38|272|272
+19:39|273|273
+19:40|237|237
+19:41|210|210
+# ingest_gap(source ais) created since t0

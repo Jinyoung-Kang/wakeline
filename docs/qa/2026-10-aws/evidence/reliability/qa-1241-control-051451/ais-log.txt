@@ -1,0 +1,4 @@
+2026-10-13 20:14:51,449 INFO ais.main: ais stopped
+2026-10-13 20:15:52,027 INFO ais.main: ais starting in fixture mode (replay ais_east_asia_90s.jsonl, no external calls)
+2026-10-13 20:15:52,027 INFO ais.shards: carrying over an open AIS gap from the previous run (ais process stopped, shard 1)
+2026-10-13 20:15:53,551 INFO ais.sink: ais gap published: 2026-10-13T20:14:51.423Z → 2026-10-13T20:15:53.550Z (ais process stopped)

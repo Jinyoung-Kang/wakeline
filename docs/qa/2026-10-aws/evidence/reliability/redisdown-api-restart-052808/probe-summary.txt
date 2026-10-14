@@ -1,0 +1,19 @@
+/healthz
+      0.1s ..    32.2s  n=  9  max_ms=    27  status=200 health=ok
+     36.2s ..    36.2s  n=  1  max_ms=     6  status=502 retry-after=10 health=502
+     40.2s ..    40.2s  n=  1  max_ms=    28  status=200 health=starting
+     44.2s ..    52.2s  n=  3  max_ms=    21  status=200 health=degraded reasons=['redis_unavailable']
+     56.2s ..    56.2s  n=  1  max_ms=    11  status=200 health=starting
+     60.2s ..    96.3s  n= 10  max_ms=    21  status=200 health=ok
+/api/v1/ships?bbox=120,30,135,40
+      0.1s ..    32.2s  n=  9  max_ms=    36  status=200
+     36.2s ..    36.2s  n=  1  max_ms=     4  status=502 retry-after=10 code=BAD_GATEWAY
+     40.2s ..    96.3s  n= 15  max_ms=    34  status=200
+/api/v1/aircraft?bbox=124,33,132,39
+      0.1s ..    32.2s  n=  9  max_ms=    39  status=200
+     36.2s ..    36.2s  n=  1  max_ms=     5  status=502 retry-after=10 code=BAD_GATEWAY
+     40.2s ..    96.3s  n= 15  max_ms=    48  status=200
+/api/v1/alerts/history
+      0.1s ..    32.2s  n=  9  max_ms=    41  status=200
+     36.2s ..    36.2s  n=  1  max_ms=     5  status=502 retry-after=10 code=BAD_GATEWAY
+     40.2s ..    96.3s  n= 15  max_ms=    86  status=200

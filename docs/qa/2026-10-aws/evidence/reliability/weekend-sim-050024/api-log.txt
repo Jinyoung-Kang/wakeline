@@ -1,0 +1,6 @@
+2026-10-13T20:00:42.192Z  INFO 7 --- [wakeline-api] [           main] dev.wakeline.WakelineApplication         : Started WakelineApplication in 3.816 seconds (process running for 5.319)
+2026-10-13T20:00:52.254Z  WARN 7 --- [wakeline-api] [        sched-4] dev.wakeline.history.MaintenanceJobs     : ensure track_point partitions failed: org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2026-10-13T20:00:57.270Z  WARN 7 --- [wakeline-api] [        sched-4] dev.wakeline.history.MaintenanceJobs     : ensure ship_position partitions failed: org.springframework.jdbc.CannotGetJdbcConnectionException: Failed to obtain JDBC Connection
+2026-10-13T20:01:42.325Z  INFO 7 --- [wakeline-api] [        sched-2] dev.wakeline.history.MaintenanceJobs     : daily stats aggregated for 2026-10-09: [sigmet, traffic, alerts] (region 36.5,127.8 r=250 NM)
+2026-10-13T20:01:42.330Z  INFO 7 --- [wakeline-api] [        sched-2] dev.wakeline.history.MaintenanceJobs     : daily stats aggregated for 2026-10-10: [sigmet, traffic, alerts] (region 36.5,127.8 r=250 NM)
+2026-10-13T20:01:42.332Z  INFO 7 --- [wakeline-api] [        sched-2] dev.wakeline.history.MaintenanceJobs     : catch-up: summarized hours [2026-10-12T14:00:00Z, 2026-10-13T19:00:00Z], aggregated days [2026-10-09, 2026-10-10], backfilled 0 older days 
