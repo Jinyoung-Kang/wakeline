@@ -49,6 +49,15 @@ public class MaintenanceJobs {
     /** 오늘(KST 날짜) */
     public static LocalDate today() { return LocalDate.now(DAY_ZONE); }
     static final int CATCH_UP_DAYS = 7;
+    /**
+     * 1분 요약 따라잡기가 요약이 이미 있어도 다시 요약하는 최근 닫힌 시간 수(QA-1202 — 있는 분은 ON CONFLICT 로 그대로, 빠진 분만 더한다). 정시 요약(:05)은
+     * 그때 있는 원본만 요약하는데, 그 시간의 행이 :05 뒤에 쓰이는 길이 있다: Redis 장애 동안 수집기가 쌓아 둔 발행(재전송 큐 1,000건 · 64 MiB — 넘치면
+     * 가장 오래된 것부터 버린다)이 장애 뒤 들어오거나, api 재시작 뒤 스트림 백로그(시간 트리밍 2.5 h)를 따라잡는 동안 :05 가 돈다 — 둘 다 늦음을 약
+     * 2.5 h 로 묶는다(저장기 큐 50,000행은 몇 분 분량). 따라잡기는 성공 뒤 3 h({@link #CATCH_UP_EVERY})마다 돌므로 6 h 면 어느 시간이든 끝나고 3 h 넘게
+     * 지난 따라잡기가 한 번은 다시 본다. 그보다 오래된 시간은 요약이 하나도 없을 때만 요약한다 — 원본을 다시 읽는 양은 따라잡기마다 6시간분이다
+     * (모든 시간을 다시 읽으면 3일치 원본을 3시간마다 읽는다). 3 h 넘게 늦은 행은 여전히 요약되지 않는다(위 경로로는 생기지 않는다).
+     */
+    static final int RESUMMARIZE_HOURS = 6;
     /** 따라잡기 창 밖의 날을 한 번의 따라잡기에 채우는 최대 일수(backfillStats) — /stats 범위 상한(92일)과 같다 */
     static final int BACKFILL_MAX_DAYS = 92;
     /** 선박 위치 보존(계약 v2 §B3). 함수가 24 h ~ 30일 밖의 값을 거절한다(V5). */
@@ -367,7 +376,8 @@ public class MaintenanceJobs {
      * 기동 실패 — 금 18:00 → 화 09:00 KST 는 87 h)를 넘지 못해, 멈추기 직전 시간의 요약이 원본 삭제와 함께 영구히 빠졌다(재생은 보존 뒤 1분 요약만
      * 읽는다). 그 원본은 기동 뒤 첫 따라잡기가 끝날 때까지 삭제를 미루므로({@link #DROP_HOLD_MAX}) 파티션이 남아 있다 — 남은 파티션이 곧 요약할 수 있는 범위다.
      * 지워지는 중인 파티션과 겹쳐도 깨지지 않는다: 파티션 DROP 은 부모의 ACCESS EXCLUSIVE 를 얻을 때까지 이 읽기를 기다리고, 그 뒤의 읽기는 그 시간을 빈
-     * 것으로 본다(예전 2 h 여유는 필요 없다). 시간마다 작은 EXISTS 두 번(ts BRIN · ts_minute 색인) — 평소 창은 가장 오래된 파티션까지 96 h 안팎. @return 요약한 시간
+     * 것으로 본다(예전 2 h 여유는 필요 없다). 시간마다 작은 EXISTS 두 번(ts BRIN · ts_minute 색인) — 평소 창은 가장 오래된 파티션까지 96 h 안팎.
+     * 최근 {@value #RESUMMARIZE_HOURS}시간은 요약이 있어도 다시 요약한다(늦게 쓰인 분 — QA-1202). @return 요약한 시간(최근 시간은 새로 더한 분이 있을 때만)
      */
     List<Instant> catchUpSummaries(Instant now) {
         Bbox b = region.current().bbox();
@@ -375,8 +385,13 @@ public class MaintenanceJobs {
         Instant oldest = oldestPartitionStart("track_point");
         if (oldest == null) return List.of();
         Instant first = latest(oldest, current.minus(props.summaryRetentionDays(), ChronoUnit.DAYS));
+        Instant recent = current.minus(RESUMMARIZE_HOURS, ChronoUnit.HOURS);
         List<Instant> done = new ArrayList<>();
         for (Instant h = first; h.isBefore(current); h = h.plus(1, ChronoUnit.HOURS)) {
+            if (!h.isBefore(recent)) {
+                if (summarizeHour(h) > 0) done.add(h); // 요약이 없던 시간 · 정시 요약 뒤에 늦게 쓰인 분
+                continue;
+            }
             Boolean missing = db.sql("""
                     SELECT NOT EXISTS (SELECT 1 FROM track_point_1m WHERE ts_minute >= :from AND ts_minute < :to)
                        AND EXISTS (SELECT 1 FROM track_point WHERE ts >= :from AND ts < :to
