@@ -1,0 +1,126 @@
+cd apps/api && ./gradlew --offline test --tests 'dev.wakeline.qa.Qa110*' --tests 'dev.wakeline.it.SecurityIT' --tests 'dev.wakeline.ops.OpsSessionLifetimeFilterTest' --tests 'dev.wakeline.platform.web.RateLimitFilterTest'
+# 결과: 52 tests completed, 15 failed (실패 15 = 아래 QA-1100 2 · QA-1101 1 · QA-1102 1 · QA-1103 11 — 대조군 SecurityIT 25 · OpsSessionLifetimeFilterTest 9 · RateLimitFilterTest 2 모두 통과)
+# 2026-10-14 · 브랜치 qa/aws-2026-10 (main 29d39e38 + QA 도구) · Testcontainers(wakeline-db:local · redis:8-alpine)
+
+FAIL controlCharactersInHeadersReadByPublicControllersAreNot500(CapturedOutput)
+  org.assertj.core.error.AssertJMultipleFailuresError: 
+Multiple Failures (12 failures)
+-- failure 1 --
+[GET /api/v1/aircraft?bbox=126,37,127,38 If-None-Match with a C1 control character (all statuses: {GET /api/v1/aircraft?bbox=126,37,127,38 If-None-Match=500, GET /api/v1/ships?bbox=126,37,127,38 If-None-Match=500, GET /api/v1/sigmets If-None-Match=500, GET /api/v1/radar/frames If-None-Match=500, GET /api/v1/radar/kr If-None-Match=500, GET /api/v1/traffic/grid If-None-Match=500, GET /api/v1/ships/coverage If-None-Match=500, GET /api/v1/warnings If-None-Match=500, GET /api/v1/airspace If-None-Match=500, POST /api/v1/client-errors User-Agent=500})] 
+Expecting actual:
+  500
+to be less than:
+  500 
+at Qa1101ControlCharHeaderValueIs500IT.lambda$controlCharactersInHeadersReadByPublicControllersAreNot500$1(Qa1101ControlCharHeaderValueIs500IT.java:71)
+-- failure 2 --
+[GET /api/v1/ships?bbox=126,37,127,38 If-None-Match with a C1 control character (all statuses: {GET /api/v1/aircraft?bbox=126,37,127,38 If-None-Match=500, GET /api/v1/ships?bbox=126,37,127,38 If-None-Match=500, GET /api/v1/sigmets If-None-Match=500, GET /api/v1/radar/frames If-None-Match=500, GET /api/v1/radar/kr If-None-Match=500, GET /api/v1/traffic/grid If-None-Match=500, GET /api/v1/ships/coverage If-None-Match=500, GET /api/v1/warnings If-None-Match=500, GET /api/v1/airspace If-None-Match=500, POST /api/v1/client-errors User-Agent=500})] 
+Expecting actual:
+  500
+to be less than:
+  500 
+at Qa1101ControlCharHeaderValueIs500IT.lambda$controlCharactersInHeadersReadByPublicControllersAreNot500$1(Qa1101ControlCharHeaderValueIs500IT.java:71)
+-- failure 3 --
+[GET /api/v1/sigmets If-None-Match with a C1 control character (all statuses: {GET /api/v1/aircraft?bbox=126,37,127,38 If-None-Match=500, GET /api/v1/ships?bbox=126,37,127,38 If-None-Match=500, GET /api/v1/sigmets If-None-Match=500, GET /api/v1/radar/frames If-None-Match=500, GET /api/v1/radar/kr If-None-Match=500, GET /api/v1/traffic/grid If-None-Match=500, GET /api/v1/ships/coverage If-None-Match=500, GET /api/v1/warnings If-None-Match=500, GET /api/v1/airspace If-None-Match=500, POST /api/v1/client-errors User-Agent=500})] 
+Expecting actual:
+  500
+to be less than:
+  500 
+at Qa1101ControlCharHeaderValueIs500IT.lambda$controlCharactersInHeadersReadByPublicControllersAreNot500$1(Qa1101ControlCharHeaderValueIs500IT.java:71)
+-- failure 4 --
+[GET /api/v1/radar/frames If-None-Match with a C1 control character (all statuses: {GET /api/v1/aircraft?bbox=126,37,127,38 If-None-Match=500, GET /api/v1/ships?bbox=126,37,127,38 If-None-Match=500, GET /api/v1/sigmets If-None-Match=500, GET /api/v1/radar/frames If-None-Match=500, GET /api/v1/radar/kr If-None-Match=500, GET /api/v1/traffic/grid If-None-Match=500, GET /api/v1/ships/coverage If-None-Match=500, GET /api/v1/warnings If-None-Match=500, GET /api/v1/airspace If-None-Match=500, POST /api/v1/client-errors User-Agent=500})] 
+Expecting actual:
+  500
+to be less than:
+  500 
+at Qa1101ControlCharHeaderValueIs500IT.lambda$controlCharactersInHeadersReadByPublicControllersAreNot500$1(Qa1101ControlCharHeaderValueIs500IT.java:71)
+-- failure 5 --
+[GET /api/v1/radar/kr If-None-Match with a C1 control character (all statuses: {GET /api/v1/aircraft?bbox=126,37,127,38 If-None-Match=500, GET /api/v1/ships?bbox=126,37,127,38 If-None-Match=500, GET /api/v1/sigmets If-None-Match=500, GET /api/v1/radar/frames If-None-Match=500, GET /api/v1/radar/kr If-None-Match=500, GET /api/v1/traffic/grid If-None-Match=500, GET /api/v1/ships/coverage If-None-Match=500, GET /api/v1/warnings If-None-Match=500, GET /api/v1/airspace If-None-Match=500, POST /api/v1/client-errors User-Agent=500})] 
+Expecting actual:
+  500
+to be less than:
+  500 
+at Qa1101ControlCharHeaderValueIs500IT.lambda$controlCharactersInHeadersReadByPublicControllersAreNot500$1(Qa1101ControlCharHeaderValueIs500IT.java:71)
+-- failure 6 --
+[GET /api/v1/traffic/grid If-None-Match with a C1 control character (all statuses: {GET /api/v1/aircraft?bbox=126,37,127,38 If-None-Match=500, GET /api/v1/ships?bbox=126,37,127,38 If-None-Match=500, GET /api/v1/sigmets If-None-Match=500, GET /api/v1/radar/frames If-None-Match=500, GET /api/v1/radar/kr If-None-Match=500, GET /api/v1/traffic/grid If-None-Match=500, GET /api/v1/ships/coverage If-None-Match=500, GET /api/v1/warnings If-None-Match=500, GET /api/v1/airspace If-None-Match=500, POST /api/v1/client-errors User-Agent=500})] 
+Expecting actual:
+  500
+to be less than:
+  500 
+at Qa1101ControlCharHeaderValueIs500IT.lambda$controlCharactersInHeadersReadByPublicControllersAreNot500$1(Qa1101ControlCharHeaderValueIs500IT.java:71)
+-- failure 7 --
+[GET /api/v1/ships/coverage If-None-Match with a C1 control character (all statuses: {GET /api/v1/aircraft?bbox=126,37,127,38 If-None-Match=500, GET /api/v1/ships?bbox=126,37,127,38 If-None-Match=500, GET /api/v1/sigmets If-None-Match=500, GET /api/v1/radar/frames If-None-Match=500, GET /api/v1/radar/kr If-None-Match=500, GET /api/v1/traffic/grid If-None-Match=500, GET /api/v1/ships/coverage If-None-Match=500, GET /api/v1/warnings If-None-Match=500, GET /api/v1/airspace If-None-Match=500, POST /api/v1/client-errors User-Agent=500})] 
+Expecting actual:
+  500
+to be less than:
+  500 
+at Qa1101ControlCharHeaderValueIs500IT.lambda$controlCharactersInHeadersReadByPublicControllersAreNot500$1(Qa1101ControlCharHeaderValueIs500IT.java:71)
+-- failure 8 --
+[GET /api/v1/warnings If-None-Match with a C1 control character (all statuses: {GET /api/v1/aircraft?bbox=126,37,127,38 If-None-Match=500, GET /api/v1/ships?bbox=126,37,127,38 If-None-Match=500, GET /api/v1/sigmets If-None-Match=500, GET /api/v1/radar/frames If-None-Match=500, GET /api/v1/radar/kr If-None-Match=500, GET /api/v1/traffic/grid If-None-Match=500, GET /api/v1/ships/coverage If-None-Match=500, GET /api/v1/warnings If-None-Match=500, GET /api/v1/airspace If-None-Match=500, POST /api/v1/client-errors User-Agent=500})] 
+Expecting actual:
+  500
+to be less than:
+  500 
+at Qa1101ControlCharHeaderValueIs500IT.lambda$controlCharactersInHeadersReadByPublicControllersAreNot500$1(Qa1101ControlCharHeaderValueIs500IT.java:71)
+-- failure 9 --
+[GET /api/v1/airspace If-None-Match with a C1 control character (all statuses: {GET /api/v1/aircraft?bbox=126,37,127,38 If-None-Match=500, GET /api/v1/ships?bbox=126,37,127,38 If-None-Match=500, GET /api/v1/sigmets If-None-Match=500, GET /api/v1/radar/frames If-None-Match=500, GET /api/v1/radar/kr If-None-Match=500, GET /api/v1/traffic/grid If-None-Match=500, GET /api/v1/ships/coverage If-None-Match=500, GET /api/v1/warnings If-None-Match=500, GET /api/v1/airspace If-None-Match=500, POST /api/v1/client-errors User-Agent=500})] 
+Expecting actual:
+  500
+to be less than:
+  500 
+at Qa1101ControlCharHeaderValueIs500IT.lambda$controlCharactersInHeadersReadByPublicControllersAreNot500$1(Qa1101ControlCharHeaderValueIs500IT.java:71)
+-- failure 10 --
+[POST /api/v1/client-errors User-Agent with a C1 control character (all statuses: {GET /api/v1/aircraft?bbox=126,37,127,38 If-None-Match=500, GET /api/v1/ships?bbox=126,37,127,38 If-None-Match=500, GET /api/v1/sigmets If-None-Match=500, GET /api/v1/radar/frames If-None-Match=500, GET /api/v1/radar/kr If-None-Match=500, GET /api/v1/traffic/grid If-None-Match=500, GET /api/v1/ships/coverage If-None-Match=500, GET /api/v1/warnings If-None-Match=500, GET /api/v1/airspace If-None-Match=500, POST /api/v1/client-errors User-Agent=500})] 
+Expecting actual:
+  500
+to be less than:
+  500 
+at Qa1101ControlCharHeaderValueIs500IT.lambda$controlCharactersInHeadersReadByPublicControllersAreNot500$1(Qa1101ControlCharHeaderValueIs500IT.java:71)
+-- failure 11 --
+[ERROR log for anonymous header input] 
+Expecting actual:
+  "2026-10-13T19:03:06.569Z ERROR 27347 --- [wakeline-api] [cat-handler-514] [rid:1a136a5a044af0d1c072e222162] d.wakeline.platform.web.ProblemAdvice    : unhandled error request_id=1a136a5a044af0d1c072e222162 path=/api/v1/aircraft
+
+org.springframework.security.web.firewall.RequestRejectedException: The request was rejected because the header: "If-None-Match " has a value """" that is not allowed.
+	at org.springframework.security.web.firewall.StrictHttpFirewall$StrictFirewalledRequest.validateAllowedHeaderValue(StrictHttpFirewall.java:843) ~[spring-security-web-7.1.1.jar:7.1.1]
+	at org.springframework.security.web.firewall.StrictHttpFirewall$StrictFirewalledRequest.getHeader(StrictHttpFirewall.java:726) ~[spring-security-web-7.1.1.jar:7.1.1]
+	at jakarta.servlet.http.HttpServletRequestWrapper.getHeader(HttpServletRequestWrapper.java:82) ~[tomcat-embed-core-11.0.26.jar:6.1]
+	at jakarta.servlet.http.HttpServletRequestWrapper.getHeader(HttpServletRequestWrapper.java:82) ~[tomcat-embed-core-11.0.26.jar:6.1]
+	at dev.wakeline.aircraft.web.AircraftController.snapshot(AircraftController.java:81) ~[main/:na]
+	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:104) ~[na:na]
+	at java.base/java.lang.reflect.Method.invoke(Method.java:565) ~[na:na]
+	at org.springframework.web.method.support.InvocableHandlerMethod.doInvoke(InvocableHandlerMethod.java:252) ~[spring-web-7.0.9.jar:7.0.9]
+	at org.springframework.web.method.support.InvocableHandlerMethod.invokeForRequest(InvocableHandlerM …(잘림 — 항목 10건 모두 같은 모양, distinct fingerprints: 10)
+-- failure 12 --
+[ERROR entries in the server log stream wakeline:logs written by anonymous header input (distinct fingerprints: 10)] 
+Expecting empty but was: [{"v":1,"ts":"2026-10-13T19:03:06.569Z","service":"api","instance":"Jinyoung-MacBookPro.local:27347","level":"ERROR","logger":"dev.wakeline.platform.web.ProblemAdvice","thread":"tomcat-handler-514","message":"unhandled error request_id=1a136a5a044af0d1c072e222162 path=/api/v1/aircraft","exception":{"type":"org.springframework.security.web.firewall.RequestRejectedException","message":"The request was rejected because the header: \"If-None-Match \" has a value \"\"\"\" that is not allowed.","stack":"org.springframework.security.web.firewall.RequestRejectedException: The request was rejected because the header: \"If-None-Match \" has a value \"\"\"\" that is not allowed.\n\tat org.springframework.security.web.firewall.StrictHttpFirewall$StrictFirewalledRequest.validateAllowedHeaderValue(StrictHttpFirewall.java:843) ~[spring-security-web-7.1.1.jar:7.1.1]\n\tat org.springframework.security.web.firewall.StrictHttpFirewall$StrictFirewalledRequest.getHeader(StrictHttpFirewall.java:726) ~[spring-security-web-7.1.1.jar:7.1.1]\n\tat jakarta.servlet.http.HttpServletRequestWrapper.getHeader(HttpServletRequestWrapper.java:82) ~[tomcat-embed-core-11.0.26.jar:6.1]\n\tat jakarta.servlet.http.HttpServletRequestWrapper.getHeader(HttpServletRequestWrapper.java:82) ~[tomcat-embed-core-11.0.26.jar:6.1]\n\tat dev.wakeline.aircraft.web.AircraftController.snapshot(AircraftController.java:81) ~[main/:na]\n\tat java.base/jdk.internal.reflect.DirectMethodHan …(잘림 — 항목 10건 모두 같은 모양, distinct fingerprints: 10)
+
+--- 서버 로그(시험 표준 출력) 발췌 — ERROR 줄과 스택 앞부분 ---
+2026-10-13T19:03:06.569Z ERROR 27347 --- [wakeline-api] [cat-handler-514] [rid:1a136a5a044af0d1c072e222162] d.wakeline.platform.web.ProblemAdvice    : unhandled error request_id=1a136a5a044af0d1c072e222162 path=/api/v1/aircraft
+
+org.springframework.security.web.firewall.RequestRejectedException: The request was rejected because the header: "If-None-Match " has a value """" that is not allowed.
+	at org.springframework.security.web.firewall.StrictHttpFirewall$StrictFirewalledRequest.validateAllowedHeaderValue(StrictHttpFirewall.java:843) ~[spring-security-web-7.1.1.jar:7.1.1]
+	at org.springframework.security.web.firewall.StrictHttpFirewall$StrictFirewalledRequest.getHeader(StrictHttpFirewall.java:726) ~[spring-security-web-7.1.1.jar:7.1.1]
+	at jakarta.servlet.http.HttpServletRequestWrapper.getHeader(HttpServletRequestWrapper.java:82) ~[tomcat-embed-core-11.0.26.jar:6.1]
+	at jakarta.servlet.http.HttpServletRequestWrapper.getHeader(HttpServletRequestWrapper.java:82) ~[tomcat-embed-core-11.0.26.jar:6.1]
+	at dev.wakeline.aircraft.web.AircraftController.snapshot(AircraftController.java:81) ~[main/:na]
+	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:104) ~[na:na]
+	at java.base/java.lang.reflect.Method.invoke(Method.java:565) ~[na:na]
+	at org.springframework.web.method.support.InvocableHandlerMethod.doInvoke(InvocableHandlerMethod.java:252) ~[spring-web-7.0.9.jar:7.0.9]
+	at org.springframework.web.method.support.InvocableHandlerMethod.invokeForRequest(InvocableHandlerMethod.java:184) ~[spring-web-7.0.9.jar:7.0.9]
+	at org.springframework.web.servlet.mvc.method.annotation.ServletInvocableHandlerMethod.invokeAndHandle(ServletInvocableHandlerMethod.java:117) ~[spring-webmvc-7.0.9.jar:7.0.9]
+	at org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerAdapter.invokeHandlerMethod(RequestMappingHandlerAdapter.java:934) ~[spring-webmvc-7.0.9.jar:7.0.9]
+
+2026-10-13T19:03:06.585Z ERROR 27347 --- [wakeline-api] [cat-handler-515] [rid:1a136a5a055985dfe56be1053fc] d.wakeline.platform.web.ProblemAdvice    : unhandled error request_id=1a136a5a055985dfe56be1053fc path=/api/v1/ships
+
+org.springframework.security.web.firewall.RequestRejectedException: The request was rejected because the header: "If-None-Match " has a value """" that is not allowed.
+	at org.springframework.security.web.firewall.StrictHttpFirewall$StrictFirewalledRequest.validateAllowedHeaderValue(StrictHttpFirewall.java:843) ~[spring-security-web-7.1.1.jar:7.1.1]
+	at org.springframework.security.web.firewall.StrictHttpFirewall$StrictFirewalledRequest.getHeader(StrictHttpFirewall.java:726) ~[spring-security-web-7.1.1.jar:7.1.1]
+	at jakarta.servlet.http.HttpServletRequestWrapper.getHeader(HttpServletRequestWrapper.java:82) ~[tomcat-embed-core-11.0.26.jar:6.1]
+	at jakarta.servlet.http.HttpServletRequestWrapper.getHeader(HttpServletRequestWrapper.java:82) ~[tomcat-embed-core-11.0.26.jar:6.1]
+	at dev.wakeline.ships.web.ShipController.shipList(ShipController.java:104) ~[main/:na]
+	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:104) ~[na:na]
+	at java.base/java.lang.reflect.Method.invoke(Method.java:565) ~[na:na]
+	at org.springframework.web.method.support.InvocableHandlerMethod.doInvoke(InvocableHandlerMethod.java:252) ~[spring-web-7.0.9.jar:7.0.9]
+	at org.springframework.web.method.support.InvocableHandlerMethod.invokeForRequest(InvocableHandlerMethod.java:184) ~[spring-web-7.0.9.jar:7.0.9]
+	at org.springframework.web.servlet.mvc.method.annotation.ServletInvocableHandlerMethod.invokeAndHandle(ServletInvocableHandlerMethod.java:117) ~[spring-webmvc-7.0.9.jar:7.0.9]
+	at org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerAdapter.invokeHandlerMethod(RequestMappingHandlerAdapter.java:934) ~[spring-webmvc-7.0.9.jar:7.0.9]

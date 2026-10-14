@@ -1,0 +1,17 @@
+# QA-1101 영향 측정(2026-10-14 · Testcontainers 통합 시험 — 실제 Tomcat · 실제 Redis · 로그 싱크 켜짐)
+# 원본: probes/QaApiSecFloodProbeIT.java.txt — apps/api/src/test/java/dev/wakeline/qa/ 로 복사한 뒤
+#   cd apps/api && ./gradlew --offline test --tests 'dev.wakeline.qa.QaApiSecFloodProbeIT'   (약 80 s)
+# 한 IP(127.0.0.1)가 If-None-Match 를 읽는 공개 경로 9곳 + /client-errors(User-Agent) 1곳에 10 s 마다 한 번씩(7회 · 70건) C1 바이트 0x85 를 보냈다.
+
+QAPROBE flood sent=70 statuses={500=70} elapsed_ms=60703 error_entries=70 xlen_before=0 xlen_after=70 per_min(7 rounds x 10 s)=60.0 minutes_to_3000=50.0
+
+# 2단계: 같은 경로(/api/v1/aircraft)를 글자 하나씩 퍼센트 인코딩해(디코딩하면 같은 경로 — 같은 컨트롤러) 0.2 s 안에 24건.
+# 지문은 getRequestURI 원문이 든 메시지 틀에서 만든다(LogEvents.template 은 숫자 · 16진만 '#' 로) — 인코딩한 글자 위치가 다르면 다른 지문.
+QAPROBE encoded-variants sent=24 in_ms=217 statuses={500=24} error_entries=12 distinct_fp=12
+
+# 해석
+# - 요청 하나 = 서버 로그 스트림 wakeline:logs 의 ERROR 항목 하나(억제는 같은 지문 10 s 에 1건 — 위 1단계는 경로마다 10 s 간격이라 모두 실렸다).
+# - 2단계: 같은 글자의 대 · 소문자 16진 표기(%6C · %6c)는 같은 틀이 되어 24건 중 12건만 실렸지만, 인코딩할 글자 위치를 바꾸면(글자 12개 · 조합 2^12) 지문은 사실상
+#   무한히 만들 수 있어 억제를 피한다 → 상한은 api 의 IP당 분당 120(공개 제한)뿐이다.
+# - wakeline:logs 는 MAXLEN ~ 3000(LogSink.MAXLEN — api · collector · ais 의 서버 로그가 함께 쓴다). 한 IP 가 분당 120건이면 약 25분, 1단계처럼 고정
+#   경로 10곳만 써도 분당 60건 · 약 50분이면 그 전의 서버 오류 항목이 모두 밀려난다(계산 — 3,000건을 실제로 채워 보지는 않았다).

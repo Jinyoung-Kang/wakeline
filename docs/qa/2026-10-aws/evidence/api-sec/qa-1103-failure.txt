@@ -1,0 +1,49 @@
+cd apps/api && ./gradlew --offline test --tests 'dev.wakeline.qa.Qa110*' --tests 'dev.wakeline.it.SecurityIT' --tests 'dev.wakeline.ops.OpsSessionLifetimeFilterTest' --tests 'dev.wakeline.platform.web.RateLimitFilterTest'
+# 결과: 52 tests completed, 15 failed (실패 15 = 아래 QA-1100 2 · QA-1101 1 · QA-1102 1 · QA-1103 11 — 대조군 SecurityIT 25 · OpsSessionLifetimeFilterTest 9 · RateLimitFilterTest 2 모두 통과)
+# 2026-10-14 · 브랜치 qa/aws-2026-10 (main 29d39e38 + QA 도구) · Testcontainers(wakeline-db:local · redis:8-alpine)
+
+PASS "/api/v1/alerts/history?hex=71be01%00"
+FAIL "/api/v1/alerts/history?hex=71be01%1F"
+  org.opentest4j.AssertionFailedError: [GET /api/v1/alerts/history?hex=71be01%1F — body {"items":[],"meta":{"provider":"db","fetched_at":"2026-10-13T19:03:10.583287Z","lag_s":0.0,"stale":false,"generated_at":"2026-10-13T19:03:10.583290Z","request_id":"1a136a5afee228f2d532618b789"}}] 
+expected: 400
+ but was: 200
+FAIL "/api/v1/alerts/history?hex=%1C71be01"
+  org.opentest4j.AssertionFailedError: [GET /api/v1/alerts/history?hex=%1C71be01 — body {"items":[],"meta":{"provider":"db","fetched_at":"2026-10-13T19:03:10.595140Z","lag_s":0.0,"stale":false,"generated_at":"2026-10-13T19:03:10.595142Z","request_id":"1a136a5affe6fe7c38fa52783fc"}}] 
+expected: 400
+ but was: 200
+FAIL "/api/v1/aircraft/71be01%1F"
+  org.opentest4j.AssertionFailedError: [GET /api/v1/aircraft/71be01%1F — body {"detail":"aircraft 71be01 not seen","instance":"/api/v1/aircraft/71be01%1F","status":404,"title":"not found","type":"https://wakeline.invalid/problems/not-found","code":"NOT_FOUND","request_id":"1a136a5b0083db54da3891e2eb1"}] 
+expected: 400
+ but was: 404
+FAIL "/api/v1/airports/RKSI%1F/wx"
+  org.opentest4j.AssertionFailedError: [GET /api/v1/airports/RKSI%1F/wx — body {"detail":"airport not watched: RKSI","instance":"/api/v1/airports/RKSI%1F/wx","status":404,"title":"not found","type":"https://wakeline.invalid/problems/not-found","code":"NOT_FOUND","request_id":"1a136a5b013206abb81a1d0a29c"}] 
+expected: 400
+ but was: 404
+FAIL "/api/v1/ships/440123456%1F"
+  org.opentest4j.AssertionFailedError: [GET /api/v1/ships/440123456%1F — body {"detail":"ship 440123456 not seen","instance":"/api/v1/ships/440123456%1F","status":404,"title":"not found","type":"https://wakeline.invalid/problems/not-found","code":"NOT_FOUND","request_id":"1a136a5b01e055de7557c3fb499"}] 
+expected: 400
+ but was: 404
+FAIL "/api/v1/alerts/history?limit=10%1F"
+  org.opentest4j.AssertionFailedError: [GET /api/v1/alerts/history?limit=10%1F — body {"items":[],"meta":{"provider":"db","fetched_at":"2026-10-13T19:03:10.640732Z","lag_s":0.0,"stale":false,"generated_at":"2026-10-13T19:03:10.640732Z","request_id":"1a136a5b02c0340d93576066792"}}] 
+expected: 400
+ but was: 200
+FAIL "/api/v1/alerts?kind=observed%1F"
+  org.opentest4j.AssertionFailedError: [GET /api/v1/alerts?kind=observed%1F — body {"items":[],"meta":{"provider":"engine","fetched_at":"2026-10-13T19:03:10.655784Z","lag_s":0.0,"stale":false,"generated_at":"2026-10-13T19:03:10.655785Z","request_id":"1a136a5b03a6579dedcf7086730"}}] 
+expected: 400
+ but was: 200
+FAIL "/api/v1/stats/sigmet?group=fir%1F"
+  org.opentest4j.AssertionFailedError: [GET /api/v1/stats/sigmet?group=fir%1F — body {"items":[],"days":[{"day":"2026-10-07","aggregated":false},{"day":"2026-10-08","aggregated":false},{"day":"2026-10-09","aggregated":false},{"day":"2026-10-10","aggregated":false},{"day":"2026-10-11","aggregated":false},{"day":"2026-10-12","aggregated":true},{"day":"2026-10-13","aggregated":false},{"day":"2026-10-14","aggregated":false}],"group":"fir","day_zone":"Asia/Seoul","meta":{"provider":"db","fetched_at":"2026-10-13T19:03:10.673283Z","lag_s":0.0,"stale":false,"generated_at":"2026-10-13T19:03:10.673284Z","request_id":"1a136a5b0498785c69af2321943"}}] 
+expected: 400
+ but was: 200
+FAIL "/api/v1/stats/traffic?day=2026-10-01%1F"
+  org.opentest4j.AssertionFailedError: [GET /api/v1/stats/traffic?day=2026-10-01%1F — body {"day":"2026-10-01","aggregated":false,"items":[],"day_zone":"Asia/Seoul","meta":{"provider":"db","fetched_at":"2026-10-13T19:03:10.685744Z","lag_s":0.0,"stale":false,"generated_at":"2026-10-13T19:03:10.685746Z","request_id":"1a136a5b059f648ff486bef086a"}}] 
+expected: 400
+ but was: 200
+FAIL "/api/v1/alerts/history?hex=71be01%09"
+  org.opentest4j.AssertionFailedError: [GET /api/v1/alerts/history?hex=71be01%09 — body {"items":[],"meta":{"provider":"db","fetched_at":"2026-10-13T19:03:10.698021Z","lag_s":0.0,"stale":false,"generated_at":"2026-10-13T19:03:10.698022Z","request_id":"1a136a5b06512d8f7c633af614d"}}] 
+expected: 400
+ but was: 200
+FAIL "/api/v1/ships/440123456%09"
+  org.opentest4j.AssertionFailedError: [GET /api/v1/ships/440123456%09 — body {"detail":"ship 440123456 not seen","instance":"/api/v1/ships/440123456%09","status":404,"title":"not found","type":"https://wakeline.invalid/problems/not-found","code":"NOT_FOUND","request_id":"1a136a5b070c1941e808c331903"}] 
+expected: 400
+ but was: 404

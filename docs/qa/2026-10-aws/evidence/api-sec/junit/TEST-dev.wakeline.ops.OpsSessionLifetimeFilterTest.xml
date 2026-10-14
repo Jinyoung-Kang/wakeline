@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="dev.wakeline.ops.OpsSessionLifetimeFilterTest" tests="9" skipped="0" failures="0" errors="0" timestamp="2026-10-13T19:03:05.949Z" hostname="Jinyoung-MacBookPro.local" time="0.016">
+  <properties/>
+  <testcase name="logoutReachesTheControllerWhenTheCredentialLookupFails()" classname="dev.wakeline.ops.OpsSessionLifetimeFilterTest" time="0.005"/>
+  <testcase name="maxAgeMustBePositive()" classname="dev.wakeline.ops.OpsSessionLifetimeFilterTest" time="0.004"/>
+  <testcase name="sessionIsBoundToTheCredentialItWasCreatedWith()" classname="dev.wakeline.ops.OpsSessionLifetimeFilterTest" time="0.002"/>
+  <testcase name="youngerSessionIsKept()" classname="dev.wakeline.ops.OpsSessionLifetimeFilterTest" time="0.0"/>
+  <testcase name="withoutLoginTimeTheCreationTimeCounts()" classname="dev.wakeline.ops.OpsSessionLifetimeFilterTest" time="0.001"/>
+  <testcase name="anOpsRequestWhoseSessionCannotBeReadIs503WithRetryAfter()" classname="dev.wakeline.ops.OpsSessionLifetimeFilterTest" time="0.001"/>
+  <testcase name="onlyOpsPathsAreChecked()" classname="dev.wakeline.ops.OpsSessionLifetimeFilterTest" time="0.001"/>
+  <testcase name="sessionOlderThanMaxAgeIsInvalidatedAndTheRequestContinuesAnonymously()" classname="dev.wakeline.ops.OpsSessionLifetimeFilterTest" time="0.0"/>
+  <testcase name="percentEncodedOpsPathIsCheckedLikeTheAuthorizationRule()" classname="dev.wakeline.ops.OpsSessionLifetimeFilterTest" time="0.0"/>
+  <system-out><![CDATA[2026-10-13T19:03:05.964Z  WARN 27347 --- [wakeline-api] [    Test worker] d.wakeline.ops.OpsSessionLifetimeFilter  : session store unavailable request_id=- path=/api/v1/ops/settings → 503: RedisSystemException: Currently not connected
+2026-10-13T19:03:05.964Z  WARN 27347 --- [wakeline-api] [    Test worker] d.wakeline.ops.OpsSessionLifetimeFilter  : session store unavailable request_id=- path=/api/v1/ops/settings → 503: QueryTimeoutException: Redis command timed out
+]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>
