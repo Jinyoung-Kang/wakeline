@@ -2,6 +2,7 @@
  * 표시 규칙(순수 함수). 값이 없으면 "—" — 0/false/"없음" 으로 채우지 않는다(데이터 정직성).
  * 색은 지도 레이어(maplayers.ts)·범례(MapLegend)·카드가 이 한 곳을 공유한다.
  */
+import { frontNotice } from "./front-answer";
 
 /**
  * SIGMET 위험 유형 색. TC(빨강)와 IFR(분홍)은 서로 다른 색(GAP-13). 목록에 없는 유형은 HAZARD_DEFAULT_COLOR.
@@ -313,10 +314,15 @@ export function fmtLatencyMs(v: unknown): string {
   return Number.isFinite(n) && n >= 0 ? `${n.toLocaleString("en-US")} ms` : "—";
 }
 
-/** 공항 기상 이력 화면의 오류 → 한국어(R-56: 서버 영문 detail 을 그대로 보이지 않는다) */
+/**
+ * 공항 기상 이력 화면의 오류 → 한국어(R-56: 서버 영문 detail 을 그대로 보이지 않는다).
+ * 앞단(AWS 데모)이 답한 오류(잠금 만료 · 원본에 닿지 못함)는 숫자 대신 그 안내를 싣는다(QA-1301 — lib/front-answer frontNotice).
+ */
 export function airportErrorText(e: unknown, icao: string): string {
   const status = typeof e === "object" && e !== null && typeof (e as { status?: unknown }).status === "number" ? (e as { status: number }).status : null;
   if (status == null) return "서버에 연결할 수 없습니다(네트워크) — 기상 이력을 불러오지 못했습니다.";
+  const front = frontNotice(e);
+  if (front) return `기상 이력을 불러오지 못했습니다(HTTP ${status}) · ${front}`;
   if (status === 404) return `감시 공항 목록에 없는 코드입니다: ${icao} — 감시 공항만 기상 이력을 보관합니다.`;
   if (status === 400) return `공항 코드 형식이 올바르지 않습니다: ${icao}`;
   return `기상 이력을 불러오지 못했습니다(HTTP ${status}).`;

@@ -7,6 +7,7 @@
  */
 import type * as GeoJSON from "geojson";
 import { ApiError } from "./api";
+import { frontNotice } from "./front-answer";
 import { DISPLAY_TZ, fmtKst, fmtKstRange, fmtRangeTitle, fmtTimeTitle, timeParts } from "./time";
 import { band, fmtAltGndDual, fmtBool, fmtDuration, fmtGsDual, fmtNum } from "./format";
 import type { Tip } from "./tooltip";
@@ -214,6 +215,8 @@ export function replayInspectorMiss(pick: { kind: "aircraft"; hex: string } | { 
  */
 export function replayErrorText(e: unknown, retry: ReplayRetry = "none"): string {
   if (e instanceof ApiError) {
+    const front = frontNotice(e); // 앞단(AWS 데모)이 답한 오류 — 잠금 만료 · 원본에 닿지 못함(QA-1301)
+    if (front) return `기록을 불러오지 못함(HTTP ${e.status}) · ${front}`;
     if (e.status === 422) return "요청 영역이 너무 넓음 — 지도를 확대하세요";
     if (e.status === 400) return "잘못된 요청(시각은 최근 31일 안) — 기록을 불러오지 못함";
     if (e.status === 429) return "요청이 많아 잠시 제한됨 — 잠시 뒤 다시";
