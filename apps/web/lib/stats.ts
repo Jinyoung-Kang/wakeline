@@ -54,16 +54,23 @@ export function yesterdayKst(nowMs: number): string {
   return addDays(todayKst(nowMs), -1) ?? "";
 }
 
+/** api 가 받는 가장 이른 날짜(platform.web.TimeParams.MIN_DAY — 그 앞은 400 "out of the supported range") — 통계 날짜 칸의 하한(QA-1303) */
+export const STATS_MIN_DAY = "1970-01-01";
+
 /**
  * 통계 날짜 칸에 넣은 값 → 조회할 날짜(QA-309 — 칸은 max = 어제(KST)인데 입력을 검사하지 않아, ↑ 키나 직접 입력으로 한 달 뒤 날짜를 넣으면 그 날로
  * 조회하고 "다음 03:30 KST 집계 뒤 채워집니다"라고 약속했다). 달력 날짜가 아니면 null(바꾸지 않는다), max 보다 뒤면 max(가장 최근 집계 날짜).
+ * min(STATS_MIN_DAY) 보다 앞이면 min(below — QA-1303: api 가 답할 수 없는 날을 물어 400 을 '응답을 받지 못함 · 다시 시도'로 보였다).
  */
-export function statsPickDay(value: string, max: string): { day: string; clamped: boolean } | null {
+export function statsPickDay(value: string, max: string, min: string = STATS_MIN_DAY): { day: string; clamped: boolean; below?: true } | null {
   if (!isCalendarDay(value)) return null;
+  if (value < min) return { day: min, clamped: true, below: true };
   return max && value > max ? { day: max, clamped: true } : { day: value, clamped: false };
 }
 /** 날짜 칸이 미래 날짜를 받아 최근 집계 날짜로 되돌렸을 때의 안내 */
 export const STATS_FUTURE_DAY_NOTE = "아직 오지 않았거나 끝나지 않은 날짜는 고를 수 없습니다 — 가장 최근 집계 날짜(어제 · KST)로 맞춤";
+/** 날짜 칸이 하한(STATS_MIN_DAY) 앞 날짜를 받아 하한으로 되돌렸을 때의 안내 */
+export const STATS_MIN_DAY_NOTE = `${STATS_MIN_DAY} 앞 날짜는 통계가 다루지 않습니다 — 가장 이른 날짜(${STATS_MIN_DAY} · KST)로 맞춤`;
 
 /**
  * 빈 상태 문구. day = 조회한 날짜(KST — 이 화면에서는 교통량만 날짜로 묻는다, 최근 7일 묶음이면 null), today = 오늘(KST 날짜).
