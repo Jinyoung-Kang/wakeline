@@ -111,14 +111,16 @@ def _deflate_negotiated(ws: ClientConnection) -> bool:
 
 def _closed_reason(e: ConnectionClosed) -> str:
     """끊긴 쪽을 구분한다: 서버가 close 프레임을 보냈는지, 우리가 먼저 닫았는지(예: 1011 keepalive ping timeout · 1009 너무 큰 메시지),
-    아니면 둘 다 없이 TCP 가 끊겼는지. 공백 사유·상태 해시에 그대로 남아 원인 진단에 쓰인다."""
+    아니면 둘 다 없이 TCP 가 끊겼는지. 공백 사유·상태 해시에 그대로 남아 원인 진단에 쓰인다.
+    close 사유는 자르지 않는다 — 프로토콜이 123 바이트로 묶고(RFC 6455 §5.5), _run 이 사유 전체를 가린 뒤 공백 기록이 REASON_MAX 로 자른다.
+    여기서 120 에서 자르면 끝에 걸친 키의 앞부분이 가려지지 않고 공개 공백 원인(/api/v1/ais/gaps)에 남았다(QA-1140)."""
     rcvd, sent = e.rcvd, e.sent
     if rcvd is None and sent is not None:
-        return f"client closed ({sent.code}" + (f" {sent.reason[:120]})" if sent.reason else ")")
+        return f"client closed ({sent.code}" + (f" {sent.reason})" if sent.reason else ")")
     if rcvd is None:
         return "connection lost (no close frame)"
     text = f"server closed ({rcvd.code}"
-    return text + (f" {rcvd.reason[:120]})" if rcvd.reason else ")")
+    return text + (f" {rcvd.reason})" if rcvd.reason else ")")
 
 
 class AisStreamClient:
@@ -245,7 +247,8 @@ class AisStreamClient:
                 code, text = ws.close_code, ws.close_reason
                 if code is None:
                     return "connection ended"
-                return f"server closed ({code} {text[:120]})" if text else f"server closed ({code})"
+                # 사유는 자르지 않는다(_closed_reason · QA-1140)
+                return f"server closed ({code} {text})" if text else f"server closed ({code})"
         except ConnectionClosed as e:
             return _closed_reason(e)
         except TimeoutError:

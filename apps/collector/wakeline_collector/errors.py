@@ -3,7 +3,8 @@
 repr(e) 는 읽히지 않았다: "ProviderHttpError('HTTP 429: <html>\\r\\n<head><title>429 To…" · "ReadTimeout('')" · "ConnectError('')".
 규칙(앞머리는 늘 예외 종류 — 로그 지문 fp 가 종류별로 묶인다. HTTP 오류는 'HTTP <code>' 가 종류다):
 - ProviderHttpError → "HTTP <code> <사유>". 사유는 HTML 본문의 <title>(앞의 상태 코드는 뺀다), 없으면 http.HTTPStatus 문구.
-  HTML 이 아닌 본문은 앞 BODY_HEAD 글자를 한 줄로 덧붙인다(" — …"). 모르는 코드는 문구 없이 "HTTP <code>".
+  HTML 이 아닌 본문은 가린 뒤 앞 BODY_HEAD 글자를 한 줄로 덧붙인다(" — …" — 자른 뒤 가리면 경계에 걸친 키의 앞부분이 남는다, QA-1140).
+  모르는 코드는 문구 없이 "HTTP <code>".
 - httpx 시간 초과(ConnectTimeout·ReadTimeout·WriteTimeout·PoolTimeout) → "<Type> — <단계> 제한 <N> s 초과 (<host>)".
   N 은 그 요청에 실제로 걸린 값(request.extensions["timeout"])이다. 요청이 붙어 있지 않으면 N·호스트를 쓰지 않는다(지어내지 않는다).
 - httpx 연결·프로토콜·읽기·쓰기 오류 → "<Type> — <메시지> (<host>)". 메시지가 비면 "연결 실패"(읽기·쓰기 오류는 "응답 읽기 실패"·"요청 보내기 실패")
@@ -68,7 +69,7 @@ def _http(e: ProviderHttpError, content: bool) -> str:
         return f"{head} {reason}" if reason else head
     reason = _phrase(code)
     out = f"{head} {reason}" if reason else head
-    snippet = _one_line(body)[:BODY_HEAD] if content else ""
+    snippet = _one_line(mask(body, None) or "")[:BODY_HEAD] if content else ""  # 가린 뒤 자른다(QA-1140)
     return f"{out} — {snippet}" if snippet else out
 
 

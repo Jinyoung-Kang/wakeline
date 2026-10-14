@@ -20,6 +20,8 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from wakeline_collector.masking import mask_head
+
 KST = ZoneInfo("Asia/Seoul")
 ZONE = re.compile(r"^[LS][0-9]{7}$")
 TM = re.compile(r"^[0-9]{12}$")
@@ -173,7 +175,7 @@ def parse(body: bytes) -> ParsedWarnings:
     lines, undecodable = decode_lines(body)
     if not any(line.startswith("#") and "REG_ID" in line for line in lines):
         text = "\n".join(lines)
-        raise WarningResponseError(f"not a warning list: {text.strip()[:80]!r}")
+        raise WarningResponseError(f"not a warning list: {mask_head(text.strip(), 80)!r}")  # 가린 뒤 자른다(QA-1140)
     out = ParsedWarnings(dropped=undecodable)
     rows = [line for line in lines if line.strip() and not line.startswith("#")]
     if len(rows) + len(undecodable) > MAX_ROWS:

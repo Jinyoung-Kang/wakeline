@@ -26,6 +26,7 @@ from typing import Any
 import orjson
 
 from wakeline_collector.marine_grid import CELL_DEG, GRID_ID_RE, Cell
+from wakeline_collector.masking import mask_head
 from wakeline_collector.timeutil import KST
 
 __all__ = ["CELL_DEG", "GRID_ID_RE", "KST", "KomsaApiError", "KomsaSnapshot", "TrafficItem", "build_payload", "parse_komsa"]
@@ -140,7 +141,7 @@ def parse_komsa(raw: bytes) -> KomsaSnapshot:
         raise ValueError("no response.header.resultCode")
     if str(code).strip() != "200":
         msg = header.get("resultMsg") if isinstance(header, dict) else None
-        raise KomsaApiError(str(code).strip()[:12], str(msg or "")[:120])
+        raise KomsaApiError(str(code).strip()[:12], mask_head(str(msg or ""), 120))  # 가린 뒤 자른다(QA-1140)
     body = resp.get("body")
     if not isinstance(body, dict):
         raise ValueError("no response.body object")

@@ -4,6 +4,9 @@
   규칙은 api LogMasker 와 같다 — 언어 간 시험 벡터 schemas/vectors/masking-cases.v1.json(계약 v5 §C5)으로 고정한다.
 - 값으로 가리기(R-83): 기동 때 register_secrets 로 넘긴 설정 비밀값(KMA 키 · OpenSky client secret · aisstream 키 · Redis/DB 비밀번호)
   자체를 어디에 나오든 가린다 — 공급자가 키를 응답 본문에 되돌려 주는 경우처럼 모양 규칙이 못 잡는 경우를 막는다.
+- 자르기 전에 가린다(QA-1140): 값으로 가리기는 값 **전체**가 글에 있어야 맞고, JSON 모양도 닫는 따옴표가 있어야 맞는다. 공급자 글을 오류 문구에
+  싣느라 자를 때는 mask_head(가린 뒤 자른다)를 쓴다 — 자른 뒤 가리면 경계에 걸친 키의 앞부분이 남는다. 이미 잘린 원문의 앞부분만 있으면
+  끝에 걸친 등록 비밀값 조각을 지운다(drop_cut_secret).
 - 로그: install_log_masking 이 핸들러에 MaskFilter 를 붙여 메시지·인자·트레이스백(log.exception)을 모두 가린다. 한 레코드는 한 번만
   가린다(핸들러가 여럿이어도) — 가린 레코드에 MASKED_ATTR 표시(칸별 '가린 뒤 · 자르기 전' 글자 수)를 달아 두고, 로그 싱크는 그 표시로
   다시 가리지 않고 잘림 표시의 N 을 정확히 센다(계약 v5 §C1).
@@ -57,6 +60,8 @@ _SECRETS: set[str] = set()
 LOG_LIMIT = 100_000  # 로그 한 줄(트레이스백 포함) 가림 상한 — 넘는 부분은 잘린다
 # MaskFilter 가 가린 레코드의 표시: {칸(msg · exc_text · stack_info): 가린 뒤 · 자르기 전 글자 수}
 MASKED_ATTR = "wakeline_masked"
+# mask_head 가 가리는 앞부분의 상한(글자) — 가리는 시간을 묶는다. 오류 문구는 이보다 훨씬 짧게(80–300 글자) 잘라 싣는다
+SCAN_MAX = 4096
 
 
 def register_secrets(*values: str | None) -> None:
@@ -77,6 +82,29 @@ def mask(text: str | None, limit: int | None = 4000) -> str | None:
         if secret in out:
             out = out.replace(secret, "***")
     return out if limit is None else out[:limit]
+
+
+def drop_cut_secret(text: str) -> str:
+    """text 가 더 긴 원문의 앞부분(이미 잘린 글)일 때: 끝에 걸쳐 잘린 등록 비밀값의 앞부분을 지운다 — 값 전체가 없으면 값으로 가리기가
+    맞지 않는다. 지우는 것은 끝의 가장 긴 조각 하나(잘린 글의 끝이라 몇 글자 덜 보여도 잃는 것이 없다)."""
+    cut = 0
+    for secret in _SECRETS:
+        for k in range(min(len(secret) - 1, len(text)), cut, -1):
+            if text.endswith(secret[:k]):
+                cut = k
+                break
+    return text[: len(text) - cut]
+
+
+def mask_head(text: str | None, n: int, *, cut: bool = False) -> str:
+    """가린 뒤 앞 n 글자 — 오류 문구에 싣는 공급자 글은 이것으로 자른다(QA-1140). cut=True: text 가 이미 잘린 원문의 앞부분이다(끝의 비밀값 조각을
+    먼저 지운다). SCAN_MAX 보다 긴 글은 그 앞부분만 가린다(같은 처리)."""
+    s = text or ""
+    if len(s) > max(SCAN_MAX, n):
+        s, cut = s[: max(SCAN_MAX, n)], True
+    if cut:
+        s = drop_cut_secret(s)
+    return (mask(s, None) or "")[:n]
 
 
 class MaskFilter(logging.Filter):
