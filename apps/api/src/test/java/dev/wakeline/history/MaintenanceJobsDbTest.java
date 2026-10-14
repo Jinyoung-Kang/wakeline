@@ -170,7 +170,7 @@ class MaintenanceJobsDbTest {
 
     /**
      * QA-1240: 파티션 보장이 실패하면(기동 순간 RDS 가 아직 답하지 않음) 다음 틱(1분)에 다시 하고, 이어지면 1 · 2 · 4 · … 30분으로 물러난다.
-     * 성공하면 6 h 동안 다시 하지 않는다(예전에는 실패해도 6 h 뒤에야 다시 했다).
+     * 성공하면 다시 매 틱 보장한다(가볍다). 예전에는 실패해도 6 h 뒤에야 다시 했다.
      */
     @Test
     void aFailedPartitionEnsureIsRetriedOnTheNextTickThenBacksOff() {
@@ -200,15 +200,16 @@ class MaintenanceJobsDbTest {
         assertThat(attempts).containsExactly(0, 1, 3, 7, 15, 31, 61, 91);
 
         down.set(false);
-        int tick = 0, firstOk = -1, after = -1;
-        for (; tick <= 30 + 6 * 60; tick++) {
+        List<Integer> afterUp = new java.util.ArrayList<>();
+        for (int tick = 0; tick <= 32; tick++) {
             int before = connections.get();
             jobs.ensurePartitions();
-            if (connections.get() > before) { if (firstOk < 0) firstOk = tick; else { after = tick; break; } }
-            now[0] = now[0].plusSeconds(60);
+            if (connections.get() > before) afterUp.add(tick);
         }
-        assertThat(firstOk).as("the next attempt after the DB answers (backed off to 30 min)").isBetween(0, 30);
-        assertThat(after - firstOk).as("minutes until the next ensure after a success").isEqualTo(6 * 60);
+        assertThat(afterUp).as("ticks with an ensure after the DB answers: the backed-off attempt (within 30 min), then every tick").isNotEmpty();
+        assertThat(afterUp.getFirst()).isBetween(0, 30);
+        assertThat(afterUp.subList(1, afterUp.size())).as("every tick after a success")
+                .isEqualTo(java.util.stream.IntStream.rangeClosed(afterUp.getFirst() + 1, 32).boxed().toList());
     }
 
     @Test
