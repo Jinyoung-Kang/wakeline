@@ -1,0 +1,37 @@
+{
+  "cls": 0.1621160956478006,
+  "shifts": [
+    {
+      "t": 957,
+      "v": 0.1621160956478006,
+      "input": true,
+      "src": [
+        "hazard 229→264 h130→281",
+        "traffic 369→554 h143→127",
+        "alerts 521→0 h130→0"
+      ]
+    }
+  ],
+  "after": {
+    "fir": {
+      "state": "ready",
+      "top": 89.8,
+      "height": 164.2
+    },
+    "hazard": {
+      "state": "ready",
+      "top": 263.7,
+      "height": 281
+    },
+    "traffic": {
+      "state": "ready",
+      "top": 554.4,
+      "height": 216.4
+    },
+    "alerts": {
+      "state": "ready",
+      "top": 780.5,
+      "height": 216
+    }
+  }
+}
