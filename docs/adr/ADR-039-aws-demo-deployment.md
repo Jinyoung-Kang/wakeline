@@ -30,6 +30,7 @@
    - 앞단 Caddy가 edge로 보낼 때 Host를 `localhost`로 바꾼다. edge의 Host 허용 목록은 그대로다.
    - 웹은 상대 경로와 `location.host`로 REST · WS 주소를 만든다. CSP도 `connect-src 'self'`라 Host를 쓰지 않는다.
    - api의 `WAKELINE_ALLOWED_ORIGINS`에는 공개 주소(`PUBLIC_ORIGIN`)를 더하고, 관리자 터널용 localhost 주소를 남긴다.
+   - 운영 쿠키는 Secure다(`AWS_COOKIE_SECURE`, 기본 true). 로컬용 `COOKIE_SECURE`는 읽지 않는다 — `.env.example`의 false가 기본값을 이겨 Secure 없이 배포됐다(QA-1600, 2026-10-14).
 4. **edge realip**: `nginx.conf`에 `include /etc/nginx/edge.d/*.conf;`를 둔다(로컬에서는 비어 있어 아무 일도 하지 않는다).
    - AWS에서는 `edge/realip.aws.conf`를 마운트한다. 사설 대역(도커 브리지 게이트웨이)에서 온 `X-Forwarded-For`를 믿는다.
    - realip이 `$remote_addr` 자체를 바꾸므로 `proxy_headers.conf`의 덮어쓰기와 api의 `WAKELINE_TRUSTED_PROXY`는 그대로다.

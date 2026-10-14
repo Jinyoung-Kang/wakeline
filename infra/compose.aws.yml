@@ -48,7 +48,9 @@ services:
       WAKELINE_READPOOL_SIZE: "2"
       # 공개 주소 + 관리자 터널(SSM 포트 포워딩으로 http://localhost:8700)
       WAKELINE_ALLOWED_ORIGINS: ${PUBLIC_ORIGIN:?PUBLIC_ORIGIN 필요 (예 https://dxxxx.cloudfront.net)},http://localhost:${WAKELINE_PORT:-8700},http://127.0.0.1:${WAKELINE_PORT:-8700}
-      WAKELINE_COOKIE_SECURE: "${COOKIE_SECURE:-true}"
+      # 공개 HTTPS 뒤라 쿠키는 Secure. 로컬용 COOKIE_SECURE(.env.example 의 false — make init 이 복사)를 읽지 않는다: 그 줄이 이 기본값을 이겨
+      # 운영 쿠키가 Secure 없이 나갔다(QA-1600). 끌 때만 .env 에 AWS_COOKIE_SECURE=false(관리자 터널을 http://localhost 가 아닌 주소로 쓸 때 등)
+      WAKELINE_COOKIE_SECURE: "${AWS_COOKIE_SECURE:-true}"
     volumes:
       - *rds-ca
     networks:
