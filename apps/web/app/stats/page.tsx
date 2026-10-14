@@ -4,7 +4,7 @@ import { useApiResource } from "@/lib/use-api-resource";
 import { ScrollRegion } from "@/components/ScrollRegion";
 import { alertStats, sigmetStats, trafficStats, type StatsItems, type StatsRow, type TrafficStats } from "@/lib/endpoints/stats";
 import { AlertStatsTable } from "@/components/AlertStatsTable";
-import { BarChart } from "@/components/BarChart";
+import { BarChart, barChartMaxHeight, barChartWidth } from "@/components/BarChart";
 import { ErrorNote } from "@/components/logs/ErrorNote";
 import { HYSTERESIS_FIX_AT, HYSTERESIS_FIX_DAY, hourlyRowsKst, topDims, trafficScopeLabel } from "@/lib/chart";
 import {
@@ -27,6 +27,8 @@ import { usePublicDemo } from "@/components/PublicDemo";
  * 받는 중 = 공유 진행 표시('불러오는 중' — lib/busy 의 나타남 지연 뒤), 받지 못함 = 그 패널만 '조회 실패' + HTTP 상태 · 요청 id + 다시 시도(그 패널만 다시 받는다),
  * 빈 상태 문구는 받은 응답에만. 패널마다 data-state(loading · ready · empty · error). SIGMET · 알림(최근 7일)은 한 번, 교통량은 날짜마다 받는다.
  * 공개 데모(AWS — ADR-039 덧붙임 2-1)는 03:30 KST 정시 집계가 돌지 않는다 — 머리 · 빈 상태는 '켜진 뒤 따라잡기'로 말한다(QA-1461 · lib/stats StatsSchedule).
+ * 패널 본문은 받기 전부터 받은 뒤의 자리를 잡는다(Panel ghost — QA-1500): 받는 중 · 빈 상태 · 오류 상태의 자리가 그림보다 낮으면 응답이 올 때 아래 패널이
+ * 밀린다(모바일 한 단 배치에서 AWS 규모 자료 CLS 0.156).
  */
 export default function StatsPage() {
   const fir = useLoad("fir", (signal) => sigmetStats("fir", { signal }));
@@ -61,13 +63,13 @@ export default function StatsPage() {
       <div className="mb-3 flex items-center gap-3"><h1 className="label" lang="en">Statistics</h1><span className="text-[11px] text-fg-3" title={run.title}>{run.text} · 최근 7일 · 빈 칸은 집계 전·자료 없음을 구분해 표시</span></div>
       {zoneErr ? <div className="mb-3 text-[11px] text-warn" role="alert" data-testid="stats-zone-error">{STATS_ZONE_ERROR}</div> : null}
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-        <Panel id="fir" head={<h2 className="label mb-2" lang="en">SIGMET by FIR (7d, top 24)</h2>} p={fir} drawable={firRows.length > 0} empty={statsWeekEmptyText(daysOf(fir.load, today), today, schedule)}>
-          <BarChart id="chart-fir" title="최근 7일 FIR별 SIGMET 발표 건수(상위 24)" rows={topDims(firRows)} />
+        <Panel id="fir" head={<h2 className="label mb-2" lang="en">SIGMET by FIR (7d, top 24)</h2>} p={fir} ghost={<ChartBox slots={FIR_TOP} rotated />} drawable={firRows.length > 0} empty={statsWeekEmptyText(daysOf(fir.load, today), today, schedule)}>
+          <BarChart id="chart-fir" title="최근 7일 FIR별 SIGMET 발표 건수(상위 24)" rows={topDims(firRows, FIR_TOP)} minSlots={FIR_TOP} />
         </Panel>
-        <Panel id="hazard" head={<h2 className="label mb-2" lang="en">SIGMET by hazard (7d)</h2>} p={haz} drawable={hazRows.length > 0} empty={statsWeekEmptyText(daysOf(haz.load, today), today, schedule)}>
+        <Panel id="hazard" head={<h2 className="label mb-2" lang="en">SIGMET by hazard (7d)</h2>} p={haz} ghost={<ChartBox rotated />} drawable={hazRows.length > 0} empty={statsWeekEmptyText(daysOf(haz.load, today), today, schedule)}>
           <BarChart id="chart-hazard" title="최근 7일 위험 유형별 SIGMET 발표 건수" rows={topDims(hazRows)} color="#f59e0b" />
         </Panel>
-        <Panel id="traffic" p={traffic} drawable={trafficRows.length > 0} empty={statsEmptyText(agg.traffic, day, today, { ...TRAFFIC_SOURCE, nowMs: openedAt }, schedule)}
+        <Panel id="traffic" p={traffic} ghost={<TrafficLines day={day} scope={SCOPE_GHOST} chart={<ChartBox slots={HOURS} rotated={false} />} />} drawable={trafficRows.length > 0} empty={statsEmptyText(agg.traffic, day, today, { ...TRAFFIC_SOURCE, nowMs: openedAt }, schedule)}
           head={<>
             <div className="mb-2 flex items-center justify-between gap-2"><h2 className="label" lang="en">Distinct aircraft by hour (KST)</h2><input type="date" value={day} min={STATS_MIN_DAY} max={maxDay} aria-label="집계 날짜(KST)" title="집계 날짜 = 한국 표준시 날짜(00:00–24:00 KST) · 어제까지" aria-describedby={clamped ? "stats-day-note" : undefined}
               onChange={(e) => { const p = statsPickDay(e.target.value, maxDay); if (p) { setDay(p.day); setClamped(!p.clamped ? null : p.below ? STATS_MIN_DAY_NOTE : STATS_FUTURE_DAY_NOTE); } }} /></div>
@@ -75,10 +77,8 @@ export default function StatsPage() {
                 role=status 가 아니라 aria-live: 패널의 status 는 받기 상태('불러오는 중') 하나다 */}
             <div aria-live="polite" className="text-[11px] text-warn" id="stats-day-note" data-testid="stats-day-clamped">{clamped ?? ""}</div>
           </>}>
-          <div className={`mb-1 text-[11px] ${scope.known ? "text-fg-2" : "text-warn"}`} data-testid="traffic-scope">범위: {scope.text}</div>
-          <BarChart id="chart-traffic" title={`${day}(KST 날짜) 시각별(KST) 고유 항공기 수 — ${scope.text}`} rows={hours} color="#3ec98f" />
-          <div className="mt-1 text-[10px] text-fg-2" data-testid="traffic-hours-note">KST 날짜 {day}(00:00–24:00 KST) · 눈금 = KST 시</div>
-          <div className="mt-1 text-[10px] text-fg-3">점선 “—” = 그 시간 자료 없음(수집 중단 또는 집계 전 — 0 대와 구분 불가)</div>
+          <TrafficLines day={day} scope={scope} testIds
+            chart={<BarChart id="chart-traffic" title={`${day}(KST 날짜) 시각별(KST) 고유 항공기 수 — ${scope.text}`} rows={hours} color="#3ec98f" />} />
         </Panel>
         <Panel id="alerts" head={<h2 className="label mb-2" lang="en">Alerts by kind (7d) · avg dwell</h2>} p={alerts} drawable={alertRows.length > 0} empty={statsWeekEmptyText(daysOf(alerts.load, today), today, schedule)}>
           <AlertStatsTable rows={alertRows} />
@@ -89,6 +89,36 @@ export default function StatsPage() {
         </Panel>
       </div>
     </ScrollRegion>
+  );
+}
+
+/** FIR 그림의 칸 수(상위 N) — 막대가 적어도 이만큼 너비를 잡아 그림 높이가 칸 너비로만 정해진다(QA-1500) */
+const FIR_TOP = 24;
+/** 시각 막대의 칸 수(KST 00–23시 — lib/chart hourlyRowsKst 는 늘 24행) */
+const HOURS = 24;
+/** 받기 전 범위 줄의 자리 — 범위 글 가운데 긴 꼴(남반구 · 서반구 중심 · 네 자리 반경)로 잡아 받은 글이 이보다 더 줄바꿈하지 않게 */
+const SCOPE_GHOST = trafficScopeLabel("region", { center: [-89.99, -179.99], radius_nm: 9999 });
+
+/**
+ * 받은 뒤 그림이 차지할 자리(Panel ghost 안 — 보이지 않음). BarChart 크기 규칙대로: slots 를 알면 너비 barChartWidth 를 넘지 않는 칸 너비에 같은 비율로,
+ * 모르면(막대 수가 응답마다 다름) 가장 큰 높이 barChartMaxHeight 로.
+ */
+function ChartBox({ slots, rotated }: { slots?: number; rotated: boolean }) {
+  const h = barChartMaxHeight({ rotated });
+  if (slots == null) return <span className="block" style={{ height: h }} />;
+  const w = barChartWidth({ slots, rotated });
+  return <span className="block w-full" style={{ maxWidth: w, aspectRatio: `${w} / ${h}` }} />;
+}
+
+/** 시간대별 항공기 패널의 본문(범위 줄 · 그림 · 주석 두 줄) — 받은 뒤와 받기 전 자리(ghost)가 같은 글 · 같은 모양을 쓴다. testIds 는 보이는 쪽만 */
+function TrafficLines({ day, scope, chart, testIds }: { day: string; scope: { known: boolean; text: string }; chart: ReactNode; testIds?: boolean }) {
+  return (
+    <>
+      <div className={`mb-1 text-[11px] ${scope.known ? "text-fg-2" : "text-warn"}`} data-testid={testIds ? "traffic-scope" : undefined}>범위: {scope.text}</div>
+      {chart}
+      <div className="mt-1 text-[10px] text-fg-2" data-testid={testIds ? "traffic-hours-note" : undefined}>KST 날짜 {day}(00:00–24:00 KST) · 눈금 = KST 시</div>
+      <div className="mt-1 text-[10px] text-fg-3">점선 “—” = 그 시간 자료 없음(수집 중단 또는 집계 전 — 0 대와 구분 불가)</div>
+    </>
   );
 }
 
@@ -105,20 +135,30 @@ function useLoad<T>(what: string, request: (signal: AbortSignal) => Promise<T>):
 /**
  * 통계 패널 하나: 머리(제목 · 날짜 고르기 — 어느 상태에서도 그대로) + 상태별 본문. data-state = loading · ready · empty · error(lib/stats statsPanelState).
  * - 받는 중: 공유 진행 표시(PanelLoading). 받지 못함: '조회 실패' + HTTP 상태 · 요청 id + 다시 시도(PanelError). 받았는데 그릴 것이 없음: 빈 상태 문구(empty) —
- *   KST 날짜로 셌다고 밝히지 않은 응답이면 그리지 않는다고(STATS_ZONE_PANEL). 그 밖: children.
+ *   KST 날짜로 셌다고 밝히지 않은 응답이면 그리지 않는다고(STATS_ZONE_PANEL) — ghost 가 있으면 잡은 자리의 가운데에. 그 밖: children.
+ * - ghost: 받은 뒤 본문의 자리(보이지 않음 · aria-hidden) — 본문과 같은 칸에 겹쳐 두어 어느 상태든 본문 높이가 max(ghost, 내용)이다. 그래서 받는 중 → 받음 ·
+ *   빈 상태 · 오류로 바뀌어도 아래 패널이 움직이지 않는다(QA-1500). 알림 표(마지막 패널)는 두지 않는다 — 뒤에 밀리는 것이 없고 행 수만큼 늘어나는 표다.
+ *   ghost 가 있는 본문의 바닥 9.75rem(127 px): 받지 못함 안내(메시지 · 요청 id · 다시 시도)가 휴대폰 너비(360–412 px)에서 차지하는 높이(잰 값 123–124 px) —
+ *   FIR 24칸 그림이 그보다 낮아지는 좁은 칸(< 480 px)에서도 받는 중 → 오류로 바뀔 때 아래 패널이 밀리지 않게.
  * 다시 시도를 누르면 단추가 사라지므로 초점을 패널로 옮긴다(키보드 · 화면 읽기 사용자가 자리를 잃지 않게).
  */
-function Panel<T>({ id, head, p, drawable, empty, children }: { id: string; head: ReactNode; p: { load: StatsLoad<T>; retry: () => void }; drawable: boolean; empty: string; children: ReactNode }) {
+function Panel<T>({ id, head, p, ghost, drawable, empty, children }: { id: string; head: ReactNode; p: { load: StatsLoad<T>; retry: () => void }; ghost?: ReactNode; drawable: boolean; empty: string; children: ReactNode }) {
   const ref = useRef<HTMLElement>(null);
   const state: StatsPanelState = statsPanelState(p.load, drawable);
   const zone = p.load.status === "loaded" && !statsZoneOk(p.load.resp);
+  const body = state === "loading" ? <PanelLoading />
+    : p.load.status === "failed" ? <PanelError error={p.load.error} onRetry={() => { ref.current?.focus(); p.retry(); }} />
+    : state === "empty" ? <Empty text={zone ? STATS_ZONE_PANEL : empty} />
+    : children;
   return (
     <section ref={ref} className="panel p-3" data-stats-panel={id} data-state={state} tabIndex={-1}>
       {head}
-      {state === "loading" ? <PanelLoading />
-        : p.load.status === "failed" ? <PanelError error={p.load.error} onRetry={() => { ref.current?.focus(); p.retry(); }} />
-        : state === "empty" ? <Empty text={zone ? STATS_ZONE_PANEL : empty} />
-        : children}
+      {ghost ? (
+        <div className="grid min-h-[9.75rem] grid-cols-1">
+          <div aria-hidden="true" className="invisible [grid-area:1/1]">{ghost}</div>
+          <div className={`min-w-0 [grid-area:1/1]${state === "empty" ? " flex flex-col justify-center" : ""}`}>{body}</div>
+        </div>
+      ) : body}
     </section>
   );
 }

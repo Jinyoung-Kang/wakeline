@@ -1,0 +1,26 @@
+{
+  "cls": 0,
+  "shifts": [],
+  "after": {
+    "fir": {
+      "state": "ready",
+      "top": 89.8,
+      "height": 169.8
+    },
+    "hazard": {
+      "state": "ready",
+      "top": 269.3,
+      "height": 281
+    },
+    "traffic": {
+      "state": "ready",
+      "top": 560,
+      "height": 216.4
+    },
+    "alerts": {
+      "state": "ready",
+      "top": 786.1,
+      "height": 216
+    }
+  }
+}

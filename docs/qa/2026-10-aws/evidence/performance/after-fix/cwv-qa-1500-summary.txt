@@ -1,0 +1,27 @@
+# QA-1500 /stats — Lighthouse 12.8.2 · 실제 GPU · 배경지도 열림 · AWS 규모(seed_perf_aws.sql) · 스택 A1(공개 데모) · web :qa ae7b705c5468(QA-1500 고침) · 2026-10-14 20:00:53 KST
+# 명령: PERF_CWV_OUT=$EV/after-fix/cwv tools/qa/perf_cwv.sh qa-1500 gpu ofm 3 /stats
+# 참고: 같은 고침의 앞선 빌드(알림 패널 구조만 다름)로 잰 6회도 CLS 0.000 × 12(데스크톱 · 모바일), 모바일 LCP 는 두 갈래 1,223–1,304 · 2,401–2,561 ms(PERF §15.2-5 '갈림')
+
+== docs/qa/2026-10-aws/evidence/performance/after-fix/cwv/qa-1500/gpu-ofm
+화면       프리셋       n            점수                 LCP ms                 TBT ms                  CLS               FCP ms   JS KiB  판정
+/stats   desktop   3 100 [100–100]          534 [426–614]                0 [0–1]  0.000 [0.000–0.000]        255 [232–262]    186.5  good
+/stats   mobile    3    98 [97–99]    2,388 [1,938–2,454]             83 [67–89]  0.000 [0.000–0.000]        781 [779–846]    186.4  good
+
+## 실행마다
+## /stats desktop #1  score 100 · LCP 614 · TBT 1 · CLS 0.000 · FCP 262 · JS 186.4 KiB · reqs 18 (ext 0 · ofm 0) · bench 2606
+  LCP 요소: body.h-full > div.flex > footer.shrink-0 > span.inline-block «|연안 교통량한국해양교통안전공단 MTIS 실시간 해양교통정보 (공공데이터»  | 단계: TTFB 151 · Load Delay 0 · Load Time 0 · Render Delay 463
+## /stats desktop #2  score 100 · LCP 426 · TBT 0 · CLS 0.000 · FCP 255 · JS 186.5 KiB · reqs 18 (ext 0 · ofm 0) · bench 2634
+  LCP 요소: body.h-full > div.flex > footer.shrink-0 > span.inline-block «|연안 교통량한국해양교통안전공단 MTIS 실시간 해양교통정보 (공공데이터»  | 단계: TTFB 147 · Load Delay 0 · Load Time 0 · Render Delay 278
+## /stats desktop #3  score 100 · LCP 534 · TBT 0 · CLS 0.000 · FCP 232 · JS 186.5 KiB · reqs 18 (ext 0 · ofm 0) · bench 2691.5
+  LCP 요소: body.h-full > div.flex > footer.shrink-0 > span.inline-block «|연안 교통량한국해양교통안전공단 MTIS 실시간 해양교통정보 (공공데이터»  | 단계: TTFB 136 · Load Delay 0 · Load Time 0 · Render Delay 398
+## /stats mobile #1  score 99 · LCP 1,938 · TBT 89 · CLS 0.000 · FCP 846 · JS 186.4 KiB · reqs 18 (ext 0 · ofm 0) · bench 2334.5
+  LCP 요소: body.h-full > div.flex > footer.shrink-0 > span.inline-block «|연안 교통량한국해양교통안전공단 MTIS 실시간 해양교통정보 (공공데이터»  | 단계: TTFB 498 · Load Delay 0 · Load Time 0 · Render Delay 1440
+## /stats mobile #2  score 98 · LCP 2,388 · TBT 67 · CLS 0.000 · FCP 779 · JS 186.5 KiB · reqs 18 (ext 0 · ofm 0) · bench 2758
+  LCP 요소: body.h-full > div.flex > footer.shrink-0 > span.inline-block «|연안 교통량한국해양교통안전공단 MTIS 실시간 해양교통정보 (공공데이터»  | 단계: TTFB 465 · Load Delay 0 · Load Time 0 · Render Delay 1924
+## /stats mobile #3  score 97 · LCP 2,454 · TBT 83 · CLS 0.000 · FCP 781 · JS 186.4 KiB · reqs 18 (ext 0 · ofm 0) · bench 2729.5
+  LCP 요소: body.h-full > div.flex > footer.shrink-0 > span.inline-block «|연안 교통량한국해양교통안전공단 MTIS 실시간 해양교통정보 (공공데이터»  | 단계: TTFB 465 · Load Delay 0 · Load Time 0 · Render Delay 1988
+
+## 고치기 전(같은 조건 — findings/performance.md §7, cwv/aws/gpu-ofm)
+화면       프리셋       n            점수                 LCP ms                 TBT ms                  CLS               FCP ms   JS KiB  판정
+/stats   desktop   3 100 [100–100]          537 [526–540]                0 [0–0]  0.051 [0.033–0.051]        229 [218–230]    186.1  good
+/stats   mobile    3    91 [91–95]    2,388 [2,381–2,389]             62 [60–80]  0.156 [0.113–0.159]        777 [768–778]    186.1  MISS CLS>0.1

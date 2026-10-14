@@ -10,7 +10,7 @@ import { emptyExternal } from "./qa-aws-helpers";
  * 줄어든다)보다 낮아, 한 단 배치에서 위 패널이 커지며 아래 패널을 민다. 빈 상태 · 오류 상태도 높이가 다르다.
  * 이 시험은 네 요청을 대신 답한다(route — 스택의 집계 상태와 무관하게 결정적). 응답 모양 · 크기는 A1 + AWS 규모 시드에서 받은 것과 같다.
  * 1) 모바일(Lighthouse 모바일 화면 412×823 · DPR 1.75): 받는 중으로 그린 뒤 응답이 오면 CLS(layout-shift 의 가장 큰 세션 창) ≤ 0.1.
- * 2) 받는 중 · 빈 상태 · 오류 상태에서 패널의 자리(뒤 패널의 위치)가 받은 뒤와 같다 — 모바일 412 · 데스크톱 1350. 마지막 패널(알림 표)은 뒤에 미는 것이
+ * 2) 받는 중 · 빈 상태 · 오류 상태에서 패널의 자리(뒤 패널의 위치)가 받은 뒤와 같다 — 모바일 412 · 태블릿 768 · 데스크톱 1350. 마지막 패널(알림 표)은 뒤에 미는 것이
  *    없어 높이를 재지 않는다(행 수에 따라 늘어나는 표).
  * 실행: cd apps/web && QA_BASE_URL=http://localhost:8701 QA_EVIDENCE_DIR=… npx playwright test -c e2e/qa/playwright.qa.config.ts qa-1500
  */
@@ -99,7 +99,8 @@ test("QA-1500 /stats mobile CLS stays ≤ 0.1 when AWS-scale stats arrive after 
   expect(cls, "mobile CLS of /stats with AWS-scale stats").toBeLessThanOrEqual(0.1);
 });
 
-for (const [name, opts] of [["mobile 412", MOBILE], ["desktop 1350", { viewport: { width: 1350, height: 940 } }]] as const) {
+// 768 = 한 단 배치에서 그림이 줄지 않는 너비(교통량 그림 672 px · 글이 한 줄씩) — 교통량 자리가 가장 클 때
+for (const [name, opts] of [["mobile 412", MOBILE], ["tablet 768", { viewport: { width: 768, height: 1024 } }], ["desktop 1350", { viewport: { width: 1350, height: 940 } }]] as const) {
   test(`QA-1500 /stats panels keep their place in loading · empty · error (${name})`, async ({ browser, baseURL }) => {
     assertIsolated(baseURL);
     const out: Record<string, Awaited<ReturnType<typeof layout>>> = {};
