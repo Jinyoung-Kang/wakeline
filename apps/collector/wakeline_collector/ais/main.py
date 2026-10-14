@@ -137,6 +137,7 @@ async def _run(
         log_metrics=lambda: sink_metrics(logsink),  # 계약 v5 §C2: 상태 해시의 log_sent · log_dropped · log_suppressed
         loop_lag=loop_lag,
     )
+    # 이전 실행의 상태(공백 이어받기). Redis 가 아직 답하지 않으면 발행 태스크가 첫 상태 쓰기 전에 다시 읽어 잇는다(QA-1241)
     shards.load_previous(await sink.read_previous_status())
 
     default_shards = parse_shards(s.ais_bboxes)

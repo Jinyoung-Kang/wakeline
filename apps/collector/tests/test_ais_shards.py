@@ -465,3 +465,46 @@ def test_restored_last_gap_keeps_its_scope():
     bad, _, _ = _set()
     bad.load_previous({**base, "last_gap_scope": "a|b"})
     assert "scope" not in (bad.last_gap() or {})
+
+
+def test_late_previous_status_gives_the_same_gaps_as_reading_it_at_start():
+    """QA-1241: 기동 때 Redis 가 답하지 않아 이전 상태를 나중에 읽으면(carry_over_late), 기동 때 읽었을 때와 같은 공백이 남는다 — 이미 받은
+    구역은 그 구역의 첫 데이터 시각에, 구역 없는 공백은 어느 구역이든 첫 데이터 시각에 닫고, 아직 받지 않은 구역은 열어 둔다."""
+    ss, _, _ = _set()
+    ss.load_previous({})  # 기동 때 읽지 못함
+    a, b, c = ss.add(A), ss.add(B), ss.add(C)
+    ss.restore_leftover()
+    _receiving(a, A, T0_EPOCH + 2)  # A 는 받기 시작했다(B 는 아직)
+    a.feed.on_disconnected("server closed (1006)")  # 이 프로세스의 공백(T+2 부터) — 이어받은 공백보다 뒤
+    late = ss.add(D, restore=False)  # 기동 뒤 설정으로 더한 구역은 잇지 않는다
+    ss.carry_over_late(_prev_v4())  # A(열린 공백 T-60) · B(마지막 메시지 T-30) · 1,1,2,2(열린 공백 T-90, 원인 x)
+    (ev,) = a.feed.gaps.pending
+    assert ev == {
+        "started_at": iso_ms(T0_EPOCH - 60),
+        "ended_at": iso_ms(T0_EPOCH + 2),
+        "reason": "ais process stopped",
+        "scope": A,
+    }
+    assert a.feed.gaps.open_since == T0_EPOCH + 2 and a.feed.gaps.reason == "server closed (1006)"  # 자기 공백은 그대로
+    assert (b.feed.gaps.open_since, b.feed.gaps.reason) == (T0_EPOCH - 30, "ais process restart")  # 아직 받지 않음 — 열어 둔다
+    assert c.feed.gaps.open_since is None and late.feed.gaps.open_since is None
+    (left,) = ss.leftover.pending  # 구역 없는 공백 — A 의 첫 데이터에 닫혔어야 했다
+    assert (left["started_at"], left["ended_at"], left["reason"]) == (iso_ms(T0_EPOCH - 90), iso_ms(T0_EPOCH + 2), "x")
+    assert ss.leftover.open_since is None
+    _receiving(b, B, T0_EPOCH + 9)
+    assert b.feed.gaps.last == {
+        "started_at": iso_ms(T0_EPOCH - 30),
+        "ended_at": iso_ms(T0_EPOCH + 9),
+        "reason": "ais process restart",
+        "scope": B,
+    }
+
+
+def test_late_previous_status_of_another_provider_or_an_empty_hash_carries_nothing():
+    ss, _, _ = _set()
+    a = ss.add(A)
+    ss.restore_leftover()
+    _receiving(a, A, T0_EPOCH + 2)
+    ss.carry_over_late({})
+    ss.carry_over_late({**_prev_v4(), "provider": "fixture"})
+    assert not a.feed.gaps.pending and not ss.leftover.pending and ss.leftover.open_since is None
