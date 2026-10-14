@@ -18,6 +18,10 @@ class BboxParamTest {
     @Test void tooLarge_is422() {
         assertThatThrownBy(() -> BboxParam.parse("-180,-90,180,90", 2500)).isInstanceOf(Problem.class)
                 .satisfies(e -> assertThat(((Problem) e).code()).isEqualTo("BBOX_TOO_LARGE"));
+        // QA-1311: 넓이는 10진 표기로 잰다 — 정확히 2,500 은 받고(Qa1311…), 조금이라도 넘으면 그대로 422
+        assertThat(BboxParam.parse("100.3,10.3,150.3,60.3", 2500).area()).isEqualTo(2500);
+        assertThatThrownBy(() -> BboxParam.parse("100.3,10.3,150.3000001,60.3", 2500)).isInstanceOf(Problem.class)
+                .satisfies(e -> assertThat(((Problem) e).code()).isEqualTo("BBOX_TOO_LARGE"));
     }
 
     @Test void malformed_is400() {
