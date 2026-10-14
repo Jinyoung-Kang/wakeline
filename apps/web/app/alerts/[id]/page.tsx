@@ -6,6 +6,7 @@ import { RequestIdOf } from "@/components/logs/ErrorNote";
 import { alertDetail } from "@/lib/endpoints/alerts";
 import { ApiError } from "@/lib/api";
 import { frontNotice } from "@/lib/front-answer";
+import { routeParam } from "@/lib/route-param";
 import { useApiResource } from "@/lib/use-api-resource";
 
 /**
@@ -25,7 +26,8 @@ function alertPageErrorText(e: unknown): string {
 }
 
 export default function AlertPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = use(params);
+  // Next 는 params 를 인코딩해 넘긴다 — 사람이 친 값으로 보이고 검사한다(QA-1424 · lib/route-param)
+  const id = routeParam(use(params).id);
   const valid = /^[0-9]{1,18}$/.test(id);
   const res = useApiResource(valid ? id : null, (signal) => alertDetail(id, { signal }));
   const d = res.data;
