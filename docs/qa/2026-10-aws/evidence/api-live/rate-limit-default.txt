@@ -1,0 +1,17 @@
+## 1. 경계 120/121(공개 GET /api/v1/status)
+   (1, 200, '120', '119', '60', None, None)
+   (2, 200, '120', '118', '60', None, None)
+   (119, 200, '120', '1', '43', None, None)
+   (120, 200, '120', '0', '42', None, None)
+   (121, 429, '120', '0', '42', '42', ('RATE_LIMITED', ['code', 'detail', 'instance', 'request_id', 'status', 'title', 'type'], 'application/problem+json'))
+   (122, 429, '120', '0', '42', '42', ('RATE_LIMITED', ['code', 'detail', 'instance', 'request_id', 'status', 'title', 'type'], 'application/problem+json'))
+   (123, 429, '120', '0', '42', '42', ('RATE_LIMITED', ['code', 'detail', 'instance', 'request_id', 'status', 'title', 'type'], 'application/problem+json'))
+   (124, 429, '120', '0', '42', '42', ('RATE_LIMITED', ['code', 'detail', 'instance', 'request_id', 'status', 'title', 'type'], 'application/problem+json'))
+   (125, 429, '120', '0', '42', '42', ('RATE_LIMITED', ['code', 'detail', 'instance', 'request_id', 'status', 'title', 'type'], 'application/problem+json'))
+  상태: {200: 120, 429: 5}
+## 2. 익명 운영 GET 60건(404) 다음 공개 GET
+   보낸 것 {404: 60} → 공개 GET 200 X-RateLimit-Remaining=119 (120 − 1 − 센 수)
+## 3. 400 60건(형식 오류 30 · 방화벽 30) 다음 공개 GET
+   보낸 것 {406: 30, 400: 30} → 공개 GET 200 X-RateLimit-Remaining=89 (120 − 1 − 센 수)
+## 4. /healthz 30 · /api/v1/openapi 30 다음 공개 GET
+   보낸 것 {200: 60} → 공개 GET 200 X-RateLimit-Remaining=89 (120 − 1 − 센 수)

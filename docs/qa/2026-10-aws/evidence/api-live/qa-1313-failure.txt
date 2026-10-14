@@ -1,0 +1,16 @@
+# 실행: cd apps/api && ./gradlew --offline test --tests 'dev.wakeline.qa.Qa1313TooManyCookiesErrorBodyIsNotProblemIT'
+# 결과(2026-10-14 KST · 제품 코드 수정 없음): tests=1 failures=1 errors=0 — 대조군(쿠키 200개 → 200)은 통과
+
+Multiple Failures (15 failures)
+ * [GET /api/v1/status with 201 cookies — Content-Type (body {"timestamp":"2026-10-13T20:34:30.461Z","status":400,"error":"Bad Request","path":"/api/v1/status"})]  Expecting actual:   "application/geo+json" to start with:
+ * [GET /api/v1/status with 201 cookies — body]  Expecting actual:   "{"timestamp":"2026-10-13T20:34:30.461Z","status":400,"error":"Bad Request","path":"/api/v1/status"}" to contain:
+ * [GET /api/v1/status with 201 cookies — body]  Expecting actual:   "{"timestamp":"2026-10-13T20:34:30.461Z","status":400,"error":"Bad Request","path":"/api/v1/status"}" to contain:
+ * [GET /api/v1/status with 201 cookies — body]  Expecting actual:   "{"timestamp":"2026-10-13T20:34:30.461Z","status":400,"error":"Bad Request","path":"/api/v1/status"}" not to contain:
+ * [GET /api/v1/status with 201 cookies — X-Request-Id]  Expecting actual not to be null at Qa1313TooManyCookiesErrorBodyIsNotProblemIT.lambda$tooManyCookiesIsAProblemResponse$0(Qa1313TooManyCookiesErrorBodyIsNotProblemIT.java:49) -- failure 6 --
+ * [GET /api/v1/aircraft?bbox=126,37,127,38 with 201 cookies — body]  Expecting actual:   "{"timestamp":"2026-10-13T20:34:30.478Z","status":400,"error":"Bad Request","path":"/api/v1/aircraft"}" to contain:
+ * [GET /api/v1/aircraft?bbox=126,37,127,38 with 201 cookies — body]  Expecting actual:   "{"timestamp":"2026-10-13T20:34:30.478Z","status":400,"error":"Bad Request","path":"/api/v1/aircraft"}" to contain:
+ * [GET /api/v1/aircraft?bbox=126,37,127,38 with 201 cookies — body]  Expecting actual:   "{"timestamp":"2026-10-13T20:34:30.478Z","status":400,"error":"Bad Request","path":"/api/v1/aircraft"}" not to contain:
+ * [GET /api/v1/aircraft?bbox=126,37,127,38 with 201 cookies — X-Request-Id]  Expecting actual not to be null at Qa1313TooManyCookiesErrorBodyIsNotProblemIT.lambda$tooManyCookiesIsAProblemResponse$0(Qa1313TooManyCookiesErrorBodyIsNotProblemIT.java:49) -- failure 11 --
+ * [GET /api/v1/ops/providers with 201 cookies — body]  Expecting actual:   "{"timestamp":"2026-10-13T20:34:30.482Z","status":400,"error":"Bad Request","path":"/api/v1/ops/providers"}" to contain:
+ * [GET /api/v1/ops/providers with 201 cookies — body]  Expecting actual:   "{"timestamp":"2026-10-13T20:34:30.482Z","status":400,"error":"Bad Request","path":"/api/v1/ops/providers"}" to contain:
+ * [GET /api/v1/ops/providers with 201 cookies — body]  Expecting actual:   "{"timestamp":"2026-10-13T20:34:30.482Z","status":400,"error":"Bad Request","path":"/api/v1/ops/providers"}" not to contain:

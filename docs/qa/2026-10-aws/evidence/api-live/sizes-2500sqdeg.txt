@@ -1,0 +1,11 @@
+aircraft 2500sq° detail=lite       200    43239B gz=   7981B items=127 source=None median=8.1ms max=10.2ms
+aircraft 2500sq° detail=full       200    55814B gz=   9576B items=127 source=None median=7.6ms max=9.0ms
+ships 2500sq°                      200   107255B gz=  19407B items=376 source=None median=9.4ms max=10.4ms
+replay 2500sq° at-1m               200    33970B gz=   7465B items=127 source=track_point median=19.7ms max=22.1ms
+replay 2500sq° at-5m               200    45544B gz=   7971B items=127 source=track_point median=21.9ms max=23.6ms
+replay 2500sq° at-30m              200   104740B gz=  10579B items=128 source=track_point median=15.6ms max=26.0ms
+replay 2500sq° at-60m              200   104046B gz=  10117B items=127 source=track_point median=26.8ms max=33.4ms
+replay 2500sq° at-90m              200   104062B gz=  10307B items=127 source=track_point median=15.5ms max=21.5ms
+replay 2500sq° at-180m             200      259B gz=    190B items=0 source=none median=12.0ms max=13.2ms
+replay 2500sq° at-600m             200      259B gz=    189B items=0 source=none median=10.5ms max=14.5ms
+replay 2500sq° at-1400m            200      259B gz=    193B items=0 source=none median=9.9ms max=40.4ms

@@ -1,0 +1,39 @@
+## QA-1310 — 비 ASCII 대소문자 접기(기대: 400)
+ok   200 (기대 200) /api/v1/stats/sigmet?group=FIR items=[] group=fir
+BUG  200 (기대 400) /api/v1/stats/sigmet?group=f%C4%B1r items=[] group=fir
+BUG  200 (기대 400) /api/v1/stats/sigmet?group=f%C4%B0r items=[] group=fir
+ok   200 (기대 200) /api/v1/alerts?kind=OBSERVED items=[["781a9d", "CQH6566"], ["71bd62", "JNA347"], ["781a89", "CSN8102"]]
+BUG  200 (기대 400) /api/v1/alerts?kind=ob%C5%BFerved items=[["781a9d", "CQH6566"], ["71bd62", "JNA347"], ["781a89", "CSN8102"]]
+BUG  200 (기대 400) /api/v1/alerts?kind=pred%C4%B1cted items=[["71c764", "ESR220"], ["71bd53", "KAL2042"], ["71ba13", "JJA156"]]
+BUG  200 (기대 400) /api/v1/aircraft?bbox=124,33,132,39&detail=l%C4%B1te 
+ok   200 (기대 200) /api/v1/aircraft/search?q=SJO items=[["86d8cc", "SJO463"]]
+BUG  200 (기대 400) /api/v1/aircraft/search?q=%C5%BFJO items=[["86d8cc", "SJO463"]]
+ok   200 (기대 200) /api/v1/aircraft/search?q=IBX items=[["8463b4", "IBX60"]]
+BUG  200 (기대 400) /api/v1/aircraft/search?q=%C4%B1BX items=[["8463b4", "IBX60"]]
+BUG  200 (기대 400) /api/v1/aircraft/search?q=%C3%9F%C3%9F items=[]
+ok   400 (기대 400) /api/v1/ships/search?q=ev%C4%B1er  code=BAD_QUERY
+ok   400 (기대 400) /api/v1/airports/rks%C4%B1/wx  code=BAD_ICAO
+
+## QA-1311 — 정확히 50° × 50° bbox(기대: 200)
+ok   200 /api/v1/aircraft bbox=124.1,10.1,174.1,60.1 (double 넓이 2500.0)  
+ok   200 /api/v1/ships bbox=124.1,10.1,174.1,60.1 (double 넓이 2500.0)  
+ok   200 /api/v1/replay bbox=124.1,10.1,174.1,60.1 (double 넓이 2500.0)  
+ok   WS subscribe zoom 7 bbox=[124.1, 10.1, 174.1, 60.1] → ['snapshot']
+ok   200 /api/v1/aircraft bbox=0,0,50,50 (double 넓이 2500.0)  
+ok   200 /api/v1/ships bbox=0,0,50,50 (double 넓이 2500.0)  
+ok   200 /api/v1/replay bbox=0,0,50,50 (double 넓이 2500.0)  
+ok   WS subscribe zoom 7 bbox=[0.0, 0.0, 50.0, 50.0] → ['snapshot']
+BUG  422 /api/v1/aircraft bbox=100.3,10.3,150.3,60.3 (double 넓이 2500.000000000001) BBOX_TOO_LARGE bbox area 2500 sq° exceeds 2500
+BUG  422 /api/v1/ships bbox=100.3,10.3,150.3,60.3 (double 넓이 2500.000000000001) BBOX_TOO_LARGE bbox area 2500 sq° exceeds 2500
+BUG  422 /api/v1/replay bbox=100.3,10.3,150.3,60.3 (double 넓이 2500.000000000001) BBOX_TOO_LARGE bbox area 2500 sq° exceeds 2500
+BUG  WS subscribe zoom 7 bbox=[100.3, 10.3, 150.3, 60.3] → ['BBOX_TOO_LARGE']
+BUG  422 /api/v1/aircraft bbox=0,14.4,50,64.4 (double 넓이 2500.0000000000005) BBOX_TOO_LARGE bbox area 2500 sq° exceeds 2500
+BUG  422 /api/v1/ships bbox=0,14.4,50,64.4 (double 넓이 2500.0000000000005) BBOX_TOO_LARGE bbox area 2500 sq° exceeds 2500
+BUG  422 /api/v1/replay bbox=0,14.4,50,64.4 (double 넓이 2500.0000000000005) BBOX_TOO_LARGE bbox area 2500 sq° exceeds 2500
+BUG  WS subscribe zoom 7 bbox=[0.0, 14.4, 50.0, 64.4] → ['BBOX_TOO_LARGE']
+BUG  422 /api/v1/aircraft bbox=101.8,14.9,151.8,64.9 (double 넓이 2500.000000000001) BBOX_TOO_LARGE bbox area 2500 sq° exceeds 2500
+BUG  422 /api/v1/ships bbox=101.8,14.9,151.8,64.9 (double 넓이 2500.000000000001) BBOX_TOO_LARGE bbox area 2500 sq° exceeds 2500
+BUG  422 /api/v1/replay bbox=101.8,14.9,151.8,64.9 (double 넓이 2500.000000000001) BBOX_TOO_LARGE bbox area 2500 sq° exceeds 2500
+BUG  WS subscribe zoom 7 bbox=[101.8, 14.9, 151.8, 64.9] → ['BBOX_TOO_LARGE']
+
+결함으로 보인 줄: 20

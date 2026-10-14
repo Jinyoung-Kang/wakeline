@@ -1,0 +1,619 @@
+{"label": "aircraft track from", "path": "/api/v1/aircraft/780de6/track?from=300000-01-01T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.008, "leak": null}
+{"label": "aircraft track to", "path": "/api/v1/aircraft/780de6/track?to=300000-01-01T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.01, "leak": null}
+{"label": "ship track from", "path": "/api/v1/ships/440999001/track?from=300000-01-01T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.008, "leak": null}
+{"label": "ship track to", "path": "/api/v1/ships/440999001/track?to=300000-01-01T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.004, "leak": null}
+{"label": "ais gaps from", "path": "/api/v1/ais/gaps?from=300000-01-01T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.011, "leak": null}
+{"label": "ais gaps to", "path": "/api/v1/ais/gaps?to=300000-01-01T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.008, "leak": null}
+{"label": "alerts history from", "path": "/api/v1/alerts/history?from=300000-01-01T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.006, "leak": null}
+{"label": "alerts history to", "path": "/api/v1/alerts/history?to=300000-01-01T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.006, "leak": null}
+{"label": "replay at", "path": "/api/v1/replay?at=300000-01-01T00%3A00%3A00Z&bbox=126,33,130,38", "status": 400, "code": "BAD_REQUEST", "s": 0.011, "leak": null}
+{"label": "aircraft track from", "path": "/api/v1/aircraft/780de6/track?from=%2B300000-01-01T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.01, "leak": null}
+{"label": "aircraft track to", "path": "/api/v1/aircraft/780de6/track?to=%2B300000-01-01T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.009, "leak": null}
+{"label": "ship track from", "path": "/api/v1/ships/440999001/track?from=%2B300000-01-01T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.004, "leak": null}
+{"label": "ship track to", "path": "/api/v1/ships/440999001/track?to=%2B300000-01-01T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.007, "leak": null}
+{"label": "ais gaps from", "path": "/api/v1/ais/gaps?from=%2B300000-01-01T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.008, "leak": null}
+{"label": "ais gaps to", "path": "/api/v1/ais/gaps?to=%2B300000-01-01T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.007, "leak": null}
+{"label": "alerts history from", "path": "/api/v1/alerts/history?from=%2B300000-01-01T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.006, "leak": null}
+{"label": "alerts history to", "path": "/api/v1/alerts/history?to=%2B300000-01-01T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.004, "leak": null}
+{"label": "replay at", "path": "/api/v1/replay?at=%2B300000-01-01T00%3A00%3A00Z&bbox=126,33,130,38", "status": 400, "code": "BAD_REQUEST", "s": 0.011, "leak": null}
+{"label": "aircraft track from", "path": "/api/v1/aircraft/780de6/track?from=-999999999-01-01T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.007, "leak": null}
+{"label": "aircraft track to", "path": "/api/v1/aircraft/780de6/track?to=-999999999-01-01T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.008, "leak": null}
+{"label": "ship track from", "path": "/api/v1/ships/440999001/track?from=-999999999-01-01T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.009, "leak": null}
+{"label": "ship track to", "path": "/api/v1/ships/440999001/track?to=-999999999-01-01T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.008, "leak": null}
+{"label": "ais gaps from", "path": "/api/v1/ais/gaps?from=-999999999-01-01T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.004, "leak": null}
+{"label": "ais gaps to", "path": "/api/v1/ais/gaps?to=-999999999-01-01T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.008, "leak": null}
+{"label": "alerts history from", "path": "/api/v1/alerts/history?from=-999999999-01-01T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.008, "leak": null}
+{"label": "alerts history to", "path": "/api/v1/alerts/history?to=-999999999-01-01T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.007, "leak": null}
+{"label": "replay at", "path": "/api/v1/replay?at=-999999999-01-01T00%3A00%3A00Z&bbox=126,33,130,38", "status": 400, "code": "BAD_REQUEST", "s": 0.007, "leak": null}
+{"label": "aircraft track from", "path": "/api/v1/aircraft/780de6/track?from=%2B1000000000-12-31T23%3A59%3A59Z", "status": 400, "code": "BAD_REQUEST", "s": 0.007, "leak": null}
+{"label": "aircraft track to", "path": "/api/v1/aircraft/780de6/track?to=%2B1000000000-12-31T23%3A59%3A59Z", "status": 400, "code": "BAD_REQUEST", "s": 0.005, "leak": null}
+{"label": "ship track from", "path": "/api/v1/ships/440999001/track?from=%2B1000000000-12-31T23%3A59%3A59Z", "status": 400, "code": "BAD_REQUEST", "s": 0.007, "leak": null}
+{"label": "ship track to", "path": "/api/v1/ships/440999001/track?to=%2B1000000000-12-31T23%3A59%3A59Z", "status": 400, "code": "BAD_REQUEST", "s": 0.004, "leak": null}
+{"label": "ais gaps from", "path": "/api/v1/ais/gaps?from=%2B1000000000-12-31T23%3A59%3A59Z", "status": 400, "code": "BAD_REQUEST", "s": 0.007, "leak": null}
+{"label": "ais gaps to", "path": "/api/v1/ais/gaps?to=%2B1000000000-12-31T23%3A59%3A59Z", "status": 400, "code": "BAD_REQUEST", "s": 0.005, "leak": null}
+{"label": "alerts history from", "path": "/api/v1/alerts/history?from=%2B1000000000-12-31T23%3A59%3A59Z", "status": 400, "code": "BAD_REQUEST", "s": 0.005, "leak": null}
+{"label": "alerts history to", "path": "/api/v1/alerts/history?to=%2B1000000000-12-31T23%3A59%3A59Z", "status": 400, "code": "BAD_REQUEST", "s": 0.007, "leak": null}
+{"label": "replay at", "path": "/api/v1/replay?at=%2B1000000000-12-31T23%3A59%3A59Z&bbox=126,33,130,38", "status": 400, "code": "BAD_REQUEST", "s": 0.007, "leak": null}
+{"label": "aircraft track from", "path": "/api/v1/aircraft/780de6/track?from=0000-01-01T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.005, "leak": null}
+{"label": "aircraft track to", "path": "/api/v1/aircraft/780de6/track?to=0000-01-01T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.009, "leak": null}
+{"label": "ship track from", "path": "/api/v1/ships/440999001/track?from=0000-01-01T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.01, "leak": null}
+{"label": "ship track to", "path": "/api/v1/ships/440999001/track?to=0000-01-01T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.01, "leak": null}
+{"label": "ais gaps from", "path": "/api/v1/ais/gaps?from=0000-01-01T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.008, "leak": null}
+{"label": "ais gaps to", "path": "/api/v1/ais/gaps?to=0000-01-01T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.008, "leak": null}
+{"label": "alerts history from", "path": "/api/v1/alerts/history?from=0000-01-01T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.007, "leak": null}
+{"label": "alerts history to", "path": "/api/v1/alerts/history?to=0000-01-01T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.007, "leak": null}
+{"label": "replay at", "path": "/api/v1/replay?at=0000-01-01T00%3A00%3A00Z&bbox=126,33,130,38", "status": 400, "code": "BAD_REQUEST", "s": 0.004, "leak": null}
+{"label": "aircraft track from", "path": "/api/v1/aircraft/780de6/track?from=-0001-01-01T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.006, "leak": null}
+{"label": "aircraft track to", "path": "/api/v1/aircraft/780de6/track?to=-0001-01-01T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.008, "leak": null}
+{"label": "ship track from", "path": "/api/v1/ships/440999001/track?from=-0001-01-01T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.006, "leak": null}
+{"label": "ship track to", "path": "/api/v1/ships/440999001/track?to=-0001-01-01T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.005, "leak": null}
+{"label": "ais gaps from", "path": "/api/v1/ais/gaps?from=-0001-01-01T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.005, "leak": null}
+{"label": "ais gaps to", "path": "/api/v1/ais/gaps?to=-0001-01-01T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.009, "leak": null}
+{"label": "alerts history from", "path": "/api/v1/alerts/history?from=-0001-01-01T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.007, "leak": null}
+{"label": "alerts history to", "path": "/api/v1/alerts/history?to=-0001-01-01T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.004, "leak": null}
+{"label": "replay at", "path": "/api/v1/replay?at=-0001-01-01T00%3A00%3A00Z&bbox=126,33,130,38", "status": 400, "code": "BAD_REQUEST", "s": 0.003, "leak": null}
+{"label": "aircraft track from", "path": "/api/v1/aircraft/780de6/track?from=1970-01-01T00%3A00%3A00Z", "status": 400, "code": "BAD_RANGE", "s": 0.008, "leak": null}
+{"label": "aircraft track to", "path": "/api/v1/aircraft/780de6/track?to=1970-01-01T00%3A00%3A00Z", "status": 200, "code": null, "s": 0.009, "leak": null}
+{"label": "ship track from", "path": "/api/v1/ships/440999001/track?from=1970-01-01T00%3A00%3A00Z", "status": 400, "code": "BAD_RANGE", "s": 0.004, "leak": null}
+{"label": "ship track to", "path": "/api/v1/ships/440999001/track?to=1970-01-01T00%3A00%3A00Z", "status": 200, "code": null, "s": 0.012, "leak": null}
+{"label": "ais gaps from", "path": "/api/v1/ais/gaps?from=1970-01-01T00%3A00%3A00Z", "status": 400, "code": "BAD_RANGE", "s": 0.007, "leak": null}
+{"label": "ais gaps to", "path": "/api/v1/ais/gaps?to=1970-01-01T00%3A00%3A00Z", "status": 200, "code": null, "s": 0.008, "leak": null}
+{"label": "alerts history from", "path": "/api/v1/alerts/history?from=1970-01-01T00%3A00%3A00Z", "status": 400, "code": "BAD_RANGE", "s": 0.006, "leak": null}
+{"label": "alerts history to", "path": "/api/v1/alerts/history?to=1970-01-01T00%3A00%3A00Z", "status": 200, "code": null, "s": 0.011, "leak": null}
+{"label": "replay at", "path": "/api/v1/replay?at=1970-01-01T00%3A00%3A00Z&bbox=126,33,130,38", "status": 400, "code": "BAD_AT", "s": 0.009, "leak": null}
+{"label": "aircraft track from", "path": "/api/v1/aircraft/780de6/track?from=2026-13-40T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.007, "leak": null}
+{"label": "aircraft track to", "path": "/api/v1/aircraft/780de6/track?to=2026-13-40T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.009, "leak": null}
+{"label": "ship track from", "path": "/api/v1/ships/440999001/track?from=2026-13-40T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.006, "leak": null}
+{"label": "ship track to", "path": "/api/v1/ships/440999001/track?to=2026-13-40T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.009, "leak": null}
+{"label": "ais gaps from", "path": "/api/v1/ais/gaps?from=2026-13-40T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.009, "leak": null}
+{"label": "ais gaps to", "path": "/api/v1/ais/gaps?to=2026-13-40T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.008, "leak": null}
+{"label": "alerts history from", "path": "/api/v1/alerts/history?from=2026-13-40T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.005, "leak": null}
+{"label": "alerts history to", "path": "/api/v1/alerts/history?to=2026-13-40T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.009, "leak": null}
+{"label": "replay at", "path": "/api/v1/replay?at=2026-13-40T00%3A00%3A00Z&bbox=126,33,130,38", "status": 400, "code": "BAD_REQUEST", "s": 0.009, "leak": null}
+{"label": "aircraft track from", "path": "/api/v1/aircraft/780de6/track?from=2026-10-01", "status": 400, "code": "BAD_REQUEST", "s": 0.008, "leak": null}
+{"label": "aircraft track to", "path": "/api/v1/aircraft/780de6/track?to=2026-10-01", "status": 400, "code": "BAD_REQUEST", "s": 0.01, "leak": null}
+{"label": "ship track from", "path": "/api/v1/ships/440999001/track?from=2026-10-01", "status": 400, "code": "BAD_REQUEST", "s": 0.008, "leak": null}
+{"label": "ship track to", "path": "/api/v1/ships/440999001/track?to=2026-10-01", "status": 400, "code": "BAD_REQUEST", "s": 0.007, "leak": null}
+{"label": "ais gaps from", "path": "/api/v1/ais/gaps?from=2026-10-01", "status": 400, "code": "BAD_REQUEST", "s": 0.008, "leak": null}
+{"label": "ais gaps to", "path": "/api/v1/ais/gaps?to=2026-10-01", "status": 400, "code": "BAD_REQUEST", "s": 0.008, "leak": null}
+{"label": "alerts history from", "path": "/api/v1/alerts/history?from=2026-10-01", "status": 400, "code": "BAD_REQUEST", "s": 0.005, "leak": null}
+{"label": "alerts history to", "path": "/api/v1/alerts/history?to=2026-10-01", "status": 400, "code": "BAD_REQUEST", "s": 0.006, "leak": null}
+{"label": "replay at", "path": "/api/v1/replay?at=2026-10-01&bbox=126,33,130,38", "status": 400, "code": "BAD_REQUEST", "s": 0.008, "leak": null}
+{"label": "aircraft track from", "path": "/api/v1/aircraft/780de6/track?from=", "status": 200, "code": null, "s": 0.007, "leak": null}
+{"label": "aircraft track to", "path": "/api/v1/aircraft/780de6/track?to=", "status": 200, "code": null, "s": 0.016, "leak": null}
+{"label": "ship track from", "path": "/api/v1/ships/440999001/track?from=", "status": 200, "code": null, "s": 0.008, "leak": null}
+{"label": "ship track to", "path": "/api/v1/ships/440999001/track?to=", "status": 200, "code": null, "s": 0.009, "leak": null}
+{"label": "ais gaps from", "path": "/api/v1/ais/gaps?from=", "status": 200, "code": null, "s": 0.006, "leak": null}
+{"label": "ais gaps to", "path": "/api/v1/ais/gaps?to=", "status": 200, "code": null, "s": 0.006, "leak": null}
+{"label": "alerts history from", "path": "/api/v1/alerts/history?from=", "status": 200, "code": null, "s": 0.013, "leak": null}
+{"label": "alerts history to", "path": "/api/v1/alerts/history?to=", "status": 200, "code": null, "s": 0.014, "leak": null}
+{"label": "replay at", "path": "/api/v1/replay?at=&bbox=126,33,130,38", "status": 400, "code": "BAD_REQUEST", "s": 0.008, "leak": null}
+{"label": "stats sigmet from", "path": "/api/v1/stats/sigmet?from=300000-01-01", "status": 400, "code": "BAD_REQUEST", "s": 0.008, "leak": null}
+{"label": "stats sigmet to", "path": "/api/v1/stats/sigmet?to=300000-01-01", "status": 400, "code": "BAD_REQUEST", "s": 0.007, "leak": null}
+{"label": "stats traffic day", "path": "/api/v1/stats/traffic?day=300000-01-01", "status": 400, "code": "BAD_REQUEST", "s": 0.01, "leak": null}
+{"label": "stats alerts from", "path": "/api/v1/stats/alerts?from=300000-01-01", "status": 400, "code": "BAD_REQUEST", "s": 0.009, "leak": null}
+{"label": "stats alerts to", "path": "/api/v1/stats/alerts?to=300000-01-01", "status": 400, "code": "BAD_REQUEST", "s": 0.01, "leak": null}
+{"label": "stats sigmet from", "path": "/api/v1/stats/sigmet?from=%2B300000-01-01", "status": 400, "code": "BAD_REQUEST", "s": 0.007, "leak": null}
+{"label": "stats sigmet to", "path": "/api/v1/stats/sigmet?to=%2B300000-01-01", "status": 400, "code": "BAD_REQUEST", "s": 0.007, "leak": null}
+{"label": "stats traffic day", "path": "/api/v1/stats/traffic?day=%2B300000-01-01", "status": 400, "code": "BAD_REQUEST", "s": 0.005, "leak": null}
+{"label": "stats alerts from", "path": "/api/v1/stats/alerts?from=%2B300000-01-01", "status": 400, "code": "BAD_REQUEST", "s": 0.006, "leak": null}
+{"label": "stats alerts to", "path": "/api/v1/stats/alerts?to=%2B300000-01-01", "status": 400, "code": "BAD_REQUEST", "s": 0.006, "leak": null}
+{"label": "stats sigmet from", "path": "/api/v1/stats/sigmet?from=-999999999-01-01", "status": 400, "code": "BAD_REQUEST", "s": 0.009, "leak": null}
+{"label": "stats sigmet to", "path": "/api/v1/stats/sigmet?to=-999999999-01-01", "status": 400, "code": "BAD_REQUEST", "s": 0.007, "leak": null}
+{"label": "stats traffic day", "path": "/api/v1/stats/traffic?day=-999999999-01-01", "status": 400, "code": "BAD_REQUEST", "s": 0.009, "leak": null}
+{"label": "stats alerts from", "path": "/api/v1/stats/alerts?from=-999999999-01-01", "status": 400, "code": "BAD_REQUEST", "s": 0.005, "leak": null}
+{"label": "stats alerts to", "path": "/api/v1/stats/alerts?to=-999999999-01-01", "status": 400, "code": "BAD_REQUEST", "s": 0.01, "leak": null}
+{"label": "stats sigmet from", "path": "/api/v1/stats/sigmet?from=%2B999999999-12-31", "status": 400, "code": "BAD_REQUEST", "s": 0.004, "leak": null}
+{"label": "stats sigmet to", "path": "/api/v1/stats/sigmet?to=%2B999999999-12-31", "status": 400, "code": "BAD_REQUEST", "s": 0.009, "leak": null}
+{"label": "stats traffic day", "path": "/api/v1/stats/traffic?day=%2B999999999-12-31", "status": 400, "code": "BAD_REQUEST", "s": 0.008, "leak": null}
+{"label": "stats alerts from", "path": "/api/v1/stats/alerts?from=%2B999999999-12-31", "status": 400, "code": "BAD_REQUEST", "s": 0.008, "leak": null}
+{"label": "stats alerts to", "path": "/api/v1/stats/alerts?to=%2B999999999-12-31", "status": 400, "code": "BAD_REQUEST", "s": 0.006, "leak": null}
+{"label": "stats sigmet from", "path": "/api/v1/stats/sigmet?from=0000-01-01", "status": 400, "code": "BAD_REQUEST", "s": 0.009, "leak": null}
+{"label": "stats sigmet to", "path": "/api/v1/stats/sigmet?to=0000-01-01", "status": 400, "code": "BAD_REQUEST", "s": 0.008, "leak": null}
+{"label": "stats traffic day", "path": "/api/v1/stats/traffic?day=0000-01-01", "status": 400, "code": "BAD_REQUEST", "s": 0.008, "leak": null}
+{"label": "stats alerts from", "path": "/api/v1/stats/alerts?from=0000-01-01", "status": 400, "code": "BAD_REQUEST", "s": 0.006, "leak": null}
+{"label": "stats alerts to", "path": "/api/v1/stats/alerts?to=0000-01-01", "status": 400, "code": "BAD_REQUEST", "s": 0.01, "leak": null}
+{"label": "stats sigmet from", "path": "/api/v1/stats/sigmet?from=-0001-01-01", "status": 400, "code": "BAD_REQUEST", "s": 0.011, "leak": null}
+{"label": "stats sigmet to", "path": "/api/v1/stats/sigmet?to=-0001-01-01", "status": 400, "code": "BAD_REQUEST", "s": 0.009, "leak": null}
+{"label": "stats traffic day", "path": "/api/v1/stats/traffic?day=-0001-01-01", "status": 400, "code": "BAD_REQUEST", "s": 0.006, "leak": null}
+{"label": "stats alerts from", "path": "/api/v1/stats/alerts?from=-0001-01-01", "status": 400, "code": "BAD_REQUEST", "s": 0.005, "leak": null}
+{"label": "stats alerts to", "path": "/api/v1/stats/alerts?to=-0001-01-01", "status": 400, "code": "BAD_REQUEST", "s": 0.006, "leak": null}
+{"label": "stats sigmet from", "path": "/api/v1/stats/sigmet?from=2026-02-30", "status": 400, "code": "BAD_REQUEST", "s": 0.01, "leak": null}
+{"label": "stats sigmet to", "path": "/api/v1/stats/sigmet?to=2026-02-30", "status": 400, "code": "BAD_REQUEST", "s": 0.007, "leak": null}
+{"label": "stats traffic day", "path": "/api/v1/stats/traffic?day=2026-02-30", "status": 400, "code": "BAD_REQUEST", "s": 0.007, "leak": null}
+{"label": "stats alerts from", "path": "/api/v1/stats/alerts?from=2026-02-30", "status": 400, "code": "BAD_REQUEST", "s": 0.009, "leak": null}
+{"label": "stats alerts to", "path": "/api/v1/stats/alerts?to=2026-02-30", "status": 400, "code": "BAD_REQUEST", "s": 0.008, "leak": null}
+{"label": "stats sigmet from", "path": "/api/v1/stats/sigmet?from=", "status": 200, "code": null, "s": 0.011, "leak": null}
+{"label": "stats sigmet to", "path": "/api/v1/stats/sigmet?to=", "status": 200, "code": null, "s": 0.01, "leak": null}
+{"label": "stats traffic day", "path": "/api/v1/stats/traffic?day=", "status": 200, "code": null, "s": 0.01, "leak": null}
+{"label": "stats alerts from", "path": "/api/v1/stats/alerts?from=", "status": 200, "code": null, "s": 0.01, "leak": null}
+{"label": "stats alerts to", "path": "/api/v1/stats/alerts?to=", "status": 200, "code": null, "s": 0.008, "leak": null}
+{"label": "aircraft track stepS", "path": "/api/v1/aircraft/780de6/track?stepS=-1", "status": 200, "code": null, "s": 0.018, "leak": null}
+{"label": "ships search limit", "path": "/api/v1/ships/search?q=44&limit=-1", "status": 200, "code": null, "s": 0.01, "leak": null}
+{"label": "alerts history limit", "path": "/api/v1/alerts/history?limit=-1", "status": 200, "code": null, "s": 0.008, "leak": null}
+{"label": "alerts history cursor", "path": "/api/v1/alerts/history?cursor=-1", "status": 200, "code": null, "s": 0.005, "leak": null}
+{"label": "aircraft track stepS", "path": "/api/v1/aircraft/780de6/track?stepS=0", "status": 200, "code": null, "s": 0.018, "leak": null}
+{"label": "ships search limit", "path": "/api/v1/ships/search?q=44&limit=0", "status": 200, "code": null, "s": 0.01, "leak": null}
+{"label": "alerts history limit", "path": "/api/v1/alerts/history?limit=0", "status": 200, "code": null, "s": 0.01, "leak": null}
+{"label": "alerts history cursor", "path": "/api/v1/alerts/history?cursor=0", "status": 200, "code": null, "s": 0.008, "leak": null}
+{"label": "aircraft track stepS", "path": "/api/v1/aircraft/780de6/track?stepS=NaN", "status": 400, "code": "BAD_REQUEST", "s": 0.013, "leak": null}
+{"label": "ships search limit", "path": "/api/v1/ships/search?q=44&limit=NaN", "status": 400, "code": "BAD_REQUEST", "s": 0.009, "leak": null}
+{"label": "alerts history limit", "path": "/api/v1/alerts/history?limit=NaN", "status": 400, "code": "BAD_REQUEST", "s": 0.008, "leak": null}
+{"label": "alerts history cursor", "path": "/api/v1/alerts/history?cursor=NaN", "status": 400, "code": "BAD_REQUEST", "s": 0.007, "leak": null}
+{"label": "aircraft track stepS", "path": "/api/v1/aircraft/780de6/track?stepS=Infinity", "status": 400, "code": "BAD_REQUEST", "s": 0.01, "leak": null}
+{"label": "ships search limit", "path": "/api/v1/ships/search?q=44&limit=Infinity", "status": 400, "code": "BAD_REQUEST", "s": 0.008, "leak": null}
+{"label": "alerts history limit", "path": "/api/v1/alerts/history?limit=Infinity", "status": 400, "code": "BAD_REQUEST", "s": 0.008, "leak": null}
+{"label": "alerts history cursor", "path": "/api/v1/alerts/history?cursor=Infinity", "status": 400, "code": "BAD_REQUEST", "s": 0.005, "leak": null}
+{"label": "aircraft track stepS", "path": "/api/v1/aircraft/780de6/track?stepS=1e309", "status": 400, "code": "BAD_REQUEST", "s": 0.005, "leak": null}
+{"label": "ships search limit", "path": "/api/v1/ships/search?q=44&limit=1e309", "status": 400, "code": "BAD_REQUEST", "s": 0.009, "leak": null}
+{"label": "alerts history limit", "path": "/api/v1/alerts/history?limit=1e309", "status": 400, "code": "BAD_REQUEST", "s": 0.007, "leak": null}
+{"label": "alerts history cursor", "path": "/api/v1/alerts/history?cursor=1e309", "status": 400, "code": "BAD_REQUEST", "s": 0.008, "leak": null}
+{"label": "aircraft track stepS", "path": "/api/v1/aircraft/780de6/track?stepS=99999999999999999999", "status": 400, "code": "BAD_REQUEST", "s": 0.007, "leak": null}
+{"label": "ships search limit", "path": "/api/v1/ships/search?q=44&limit=99999999999999999999", "status": 400, "code": "BAD_REQUEST", "s": 0.009, "leak": null}
+{"label": "alerts history limit", "path": "/api/v1/alerts/history?limit=99999999999999999999", "status": 400, "code": "BAD_REQUEST", "s": 0.004, "leak": null}
+{"label": "alerts history cursor", "path": "/api/v1/alerts/history?cursor=99999999999999999999", "status": 400, "code": "BAD_REQUEST", "s": 0.006, "leak": null}
+{"label": "aircraft track stepS", "path": "/api/v1/aircraft/780de6/track?stepS=2147483648", "status": 400, "code": "BAD_REQUEST", "s": 0.005, "leak": null}
+{"label": "ships search limit", "path": "/api/v1/ships/search?q=44&limit=2147483648", "status": 400, "code": "BAD_REQUEST", "s": 0.008, "leak": null}
+{"label": "alerts history limit", "path": "/api/v1/alerts/history?limit=2147483648", "status": 400, "code": "BAD_REQUEST", "s": 0.009, "leak": null}
+{"label": "alerts history cursor", "path": "/api/v1/alerts/history?cursor=2147483648", "status": 200, "code": null, "s": 0.01, "leak": null}
+{"label": "aircraft track stepS", "path": "/api/v1/aircraft/780de6/track?stepS=1.5", "status": 400, "code": "BAD_REQUEST", "s": 0.007, "leak": null}
+{"label": "ships search limit", "path": "/api/v1/ships/search?q=44&limit=1.5", "status": 400, "code": "BAD_REQUEST", "s": 0.005, "leak": null}
+{"label": "alerts history limit", "path": "/api/v1/alerts/history?limit=1.5", "status": 400, "code": "BAD_REQUEST", "s": 0.005, "leak": null}
+{"label": "alerts history cursor", "path": "/api/v1/alerts/history?cursor=1.5", "status": 400, "code": "BAD_REQUEST", "s": 0.008, "leak": null}
+{"label": "aircraft track stepS", "path": "/api/v1/aircraft/780de6/track?stepS=", "status": 200, "code": null, "s": 0.023, "leak": null}
+{"label": "ships search limit", "path": "/api/v1/ships/search?q=44&limit=", "status": 200, "code": null, "s": 0.009, "leak": null}
+{"label": "alerts history limit", "path": "/api/v1/alerts/history?limit=", "status": 200, "code": null, "s": 0.011, "leak": null}
+{"label": "alerts history cursor", "path": "/api/v1/alerts/history?cursor=", "status": 200, "code": null, "s": 0.014, "leak": null}
+{"label": "aircraft bbox", "path": "/api/v1/aircraft?bbox=-180%2C-90%2C180%2C90", "status": 422, "code": "BBOX_TOO_LARGE", "s": 0.009, "leak": null}
+{"label": "ships bbox", "path": "/api/v1/ships?bbox=-180%2C-90%2C180%2C90", "status": 422, "code": "BBOX_TOO_LARGE", "s": 0.004, "leak": null}
+{"label": "sigmets bbox", "path": "/api/v1/sigmets?bbox=-180%2C-90%2C180%2C90", "status": 200, "code": null, "s": 0.013, "leak": null}
+{"label": "airports bbox", "path": "/api/v1/airports?bbox=-180%2C-90%2C180%2C90", "status": 200, "code": null, "s": 0.01, "leak": null}
+{"label": "replay bbox", "path": "/api/v1/replay?at=2026-10-01T12:00:00Z&bbox=-180%2C-90%2C180%2C90", "status": 422, "code": "BBOX_TOO_LARGE", "s": 0.004, "leak": null}
+{"label": "aircraft bbox", "path": "/api/v1/aircraft?bbox=NaN%2CNaN%2CNaN%2CNaN", "status": 400, "code": "BAD_BBOX", "s": 0.009, "leak": null}
+{"label": "ships bbox", "path": "/api/v1/ships?bbox=NaN%2CNaN%2CNaN%2CNaN", "status": 400, "code": "BAD_BBOX", "s": 0.011, "leak": null}
+{"label": "sigmets bbox", "path": "/api/v1/sigmets?bbox=NaN%2CNaN%2CNaN%2CNaN", "status": 400, "code": "BAD_BBOX", "s": 0.009, "leak": null}
+{"label": "airports bbox", "path": "/api/v1/airports?bbox=NaN%2CNaN%2CNaN%2CNaN", "status": 400, "code": "BAD_BBOX", "s": 0.009, "leak": null}
+{"label": "replay bbox", "path": "/api/v1/replay?at=2026-10-01T12:00:00Z&bbox=NaN%2CNaN%2CNaN%2CNaN", "status": 400, "code": "BAD_BBOX", "s": 0.007, "leak": null}
+{"label": "aircraft bbox", "path": "/api/v1/aircraft?bbox=1e308%2C1e308%2C-1e308%2C-1e308", "status": 400, "code": "BAD_BBOX", "s": 0.009, "leak": null}
+{"label": "ships bbox", "path": "/api/v1/ships?bbox=1e308%2C1e308%2C-1e308%2C-1e308", "status": 400, "code": "BAD_BBOX", "s": 0.009, "leak": null}
+{"label": "sigmets bbox", "path": "/api/v1/sigmets?bbox=1e308%2C1e308%2C-1e308%2C-1e308", "status": 400, "code": "BAD_BBOX", "s": 0.005, "leak": null}
+{"label": "airports bbox", "path": "/api/v1/airports?bbox=1e308%2C1e308%2C-1e308%2C-1e308", "status": 400, "code": "BAD_BBOX", "s": 0.009, "leak": null}
+{"label": "replay bbox", "path": "/api/v1/replay?at=2026-10-01T12:00:00Z&bbox=1e308%2C1e308%2C-1e308%2C-1e308", "status": 400, "code": "BAD_BBOX", "s": 0.009, "leak": null}
+{"label": "aircraft bbox", "path": "/api/v1/aircraft?bbox=1%2C2%2C3", "status": 400, "code": "BAD_BBOX", "s": 0.008, "leak": null}
+{"label": "ships bbox", "path": "/api/v1/ships?bbox=1%2C2%2C3", "status": 400, "code": "BAD_BBOX", "s": 0.006, "leak": null}
+{"label": "sigmets bbox", "path": "/api/v1/sigmets?bbox=1%2C2%2C3", "status": 400, "code": "BAD_BBOX", "s": 0.007, "leak": null}
+{"label": "airports bbox", "path": "/api/v1/airports?bbox=1%2C2%2C3", "status": 400, "code": "BAD_BBOX", "s": 0.008, "leak": null}
+{"label": "replay bbox", "path": "/api/v1/replay?at=2026-10-01T12:00:00Z&bbox=1%2C2%2C3", "status": 400, "code": "BAD_BBOX", "s": 0.008, "leak": null}
+{"label": "aircraft bbox", "path": "/api/v1/aircraft?bbox=1%2C2%2C3%2C4%2C5", "status": 400, "code": "BAD_BBOX", "s": 0.005, "leak": null}
+{"label": "ships bbox", "path": "/api/v1/ships?bbox=1%2C2%2C3%2C4%2C5", "status": 400, "code": "BAD_BBOX", "s": 0.009, "leak": null}
+{"label": "sigmets bbox", "path": "/api/v1/sigmets?bbox=1%2C2%2C3%2C4%2C5", "status": 400, "code": "BAD_BBOX", "s": 0.009, "leak": null}
+{"label": "airports bbox", "path": "/api/v1/airports?bbox=1%2C2%2C3%2C4%2C5", "status": 400, "code": "BAD_BBOX", "s": 0.008, "leak": null}
+{"label": "replay bbox", "path": "/api/v1/replay?at=2026-10-01T12:00:00Z&bbox=1%2C2%2C3%2C4%2C5", "status": 400, "code": "BAD_BBOX", "s": 0.007, "leak": null}
+{"label": "aircraft bbox", "path": "/api/v1/aircraft?bbox=0%2C0%2C0%2C0", "status": 400, "code": "BAD_BBOX", "s": 0.004, "leak": null}
+{"label": "ships bbox", "path": "/api/v1/ships?bbox=0%2C0%2C0%2C0", "status": 400, "code": "BAD_BBOX", "s": 0.006, "leak": null}
+{"label": "sigmets bbox", "path": "/api/v1/sigmets?bbox=0%2C0%2C0%2C0", "status": 400, "code": "BAD_BBOX", "s": 0.004, "leak": null}
+{"label": "airports bbox", "path": "/api/v1/airports?bbox=0%2C0%2C0%2C0", "status": 400, "code": "BAD_BBOX", "s": 0.009, "leak": null}
+{"label": "replay bbox", "path": "/api/v1/replay?at=2026-10-01T12:00:00Z&bbox=0%2C0%2C0%2C0", "status": 400, "code": "BAD_BBOX", "s": 0.006, "leak": null}
+{"label": "aircraft bbox", "path": "/api/v1/aircraft?bbox=170%2C0%2C-170%2C10", "status": 400, "code": "BAD_BBOX", "s": 0.009, "leak": null}
+{"label": "ships bbox", "path": "/api/v1/ships?bbox=170%2C0%2C-170%2C10", "status": 400, "code": "BAD_BBOX", "s": 0.007, "leak": null}
+{"label": "sigmets bbox", "path": "/api/v1/sigmets?bbox=170%2C0%2C-170%2C10", "status": 400, "code": "BAD_BBOX", "s": 0.008, "leak": null}
+{"label": "airports bbox", "path": "/api/v1/airports?bbox=170%2C0%2C-170%2C10", "status": 400, "code": "BAD_BBOX", "s": 0.006, "leak": null}
+{"label": "replay bbox", "path": "/api/v1/replay?at=2026-10-01T12:00:00Z&bbox=170%2C0%2C-170%2C10", "status": 400, "code": "BAD_BBOX", "s": 0.009, "leak": null}
+{"label": "aircraft bbox", "path": "/api/v1/aircraft?bbox=Infinity%2C0%2C1%2C1", "status": 400, "code": "BAD_BBOX", "s": 0.01, "leak": null}
+{"label": "ships bbox", "path": "/api/v1/ships?bbox=Infinity%2C0%2C1%2C1", "status": 400, "code": "BAD_BBOX", "s": 0.006, "leak": null}
+{"label": "sigmets bbox", "path": "/api/v1/sigmets?bbox=Infinity%2C0%2C1%2C1", "status": 400, "code": "BAD_BBOX", "s": 0.006, "leak": null}
+{"label": "airports bbox", "path": "/api/v1/airports?bbox=Infinity%2C0%2C1%2C1", "status": 400, "code": "BAD_BBOX", "s": 0.007, "leak": null}
+{"label": "replay bbox", "path": "/api/v1/replay?at=2026-10-01T12:00:00Z&bbox=Infinity%2C0%2C1%2C1", "status": 400, "code": "BAD_BBOX", "s": 0.006, "leak": null}
+{"label": "aircraft bbox", "path": "/api/v1/aircraft?bbox=a%2Cb%2Cc%2Cd", "status": 400, "code": "BAD_BBOX", "s": 0.007, "leak": null}
+{"label": "ships bbox", "path": "/api/v1/ships?bbox=a%2Cb%2Cc%2Cd", "status": 400, "code": "BAD_BBOX", "s": 0.01, "leak": null}
+{"label": "sigmets bbox", "path": "/api/v1/sigmets?bbox=a%2Cb%2Cc%2Cd", "status": 400, "code": "BAD_BBOX", "s": 0.008, "leak": null}
+{"label": "airports bbox", "path": "/api/v1/airports?bbox=a%2Cb%2Cc%2Cd", "status": 400, "code": "BAD_BBOX", "s": 0.008, "leak": null}
+{"label": "replay bbox", "path": "/api/v1/replay?at=2026-10-01T12:00:00Z&bbox=a%2Cb%2Cc%2Cd", "status": 400, "code": "BAD_BBOX", "s": 0.007, "leak": null}
+{"label": "aircraft bbox", "path": "/api/v1/aircraft?bbox=", "status": 400, "code": "BAD_BBOX", "s": 0.004, "leak": null}
+{"label": "ships bbox", "path": "/api/v1/ships?bbox=", "status": 400, "code": "BAD_BBOX", "s": 0.008, "leak": null}
+{"label": "sigmets bbox", "path": "/api/v1/sigmets?bbox=", "status": 400, "code": "BAD_BBOX", "s": 0.004, "leak": null}
+{"label": "airports bbox", "path": "/api/v1/airports?bbox=", "status": 400, "code": "BAD_BBOX", "s": 0.008, "leak": null}
+{"label": "replay bbox", "path": "/api/v1/replay?at=2026-10-01T12:00:00Z&bbox=", "status": 400, "code": "BAD_BBOX", "s": 0.008, "leak": null}
+{"label": "aircraft search q", "path": "/api/v1/aircraft/search?q=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "status": 400, "code": "BAD_QUERY", "s": 0.009, "leak": null}
+{"label": "ships search q", "path": "/api/v1/ships/search?q=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "status": 400, "code": "BAD_QUERY", "s": 0.007, "leak": null}
+{"label": "aircraft hex", "path": "/api/v1/aircraft/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "status": 400, "code": "BAD_HEX", "s": 0.008, "leak": null}
+{"label": "ships mmsi", "path": "/api/v1/ships/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "status": 400, "code": "BAD_MMSI", "s": 0.004, "leak": null}
+{"label": "sigmet id", "path": "/api/v1/sigmets/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "status": 404, "code": "NOT_FOUND", "s": 0.007, "leak": null}
+{"label": "airport wx", "path": "/api/v1/airports/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "status": 400, "code": "BAD_ICAO", "s": 0.008, "leak": null}
+{"label": "radar kr tm", "path": "/api/v1/radar/kr/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "status": 400, "code": "BAD_TM", "s": 0.009, "leak": null}
+{"label": "alerts kind", "path": "/api/v1/alerts?kind=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "status": 400, "code": "BAD_FILTER", "s": 0.009, "leak": null}
+{"label": "alerts history hex", "path": "/api/v1/alerts/history?hex=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "status": 400, "code": "BAD_HEX", "s": 0.007, "leak": null}
+{"label": "sigmets hazard", "path": "/api/v1/sigmets?hazard=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "status": 200, "code": null, "s": 0.004, "leak": null}
+{"label": "stats sigmet group", "path": "/api/v1/stats/sigmet?group=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "status": 400, "code": "BAD_FILTER", "s": 0.004, "leak": null}
+{"label": "aircraft detail param", "path": "/api/v1/aircraft?bbox=126,33,130,38&detail=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "status": 400, "code": "BAD_FILTER", "s": 0.009, "leak": null}
+{"label": "aircraft search q", "path": "/api/v1/aircraft/search?q=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "status": 400, "code": "BAD_QUERY", "s": 0.008, "leak": null}
+{"label": "ships search q", "path": "/api/v1/ships/search?q=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "status": 400, "code": "BAD_QUERY", "s": 0.009, "leak": null}
+{"label": "aircraft hex", "path": "/api/v1/aircraft/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "status": 400, "code": "BAD_HEX", "s": 0.01, "leak": null}
+{"label": "ships mmsi", "path": "/api/v1/ships/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "status": 400, "code": "BAD_MMSI", "s": 0.005, "leak": null}
+{"label": "sigmet id", "path": "/api/v1/sigmets/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "status": 404, "code": "NOT_FOUND", "s": 0.009, "leak": null}
+{"label": "airport wx", "path": "/api/v1/airports/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "status": 400, "code": "BAD_ICAO", "s": 0.008, "leak": null}
+{"label": "radar kr tm", "path": "/api/v1/radar/kr/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "status": 400, "code": "BAD_TM", "s": 0.01, "leak": null}
+{"label": "alerts kind", "path": "/api/v1/alerts?kind=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "status": 400, "code": "BAD_FILTER", "s": 0.01, "leak": null}
+{"label": "alerts history hex", "path": "/api/v1/alerts/history?hex=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "status": 400, "code": "BAD_HEX", "s": 0.008, "leak": null}
+{"label": "sigmets hazard", "path": "/api/v1/sigmets?hazard=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "status": 200, "code": null, "s": 0.009, "leak": null}
+{"label": "stats sigmet group", "path": "/api/v1/stats/sigmet?group=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "status": 400, "code": "BAD_FILTER", "s": 0.007, "leak": null}
+{"label": "aircraft detail param", "path": "/api/v1/aircraft?bbox=126,33,130,38&detail=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "status": 400, "code": "BAD_FILTER", "s": 0.008, "leak": null}
+{"label": "aircraft search q", "path": "/api/v1/aircraft/search?q=%ED%95%9C%EA%B8%80", "status": 400, "code": "BAD_QUERY", "s": 0.018, "leak": null}
+{"label": "ships search q", "path": "/api/v1/ships/search?q=%ED%95%9C%EA%B8%80", "status": 400, "code": "BAD_QUERY", "s": 0.009, "leak": null}
+{"label": "aircraft hex", "path": "/api/v1/aircraft/%ED%95%9C%EA%B8%80", "status": 400, "code": "BAD_HEX", "s": 0.009, "leak": null}
+{"label": "ships mmsi", "path": "/api/v1/ships/%ED%95%9C%EA%B8%80", "status": 400, "code": "BAD_MMSI", "s": 0.008, "leak": null}
+{"label": "sigmet id", "path": "/api/v1/sigmets/%ED%95%9C%EA%B8%80", "status": 404, "code": "NOT_FOUND", "s": 0.007, "leak": null}
+{"label": "airport wx", "path": "/api/v1/airports/%ED%95%9C%EA%B8%80/wx", "status": 400, "code": "BAD_ICAO", "s": 0.008, "leak": null}
+{"label": "radar kr tm", "path": "/api/v1/radar/kr/%ED%95%9C%EA%B8%80.png", "status": 400, "code": "BAD_TM", "s": 0.008, "leak": null}
+{"label": "alerts kind", "path": "/api/v1/alerts?kind=%ED%95%9C%EA%B8%80", "status": 400, "code": "BAD_FILTER", "s": 0.004, "leak": null}
+{"label": "alerts history hex", "path": "/api/v1/alerts/history?hex=%ED%95%9C%EA%B8%80", "status": 400, "code": "BAD_HEX", "s": 0.01, "leak": null}
+{"label": "sigmets hazard", "path": "/api/v1/sigmets?hazard=%ED%95%9C%EA%B8%80", "status": 200, "code": null, "s": 0.008, "leak": null}
+{"label": "stats sigmet group", "path": "/api/v1/stats/sigmet?group=%ED%95%9C%EA%B8%80", "status": 400, "code": "BAD_FILTER", "s": 0.009, "leak": null}
+{"label": "aircraft detail param", "path": "/api/v1/aircraft?bbox=126,33,130,38&detail=%ED%95%9C%EA%B8%80", "status": 400, "code": "BAD_FILTER", "s": 0.009, "leak": null}
+{"label": "aircraft search q", "path": "/api/v1/aircraft/search?q=%E2%80%AE", "status": 400, "code": "BAD_QUERY", "s": 0.005, "leak": null}
+{"label": "ships search q", "path": "/api/v1/ships/search?q=%E2%80%AE", "status": 400, "code": "BAD_QUERY", "s": 0.009, "leak": null}
+{"label": "aircraft hex", "path": "/api/v1/aircraft/%E2%80%AE", "status": 400, "code": "BAD_HEX", "s": 0.008, "leak": null}
+{"label": "ships mmsi", "path": "/api/v1/ships/%E2%80%AE", "status": 400, "code": "BAD_MMSI", "s": 0.011, "leak": null}
+{"label": "sigmet id", "path": "/api/v1/sigmets/%E2%80%AE", "status": 404, "code": "NOT_FOUND", "s": 0.007, "leak": null}
+{"label": "airport wx", "path": "/api/v1/airports/%E2%80%AE/wx", "status": 400, "code": "BAD_ICAO", "s": 0.008, "leak": null}
+{"label": "radar kr tm", "path": "/api/v1/radar/kr/%E2%80%AE.png", "status": 400, "code": "BAD_TM", "s": 0.007, "leak": null}
+{"label": "alerts kind", "path": "/api/v1/alerts?kind=%E2%80%AE", "status": 400, "code": "BAD_FILTER", "s": 0.006, "leak": null}
+{"label": "alerts history hex", "path": "/api/v1/alerts/history?hex=%E2%80%AE", "status": 400, "code": "BAD_HEX", "s": 0.005, "leak": null}
+{"label": "sigmets hazard", "path": "/api/v1/sigmets?hazard=%E2%80%AE", "status": 200, "code": null, "s": 0.006, "leak": null}
+{"label": "stats sigmet group", "path": "/api/v1/stats/sigmet?group=%E2%80%AE", "status": 400, "code": "BAD_FILTER", "s": 0.012, "leak": null}
+{"label": "aircraft detail param", "path": "/api/v1/aircraft?bbox=126,33,130,38&detail=%E2%80%AE", "status": 400, "code": "BAD_FILTER", "s": 0.007, "leak": null}
+{"label": "aircraft search q", "path": "/api/v1/aircraft/search?q=%25", "status": 400, "code": "BAD_QUERY", "s": 0.009, "leak": null}
+{"label": "ships search q", "path": "/api/v1/ships/search?q=%25", "status": 400, "code": "BAD_QUERY", "s": 0.008, "leak": null}
+{"label": "aircraft hex", "path": "/api/v1/aircraft/%25", "status": 400, "code": "BAD_REQUEST", "s": 0.005, "leak": null}
+{"label": "ships mmsi", "path": "/api/v1/ships/%25", "status": 400, "code": "BAD_REQUEST", "s": 0.007, "leak": null}
+{"label": "sigmet id", "path": "/api/v1/sigmets/%25", "status": 400, "code": "BAD_REQUEST", "s": 0.004, "leak": null}
+{"label": "airport wx", "path": "/api/v1/airports/%25/wx", "status": 400, "code": "BAD_REQUEST", "s": 0.006, "leak": null}
+{"label": "radar kr tm", "path": "/api/v1/radar/kr/%25.png", "status": 400, "code": "BAD_REQUEST", "s": 0.006, "leak": null}
+{"label": "alerts kind", "path": "/api/v1/alerts?kind=%25", "status": 400, "code": "BAD_FILTER", "s": 0.007, "leak": null}
+{"label": "alerts history hex", "path": "/api/v1/alerts/history?hex=%25", "status": 400, "code": "BAD_HEX", "s": 0.008, "leak": null}
+{"label": "sigmets hazard", "path": "/api/v1/sigmets?hazard=%25", "status": 200, "code": null, "s": 0.008, "leak": null}
+{"label": "stats sigmet group", "path": "/api/v1/stats/sigmet?group=%25", "status": 400, "code": "BAD_FILTER", "s": 0.007, "leak": null}
+{"label": "aircraft detail param", "path": "/api/v1/aircraft?bbox=126,33,130,38&detail=%25", "status": 400, "code": "BAD_FILTER", "s": 0.009, "leak": null}
+{"label": "aircraft search q", "path": "/api/v1/aircraft/search?q=%27", "status": 400, "code": "BAD_QUERY", "s": 0.004, "leak": null}
+{"label": "ships search q", "path": "/api/v1/ships/search?q=%27", "status": 400, "code": "BAD_QUERY", "s": 0.009, "leak": null}
+{"label": "aircraft hex", "path": "/api/v1/aircraft/%27", "status": 400, "code": "BAD_HEX", "s": 0.009, "leak": null}
+{"label": "ships mmsi", "path": "/api/v1/ships/%27", "status": 400, "code": "BAD_MMSI", "s": 0.008, "leak": null}
+{"label": "sigmet id", "path": "/api/v1/sigmets/%27", "status": 404, "code": "NOT_FOUND", "s": 0.007, "leak": null}
+{"label": "airport wx", "path": "/api/v1/airports/%27/wx", "status": 400, "code": "BAD_ICAO", "s": 0.009, "leak": null}
+{"label": "radar kr tm", "path": "/api/v1/radar/kr/%27.png", "status": 400, "code": "BAD_TM", "s": 0.009, "leak": null}
+{"label": "alerts kind", "path": "/api/v1/alerts?kind=%27", "status": 400, "code": "BAD_FILTER", "s": 0.01, "leak": null}
+{"label": "alerts history hex", "path": "/api/v1/alerts/history?hex=%27", "status": 400, "code": "BAD_HEX", "s": 0.008, "leak": null}
+{"label": "sigmets hazard", "path": "/api/v1/sigmets?hazard=%27", "status": 200, "code": null, "s": 0.006, "leak": null}
+{"label": "stats sigmet group", "path": "/api/v1/stats/sigmet?group=%27", "status": 400, "code": "BAD_FILTER", "s": 0.009, "leak": null}
+{"label": "aircraft detail param", "path": "/api/v1/aircraft?bbox=126,33,130,38&detail=%27", "status": 400, "code": "BAD_FILTER", "s": 0.007, "leak": null}
+{"label": "aircraft search q", "path": "/api/v1/aircraft/search?q=", "status": 400, "code": "BAD_QUERY", "s": 0.009, "leak": null}
+{"label": "ships search q", "path": "/api/v1/ships/search?q=", "status": 400, "code": "BAD_QUERY", "s": 0.004, "leak": null}
+{"label": "aircraft hex", "path": "/api/v1/aircraft/-", "status": 400, "code": "BAD_HEX", "s": 0.008, "leak": null}
+{"label": "ships mmsi", "path": "/api/v1/ships/-", "status": 400, "code": "BAD_MMSI", "s": 0.006, "leak": null}
+{"label": "sigmet id", "path": "/api/v1/sigmets/-", "status": 404, "code": "NOT_FOUND", "s": 0.017, "leak": null}
+{"label": "airport wx", "path": "/api/v1/airports/-/wx", "status": 400, "code": "BAD_ICAO", "s": 0.008, "leak": null}
+{"label": "radar kr tm", "path": "/api/v1/radar/kr/-.png", "status": 400, "code": "BAD_TM", "s": 0.008, "leak": null}
+{"label": "alerts kind", "path": "/api/v1/alerts?kind=", "status": 200, "code": null, "s": 0.006, "leak": null}
+{"label": "alerts history hex", "path": "/api/v1/alerts/history?hex=", "status": 400, "code": "BAD_HEX", "s": 0.007, "leak": null}
+{"label": "sigmets hazard", "path": "/api/v1/sigmets?hazard=", "status": 200, "code": null, "s": 0.004, "leak": null}
+{"label": "stats sigmet group", "path": "/api/v1/stats/sigmet?group=", "status": 200, "code": null, "s": 0.012, "leak": null}
+{"label": "aircraft detail param", "path": "/api/v1/aircraft?bbox=126,33,130,38&detail=", "status": 200, "code": null, "s": 0.004, "leak": null}
+{"label": "sigmet id (real)", "path": "/api/v1/sigmets/ZSHA%3A4%3A1791920385", "status": 404, "code": "NOT_FOUND", "s": 0.009, "leak": null}
+{"label": "airspace category", "path": "/api/v1/airspace?category=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "status": 400, "code": "BAD_CATEGORY", "s": 0.004, "leak": null}
+{"label": "airspace category", "path": "/api/v1/airspace?category=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "status": 400, "code": "BAD_CATEGORY", "s": 0.007, "leak": null}
+{"label": "airspace category", "path": "/api/v1/airspace?category=%ED%95%9C%EA%B8%80", "status": 400, "code": "BAD_CATEGORY", "s": 0.008, "leak": null}
+{"label": "airspace category", "path": "/api/v1/airspace?category=%E2%80%AE", "status": 400, "code": "BAD_CATEGORY", "s": 0.006, "leak": null}
+{"label": "airspace category", "path": "/api/v1/airspace?category=%25", "status": 400, "code": "BAD_CATEGORY", "s": 0.007, "leak": null}
+{"label": "airspace category", "path": "/api/v1/airspace?category=%27", "status": 400, "code": "BAD_CATEGORY", "s": 0.008, "leak": null}
+{"label": "airspace category", "path": "/api/v1/airspace?category=", "status": 200, "code": null, "s": 0.01, "leak": null}
+{"label": "airspace category", "path": "/api/v1/airspace?category=prohibited", "status": 200, "code": null, "s": 0.008, "leak": null}
+{"label": "airspace category", "path": "/api/v1/airspace?category=prohibited%2Crestricted", "status": 200, "code": null, "s": 0.004, "leak": null}
+{"label": "airspace category", "path": "/api/v1/airspace?category=%2C", "status": 400, "code": "BAD_CATEGORY", "s": 0.008, "leak": null}
+{"label": "airspace category", "path": "/api/v1/airspace?category=%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%2C%", "status": 400, "code": "BAD_CATEGORY", "s": 0.009, "leak": null}
+{"label": "airspace category", "path": "/api/v1/airspace?category=a%00", "status": 400, "code": "BAD_CATEGORY", "s": 0.004, "leak": null}
+{"label": "airspace category", "path": "/api/v1/airspace?category=%09", "status": 400, "code": "BAD_CATEGORY", "s": 0.007, "leak": null}
+{"label": "airspace category", "path": "/api/v1/airspace?category=PROHIBITED", "status": 400, "code": "BAD_CATEGORY", "s": 0.007, "leak": null}
+{"label": "warnings history from", "path": "/api/v1/warnings/history?from=300000-01-01T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.009, "leak": null}
+{"label": "warnings history to", "path": "/api/v1/warnings/history?to=300000-01-01T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.007, "leak": null}
+{"label": "warnings history from", "path": "/api/v1/warnings/history?from=%2B300000-01-01T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.013, "leak": null}
+{"label": "warnings history to", "path": "/api/v1/warnings/history?to=%2B300000-01-01T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.009, "leak": null}
+{"label": "warnings history from", "path": "/api/v1/warnings/history?from=-999999999-01-01T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.008, "leak": null}
+{"label": "warnings history to", "path": "/api/v1/warnings/history?to=-999999999-01-01T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.006, "leak": null}
+{"label": "warnings history from", "path": "/api/v1/warnings/history?from=%2B1000000000-12-31T23%3A59%3A59Z", "status": 400, "code": "BAD_REQUEST", "s": 0.01, "leak": null}
+{"label": "warnings history to", "path": "/api/v1/warnings/history?to=%2B1000000000-12-31T23%3A59%3A59Z", "status": 400, "code": "BAD_REQUEST", "s": 0.006, "leak": null}
+{"label": "warnings history from", "path": "/api/v1/warnings/history?from=0000-01-01T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.007, "leak": null}
+{"label": "warnings history to", "path": "/api/v1/warnings/history?to=0000-01-01T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.006, "leak": null}
+{"label": "warnings history from", "path": "/api/v1/warnings/history?from=-0001-01-01T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.004, "leak": null}
+{"label": "warnings history to", "path": "/api/v1/warnings/history?to=-0001-01-01T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.005, "leak": null}
+{"label": "warnings history from", "path": "/api/v1/warnings/history?from=1970-01-01T00%3A00%3A00Z", "status": 400, "code": "BAD_RANGE", "s": 0.008, "leak": null}
+{"label": "warnings history to", "path": "/api/v1/warnings/history?to=1970-01-01T00%3A00%3A00Z", "status": 200, "code": null, "s": 0.009, "leak": null}
+{"label": "warnings history from", "path": "/api/v1/warnings/history?from=2026-13-40T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.007, "leak": null}
+{"label": "warnings history to", "path": "/api/v1/warnings/history?to=2026-13-40T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.008, "leak": null}
+{"label": "warnings history from", "path": "/api/v1/warnings/history?from=2026-10-01", "status": 400, "code": "BAD_REQUEST", "s": 0.007, "leak": null}
+{"label": "warnings history to", "path": "/api/v1/warnings/history?to=2026-10-01", "status": 400, "code": "BAD_REQUEST", "s": 0.005, "leak": null}
+{"label": "warnings history from", "path": "/api/v1/warnings/history?from=", "status": 200, "code": null, "s": 0.009, "leak": null}
+{"label": "warnings history to", "path": "/api/v1/warnings/history?to=", "status": 200, "code": null, "s": 0.01, "leak": null}
+{"label": "warnings history limit", "path": "/api/v1/warnings/history?limit=-1", "status": 200, "code": null, "s": 0.008, "leak": null}
+{"label": "alert id", "path": "/api/v1/alerts/-1", "status": 400, "code": "BAD_ID", "s": 0.008, "leak": null}
+{"label": "warnings history limit", "path": "/api/v1/warnings/history?limit=0", "status": 200, "code": null, "s": 0.009, "leak": null}
+{"label": "alert id", "path": "/api/v1/alerts/0", "status": 404, "code": "NOT_FOUND", "s": 0.011, "leak": null}
+{"label": "warnings history limit", "path": "/api/v1/warnings/history?limit=NaN", "status": 400, "code": "BAD_REQUEST", "s": 0.008, "leak": null}
+{"label": "alert id", "path": "/api/v1/alerts/NaN", "status": 400, "code": "BAD_ID", "s": 0.01, "leak": null}
+{"label": "warnings history limit", "path": "/api/v1/warnings/history?limit=Infinity", "status": 400, "code": "BAD_REQUEST", "s": 0.006, "leak": null}
+{"label": "alert id", "path": "/api/v1/alerts/Infinity", "status": 400, "code": "BAD_ID", "s": 0.005, "leak": null}
+{"label": "warnings history limit", "path": "/api/v1/warnings/history?limit=1e309", "status": 400, "code": "BAD_REQUEST", "s": 0.008, "leak": null}
+{"label": "alert id", "path": "/api/v1/alerts/1e309", "status": 400, "code": "BAD_ID", "s": 0.008, "leak": null}
+{"label": "warnings history limit", "path": "/api/v1/warnings/history?limit=99999999999999999999", "status": 400, "code": "BAD_REQUEST", "s": 0.008, "leak": null}
+{"label": "alert id", "path": "/api/v1/alerts/99999999999999999999", "status": 400, "code": "BAD_ID", "s": 0.005, "leak": null}
+{"label": "warnings history limit", "path": "/api/v1/warnings/history?limit=2147483648", "status": 400, "code": "BAD_REQUEST", "s": 0.011, "leak": null}
+{"label": "alert id", "path": "/api/v1/alerts/2147483648", "status": 404, "code": "NOT_FOUND", "s": 0.01, "leak": null}
+{"label": "warnings history limit", "path": "/api/v1/warnings/history?limit=1.5", "status": 400, "code": "BAD_REQUEST", "s": 0.007, "leak": null}
+{"label": "alert id", "path": "/api/v1/alerts/1.5", "status": 400, "code": "BAD_ID", "s": 0.006, "leak": null}
+{"label": "warnings history limit", "path": "/api/v1/warnings/history?limit=", "status": 200, "code": null, "s": 0.008, "leak": null}
+{"label": "alert id", "path": "/api/v1/alerts/-", "status": 400, "code": "BAD_ID", "s": 0.008, "leak": null}
+{"label": "warnings history zone", "path": "/api/v1/warnings/history?zone=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "status": 400, "code": "BAD_ZONE", "s": 0.007, "leak": null}
+{"label": "warnings history zone", "path": "/api/v1/warnings/history?zone=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "status": 400, "code": "BAD_ZONE", "s": 0.009, "leak": null}
+{"label": "warnings history zone", "path": "/api/v1/warnings/history?zone=%ED%95%9C%EA%B8%80", "status": 400, "code": "BAD_ZONE", "s": 0.009, "leak": null}
+{"label": "warnings history zone", "path": "/api/v1/warnings/history?zone=%E2%80%AE", "status": 400, "code": "BAD_ZONE", "s": 0.007, "leak": null}
+{"label": "warnings history zone", "path": "/api/v1/warnings/history?zone=%25", "status": 400, "code": "BAD_ZONE", "s": 0.007, "leak": null}
+{"label": "warnings history zone", "path": "/api/v1/warnings/history?zone=%27", "status": 400, "code": "BAD_ZONE", "s": 0.006, "leak": null}
+{"label": "warnings history zone", "path": "/api/v1/warnings/history?zone=", "status": 400, "code": "BAD_ZONE", "s": 0.008, "leak": null}
+{"label": "warnings history zone", "path": "/api/v1/warnings/history?zone=S1312020", "status": 200, "code": null, "s": 0.009, "leak": null}
+{"label": "warnings history zone", "path": "/api/v1/warnings/history?zone=L1100100", "status": 200, "code": null, "s": 0.006, "leak": null}
+{"label": "warnings history zone", "path": "/api/v1/warnings/history?zone=S131202%00", "status": 400, "code": "BAD_ZONE", "s": 0.008, "leak": null}
+{"label": "warnings history zone", "path": "/api/v1/warnings/history?zone=s1312020", "status": 400, "code": "BAD_ZONE", "s": 0.006, "leak": null}
+{"label": "watch aircraft", "path": "/api/v1/watch?aircraft=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "status": 400, "code": "BAD_HEX", "s": 0.01, "leak": null}
+{"label": "watch aircraft", "path": "/api/v1/watch?aircraft=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "status": 400, "code": "BAD_HEX", "s": 0.005, "leak": null}
+{"label": "watch aircraft", "path": "/api/v1/watch?aircraft=%ED%95%9C%EA%B8%80", "status": 400, "code": "BAD_HEX", "s": 0.006, "leak": null}
+{"label": "watch aircraft", "path": "/api/v1/watch?aircraft=%E2%80%AE", "status": 400, "code": "BAD_HEX", "s": 0.006, "leak": null}
+{"label": "watch aircraft", "path": "/api/v1/watch?aircraft=%25", "status": 400, "code": "BAD_HEX", "s": 0.013, "leak": null}
+{"label": "watch aircraft", "path": "/api/v1/watch?aircraft=%27", "status": 400, "code": "BAD_HEX", "s": 0.007, "leak": null}
+{"label": "watch aircraft", "path": "/api/v1/watch?aircraft=", "status": 200, "code": null, "s": 0.009, "leak": null}
+{"label": "watch aircraft", "path": "/api/v1/watch?aircraft=71be01", "status": 200, "code": null, "s": 0.009, "leak": null}
+{"label": "watch aircraft", "path": "/api/v1/watch?aircraft=71be01%2C71be01%2C71be01%2C71be01%2C71be01%2C71be01%2C71be01%2C71be01%2C71be01%2C71be01%2C71be01%2C71be01%2C71be01%2C71be01%2C71be01%2C71be01%2C71be01%2C71be01%2C71be01%2C71be01%2C71be01%2C71be01%2C71be01%2C71be01%2C71be01%2C71be01%2C71be01%2C71be01%2C71be01%2C71be01%2C71be01%", "status": 400, "code": "TOO_MANY_TARGETS", "s": 0.004, "leak": null}
+{"label": "watch aircraft", "path": "/api/v1/watch?aircraft=%2C%2C%2C", "status": 200, "code": null, "s": 0.007, "leak": null}
+{"label": "watch aircraft", "path": "/api/v1/watch?aircraft=zzzzzz", "status": 400, "code": "BAD_HEX", "s": 0.005, "leak": null}
+{"label": "watch ships", "path": "/api/v1/watch?ships=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "status": 400, "code": "BAD_MMSI", "s": 0.004, "leak": null}
+{"label": "watch ships", "path": "/api/v1/watch?ships=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "status": 400, "code": "BAD_MMSI", "s": 0.008, "leak": null}
+{"label": "watch ships", "path": "/api/v1/watch?ships=%ED%95%9C%EA%B8%80", "status": 400, "code": "BAD_MMSI", "s": 0.009, "leak": null}
+{"label": "watch ships", "path": "/api/v1/watch?ships=%E2%80%AE", "status": 400, "code": "BAD_MMSI", "s": 0.009, "leak": null}
+{"label": "watch ships", "path": "/api/v1/watch?ships=%25", "status": 400, "code": "BAD_MMSI", "s": 0.008, "leak": null}
+{"label": "watch ships", "path": "/api/v1/watch?ships=%27", "status": 400, "code": "BAD_MMSI", "s": 0.007, "leak": null}
+{"label": "watch ships", "path": "/api/v1/watch?ships=", "status": 200, "code": null, "s": 0.008, "leak": null}
+{"label": "watch ships", "path": "/api/v1/watch?ships=440123450", "status": 200, "code": null, "s": 0.007, "leak": null}
+{"label": "watch ships", "path": "/api/v1/watch?ships=440123450%2C440123450%2C440123450%2C440123450%2C440123450%2C440123450%2C440123450%2C440123450%2C440123450%2C440123450%2C440123450%2C440123450%2C440123450%2C440123450%2C440123450%2C440123450%2C440123450%2C440123450%2C440123450%2C440123450%2C440123450%2C440123450%2C440123450%2C4401", "status": 400, "code": "TOO_MANY_TARGETS", "s": 0.005, "leak": null}
+{"label": "watch ships", "path": "/api/v1/watch?ships=%D9%A4%D9%A4%D9%A0%D9%A1%D9%A2%D9%A3%D9%A4%D9%A5%D9%A0", "status": 400, "code": "BAD_MMSI", "s": 0.007, "leak": null}
+{"label": "watch airports", "path": "/api/v1/watch?airports=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "status": 400, "code": "BAD_ICAO", "s": 0.009, "leak": null}
+{"label": "watch airports", "path": "/api/v1/watch?airports=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "status": 400, "code": "BAD_ICAO", "s": 0.008, "leak": null}
+{"label": "watch airports", "path": "/api/v1/watch?airports=%ED%95%9C%EA%B8%80", "status": 400, "code": "BAD_ICAO", "s": 0.006, "leak": null}
+{"label": "watch airports", "path": "/api/v1/watch?airports=%E2%80%AE", "status": 400, "code": "BAD_ICAO", "s": 0.009, "leak": null}
+{"label": "watch airports", "path": "/api/v1/watch?airports=%25", "status": 400, "code": "BAD_ICAO", "s": 0.009, "leak": null}
+{"label": "watch airports", "path": "/api/v1/watch?airports=%27", "status": 400, "code": "BAD_ICAO", "s": 0.005, "leak": null}
+{"label": "watch airports", "path": "/api/v1/watch?airports=", "status": 200, "code": null, "s": 0.006, "leak": null}
+{"label": "watch airports", "path": "/api/v1/watch?airports=RKSI", "status": 200, "code": null, "s": 0.01, "leak": null}
+{"label": "watch airports", "path": "/api/v1/watch?airports=RKSI%2CRKSI%2CRKSI%2CRKSI%2CRKSI%2CRKSI%2CRKSI%2CRKSI%2CRKSI%2CRKSI%2CRKSI%2CRKSI%2CRKSI%2CRKSI%2CRKSI%2CRKSI%2CRKSI%2CRKSI%2CRKSI%2CRKSI%2CRKSI%2CRKSI%2CRKSI%2CRKSI%2CRKSI%2CRKSI%2CRKSI%2CRKSI%2CRKSI%2CRKSI%2CRKSI%2CRKSI%2CRKSI%2CRKSI%2CRKSI%2CRKSI%2CRKSI%2CRKSI%2CRKSI%2CRKSI", "status": 400, "code": "TOO_MANY_TARGETS", "s": 0.034, "leak": null}
+{"label": "watch airports", "path": "/api/v1/watch?airports=%EF%BC%B2%EF%BC%AB%EF%BC%B3%EF%BC%A9", "status": 400, "code": "BAD_ICAO", "s": 0.009, "leak": null}
+{"label": "alert id path", "path": "/api/v1/alerts/999999999999999999", "status": 404, "code": "NOT_FOUND", "s": 0.011, "leak": null}
+{"label": "alert id path", "path": "/api/v1/alerts/9999999999999999999", "status": 400, "code": "BAD_ID", "s": 0.009, "leak": null}
+{"label": "alert id path", "path": "/api/v1/alerts/0", "status": 404, "code": "NOT_FOUND", "s": 0.012, "leak": null}
+{"label": "alert id path", "path": "/api/v1/alerts/-1", "status": 400, "code": "BAD_ID", "s": 0.005, "leak": null}
+{"label": "alert id path", "path": "/api/v1/alerts/1e3", "status": 400, "code": "BAD_ID", "s": 0.005, "leak": null}
+{"label": "alert id path", "path": "/api/v1/alerts/%2500", "status": 400, "code": "BAD_REQUEST", "s": 0.006, "leak": null}
+{"label": "alert id path", "path": "/api/v1/alerts/%D9%A1%D9%A2%D9%A3", "status": 400, "code": "BAD_ID", "s": 0.008, "leak": null}
+{"label": "alert id path", "path": "/api/v1/alerts/0001", "status": 404, "code": "NOT_FOUND", "s": 0.012, "leak": null}
+{"label": "alert id path", "path": "/api/v1/alerts/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "status": 400, "code": "BAD_ID", "s": 0.008, "leak": null}
+{"label": "/api/v1/ships/coverage junk param", "path": "/api/v1/ships/coverage?x=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "status": 200, "code": null, "s": 0.007, "leak": null}
+{"label": "/api/v1/ships/coverage junk param", "path": "/api/v1/ships/coverage?x=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "status": 414, "code": "URI_TOO_LONG", "s": 0.004, "leak": null}
+{"label": "/api/v1/ships/coverage junk param", "path": "/api/v1/ships/coverage?x=%ED%95%9C%EA%B8%80&bbox=%ED%95%9C%EA%B8%80", "status": 200, "code": null, "s": 0.004, "leak": null}
+{"label": "/api/v1/ships/coverage junk param", "path": "/api/v1/ships/coverage?x=1e309&bbox=1e309", "status": 200, "code": null, "s": 0.007, "leak": null}
+{"label": "/api/v1/ships/coverage dup param", "path": "/api/v1/ships/coverage?x=1&x=2", "status": 200, "code": null, "s": 0.006, "leak": null}
+{"label": "/api/v1/traffic/grid junk param", "path": "/api/v1/traffic/grid?x=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "status": 200, "code": null, "s": 0.009, "leak": null}
+{"label": "/api/v1/traffic/grid junk param", "path": "/api/v1/traffic/grid?x=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "status": 414, "code": "URI_TOO_LONG", "s": 0.003, "leak": null}
+{"label": "/api/v1/traffic/grid junk param", "path": "/api/v1/traffic/grid?x=%ED%95%9C%EA%B8%80&bbox=%ED%95%9C%EA%B8%80", "status": 200, "code": null, "s": 0.01, "leak": null}
+{"label": "/api/v1/traffic/grid junk param", "path": "/api/v1/traffic/grid?x=1e309&bbox=1e309", "status": 200, "code": null, "s": 0.006, "leak": null}
+{"label": "/api/v1/traffic/grid dup param", "path": "/api/v1/traffic/grid?x=1&x=2", "status": 200, "code": null, "s": 0.005, "leak": null}
+{"label": "/api/v1/radar/frames junk param", "path": "/api/v1/radar/frames?x=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "status": 200, "code": null, "s": 0.004, "leak": null}
+{"label": "/api/v1/radar/frames junk param", "path": "/api/v1/radar/frames?x=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "status": 414, "code": "URI_TOO_LONG", "s": 0.004, "leak": null}
+{"label": "/api/v1/radar/frames junk param", "path": "/api/v1/radar/frames?x=%ED%95%9C%EA%B8%80&bbox=%ED%95%9C%EA%B8%80", "status": 200, "code": null, "s": 0.004, "leak": null}
+{"label": "/api/v1/radar/frames junk param", "path": "/api/v1/radar/frames?x=1e309&bbox=1e309", "status": 200, "code": null, "s": 0.007, "leak": null}
+{"label": "/api/v1/radar/frames dup param", "path": "/api/v1/radar/frames?x=1&x=2", "status": 200, "code": null, "s": 0.004, "leak": null}
+{"label": "/api/v1/radar/kr junk param", "path": "/api/v1/radar/kr?x=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "status": 200, "code": null, "s": 0.008, "leak": null}
+{"label": "/api/v1/radar/kr junk param", "path": "/api/v1/radar/kr?x=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "status": 414, "code": "URI_TOO_LONG", "s": 0.005, "leak": null}
+{"label": "/api/v1/radar/kr junk param", "path": "/api/v1/radar/kr?x=%ED%95%9C%EA%B8%80&bbox=%ED%95%9C%EA%B8%80", "status": 200, "code": null, "s": 0.007, "leak": null}
+{"label": "/api/v1/radar/kr junk param", "path": "/api/v1/radar/kr?x=1e309&bbox=1e309", "status": 200, "code": null, "s": 0.01, "leak": null}
+{"label": "/api/v1/radar/kr dup param", "path": "/api/v1/radar/kr?x=1&x=2", "status": 200, "code": null, "s": 0.007, "leak": null}
+{"label": "/api/v1/warnings junk param", "path": "/api/v1/warnings?x=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "status": 200, "code": null, "s": 0.004, "leak": null}
+{"label": "/api/v1/warnings junk param", "path": "/api/v1/warnings?x=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "status": 414, "code": "URI_TOO_LONG", "s": 0.005, "leak": null}
+{"label": "/api/v1/warnings junk param", "path": "/api/v1/warnings?x=%ED%95%9C%EA%B8%80&bbox=%ED%95%9C%EA%B8%80", "status": 200, "code": null, "s": 0.004, "leak": null}
+{"label": "/api/v1/warnings junk param", "path": "/api/v1/warnings?x=1e309&bbox=1e309", "status": 200, "code": null, "s": 0.01, "leak": null}
+{"label": "/api/v1/warnings dup param", "path": "/api/v1/warnings?x=1&x=2", "status": 200, "code": null, "s": 0.007, "leak": null}
+{"label": "/api/v1/status junk param", "path": "/api/v1/status?x=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "status": 200, "code": null, "s": 0.008, "leak": null}
+{"label": "/api/v1/status junk param", "path": "/api/v1/status?x=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "status": 414, "code": "URI_TOO_LONG", "s": 0.004, "leak": null}
+{"label": "/api/v1/status junk param", "path": "/api/v1/status?x=%ED%95%9C%EA%B8%80&bbox=%ED%95%9C%EA%B8%80", "status": 200, "code": null, "s": 0.004, "leak": null}
+{"label": "/api/v1/status junk param", "path": "/api/v1/status?x=1e309&bbox=1e309", "status": 200, "code": null, "s": 0.005, "leak": null}
+{"label": "/api/v1/status dup param", "path": "/api/v1/status?x=1&x=2", "status": 200, "code": null, "s": 0.007, "leak": null}
+{"label": "/api/v1/airspace junk param", "path": "/api/v1/airspace?x=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "status": 200, "code": null, "s": 0.006, "leak": null}
+{"label": "/api/v1/airspace junk param", "path": "/api/v1/airspace?x=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "status": 414, "code": "URI_TOO_LONG", "s": 0.004, "leak": null}
+{"label": "/api/v1/airspace junk param", "path": "/api/v1/airspace?x=%ED%95%9C%EA%B8%80&bbox=%ED%95%9C%EA%B8%80", "status": 200, "code": null, "s": 0.007, "leak": null}
+{"label": "/api/v1/airspace junk param", "path": "/api/v1/airspace?x=1e309&bbox=1e309", "status": 200, "code": null, "s": 0.008, "leak": null}
+{"label": "/api/v1/airspace dup param", "path": "/api/v1/airspace?x=1&x=2", "status": 200, "code": null, "s": 0.004, "leak": null}
+{"label": "/api/v1/watch junk param", "path": "/api/v1/watch?x=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "status": 200, "code": null, "s": 0.003, "leak": null}
+{"label": "/api/v1/watch junk param", "path": "/api/v1/watch?x=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "status": 414, "code": "URI_TOO_LONG", "s": 0.003, "leak": null}
+{"label": "/api/v1/watch junk param", "path": "/api/v1/watch?x=%ED%95%9C%EA%B8%80&bbox=%ED%95%9C%EA%B8%80", "status": 200, "code": null, "s": 0.007, "leak": null}
+{"label": "/api/v1/watch junk param", "path": "/api/v1/watch?x=1e309&bbox=1e309", "status": 200, "code": null, "s": 0.009, "leak": null}
+{"label": "/api/v1/watch dup param", "path": "/api/v1/watch?x=1&x=2", "status": 200, "code": null, "s": 0.007, "leak": null}
+{"label": "ops runs since", "path": "/api/v1/ops/runs?since=300000-01-01T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.007, "leak": null}
+{"label": "ops logs since", "path": "/api/v1/ops/logs?since=300000-01-01T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.011, "leak": null}
+{"label": "ops logs until", "path": "/api/v1/ops/logs?until=300000-01-01T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.008, "leak": null}
+{"label": "ops logs groups since", "path": "/api/v1/ops/logs/groups?since=300000-01-01T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.01, "leak": null}
+{"label": "ops runs since", "path": "/api/v1/ops/runs?since=%2B300000-01-01T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.013, "leak": null}
+{"label": "ops logs since", "path": "/api/v1/ops/logs?since=%2B300000-01-01T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.011, "leak": null}
+{"label": "ops logs until", "path": "/api/v1/ops/logs?until=%2B300000-01-01T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.014, "leak": null}
+{"label": "ops logs groups since", "path": "/api/v1/ops/logs/groups?since=%2B300000-01-01T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.016, "leak": null}
+{"label": "ops runs since", "path": "/api/v1/ops/runs?since=-999999999-01-01T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.012, "leak": null}
+{"label": "ops logs since", "path": "/api/v1/ops/logs?since=-999999999-01-01T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.006, "leak": null}
+{"label": "ops logs until", "path": "/api/v1/ops/logs?until=-999999999-01-01T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.013, "leak": null}
+{"label": "ops logs groups since", "path": "/api/v1/ops/logs/groups?since=-999999999-01-01T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.005, "leak": null}
+{"label": "ops runs since", "path": "/api/v1/ops/runs?since=%2B1000000000-12-31T23%3A59%3A59Z", "status": 400, "code": "BAD_REQUEST", "s": 0.006, "leak": null}
+{"label": "ops logs since", "path": "/api/v1/ops/logs?since=%2B1000000000-12-31T23%3A59%3A59Z", "status": 400, "code": "BAD_REQUEST", "s": 0.015, "leak": null}
+{"label": "ops logs until", "path": "/api/v1/ops/logs?until=%2B1000000000-12-31T23%3A59%3A59Z", "status": 400, "code": "BAD_REQUEST", "s": 0.005, "leak": null}
+{"label": "ops logs groups since", "path": "/api/v1/ops/logs/groups?since=%2B1000000000-12-31T23%3A59%3A59Z", "status": 400, "code": "BAD_REQUEST", "s": 0.013, "leak": null}
+{"label": "ops runs since", "path": "/api/v1/ops/runs?since=0000-01-01T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.014, "leak": null}
+{"label": "ops logs since", "path": "/api/v1/ops/logs?since=0000-01-01T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.014, "leak": null}
+{"label": "ops logs until", "path": "/api/v1/ops/logs?until=0000-01-01T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.014, "leak": null}
+{"label": "ops logs groups since", "path": "/api/v1/ops/logs/groups?since=0000-01-01T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.012, "leak": null}
+{"label": "ops runs since", "path": "/api/v1/ops/runs?since=-0001-01-01T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.007, "leak": null}
+{"label": "ops logs since", "path": "/api/v1/ops/logs?since=-0001-01-01T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.014, "leak": null}
+{"label": "ops logs until", "path": "/api/v1/ops/logs?until=-0001-01-01T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.011, "leak": null}
+{"label": "ops logs groups since", "path": "/api/v1/ops/logs/groups?since=-0001-01-01T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.014, "leak": null}
+{"label": "ops runs since", "path": "/api/v1/ops/runs?since=1970-01-01T00%3A00%3A00Z", "status": 200, "code": null, "s": 0.021, "leak": null}
+{"label": "ops logs since", "path": "/api/v1/ops/logs?since=1970-01-01T00%3A00%3A00Z", "status": 200, "code": null, "s": 0.016, "leak": null}
+{"label": "ops logs until", "path": "/api/v1/ops/logs?until=1970-01-01T00%3A00%3A00Z", "status": 200, "code": null, "s": 0.014, "leak": null}
+{"label": "ops logs groups since", "path": "/api/v1/ops/logs/groups?since=1970-01-01T00%3A00%3A00Z", "status": 200, "code": null, "s": 0.01, "leak": null}
+{"label": "ops runs since", "path": "/api/v1/ops/runs?since=2026-13-40T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.01, "leak": null}
+{"label": "ops logs since", "path": "/api/v1/ops/logs?since=2026-13-40T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.007, "leak": null}
+{"label": "ops logs until", "path": "/api/v1/ops/logs?until=2026-13-40T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.016, "leak": null}
+{"label": "ops logs groups since", "path": "/api/v1/ops/logs/groups?since=2026-13-40T00%3A00%3A00Z", "status": 400, "code": "BAD_REQUEST", "s": 0.013, "leak": null}
+{"label": "ops runs since", "path": "/api/v1/ops/runs?since=2026-10-01", "status": 400, "code": "BAD_REQUEST", "s": 0.013, "leak": null}
+{"label": "ops logs since", "path": "/api/v1/ops/logs?since=2026-10-01", "status": 400, "code": "BAD_REQUEST", "s": 0.012, "leak": null}
+{"label": "ops logs until", "path": "/api/v1/ops/logs?until=2026-10-01", "status": 400, "code": "BAD_REQUEST", "s": 0.013, "leak": null}
+{"label": "ops logs groups since", "path": "/api/v1/ops/logs/groups?since=2026-10-01", "status": 400, "code": "BAD_REQUEST", "s": 0.011, "leak": null}
+{"label": "ops runs since", "path": "/api/v1/ops/runs?since=", "status": 200, "code": null, "s": 0.013, "leak": null}
+{"label": "ops logs since", "path": "/api/v1/ops/logs?since=", "status": 200, "code": null, "s": 0.008, "leak": null}
+{"label": "ops logs until", "path": "/api/v1/ops/logs?until=", "status": 200, "code": null, "s": 0.015, "leak": null}
+{"label": "ops logs groups since", "path": "/api/v1/ops/logs/groups?since=", "status": 200, "code": null, "s": 0.016, "leak": null}
+{"label": "ops runs limit", "path": "/api/v1/ops/runs?limit=-1", "status": 200, "code": null, "s": 0.015, "leak": null}
+{"label": "ops runs cursor", "path": "/api/v1/ops/runs?cursor=-1", "status": 200, "code": null, "s": 0.018, "leak": null}
+{"label": "ops quality days", "path": "/api/v1/ops/quality?days=-1", "status": 200, "code": null, "s": 0.012, "leak": null}
+{"label": "ops audit cursor", "path": "/api/v1/ops/audit?cursor=-1", "status": 200, "code": null, "s": 0.006, "leak": null}
+{"label": "ops audit limit", "path": "/api/v1/ops/audit?limit=-1", "status": 200, "code": null, "s": 0.014, "leak": null}
+{"label": "ops logs limit", "path": "/api/v1/ops/logs?limit=-1", "status": 200, "code": null, "s": 0.014, "leak": null}
+{"label": "ops runs limit", "path": "/api/v1/ops/runs?limit=0", "status": 200, "code": null, "s": 0.015, "leak": null}
+{"label": "ops runs cursor", "path": "/api/v1/ops/runs?cursor=0", "status": 200, "code": null, "s": 0.019, "leak": null}
+{"label": "ops quality days", "path": "/api/v1/ops/quality?days=0", "status": 200, "code": null, "s": 0.013, "leak": null}
+{"label": "ops audit cursor", "path": "/api/v1/ops/audit?cursor=0", "status": 200, "code": null, "s": 0.005, "leak": null}
+{"label": "ops audit limit", "path": "/api/v1/ops/audit?limit=0", "status": 200, "code": null, "s": 0.013, "leak": null}
+{"label": "ops logs limit", "path": "/api/v1/ops/logs?limit=0", "status": 200, "code": null, "s": 0.018, "leak": null}
+{"label": "ops runs limit", "path": "/api/v1/ops/runs?limit=NaN", "status": 400, "code": "BAD_REQUEST", "s": 0.008, "leak": null}
+{"label": "ops runs cursor", "path": "/api/v1/ops/runs?cursor=NaN", "status": 400, "code": "BAD_REQUEST", "s": 0.014, "leak": null}
+{"label": "ops quality days", "path": "/api/v1/ops/quality?days=NaN", "status": 400, "code": "BAD_REQUEST", "s": 0.014, "leak": null}
+{"label": "ops audit cursor", "path": "/api/v1/ops/audit?cursor=NaN", "status": 400, "code": "BAD_REQUEST", "s": 0.012, "leak": null}
+{"label": "ops audit limit", "path": "/api/v1/ops/audit?limit=NaN", "status": 400, "code": "BAD_REQUEST", "s": 0.01, "leak": null}
+{"label": "ops logs limit", "path": "/api/v1/ops/logs?limit=NaN", "status": 400, "code": "BAD_REQUEST", "s": 0.012, "leak": null}
+{"label": "ops runs limit", "path": "/api/v1/ops/runs?limit=Infinity", "status": 400, "code": "BAD_REQUEST", "s": 0.01, "leak": null}
+{"label": "ops runs cursor", "path": "/api/v1/ops/runs?cursor=Infinity", "status": 400, "code": "BAD_REQUEST", "s": 0.039, "leak": null}
+{"label": "ops quality days", "path": "/api/v1/ops/quality?days=Infinity", "status": 400, "code": "BAD_REQUEST", "s": 0.007, "leak": null}
+{"label": "ops audit cursor", "path": "/api/v1/ops/audit?cursor=Infinity", "status": 400, "code": "BAD_REQUEST", "s": 0.007, "leak": null}
+{"label": "ops audit limit", "path": "/api/v1/ops/audit?limit=Infinity", "status": 400, "code": "BAD_REQUEST", "s": 0.012, "leak": null}
+{"label": "ops logs limit", "path": "/api/v1/ops/logs?limit=Infinity", "status": 400, "code": "BAD_REQUEST", "s": 0.014, "leak": null}
+{"label": "ops runs limit", "path": "/api/v1/ops/runs?limit=1e309", "status": 400, "code": "BAD_REQUEST", "s": 0.016, "leak": null}
+{"label": "ops runs cursor", "path": "/api/v1/ops/runs?cursor=1e309", "status": 400, "code": "BAD_REQUEST", "s": 0.014, "leak": null}
+{"label": "ops quality days", "path": "/api/v1/ops/quality?days=1e309", "status": 400, "code": "BAD_REQUEST", "s": 0.01, "leak": null}
+{"label": "ops audit cursor", "path": "/api/v1/ops/audit?cursor=1e309", "status": 400, "code": "BAD_REQUEST", "s": 0.012, "leak": null}
+{"label": "ops audit limit", "path": "/api/v1/ops/audit?limit=1e309", "status": 400, "code": "BAD_REQUEST", "s": 0.014, "leak": null}
+{"label": "ops logs limit", "path": "/api/v1/ops/logs?limit=1e309", "status": 400, "code": "BAD_REQUEST", "s": 0.007, "leak": null}
+{"label": "ops runs limit", "path": "/api/v1/ops/runs?limit=99999999999999999999", "status": 400, "code": "BAD_REQUEST", "s": 0.012, "leak": null}
+{"label": "ops runs cursor", "path": "/api/v1/ops/runs?cursor=99999999999999999999", "status": 400, "code": "BAD_REQUEST", "s": 0.011, "leak": null}
+{"label": "ops quality days", "path": "/api/v1/ops/quality?days=99999999999999999999", "status": 400, "code": "BAD_REQUEST", "s": 0.013, "leak": null}
+{"label": "ops audit cursor", "path": "/api/v1/ops/audit?cursor=99999999999999999999", "status": 400, "code": "BAD_REQUEST", "s": 0.011, "leak": null}
+{"label": "ops audit limit", "path": "/api/v1/ops/audit?limit=99999999999999999999", "status": 400, "code": "BAD_REQUEST", "s": 0.008, "leak": null}
+{"label": "ops logs limit", "path": "/api/v1/ops/logs?limit=99999999999999999999", "status": 400, "code": "BAD_REQUEST", "s": 0.013, "leak": null}
+{"label": "ops runs limit", "path": "/api/v1/ops/runs?limit=2147483648", "status": 400, "code": "BAD_REQUEST", "s": 0.013, "leak": null}
+{"label": "ops runs cursor", "path": "/api/v1/ops/runs?cursor=2147483648", "status": 200, "code": null, "s": 0.016, "leak": null}
+{"label": "ops quality days", "path": "/api/v1/ops/quality?days=2147483648", "status": 400, "code": "BAD_REQUEST", "s": 0.015, "leak": null}
+{"label": "ops audit cursor", "path": "/api/v1/ops/audit?cursor=2147483648", "status": 200, "code": null, "s": 0.014, "leak": null}
+{"label": "ops audit limit", "path": "/api/v1/ops/audit?limit=2147483648", "status": 400, "code": "BAD_REQUEST", "s": 0.012, "leak": null}
+{"label": "ops logs limit", "path": "/api/v1/ops/logs?limit=2147483648", "status": 400, "code": "BAD_REQUEST", "s": 0.014, "leak": null}
+{"label": "ops runs limit", "path": "/api/v1/ops/runs?limit=1.5", "status": 400, "code": "BAD_REQUEST", "s": 0.015, "leak": null}
+{"label": "ops runs cursor", "path": "/api/v1/ops/runs?cursor=1.5", "status": 400, "code": "BAD_REQUEST", "s": 0.011, "leak": null}
+{"label": "ops quality days", "path": "/api/v1/ops/quality?days=1.5", "status": 400, "code": "BAD_REQUEST", "s": 0.012, "leak": null}
+{"label": "ops audit cursor", "path": "/api/v1/ops/audit?cursor=1.5", "status": 400, "code": "BAD_REQUEST", "s": 0.013, "leak": null}
+{"label": "ops audit limit", "path": "/api/v1/ops/audit?limit=1.5", "status": 400, "code": "BAD_REQUEST", "s": 0.007, "leak": null}
+{"label": "ops logs limit", "path": "/api/v1/ops/logs?limit=1.5", "status": 400, "code": "BAD_REQUEST", "s": 0.009, "leak": null}
+{"label": "ops runs limit", "path": "/api/v1/ops/runs?limit=", "status": 200, "code": null, "s": 0.015, "leak": null}
+{"label": "ops runs cursor", "path": "/api/v1/ops/runs?cursor=", "status": 200, "code": null, "s": 0.016, "leak": null}
+{"label": "ops quality days", "path": "/api/v1/ops/quality?days=", "status": 200, "code": null, "s": 0.007, "leak": null}
+{"label": "ops audit cursor", "path": "/api/v1/ops/audit?cursor=", "status": 200, "code": null, "s": 0.007, "leak": null}
+{"label": "ops audit limit", "path": "/api/v1/ops/audit?limit=", "status": 200, "code": null, "s": 0.013, "leak": null}
+{"label": "ops logs limit", "path": "/api/v1/ops/logs?limit=", "status": 200, "code": null, "s": 0.008, "leak": null}
+{"label": "ops runs job", "path": "/api/v1/ops/runs?job=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "status": 200, "code": null, "s": 0.017, "leak": null}
+{"label": "ops runs provider", "path": "/api/v1/ops/runs?provider=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "status": 200, "code": null, "s": 0.008, "leak": null}
+{"label": "ops runs status", "path": "/api/v1/ops/runs?status=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "status": 200, "code": null, "s": 0.016, "leak": null}
+{"label": "ops runs resolved", "path": "/api/v1/ops/runs?resolved=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "status": 400, "code": "BAD_RESOLVED", "s": 0.01, "leak": null}
+{"label": "ops logs q", "path": "/api/v1/ops/logs?q=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "status": 400, "code": "BAD_QUERY", "s": 0.005, "leak": null}
+{"label": "ops logs rid", "path": "/api/v1/ops/logs?rid=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "status": 400, "code": "BAD_RID", "s": 0.011, "leak": null}
+{"label": "ops logs fp", "path": "/api/v1/ops/logs?fp=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "status": 400, "code": "BAD_FP", "s": 0.015, "leak": null}
+{"label": "ops logs level", "path": "/api/v1/ops/logs?level=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "status": 400, "code": "BAD_LEVEL", "s": 0.007, "leak": null}
+{"label": "ops logs service", "path": "/api/v1/ops/logs?service=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "status": 400, "code": "BAD_SERVICE", "s": 0.013, "leak": null}
+{"label": "ops logs cursor", "path": "/api/v1/ops/logs?cursor=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "status": 400, "code": "BAD_CURSOR", "s": 0.013, "leak": null}
+{"label": "ops logs id stream", "path": "/api/v1/ops/logs/1-0?stream=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "status": 400, "code": "BAD_STREAM", "s": 0.012, "leak": null}
+{"label": "ops runs job", "path": "/api/v1/ops/runs?job=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "status": 200, "code": null, "s": 0.016, "leak": null}
+{"label": "ops runs provider", "path": "/api/v1/ops/runs?provider=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "status": 200, "code": null, "s": 0.012, "leak": null}
+{"label": "ops runs status", "path": "/api/v1/ops/runs?status=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "status": 200, "code": null, "s": 0.017, "leak": null}
+{"label": "ops runs resolved", "path": "/api/v1/ops/runs?resolved=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "status": 400, "code": "BAD_RESOLVED", "s": 0.011, "leak": null}
+{"label": "ops logs q", "path": "/api/v1/ops/logs?q=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "status": 400, "code": "BAD_QUERY", "s": 0.013, "leak": null}
+{"label": "ops logs rid", "path": "/api/v1/ops/logs?rid=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "status": 400, "code": "BAD_RID", "s": 0.008, "leak": null}
+{"label": "ops logs fp", "path": "/api/v1/ops/logs?fp=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "status": 400, "code": "BAD_FP", "s": 0.008, "leak": null}
+{"label": "ops logs level", "path": "/api/v1/ops/logs?level=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "status": 400, "code": "BAD_LEVEL", "s": 0.013, "leak": null}
+{"label": "ops logs service", "path": "/api/v1/ops/logs?service=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "status": 400, "code": "BAD_SERVICE", "s": 0.014, "leak": null}
+{"label": "ops logs cursor", "path": "/api/v1/ops/logs?cursor=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "status": 400, "code": "BAD_CURSOR", "s": 0.016, "leak": null}
+{"label": "ops logs id stream", "path": "/api/v1/ops/logs/1-0?stream=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "status": 400, "code": "BAD_STREAM", "s": 0.013, "leak": null}
+{"label": "ops runs job", "path": "/api/v1/ops/runs?job=%ED%95%9C%EA%B8%80", "status": 200, "code": null, "s": 0.015, "leak": null}
+{"label": "ops runs provider", "path": "/api/v1/ops/runs?provider=%ED%95%9C%EA%B8%80", "status": 200, "code": null, "s": 0.009, "leak": null}
+{"label": "ops runs status", "path": "/api/v1/ops/runs?status=%ED%95%9C%EA%B8%80", "status": 200, "code": null, "s": 0.009, "leak": null}
+{"label": "ops runs resolved", "path": "/api/v1/ops/runs?resolved=%ED%95%9C%EA%B8%80", "status": 400, "code": "BAD_RESOLVED", "s": 0.013, "leak": null}
+{"label": "ops logs q", "path": "/api/v1/ops/logs?q=%ED%95%9C%EA%B8%80", "status": 200, "code": null, "s": 0.015, "leak": null}
+{"label": "ops logs rid", "path": "/api/v1/ops/logs?rid=%ED%95%9C%EA%B8%80", "status": 400, "code": "BAD_RID", "s": 0.011, "leak": null}
+{"label": "ops logs fp", "path": "/api/v1/ops/logs?fp=%ED%95%9C%EA%B8%80", "status": 400, "code": "BAD_FP", "s": 0.034, "leak": null}
+{"label": "ops logs level", "path": "/api/v1/ops/logs?level=%ED%95%9C%EA%B8%80", "status": 400, "code": "BAD_LEVEL", "s": 0.015, "leak": null}
+{"label": "ops logs service", "path": "/api/v1/ops/logs?service=%ED%95%9C%EA%B8%80", "status": 400, "code": "BAD_SERVICE", "s": 0.014, "leak": null}
+{"label": "ops logs cursor", "path": "/api/v1/ops/logs?cursor=%ED%95%9C%EA%B8%80", "status": 400, "code": "BAD_CURSOR", "s": 0.012, "leak": null}
+{"label": "ops logs id stream", "path": "/api/v1/ops/logs/1-0?stream=%ED%95%9C%EA%B8%80", "status": 400, "code": "BAD_STREAM", "s": 0.01, "leak": null}
+{"label": "ops runs job", "path": "/api/v1/ops/runs?job=%E2%80%AE", "status": 200, "code": null, "s": 0.008, "leak": null}
+{"label": "ops runs provider", "path": "/api/v1/ops/runs?provider=%E2%80%AE", "status": 200, "code": null, "s": 0.015, "leak": null}
+{"label": "ops runs status", "path": "/api/v1/ops/runs?status=%E2%80%AE", "status": 200, "code": null, "s": 0.015, "leak": null}
+{"label": "ops runs resolved", "path": "/api/v1/ops/runs?resolved=%E2%80%AE", "status": 400, "code": "BAD_RESOLVED", "s": 0.013, "leak": null}
+{"label": "ops logs q", "path": "/api/v1/ops/logs?q=%E2%80%AE", "status": 200, "code": null, "s": 0.014, "leak": null}
+{"label": "ops logs rid", "path": "/api/v1/ops/logs?rid=%E2%80%AE", "status": 400, "code": "BAD_RID", "s": 0.012, "leak": null}
+{"label": "ops logs fp", "path": "/api/v1/ops/logs?fp=%E2%80%AE", "status": 400, "code": "BAD_FP", "s": 0.01, "leak": null}
+{"label": "ops logs level", "path": "/api/v1/ops/logs?level=%E2%80%AE", "status": 400, "code": "BAD_LEVEL", "s": 0.016, "leak": null}
+{"label": "ops logs service", "path": "/api/v1/ops/logs?service=%E2%80%AE", "status": 400, "code": "BAD_SERVICE", "s": 0.01, "leak": null}
+{"label": "ops logs cursor", "path": "/api/v1/ops/logs?cursor=%E2%80%AE", "status": 400, "code": "BAD_CURSOR", "s": 0.011, "leak": null}
+{"label": "ops logs id stream", "path": "/api/v1/ops/logs/1-0?stream=%E2%80%AE", "status": 400, "code": "BAD_STREAM", "s": 0.012, "leak": null}
+{"label": "ops runs job", "path": "/api/v1/ops/runs?job=%25", "status": 200, "code": null, "s": 0.016, "leak": null}
+{"label": "ops runs provider", "path": "/api/v1/ops/runs?provider=%25", "status": 200, "code": null, "s": 0.011, "leak": null}
+{"label": "ops runs status", "path": "/api/v1/ops/runs?status=%25", "status": 200, "code": null, "s": 0.009, "leak": null}
+{"label": "ops runs resolved", "path": "/api/v1/ops/runs?resolved=%25", "status": 400, "code": "BAD_RESOLVED", "s": 0.011, "leak": null}
+{"label": "ops logs q", "path": "/api/v1/ops/logs?q=%25", "status": 200, "code": null, "s": 0.009, "leak": null}
+{"label": "ops logs rid", "path": "/api/v1/ops/logs?rid=%25", "status": 400, "code": "BAD_RID", "s": 0.012, "leak": null}
+{"label": "ops logs fp", "path": "/api/v1/ops/logs?fp=%25", "status": 400, "code": "BAD_FP", "s": 0.012, "leak": null}
+{"label": "ops logs level", "path": "/api/v1/ops/logs?level=%25", "status": 400, "code": "BAD_LEVEL", "s": 0.011, "leak": null}
+{"label": "ops logs service", "path": "/api/v1/ops/logs?service=%25", "status": 400, "code": "BAD_SERVICE", "s": 0.011, "leak": null}
+{"label": "ops logs cursor", "path": "/api/v1/ops/logs?cursor=%25", "status": 400, "code": "BAD_CURSOR", "s": 0.008, "leak": null}
+{"label": "ops logs id stream", "path": "/api/v1/ops/logs/1-0?stream=%25", "status": 400, "code": "BAD_STREAM", "s": 0.011, "leak": null}
+{"label": "ops runs job", "path": "/api/v1/ops/runs?job=%27", "status": 200, "code": null, "s": 0.013, "leak": null}
+{"label": "ops runs provider", "path": "/api/v1/ops/runs?provider=%27", "status": 200, "code": null, "s": 0.021, "leak": null}
+{"label": "ops runs status", "path": "/api/v1/ops/runs?status=%27", "status": 200, "code": null, "s": 0.013, "leak": null}
+{"label": "ops runs resolved", "path": "/api/v1/ops/runs?resolved=%27", "status": 400, "code": "BAD_RESOLVED", "s": 0.008, "leak": null}
+{"label": "ops logs q", "path": "/api/v1/ops/logs?q=%27", "status": 200, "code": null, "s": 0.012, "leak": null}
+{"label": "ops logs rid", "path": "/api/v1/ops/logs?rid=%27", "status": 400, "code": "BAD_RID", "s": 0.008, "leak": null}
+{"label": "ops logs fp", "path": "/api/v1/ops/logs?fp=%27", "status": 400, "code": "BAD_FP", "s": 0.048, "leak": null}
+{"label": "ops logs level", "path": "/api/v1/ops/logs?level=%27", "status": 400, "code": "BAD_LEVEL", "s": 0.011, "leak": null}
+{"label": "ops logs service", "path": "/api/v1/ops/logs?service=%27", "status": 400, "code": "BAD_SERVICE", "s": 0.008, "leak": null}
+{"label": "ops logs cursor", "path": "/api/v1/ops/logs?cursor=%27", "status": 400, "code": "BAD_CURSOR", "s": 0.016, "leak": null}
+{"label": "ops logs id stream", "path": "/api/v1/ops/logs/1-0?stream=%27", "status": 400, "code": "BAD_STREAM", "s": 0.008, "leak": null}
+{"label": "ops runs job", "path": "/api/v1/ops/runs?job=", "status": 200, "code": null, "s": 0.011, "leak": null}
+{"label": "ops runs provider", "path": "/api/v1/ops/runs?provider=", "status": 200, "code": null, "s": 0.01, "leak": null}
+{"label": "ops runs status", "path": "/api/v1/ops/runs?status=", "status": 200, "code": null, "s": 0.007, "leak": null}
+{"label": "ops runs resolved", "path": "/api/v1/ops/runs?resolved=", "status": 200, "code": null, "s": 0.028, "leak": null}
+{"label": "ops logs q", "path": "/api/v1/ops/logs?q=", "status": 200, "code": null, "s": 0.01, "leak": null}
+{"label": "ops logs rid", "path": "/api/v1/ops/logs?rid=", "status": 200, "code": null, "s": 0.013, "leak": null}
+{"label": "ops logs fp", "path": "/api/v1/ops/logs?fp=", "status": 200, "code": null, "s": 0.013, "leak": null}
+{"label": "ops logs level", "path": "/api/v1/ops/logs?level=", "status": 200, "code": null, "s": 0.008, "leak": null}
+{"label": "ops logs service", "path": "/api/v1/ops/logs?service=", "status": 200, "code": null, "s": 0.02, "leak": null}
+{"label": "ops logs cursor", "path": "/api/v1/ops/logs?cursor=", "status": 200, "code": null, "s": 0.011, "leak": null}
+{"label": "ops logs id stream", "path": "/api/v1/ops/logs/1-0?stream=", "status": 404, "code": "NOT_FOUND", "s": 0.011, "leak": null}
+{"label": "ops logs id", "path": "/api/v1/ops/logs/99999999999999999999-0", "status": 404, "code": "NOT_FOUND", "s": 0.008, "leak": null}
+{"label": "ops logs id", "path": "/api/v1/ops/logs/1-99999999999999999999", "status": 404, "code": "NOT_FOUND", "s": 0.017, "leak": null}
+{"label": "ops logs id", "path": "/api/v1/ops/logs/18446744073709551615-18446744073709551615", "status": 404, "code": "NOT_FOUND", "s": 0.015, "leak": null}
+{"label": "ops logs id", "path": "/api/v1/ops/logs/0-0", "status": 404, "code": "NOT_FOUND", "s": 0.014, "leak": null}
