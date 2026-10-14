@@ -1806,6 +1806,11 @@ AWS 리뷰 D-2 · D-3 · D-4 · D-5 · D-6 · D-7 · D-8 · B-4 · C-2. 모두 �
   고치기 전에 묻는다'고 적었는데, 고침은 그대로 true 로 했고 보고서는 'Safari 확인 못함'으로만 남겼다(내 잘못 — 경고가 있으면 고치기 전에 묻는다).
 - **고침**(사용자 결정 — 기본 false): 재현 `23a4f650` → `c850eee5`. 운영 세션 쿠키가 실리는 길은 평문 터널뿐이라 Secure 가 지킬 것이 없고, 공개 CSRF 쿠키는 세션 없이 값이 없으며 CloudFront 가
   HTTPS 리디렉트 · HSTS 를 건다. 로컬 `COOKIE_SECURE` 가 AWS 값을 정하지 않는 분리(QA-1600)는 남겼다. 인프라 정책 시험 186 통과. 버린 대안: 요청마다 나누기(공용 Caddy · edge · api), 터널 TLS.
+- **확인**: api 만 다시 만든 뒤(`1cd81de7` — `WAKELINE_COOKIE_SECURE=false`) 사용자가 Safari 27 로 터널 로그인 · 운영 화면을 확인했다. 운영 화면의 빨간 'GLOBAL: 공급자 없음'은 배포와 무관하다 —
+  전세계 피드는 OpenSky 만 주는데 AWS 는 OpenSky 를 끈다(ADR-039 · 그날 호출 0 — 배포 전에도 같음, 표시 시각은 수집기 재시작). 공개 화면에는 나오지 않는다(설계). 끄려면 운영 SETTINGS 의 전세계.
+- **백업**(배포 뒤 남은 일, 사용자 실행): 처음 두 번은 `password authentication failed` — 마스터 비밀번호가 RDS 관리형 비밀(Secrets Manager, 주기적으로 바뀜)이었다. 그 값으로 받은 덤프
+  (15:14Z)는 권한 항목 wakeline 46 · buildrisk 85 · macrodash 0(역할 하나가 소유), PostGIS 0, 모두 `pg_restore -l` 통과. 실패가 남긴 빈 `.part` 2개는 지웠고, aws-deploy `2ba7d5d` 가
+  실패 때 지우게 하고(시험 `rds/test_backup.py`) README 에 '백업 받기'(비밀번호는 Secrets Manager 에서)를 적었다.
 
 ## 자동 검사 현황(2026-10-02 15:5x KST, QA 2026-10 브랜치 `qa/2026-10` — #103 뒤, 깨끗한 `git archive` 내보내기 · 격리 스택)
 | 층 | 도구 | 수 |
