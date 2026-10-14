@@ -3,10 +3,10 @@ import { Fragment, useCallback, useRef, useState } from "react";
 import { ApiError } from "@/lib/api";
 import { opsSession, opsTabPath, saveSetting, setProviderEnabled, signOutRequest, type OpsTab } from "@/lib/endpoints/ops";
 import { DISPLAY_TZ, fmtKst, fmtKstClock, fmtTimeTitle, utcDayWindowKst } from "@/lib/time";
-import { fmtBudgetLimit, fmtLatencyMs } from "@/lib/format";
+import { fmtLatencyMs } from "@/lib/format";
 import { liveNote, mirrorDiffers, switchCell, toggleNote, type SwitchNote } from "@/lib/provider-switch";
 import {
-  classifyOpsError, editSetting, isAuthMiss, parseSetting, pipelineLossCount, providerLastError, providerMissing, providersNowMs, rebaseSetting,
+  classifyOpsError, editSetting, fmtBudgetLimit, isAuthMiss, parseSetting, pipelineLossCount, providerLastError, providerMissing, providersNowMs, rebaseSetting,
   RUN_STATUS_TITLE, runStatusClass, runStatusTone, SESSION_EXPIRED_NOTE, settingConflict, qualityPartialDay, settingIfMatch, settingSpec, signOut, switchHistoryError, dlqReadError, withProviderResolutions,
   type SettingEdit,
 } from "@/lib/ops";

@@ -38,7 +38,9 @@ const CARRIED_BY_PARTS: Record<string, string> = {
   "lib/warnings.ts": "기상특보 탭 조각(응답 검증 · 조회 · 묶기 · 상태 줄)",
   "lib/endpoints/warnings.ts": "선박 카드의 해상특보 한 줄(선박을 고른 뒤)",
   "lib/airspace.ts": "공역 레이어 조각(응답 검증 · 조회 · 그리기 · 종류 거르기 · 고도 글 · 툴팁 · 상태 줄)",
-  "lib/airport-wx.ts": "공항 카드(공항을 고른 뒤) · 공항 기상 이력 화면의 응답 모양과 검사",
+  "lib/airport-wx.ts": "공항 카드(공항을 고른 뒤) · 공항 기상 이력 화면의 응답 모양과 검사 · 표시(바람 · 시정 · 기온)",
+  "lib/sigmet-list.ts": "SIGMET 탭 목록의 줄(탭을 연 뒤)",
+  "lib/evidence-band.ts": "알림 근거 카드의 고도대 · 출처(알림 행을 펼친 뒤)",
   "lib/endpoints/ship-detail.ts": "선박 카드의 REST 상세 조회(선박을 고른 뒤)",
   "lib/aircraft-card.ts": "항공기 카드의 행 규칙(품질 · 비상 squawk · 예측 까닭 · 더 새 관측) — 항공기를 고른 뒤",
   "lib/airport-list.ts": "공항 탭 목록의 줄(카테고리 · 오래됨 · 색)",
@@ -61,6 +63,16 @@ const SHIP_CARD_ONLY = [
   "storedPortCallsNote", "staticProvenance", "fmtShipEta", "fmtShipSize", "fmtDraught", "NAV_STATUS_SHORT", "navStatusShort", "POSITION_SOURCE_LABEL",
   "positionSourceLabel", "imoField", "fmtShipType", "pickDestinationInfo", "shipOriginText", "shipDestinationLines", "SHIP_TRACK_WINDOW_MS", "gapSummary",
   "gapDurationS", "LAST_SEEN_TITLE", "SHIP_SORT_DEFAULT", "shipRowFromLite", "shipList",
+];
+/**
+ * 첫 화면 모듈(lib/format · lib/sigmet · lib/alerts)에서 첫 화면 밖 모듈로 옮긴 이름(QA 2026-10-aws 고치기 — 첫 화면 JS 예산): 다시 생기면 첫 화면에 다시 실린다.
+ * Turbopack 은 모듈째 싣는다 — 첫 화면이 쓰지 않는 내보내기도 그 모듈이 첫 화면에 있으면 함께 실린다.
+ */
+const MOVED_OUT: { from: string; to: string; names: string[] }[] = [
+  { from: "lib/format.ts", to: "lib/airport-wx.ts", names: ["fmtVisSm", "fmtWind", "fmtTempPair"] },
+  { from: "lib/format.ts", to: "lib/ops.ts", names: ["fmtBudgetLimit"] },
+  { from: "lib/alerts.ts", to: "lib/evidence-band.ts", names: ["evidenceBand", "evidenceBandSource"] },
+  { from: "lib/sigmet.ts", to: "lib/sigmet-list.ts", names: ["SigmetListItem", "polygonCenter", "sigmetListItems"] },
 ];
 const INTERACTION_ONLY: Record<string, string> = { ...LAZY_PARTS, ...CARRIED_BY_PARTS };
 
@@ -141,6 +153,14 @@ describe("first screen of '/' carries no interaction-only UI", () => {
     expect(SHIP_CARD_ONLY.filter((n) => inShips.has(n)), "lib/ships 에 다시 생긴 카드 전용 이름").toEqual([]);
     const card = exported(readFileSync(resolve(ROOT, "lib/ship-card.ts"), "utf8"));
     expect(SHIP_CARD_ONLY.filter((n) => !card.has(n))).toEqual([]);
+  });
+  it("airport-card, SIGMET-list, evidence-card and ops-only helpers live in modules off the first screen, not in lib/format · lib/sigmet · lib/alerts", () => {
+    const exported = (f: string) => new Set([...readFileSync(resolve(ROOT, f), "utf8").matchAll(/^export (?:const|function|type|interface) (\w+)/gm)].map((m) => m[1]));
+    for (const { from, to, names } of MOVED_OUT) {
+      const inFrom = exported(from), inTo = exported(to);
+      expect(names.filter((n) => inFrom.has(n)), `${from} 에 다시 생긴 조각 전용 이름`).toEqual([]);
+      expect(names.filter((n) => !inTo.has(n))).toEqual([]);
+    }
   });
   it("every import() in DashboardParts is a listed interaction-only part with its reason, and every listed part is one", () => {
     expect(dynamicTargets(["components/DashboardParts.tsx"]).sort(), "DashboardParts 의 조각 = LAZY_PARTS(까닭이 적힌 것) — 조각을 더하면 LAZY_PARTS 에 언제 보이는지 적는다")

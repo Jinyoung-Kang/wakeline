@@ -2,7 +2,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it } from "vitest";
 import { aisBadge } from "@/lib/ships";
-import { fmtTempPair, fmtWind } from "@/lib/format";
+import { fmtTempPair, fmtWind } from "@/lib/airport-wx";
 import { resetData } from "@/lib/store";
 import { StatusBar } from "@/components/StatusBar";
 

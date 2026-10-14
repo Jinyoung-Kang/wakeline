@@ -4,7 +4,7 @@ import { useServerNow } from "@/lib/clock";
 import { panIfOutside } from "@/lib/focus";
 import { fmtKst } from "@/lib/time";
 import { hazardColor } from "@/lib/format";
-import { sigmetListItems, type SigmetListItem } from "@/lib/sigmet";
+import { sigmetListItems, type SigmetListItem } from "@/lib/sigmet-list";
 import { useServerData } from "@/lib/store";
 import { useUi } from "@/lib/ui-store";
 

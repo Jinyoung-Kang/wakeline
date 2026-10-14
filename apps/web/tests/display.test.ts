@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { band, BASE_ASSUMED_LABEL, fmtBool, fmtEta, TOP_UNKNOWN_LABEL } from "@/lib/format";
 import { activeSigmetFeatures, isExpired, sigmetBandSource, topAboveFromRaw } from "@/lib/sigmet";
-import { closeReasonLabel, etaRemainingS, evidenceBand, evidenceBandSource } from "@/lib/alerts";
+import { closeReasonLabel, etaRemainingS } from "@/lib/alerts";
+import { evidenceBand, evidenceBandSource } from "@/lib/evidence-band";
 import { appendTrackPoint, mergeTrack, pointFromState, trackFeatureCollection, trackFromRest } from "@/lib/track";
 import { predictionFeature, predictionKey, predictionTargets } from "@/lib/maplayers";
 import type { AircraftState, Alert, SelectedInfo, SigmetCollection, SigmetProps } from "@/lib/types";

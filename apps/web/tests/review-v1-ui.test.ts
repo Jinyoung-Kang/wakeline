@@ -18,7 +18,7 @@ import Dashboard from "@/app/page";
 import { LayerPanel } from "@/components/LayerPanel";
 import * as prefs from "@/lib/prefs";
 import { addBaseLayers } from "@/lib/maplayers";
-import * as sigmetLib from "@/lib/sigmet";
+import { sigmetListItems } from "@/lib/sigmet-list";
 import type { KrRadar, SigmetCollection } from "@/lib/types";
 import { StatusBar } from "@/components/StatusBar";
 import { KrRadarPanel } from "@/components/KrRadarPanel";
@@ -364,19 +364,19 @@ describe("R-40 keyboard paths to SIGMETs, airports and replay items; airport cat
   };
   it("the SIGMET list has the active warnings, aircraft-inside counts from the live alert list (— when unknown) and a pan target", () => {
     const now = Date.parse("2026-09-28T01:00:00Z");
-    const items = sigmetLib.sigmetListItems(fc, [alert({ sigmet_id: "S2", hex: "a1" }), alert({ id: 8, sigmet_id: "S2", hex: "a2" }), alert({ id: 9, kind: "PREDICTED", sigmet_id: "S1", hex: "a3" })], now);
+    const items = sigmetListItems(fc, [alert({ sigmet_id: "S2", hex: "a1" }), alert({ id: 8, sigmet_id: "S2", hex: "a2" }), alert({ id: 9, kind: "PREDICTED", sigmet_id: "S1", hex: "a3" })], now);
     expect(items.map((i) => i.id)).toEqual(["S2", "S1"]); // 만료(S3) 제외 · 안 항공기 많은 순
     expect(items[0]).toMatchObject({ inside: 2, predicted: 0 });
     expect(items[1]).toMatchObject({ inside: 0, predicted: 1 });
     expect(items[1].center).toEqual([122, 32]);
     expect(items[0].center![0]).toBeCloseTo(180, 6); // 날짜변경선을 넘는 폴리곤의 가운데
-    const unknown = sigmetLib.sigmetListItems(fc, null, now);
+    const unknown = sigmetListItems(fc, null, now);
     expect(unknown[0].inside).toBeNull();
   });
   it("the sigmet and airport tabs list their items as buttons when nothing is selected (no map click needed)", async () => {
     const { SigmetListView } = await import("@/components/SigmetList");
     const now = Date.parse("2026-09-28T01:00:00Z");
-    const sl = renderToStaticMarkup(createElement(SigmetListView, { items: sigmetLib.sigmetListItems(fc, [], now) }));
+    const sl = renderToStaticMarkup(createElement(SigmetListView, { items: sigmetListItems(fc, [], now) }));
     expect(sl).toMatch(/<button[^>]*data-testid="sigmet-list-item"[^>]*>.*TURB SEV/);
     expect(sl).toContain("ZSHA");
     const { AirportListView } = await import("@/components/AirportList");

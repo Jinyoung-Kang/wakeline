@@ -1,7 +1,6 @@
-/** 알림 표시 규칙(순수 함수): ETA 카운트다운(GAP-21)·종료 사유·근거의 고도대 출처. */
-import { hazardColor, type BandSource } from "./format";
-import { topAboveFromRaw } from "./sigmet";
-import type { Alert, AlertEventType, CloseReason, PublicStatus, SigmetProps } from "./types";
+/** 알림 표시 규칙(순수 함수): ETA 카운트다운(GAP-21)·종료 사유. 근거의 고도대 · 출처는 근거 카드 전용 lib/evidence-band(첫 화면 밖). */
+import { hazardColor } from "./format";
+import type { Alert, AlertEventType, CloseReason, PublicStatus } from "./types";
 
 /**
  * 남은 ETA(초, 추정). eta_at(서버 판정 시각 + eta_s)에서 서버 기준 현재 시각을 뺀다 — 목록의 ETA 가 다음 갱신까지 멈춰 있지 않게.
@@ -56,26 +55,6 @@ export const EVENT_LABEL: Record<AlertEventType, string> = {
   SIGMET_ENDED: "경보 종료",
   ZONE_ENDED: "구역 종료",
 };
-
-/** 근거의 고도대 [base, top]. top 이 null 또는 구버전의 -1 이면 미발표. */
-export function evidenceBand(ev: Record<string, unknown>): { base: number | null; top: number | null } | null {
-  const b = ev.band_ft;
-  if (!Array.isArray(b) || b.length < 2) return null;
-  const base = typeof b[0] === "number" && b[0] >= 0 ? b[0] : null;
-  const top = typeof b[1] === "number" && b[1] >= 0 ? b[1] : null;
-  return { base, top };
-}
-
-/**
- * 근거의 고도대 출처: 근거에 담긴 base_source/top_source(판정 당시)를 우선, 없으면 현재 SIGMET 속성.
- * 원문 "TOP ABV FLxxx" 여부는 SIGMET 원문에서 결정적으로 읽는다.
- */
-export function evidenceBandSource(ev: Record<string, unknown>, sigmet: Pick<SigmetProps, "base_source" | "top_source" | "raw_text"> | null | undefined, topFt: number | null): BandSource {
-  const str = (v: unknown) => (typeof v === "string" ? v : null);
-  const baseSource = str(ev.base_source) ?? (ev.base_assumed_surface === true ? "assumed_surface" : null) ?? sigmet?.base_source ?? null;
-  const topSource = str(ev.top_source) ?? (ev.top_assumed_unbounded === true ? "unknown" : null) ?? sigmet?.top_source ?? null;
-  return { base_source: baseSource, top_source: topSource, top_above: topSource === "raw_text" && topAboveFromRaw(sigmet?.raw_text, topFt) };
-}
 
 /**
  * 알림 목록의 신뢰 상태(DH-9). "live" 일 때만 목록이 현재이고 ETA 가 카운트다운한다.
