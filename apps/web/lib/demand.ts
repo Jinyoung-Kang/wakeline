@@ -106,7 +106,7 @@ export function hotChip(d: DemandInfo | null): Chip | null {
     case "throttled":
       // 서버의 throttled 는 두 까닭을 가르지 않는다(ADR-013 개정 2026-10-14 · QA-1350 — 상태 값 · 계약은 그대로): 공급자 호출 상한, 또는 서버 전체 핫 리전 칸 수를
       // 다른 방문자와 나눠 이 칸이 밀림(다른 IP 가 기다리는 동안 한 IP 는 그 절반까지만 — api DemandService.MAX_HOT_CELLS_PER_IP). 둘 다 말한다
-      return { kind: "hot", tone: "warn", text: `${HOT_THROTTLED}${h.interval_s != null ? ` · ${fmtInterval(h.interval_s)} 간격` : ""}${r ? `(${r})` : ""}`, title: `이 칸의 조회 주기를 늘렸거나 이 칸을 건너뛰고 있습니다 — 공급자 호출 상한 때문이거나, 서버 전체 핫 리전 칸 수를 다른 방문자와 나눠 이 칸이 밀렸습니다(다른 주소(IP)의 방문자가 기다리는 동안 한 주소는 그 절반까지만 씁니다). 서버는 둘 중 어느 쪽인지 알리지 않습니다. ${title}` };
+      return { kind: "hot", tone: "warn", text: `${HOT_THROTTLED}${h.interval_s != null ? ` · ${fmtInterval(h.interval_s)} 간격` : ""}${r ? `(${r})` : ""}`, title: `공급자 호출 상한, 또는 다른 방문자와 나눠 쓰는 핫 리전 칸 상한(다른 IP 가 기다리면 한 IP 는 절반까지) 때문에 이 칸을 늦추거나 건너뜁니다 — 서버는 어느 쪽인지 알리지 않습니다. ${title}` };
     case "covered_by_region":
       return { kind: "hot", tone: "muted", text: `관심 지역 수집 범위 안${h.interval_s != null ? ` · ${fmtInterval(h.interval_s)} 갱신` : ""}`, title: "화면 중심이 고정 관심 지역 안이라 따로 조회하지 않습니다 — 관심 지역 수집이 이미 이곳을 다룹니다." };
     case "error":

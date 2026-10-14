@@ -13,12 +13,9 @@ export type ConnIssue = "locked" | "unreachable" | "limit";
 
 /** 칩에 붙는 짧은 낱말과 까닭 문장(칩 title · 알림 패널) */
 export const CONN_ISSUE: Record<ConnIssue, { word: string; why: string }> = {
-  locked: { word: "접근 코드 만료", why: `${FRONT_LOCKED_TEXT}(실시간 연결은 앞단 잠금에 막혀 다시 이어지지 않음)` },
+  locked: { word: "접근 코드 만료", why: FRONT_LOCKED_TEXT },
   unreachable: { word: "서버에 닿지 못함", why: FRONT_UNREACHABLE_TEXT },
-  limit: {
-    word: "연결 수 상한",
-    why: "서버가 연결 수 상한으로 실시간 연결을 닫음(1013) — 같은 주소(IP)에서 연 상황판 탭이 많거나 서버 전체 연결이 가득 참 · 다른 탭을 닫으면 다음 재연결(최대 30 s 뒤)에 이어집니다",
-  },
+  limit: { word: "연결 수 상한", why: "서버의 연결 수 상한으로 닫힘(1013) — 같은 주소(IP)에서 연 탭이 많거나 서버 연결이 가득 참 · 다른 탭을 닫으면 다시 이어짐" },
 };
 
 /** 서버가 연결 수 상한으로 닫을 때의 코드(api WakelineWsHandler — CloseStatus.SERVICE_OVERLOAD "connection limit") */

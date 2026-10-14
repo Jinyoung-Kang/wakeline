@@ -5,7 +5,7 @@
  */
 
 export const FRONT_LOCKED_TEXT = "접근 코드가 만료됨 — 새로고침하면 접근 코드를 다시 묻습니다";
-export const FRONT_UNREACHABLE_TEXT = "서버에 닿지 못함 — 서버가 꺼져 있거나(운영 시간 밖) 다시 시작하는 중일 수 있습니다 · 잠시 뒤 다시 시도하세요";
+export const FRONT_UNREACHABLE_TEXT = "서버에 닿지 못함 — 꺼져 있거나(운영 시간 밖) 다시 시작하는 중일 수 있음 · 잠시 뒤 다시 시도";
 
 /** 앞단 잠금 만료(gateLockedText)로 분류한 오류의 code */
 export const ACCESS_LOCKED = "ACCESS_LOCKED";
