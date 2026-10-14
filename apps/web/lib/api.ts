@@ -2,9 +2,9 @@
  * 같은 출처(edge) REST 호출. 브라우저는 API 주소·키를 모른다.
  * 부른 쪽의 머리는 형식(객체 · Headers · 배열)과 상관없이 보낸다 — 객체 펼치기는 Headers 인스턴스의 값을 말없이 버렸다(web-review B16). 기본 Accept 는 정하지 않았을 때만.
  */
-import { ACCESS_LOCKED, gateLockedText } from "./front-answer";
+import { ACCESS_LOCKED, frontUnreachableText, gateLockedText, ORIGIN_UNREACHABLE } from "./front-answer";
 
-export { ACCESS_LOCKED, gateLockedText } from "./front-answer";
+export { ACCESS_LOCKED, gateLockedText, ORIGIN_UNREACHABLE } from "./front-answer";
 
 export async function apiGet<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers);
@@ -32,10 +32,15 @@ export const REQUEST_ID_RE = /^[0-9A-Za-z-]{8,64}$/;
 const CODE_RE = /^[A-Za-z0-9_.-]{1,64}$/;
 const pick = (v: unknown, re: RegExp): string | null => (typeof v === "string" && re.test(v) ? v : null);
 
-/** 앞단(AWS 데모 — ADR-039)이 api 대신 답한 응답은 lib/front-answer 가 알아본다: 잠금 만료(401 locked → ACCESS_LOCKED). 메시지는 숫자 대신 할 일을 알리는 글이다. */
+/**
+ * 앞단(AWS 데모 — ADR-039)이 api 대신 답한 응답은 lib/front-answer 가 알아본다: 잠금 만료(401 locked → ACCESS_LOCKED) · 원본에 닿지 못함
+ * (HTML 5xx → ORIGIN_UNREACHABLE). 메시지는 숫자 대신 할 일을 알리는 글이다.
+ */
 async function apiError(res: Response): Promise<ApiError> {
   let detail = `${res.status}`, code: string | null = null, rid: string | null = null;
-  try {
+  const unreachable = frontUnreachableText(res.status, res.headers?.get?.("Content-Type"));
+  if (unreachable) [detail, code] = [unreachable, ORIGIN_UNREACHABLE];
+  else try {
     const p = await res.json();
     detail = p.detail ?? p.title ?? detail;
     code = pick(p.code, CODE_RE);

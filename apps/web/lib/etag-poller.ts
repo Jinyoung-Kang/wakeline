@@ -5,7 +5,7 @@
  * - 동시에 두 번 부르지 않는다. 실패(HTTP · 망 · 형식)는 마지막 값을 두고 error 에 적는다 — 지난 값을 조용히 지금처럼 두지 않는다.
  * - stop() 은 진행 중인 요청을 끊고, 그 뒤에 도착한 답은 발행하지 않는다(세대 번호) — 레이어를 껐다 켜면 옛 폴러의 늦은 답이 새 상태를 덮지 않는다.
  */
-import { gateLockedText } from "./front-answer";
+import { frontUnreachableText, gateLockedText } from "./front-answer";
 
 export interface PollState<T> { data: T | null; etag: string | null; error: string | null; version: number; checkedAt: number | null }
 export const POLL_NONE: PollState<never> = { data: null, etag: null, error: null, version: 0, checkedAt: null };
@@ -87,9 +87,10 @@ export class EtagPoller<T> {
       if (!current()) return;
       if (res.status === 304) { this.set({ error: null, checkedAt: this.now() }, false); return; }
       if (!res.ok) {
-        // 앞단 잠금 만료(401 locked — AWS 데모)는 숫자 대신 할 일을 알린다(lib/front-answer gateLockedText)
-        const locked = res.status === 401 ? gateLockedText(401, await res.json().catch(() => null)) : null;
-        if (current()) this.set({ error: locked ?? `HTTP ${res.status}`, checkedAt: this.now() }, false);
+        // 앞단 잠금 만료(401 locked)와 앞단의 오프라인 HTML 5xx(AWS 데모)는 숫자 대신 할 일을 알린다(lib/front-answer gateLockedText · frontUnreachableText)
+        const front = res.status === 401 ? gateLockedText(401, await res.json().catch(() => null))
+          : frontUnreachableText(res.status, res.headers?.get?.("Content-Type"));
+        if (current()) this.set({ error: front ?? `HTTP ${res.status}`, checkedAt: this.now() }, false);
         return;
       }
       const etag = res.headers.get("ETag");
