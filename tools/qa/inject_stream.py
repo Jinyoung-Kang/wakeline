@@ -9,6 +9,7 @@
 
     python3 tools/qa/inject_stream.py ship
     python3 tools/qa/inject_stream.py aircraft --loop 90
+    WLQA_PROJECT=wlqa-a python3 tools/qa/inject_stream.py sigmet --loop 120   # QA 2026-10-aws: 조작 SIGMET(한반도 다각형 — 알림까지)
 """
 
 from __future__ import annotations
@@ -16,12 +17,14 @@ from __future__ import annotations
 import base64
 import gzip
 import json
+import os
 import subprocess
 import sys
 import time
 from datetime import datetime, timezone
 
-PROJECT = "wakeline-e2e"
+# compose 프로젝트: QA 2026-10-aws 의 격리 스택 A 는 wlqa-a — WLQA_PROJECT 로 바꾼다(없으면 앞선 QA 의 wakeline-e2e)
+PROJECT = os.environ.get("WLQA_PROJECT", "wakeline-e2e")
 MMSI = "440999001"
 HEX = "0a5ec1"
 # 스키마 길이 한도 안(name · destination ≤ 20, call_sign ≤ 7, callsign ≤ 8, registration ≤ 16, type_code ≤ 8)
@@ -107,6 +110,29 @@ def warnings() -> str:
     return cli("wakeline_collector", "REDIS_COLLECTOR_PASSWORD", "XADD", "wakeline:wxwarn", "*", *envelope("wx_warnings", "-", payload, 2, "qa/xss-probe")).strip()
 
 
+def sigmet_once() -> str:
+    """QA 2026-10-aws(계획 §3.1 XSS): 가장 최근 SIGMET 엔트리 + 조작한 SIGMET 1건(FIR 이름 · 발표 기관 · 위험 · 한정어 · 이동 · 변화 · 원문에 표식).
+    다각형은 한반도 가운데(35–38N · 126–129.5E)라 fixture 항공기가 들어가 알림 · 근거 화면 · 브라우저 알림까지 닿는다. 수집기의 다음 발행이 덮는다(--loop)."""
+    out = cli("wakeline_collector", "REDIS_COLLECTOR_PASSWORD", "XREVRANGE", "wakeline:sigmet", "+", "-", "COUNT", "1").split("\n")
+    d = dict(zip(out[1::2], out[2::2]))
+    p = json.loads(gzip.decompress(base64.b64decode(d["payload"])))
+    now = datetime.now(timezone.utc)
+    vf = int(now.timestamp()) // 600 * 600 - 600
+    iso = lambda t: datetime.fromtimestamp(t, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")  # noqa: E731
+    mark = "<img src=x onerror=window.__qa_xss=11>"
+    sid = f"RKRR:Q9:{vf}"
+    crafted = {"id": sid, "fir_id": "RKRR", "fir_name": "<i id=qaxs>F</i>" + mark, "issuer": "\"><svg/onload=window.__qa_xss=12>", "series_id": "Q9",
+               "hazard": "<i id=qaxh>TS", "qualifier": "<b>EMBD", "base_ft": 0, "base_source": "assumed_surface", "top_ft": 45000, "top_source": "json",
+               "valid_from": iso(vf), "valid_to": iso(vf + 4 * 3600),
+               "geometry": {"type": "MultiPolygon", "coordinates": [[[[126.0, 35.0], [129.5, 35.0], [129.5, 38.0], [126.0, 38.0], [126.0, 35.0]]]]},
+               "excluded_reason": None, "move_dir": "<i>W", "move_spd": mark, "chng": "<a href=javascript:window.__qa_xss=13>x</a>",
+               "raw_text": "WSKO31 RKSI\nRKRR SIGMET Q9 " + mark + " <script>window.__qa_xss=14</script> javascript:alert(1)=", "provider": "fixture",
+               "fetched_at": now_iso()}
+    p["sigmets"] = [x for x in p["sigmets"] if x["id"] != sid] + [crafted]
+    return sid + " " + cli("wakeline_collector", "REDIS_COLLECTOR_PASSWORD", "XADD", "wakeline:sigmet", "*",
+                           *envelope("sigmet", "-", p, len(p["sigmets"]), d.get("raw_ref", "qa/xss-probe"))).strip()
+
+
 def main() -> int:
     what = sys.argv[1] if len(sys.argv) > 1 else "ship"
     loop = int(sys.argv[sys.argv.index("--loop") + 1]) if "--loop" in sys.argv else 0
@@ -118,7 +144,10 @@ def main() -> int:
         return 0
     end = time.monotonic() + loop
     while True:
-        print("aircraft", HEX, aircraft_once(), flush=True)
+        if what == "sigmet":
+            print("sigmet", sigmet_once(), flush=True)
+        else:
+            print("aircraft", HEX, aircraft_once(), flush=True)
         if time.monotonic() >= end:
             return 0
         time.sleep(3)

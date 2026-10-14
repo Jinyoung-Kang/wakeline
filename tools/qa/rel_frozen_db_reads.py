@@ -9,9 +9,9 @@ from datetime import UTC, datetime, timedelta
 from urllib.parse import quote
 
 PROJECT = os.environ.get("QA_PROJECT", "wakeline-qa")  # 격리 스택만 — B(기본) · A(고친 빌드 재확인)
-if PROJECT not in ("wakeline-qa", "wakeline-e2e"):
-    raise SystemExit("QA_PROJECT must be wakeline-qa or wakeline-e2e")
-BASE = {"wakeline-qa": "http://localhost:8702", "wakeline-e2e": "http://localhost:8701"}[PROJECT]
+if PROJECT not in ("wakeline-qa", "wakeline-e2e", "wlqa-b"):  # wlqa-b = QA 2026-10 AWS 의 스택 B
+    raise SystemExit("QA_PROJECT must be wakeline-qa, wakeline-e2e or wlqa-b")
+BASE = {"wakeline-qa": "http://localhost:8702", "wakeline-e2e": "http://localhost:8701", "wlqa-b": "http://localhost:8702"}[PROJECT]
 HOLD_S = int(os.environ.get("HOLD_S", "45"))
 out_dir = sys.argv[1] if len(sys.argv) > 1 else "docs/qa/2026-10/evidence/reliability/db-frozen-reads"
 now = datetime.now(UTC)

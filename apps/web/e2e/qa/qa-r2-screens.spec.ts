@@ -12,7 +12,7 @@ import { duplicates, instrument, isBlockedNoise, overflow, runAxe, type AxeViola
 const BASE = process.env.QA_BASE_URL ?? "http://localhost:8701";
 if (new URL(BASE).port !== "8701") throw new Error(`QA 는 격리 스택 A 만: ${BASE}`);
 const REPO = path.resolve(__dirname, "../../../..");
-const OUT = path.join(REPO, "docs/qa/2026-10-release/evidence/ui-a11y");
+const OUT = process.env.QA_EVIDENCE_DIR ? path.resolve(process.env.QA_EVIDENCE_DIR) : path.join(REPO, "docs/qa/2026-10-release/evidence/ui-a11y");
 type Finding = { screen: string; kind: string; detail: unknown };
 const FOUND: Finding[] = [];
 const LOG: Record<string, unknown>[] = [];

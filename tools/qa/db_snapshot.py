@@ -12,10 +12,13 @@ from __future__ import annotations
 
 import fnmatch
 import json
+import os
 import subprocess
 import sys
 
-P = "wakeline-qa"
+P = os.environ.get("WLQA_PROJECT", "wakeline-qa")  # QA 2026-10 AWS 스택 B 는 WLQA_PROJECT=wlqa-b
+if P not in ("wakeline-qa", "wlqa-b"):
+    raise SystemExit("db_snapshot 은 격리 스택 B 만(wakeline-qa · wlqa-b)")
 SAFE_COLUMNS = {"ops_user": "id, username, role, failed_count, locked_until"}
 
 

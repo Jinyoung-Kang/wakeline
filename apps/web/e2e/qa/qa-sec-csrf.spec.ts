@@ -1,7 +1,7 @@
 import { expect, test, type Response } from "@playwright/test";
-import { readFileSync } from "node:fs";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
+import { opsCredentials } from "./qa-helpers";
 
 /**
  * QA 보안 점검(계획 §3.1 CSRF · Origin) — 격리 스택(8701 · 8702)에서만. 운영자(qa-b)가 로그인한 브라우저가 같은 호스트의 다른 포트
@@ -13,8 +13,6 @@ import type { AddressInfo } from "node:net";
  */
 const BASE = process.env.E2E_BASE_URL ?? "http://localhost:8701";
 if (!["8701", "8702"].includes(new URL(BASE).port)) throw new Error(`QA 는 격리 스택만: ${BASE}`);
-const CREDS = process.env.QA_CREDS ?? "/private/tmp/claude-501/-Users-jinyoung-Projects-wakeline/75437490-c65b-4783-9ac0-e224c92a9bab/scratchpad/qa-creds.json";
-const password = (u: string): string => JSON.parse(readFileSync(CREDS, "utf8")).users[u];
 
 function kstToday(): string {
   return new Date(Date.now() + 9 * 3600_000).toISOString().slice(0, 10);
@@ -52,7 +50,8 @@ test("cross-port page cannot change ops state (form POST · no-cors fetch · _cs
   const port = (server.address() as AddressInfo).port;
   try {
     // 운영자 로그인(같은 브라우저 컨텍스트 — 쿠키 공유)
-    const login = await page.request.post(`${BASE}/api/v1/ops/session`, { data: { username: "qa-b", password: password("qa-b") } });
+    const creds = opsCredentials("qa-b");
+    const login = await page.request.post(`${BASE}/api/v1/ops/session`, { data: creds });
     expect(login.status()).toBe(200);
     const csrf = (await page.context().cookies(BASE)).find((c) => c.name === "WAKELINE_CSRF")?.value ?? "";
     const auditBefore = await (await page.request.get(`${BASE}/api/v1/ops/audit?limit=1`)).json();
@@ -86,7 +85,7 @@ test("cross-port page cannot change ops state (form POST · no-cors fetch · _cs
     const auditAfter = await (await page.request.get(`${BASE}/api/v1/ops/audit?limit=1`)).json();
     expect(auditAfter.items[0]?.id, "no new audit row").toBe(auditBefore.items[0]?.id);
     const me = await (await page.request.get(`${BASE}/api/v1/ops/session`)).json();
-    expect(me.username).toBe("qa-b");
+    expect(me.username).toBe(creds.username);
 
     // 같은 탐침을 같은 출처로 보내면 컨트롤러에 닿는다(400 BAD_DAY) — 위의 403 이 탐침 탓이 아님을 보인다
     const same = await page.request.post(`${BASE}/api/v1/ops/stats/aggregate?day=${day}`, { headers: { "X-CSRF-Token": csrf, Origin: BASE } });

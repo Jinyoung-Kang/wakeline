@@ -9,10 +9,23 @@ import { expect, type Page } from "@playwright/test";
 import fs from "node:fs";
 import path from "node:path";
 
-export const EVIDENCE_DIR = path.resolve(__dirname, "../../../../docs/qa/2026-10/evidence/ui-a11y");
+// 증거 폴더: QA_EVIDENCE_DIR 이 있으면 그곳(QA 2026-10-aws — docs/qa/2026-10-aws/evidence/browser), 없으면 옛 QA 폴더(앞선 QA 의 재현 그대로)
+export const EVIDENCE_DIR = process.env.QA_EVIDENCE_DIR
+  ? path.resolve(process.env.QA_EVIDENCE_DIR)
+  : path.resolve(__dirname, "../../../../docs/qa/2026-10/evidence/ui-a11y");
 const AXE_PATH = path.resolve(__dirname, "../../node_modules/axe-core/axe.min.js");
 const CREDS = process.env.QA_CREDS
   ?? "/private/tmp/claude-501/-Users-jinyoung-Projects-wakeline/75437490-c65b-4783-9ac0-e224c92a9bab/scratchpad/qa-creds.json";
+
+/**
+ * 시험 운영자 자격 증명. 두 모양을 받는다 — 옛 QA {users: {qa-a, qa-b}}(user 로 고른다) · QA 2026-10-aws {username, password}(user 무시).
+ * 값은 이 함수를 부른 곳에서 입력칸 · 요청 본문에만 넣는다(출력 · 기록하지 않는다).
+ */
+export function opsCredentials(user = "qa-b"): { username: string; password: string } {
+  const j = JSON.parse(fs.readFileSync(CREDS, "utf8")) as { username?: unknown; password?: unknown; users?: Record<string, string> };
+  if (typeof j.username === "string" && typeof j.password === "string") return { username: j.username, password: j.password };
+  return { username: user, password: j.users?.[user] ?? "" };
+}
 
 /** 격리 스택(8701 · 8702)만 — 운영 스택(8700)이면 멈춘다 */
 export function assertIsolated(baseURL: string | undefined) {
@@ -146,11 +159,11 @@ export async function shot(page: Page, name: string, fullPage = false) {
  * 로그인 중에는 스크린샷을 찍지 않는다(입력칸은 type=password 라 가려지지만 그래도).
  */
 export async function loginOps(page: Page, user: "qa-a" | "qa-b" = "qa-b") {
-  const pw: string = JSON.parse(fs.readFileSync(CREDS, "utf8")).users[user];
+  const c = opsCredentials(user);
   await page.goto("/ops");
   await expect(page.getByTestId("ops-login")).toBeVisible({ timeout: 20_000 });
-  await page.locator("#ops-user").fill(user);
-  await page.locator("#ops-pass").fill(pw);
+  await page.locator("#ops-user").fill(c.username);
+  await page.locator("#ops-pass").fill(c.password);
   await page.locator('[data-testid="ops-login"] button[type="submit"]').click();
   await expect(page.getByTestId("ops-dashboard")).toBeVisible({ timeout: 20_000 });
 }

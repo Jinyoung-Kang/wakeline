@@ -30,7 +30,9 @@ sys.path.insert(0, os.path.dirname(__file__))
 from qa_session import OpsSession, password  # noqa: E402
 
 BASE = "http://localhost:8702"
-P = "wakeline-qa"
+P = os.environ.get("WLQA_PROJECT", "wakeline-qa")  # QA 2026-10 AWS 스택 B = wlqa-b(8702)
+if P not in ("wakeline-qa", "wlqa-b"):
+    raise SystemExit("rel_concurrency 는 스택 B 만(wakeline-qa · wlqa-b)")
 KST = timezone(timedelta(hours=9))
 results: dict[str, dict] = {}
 
