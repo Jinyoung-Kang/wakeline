@@ -28,7 +28,8 @@ public final class WeatherEvents {
     /**
      * 기상특보 목록 한 벌(ADR-036)을 <b>스트림 순서대로</b> 이력(DB)에 남기라는 이벤트 — SIGMET 세트와 같은 규칙(백로그도 저장, 같은 목록이 다시 오면
      * 저장기가 수신 시각으로 건너뛴다). 저장기는 receipt 를 hold 하고 durable 해지면 release 한다. dropped = 수집기가 해석하지 못해 뺀 줄 수 —
-     * 0 보다 크면 저장기가 목록에 없는 특보를 끝내지 않는다(줄만 버려졌을 수 있다).
+     * 0 보다 크면 저장기가 목록에 없는 특보를 곧바로 끝내지 않고 1 h 넘게 이어서 빠져 있을 때 끝낸다(줄만 버려졌을 수 있다 — QA-1203). 수집기는 줄을
+     * 모두 버린 응답을 발행하지 않는다(QA-1204).
      */
     public record WarningsReceived(Instant fetchedAt, String provider, java.util.List<WarningRecord> warnings, int dropped, Receipt receipt) implements PipelineEvent {}
 
