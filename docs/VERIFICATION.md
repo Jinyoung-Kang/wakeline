@@ -1798,6 +1798,15 @@ AWS 리뷰 D-2 · D-3 · D-4 · D-5 · D-6 · D-7 · D-8 · B-4 · C-2. 모두 �
   `82645cb1` 메시지의 'tsc pass' 는 e2e 를 보지 않는다(`tsconfig.json` 이 `e2e` 를 뺌) — 에이전트가 그 파일만 따로 tsc(엄격)로 확인해 0 이었다.
 - **멈춘 것**: 공유 gate 를 겨냥한 재현 도구는 저장소에 넣지 않았다(QA-1601 · 1602 — 독립 재현 하나는 모델 안전장치로 중단). aws-deploy 작업 트리에 다른 작업의 미커밋 변경(`compose.yml` 텔레그램 알림)이 있어 건드리지 않았다.
 
+## #146 AWS 배포(2026-10-14) 뒤 Safari 운영자 로그인이 곧바로 '세션 만료'로 끝남 — QA-1600 고침의 회귀(QA-1603)
+- **배포**(사용자 승인): wakeline `main` `1cf0f8e1`(QA 병합) — EC2 에서 `:rollback` 태그 → ff 병합 → api · collector · web 빌드 → migrate → `up -d --wait`. aws-deploy `55e135c` — gate 만
+  다시 빌드. 확인: `/healthz` ok · 특보 실제 응답 8건 · 버림 0(QA-1204 뒤 수집기) · 세 공개 주소 잠금 화면. 첫 SSM 명령은 셸이 `sh` 라 `set -o pipefail` 에서 멈췄다(아무것도 실행되지 않음 — bash 로 다시).
+- **증상**: 사용자가 Safari 27 로 터널 `http://localhost:8700/ops` 에 로그인 → '세션이 만료되었습니다'. edge 접근 기록: `POST /api/v1/ops/session` 200 바로 뒤 운영 GET 이 모두 404(세션 없음).
+- **원인**: QA-1600 고침이 AWS 운영 쿠키를 기본 Secure 로 했고, Safari 는 평문 `http://localhost` 에서 Secure 쿠키를 저장하지 않는다. QA-1600 기록이 '단순히 true 로 바꾸면 터널 로그인이 깨진다 —
+  고치기 전에 묻는다'고 적었는데, 고침은 그대로 true 로 했고 보고서는 'Safari 확인 못함'으로만 남겼다(내 잘못 — 경고가 있으면 고치기 전에 묻는다).
+- **고침**(사용자 결정 — 기본 false): 재현 `23a4f650` → `c850eee5`. 운영 세션 쿠키가 실리는 길은 평문 터널뿐이라 Secure 가 지킬 것이 없고, 공개 CSRF 쿠키는 세션 없이 값이 없으며 CloudFront 가
+  HTTPS 리디렉트 · HSTS 를 건다. 로컬 `COOKIE_SECURE` 가 AWS 값을 정하지 않는 분리(QA-1600)는 남겼다. 인프라 정책 시험 186 통과. 버린 대안: 요청마다 나누기(공용 Caddy · edge · api), 터널 TLS.
+
 ## 자동 검사 현황(2026-10-02 15:5x KST, QA 2026-10 브랜치 `qa/2026-10` — #103 뒤, 깨끗한 `git archive` 내보내기 · 격리 스택)
 | 층 | 도구 | 수 |
 |---|---|---|

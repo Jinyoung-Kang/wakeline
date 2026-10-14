@@ -20,6 +20,18 @@
 - 고치기 주의(멈춤 조건): 단순히 true 로 바꾸면 SSM 터널(평문 http)로 붙는 운영자 로그인이 깨진다(브라우저가 Secure 쿠키를 평문에서 버림 — application.yml:79·SecurityConfig.java:156 주석의 R-90). 올바른 수정은 공개 경로/HTTPS 와 터널 경로를 가르거나 터널도 TLS 로 바꾸는 설계 판단이 필요 → 제품 동작 변경이라 고치기 전 사용자에게 묻는다.
 - 의심 원인 파일:줄 — `.env.example:41` · `tools/init_env.py`(EXAMPLE 복사) · `infra/compose.aws.yml:51`.
 
+## QA-1603 (보통) — (배포 뒤) AWS 운영자 로그인이 Safari 에서 곧바로 '세션이 만료되었습니다'로 끝난다 · QA-1600 고침의 회귀
+- 환경: AWS 운영(2026-10-14 14:54Z, `1cf0f8e1` 배포 뒤) · Safari 27 · SSM 포트 포워딩 터널 `http://localhost:8700/ops`. 사용자가 겪었고 edge 접근 기록으로 확인.
+- 재현: 운영자 계정으로 로그인 → `POST /api/v1/ops/session` 200 → 바로 뒤 `GET /api/v1/ops/{session,providers,runs,…}` 가 모두 404(api 는 세션 없는 운영 요청에 404).
+  화면은 '세션이 만료되었습니다 — 다시 로그인하세요.' 시험: `infra/tests/test_qa_1603_aws_tunnel_cookie.py`(compose 해석 — 문서대로 만든 .env 에서
+  `WAKELINE_COOKIE_SECURE` 기대 false · 실제 true, `AssertionError: 'true' != 'false'`).
+- 원인: QA-1600 고침(`49104246`)이 `AWS_COOKIE_SECURE` 기본값을 true 로 두어 세션 · CSRF 쿠키가 Secure 가 됐다. Safari 는 평문 `http://localhost` 에서 Secure
+  쿠키를 저장하지 않는다(Chrome · Firefox 는 localhost 를 안전한 곳으로 보아 받는 것으로 알려져 있으나 확인하지 않았다). 위 QA-1600 절의 '고치기 주의'가 바로 이것을
+  경고했는데 고침이 그대로 true 로 했고, 보고서는 'Safari 확인 못함'으로만 남겼다 — 내 잘못.
+- 고침(`c850eee5` · 사용자 결정 2026-10-14 — 세 선택지 중 '기본 false'): `compose.aws.yml` 기본값 false. 근거: 운영 세션 쿠키가 실리는 길은 평문 터널뿐(운영 경로는
+  공개 주소에서 Caddy 가 닫음), 공개 쪽 CSRF 쿠키는 세션 없이는 값이 없음, CloudFront 가 HTTPS 리디렉트 · HSTS. QA-1600 의 분리(로컬 COOKIE_SECURE 가 AWS 값을
+  정하지 않음)는 그대로 시험한다. 고르지 않은 것: 요청마다 나누기(공개 HTTPS 는 Secure · 터널은 아님 — 공용 Caddy · edge · api 세 곳 변경), 터널을 TLS 로.
+
 ## QA-1601 (보통) — 앞단 잠금(gate) 시도 제한이 동시 요청에 지켜지지 않는다(check-then-act 경쟁) · aws-deploy(공유)
 - 환경: Docker 없이 gate.py 를 메모리로 불러 127.0.0.1 임의 포트에 띄워 시험(aws-deploy 읽기만 · __pycache__ 쓰지 않음). aws-deploy gate 는 Macro·BuildRisk·Wakeline 공유.
 - 재현 절차:

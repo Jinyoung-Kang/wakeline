@@ -10,6 +10,9 @@ RDS_HOST · PUBLIC_ORIGIN 을 더한 것이다(.env.aws.example 은 이름 목�
 PUBLIC_ORIGIN 을 더한 뒤 `docker compose -f infra/compose.yml -f infra/compose.aws.yml --env-file <임시> config` 의 해석 결과를 본다.
 컨테이너를 띄우지 않는다. docker compose 가 없으면 건너뛴다.
 
+뒤따른 결정(QA-1603 — 2026-10-14 배포 뒤): AWS 기본값을 true 로 둔 이 고침은 Safari 의 터널 로그인을 깨 기본값을 false 로 되돌렸다.
+그래서 이 시험은 남은 뜻만 본다 — 로컬용 COOKIE_SECURE 줄(.env.example)이 AWS 값을 정하지 않고, AWS_COOKIE_SECURE 만 정한다.
+
 실행: python3 -m unittest discover -s infra/tests -p 'test_qa_1600*' -v
 """
 from __future__ import annotations
@@ -70,21 +73,27 @@ def render_api_env(env_file: Path) -> dict[str, str]:
 
 @unittest.skipUnless(_docker_compose_available(), "docker compose 없음")
 class Qa1600AwsCookieSecureTest(unittest.TestCase):
-    def test_qa_1600_aws_api_cookie_secure_is_true_with_the_documented_env(self) -> None:
-        """기대: 공개 HTTPS(CloudFront) 뒤의 AWS 판은 쿠키 Secure(compose.aws.yml 의 기본값 true). 실제(고치기 전): .env.example 의 false."""
+    def test_qa_1600_the_local_cookie_secure_line_does_not_decide_the_aws_value(self) -> None:
+        """기대: .env.example 의 로컬용 COOKIE_SECURE=false 가 남아 있어도 AWS_COOKIE_SECURE=true 면 Secure(고치기 전: 로컬 줄이 이겼다)."""
         with tempfile.TemporaryDirectory() as d:
-            api = render_api_env(make_aws_env(Path(d)))
+            env = make_aws_env(Path(d))
+            env.write_text(env.read_text() + "AWS_COOKIE_SECURE=true\n")
+            api = render_api_env(env)
         self.assertEqual(
             api.get("WAKELINE_COOKIE_SECURE"), "true",
-            "AWS 판 api 의 WAKELINE_COOKIE_SECURE — make init(.env.example 복사) + RDS_HOST · PUBLIC_ORIGIN 으로 만든 .env 에서",
+            "AWS 판 api 의 WAKELINE_COOKIE_SECURE — make init(.env.example 복사) + RDS_HOST · PUBLIC_ORIGIN + AWS_COOKIE_SECURE=true",
         )
 
-    def test_qa_1600_control_compose_default_is_true_without_the_example_line(self) -> None:
-        """대조(지금도 통과): .env 에 COOKIE_SECURE 줄이 없으면 compose.aws.yml 의 기본값 true 가 든다 — 원인은 .env.example 의 줄이다."""
+    def test_qa_1600_control_without_the_example_line_the_value_is_the_same(self) -> None:
+        """대조: .env 에 COOKIE_SECURE 줄이 없어도 값은 같다(AWS 기본값 — QA-1603 뒤 false)."""
         with tempfile.TemporaryDirectory() as d:
-            api = render_api_env(make_aws_env(Path(d), drop_keys=("COOKIE_SECURE",)))
-        self.assertEqual(api.get("WAKELINE_COOKIE_SECURE"), "true")
-
+            a, b = Path(d, "a"), Path(d, "b")
+            a.mkdir()
+            b.mkdir()
+            with_line = render_api_env(make_aws_env(a))
+            without = render_api_env(make_aws_env(b, drop_keys=("COOKIE_SECURE",)))
+        self.assertEqual(with_line.get("WAKELINE_COOKIE_SECURE"), without.get("WAKELINE_COOKIE_SECURE"))
+        self.assertEqual(without.get("WAKELINE_COOKIE_SECURE"), "false")
 
 if __name__ == "__main__":
     unittest.main()

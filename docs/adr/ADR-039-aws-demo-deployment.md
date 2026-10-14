@@ -30,7 +30,9 @@
    - 앞단 Caddy가 edge로 보낼 때 Host를 `localhost`로 바꾼다. edge의 Host 허용 목록은 그대로다.
    - 웹은 상대 경로와 `location.host`로 REST · WS 주소를 만든다. CSP도 `connect-src 'self'`라 Host를 쓰지 않는다.
    - api의 `WAKELINE_ALLOWED_ORIGINS`에는 공개 주소(`PUBLIC_ORIGIN`)를 더하고, 관리자 터널용 localhost 주소를 남긴다.
-   - 운영 쿠키는 Secure다(`AWS_COOKIE_SECURE`, 기본 true). 로컬용 `COOKIE_SECURE`는 읽지 않는다 — `.env.example`의 false가 기본값을 이겨 Secure 없이 배포됐다(QA-1600, 2026-10-14).
+   - 운영 쿠키 Secure는 `AWS_COOKIE_SECURE`가 정한다(기본 false). 로컬용 `COOKIE_SECURE`는 읽지 않는다 — `.env.example`의 값이 AWS 값을 정하던 것을 막았다(QA-1600, 2026-10-14).
+     기본을 true로 두었더니 관리자 터널(평문 `http://localhost:8700`)에서 Safari가 Secure 쿠키를 저장하지 않아 로그인 직후 '세션 만료'가 됐다(QA-1603, 2026-10-14 배포 뒤 — 사용자 결정으로 false).
+     운영 세션 쿠키가 실리는 길은 그 터널뿐이고, 공개 쪽 CSRF 쿠키는 세션 없이는 값이 없으며, CloudFront가 HTTPS 리디렉트 · HSTS를 건다. 터널을 HTTPS로 바꾸면 true.
 4. **edge realip**: `nginx.conf`에 `include /etc/nginx/edge.d/*.conf;`를 둔다(로컬에서는 비어 있어 아무 일도 하지 않는다).
    - AWS에서는 `edge/realip.aws.conf`를 마운트한다. 사설 대역(도커 브리지 게이트웨이)에서 온 `X-Forwarded-For`를 믿는다.
    - realip이 `$remote_addr` 자체를 바꾸므로 `proxy_headers.conf`의 덮어쓰기와 api의 `WAKELINE_TRUSTED_PROXY`는 그대로다.

@@ -48,9 +48,11 @@ services:
       WAKELINE_READPOOL_SIZE: "2"
       # 공개 주소 + 관리자 터널(SSM 포트 포워딩으로 http://localhost:8700)
       WAKELINE_ALLOWED_ORIGINS: ${PUBLIC_ORIGIN:?PUBLIC_ORIGIN 필요 (예 https://dxxxx.cloudfront.net)},http://localhost:${WAKELINE_PORT:-8700},http://127.0.0.1:${WAKELINE_PORT:-8700}
-      # 공개 HTTPS 뒤라 쿠키는 Secure. 로컬용 COOKIE_SECURE(.env.example 의 false — make init 이 복사)를 읽지 않는다: 그 줄이 이 기본값을 이겨
-      # 운영 쿠키가 Secure 없이 나갔다(QA-1600). 끌 때만 .env 에 AWS_COOKIE_SECURE=false(관리자 터널을 http://localhost 가 아닌 주소로 쓸 때 등)
-      WAKELINE_COOKIE_SECURE: "${AWS_COOKIE_SECURE:-true}"
+      # 쿠키 Secure 는 기본 끔(QA-1603): 운영 세션 쿠키가 실리는 길은 위 관리자 터널(평문 http://localhost)뿐이고(운영 경로는 공개 주소에서 닫힘),
+      # Safari 는 http://localhost 에서 Secure 쿠키를 저장하지 않아 로그인 직후 '세션 만료'가 됐다. 공개 쪽 CSRF 쿠키는 세션 없이는 값이 없고 CloudFront 가
+      # HTTPS 리디렉트 · HSTS 를 건다. 터널을 HTTPS 로 바꾸면 .env 에 AWS_COOKIE_SECURE=true. 로컬용 COOKIE_SECURE(.env.example — make init 이
+      # 복사)는 읽지 않는다 — 그 줄이 AWS 값을 정하던 것(QA-1600)은 그대로 막는다.
+      WAKELINE_COOKIE_SECURE: "${AWS_COOKIE_SECURE:-false}"
     volumes:
       - *rds-ca
     networks:
