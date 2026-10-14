@@ -4,10 +4,12 @@
 
 출력: 묶음마다 건수 · 가운데 · 최대 ms · 첫 시각 · 마지막 시각 · 문장 앞 160자. 'execute <unnamed>' · 'execute S_n' 과 'statement:' 를 같은 문장으로 본다.
 문장이 여러 줄이면 첫 줄만 로그 줄에 있다 — DETAIL(파라미터) 줄은 건너뛴다.
+(QA 2026-10 AWS) 다른 격리 스택은 환경 변수 PERF_PROJECT(기본 wakeline-e2e — db 컨테이너 <프로젝트>-db-1).
 """
 
 from __future__ import annotations
 
+import os
 import re
 import statistics
 import subprocess
@@ -20,7 +22,7 @@ def main() -> int:
     since = sys.argv[1]
     until = sys.argv[2] if len(sys.argv) > 2 and not sys.argv[2].startswith("--") else None
     raw = sys.argv[sys.argv.index("--raw") + 1] if "--raw" in sys.argv else None
-    cmd = ["docker", "logs", "--since", since] + (["--until", until] if until else []) + ["wakeline-e2e-db-1"]
+    cmd = ["docker", "logs", "--since", since] + (["--until", until] if until else []) + [f"{os.environ.get('PERF_PROJECT') or 'wakeline-e2e'}-db-1"]
     out = subprocess.run(cmd, capture_output=True, text=True)
     text = out.stdout + out.stderr
     lines = text.splitlines()

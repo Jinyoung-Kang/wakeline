@@ -9,11 +9,13 @@
 # - 화면 · 프리셋을 번갈아(반복 n 마다 화면 → 데스크톱 · 모바일) 돌려 시간에 따른 흔들림이 한쪽에 몰리지 않게 한다.
 # - 결과: docs/qa/2026-10/evidence/performance/cwv/<이름표>/<gpu|swgl>-<none|ofm>/<화면>-<프리셋>-<n>.json.gz
 #   (스크린샷 · 필름스트립을 뺀 보고서 — 저장소를 가볍게). 요약은 tools/qa/perf_cwv_summary.py.
+# QA 2026-10 AWS: PERF_CWV_OUT(결과 위 폴더 — 기본 docs/qa/2026-10/evidence/performance/cwv) · PERF_BASE(기본 http://localhost:8701) — 옛 증거를 덮지 않게.
 set -euo pipefail
 label=${1:?이름표}; mode=${2:?gpu|swgl}; hosts=${3:?none|ofm}; reps=${4:-3}; shift 4 || shift $#
 pages=("$@"); [ ${#pages[@]} -eq 0 ] && pages=(/ /replay /about /stats)
 root=$(cd "$(dirname "$0")/../.." && pwd)
-out="$root/docs/qa/2026-10/evidence/performance/cwv/$label/$mode-$hosts"
+out="${PERF_CWV_OUT:-$root/docs/qa/2026-10/evidence/performance/cwv}/$label/$mode-$hosts"
+base="${PERF_BASE:-http://localhost:8701}"
 mkdir -p "$out"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
@@ -36,7 +38,7 @@ for n in $(seq 1 "$reps"); do
       dst="$out/$slug-$preset-$n.json.gz"
       [ -s "$dst" ] && continue   # 이미 잰 것은 건너뛴다
       pargs=(); [ "$preset" = desktop ] && pargs=(--preset=desktop)
-      if npx -y lighthouse@12.8.2 "http://localhost:8701$page" ${pargs[@]+"${pargs[@]}"} --only-categories=performance --output=json \
+      if npx -y lighthouse@12.8.2 "$base$page" ${pargs[@]+"${pargs[@]}"} --only-categories=performance --output=json \
           --output-path="$tmp/r.json" --quiet --max-wait-for-load=60000 --chrome-flags="$flags" "${bargs[@]}"; then
         python3 - "$tmp/r.json" "$dst" <<'EOF'
 import gzip, json, sys

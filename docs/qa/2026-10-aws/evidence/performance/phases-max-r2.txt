@@ -1,0 +1,34 @@
+label=max run=2 project=wlqa-a api=10.78.0.30:8000 phases='R100 S B I' start=2026-10-14T09:24:18Z
+sha256:13d2614bef22298b2a5e1438d03344fc7e2ac1b1c337e181834e7dd343c7e13a
+WAKELINE_READPOOL_SIZE=2
+SPRING_DATASOURCE_HIKARI_MAXIMUMPOOLSIZE=6
+WAKELINE_WS_MAX_CONN=1000
+WAKELINE_PUBLIC_RATE_LIMIT_PER_MIN=1000000
+WAKELINE_PUBLICREADS_PERMITS=3
+WAKELINE_WS_MAX_CONN_PER_IP=1000
+JAVA_TOOL_OPTIONS=-XX:+UseG1GC -XX:MaxRAMPercentage=40 -XX:+ExitOnOutOfMemoryError
+MALLOC_ARENA_MAX=2
+container_started=2026-10-14T09:24:21.068161423Z
+W 2026-10-14T09:24:31Z 2026-10-14T09:27:33Z
+state global=10000 ships=15375
+rejected_before R100 0.0
+R100 2026-10-14T09:27:33Z 2026-10-14T09:30:35Z
+rejected_after R100 0.0
+rejected_before S 0.0
+S 2026-10-14T09:30:46Z 2026-10-14T09:35:06Z
+rejected_after S 0.0
+rejected_before B 0.0
+B 2026-10-14T09:35:16Z 2026-10-14T09:37:18Z
+rejected_after B 0.0
+rejected_before I 0.0
+I 2026-10-14T09:37:28Z 2026-10-14T09:42:28Z
+rejected_after I 0.0
+inspect restarts=0 oom_killed=false started=2026-10-14T09:24:21.068161423Z status=running
+oom_lines 0
+jvm_line Picked up JAVA_TOOL_OPTIONS: -XX:+UseG1GC -XX:MaxRAMPercentage=40 -XX:+ExitOnOutOfMemoryError
+gc jvm_gc_pause_seconds_count{action="end of minor GC",cause="G1 Evacuation Pause",gc="G1 Young Generation"} 406
+gc jvm_gc_pause_seconds_sum{action="end of minor GC",cause="G1 Evacuation Pause",gc="G1 Young Generation"} 2.753
+gc jvm_gc_pause_seconds_count{action="end of minor GC",cause="G1 Humongous Allocation",gc="G1 Young Generation"} 4
+gc jvm_gc_pause_seconds_sum{action="end of minor GC",cause="G1 Humongous Allocation",gc="G1 Young Generation"} 0.039
+warn    1 WARN dev.wakeline.coverage.ShipCoverage       : ship coverage: memory cap reached (cells N / N, ship-cells N / N) — new cells or ships are not count
+end=2026-10-14T09:42:28Z

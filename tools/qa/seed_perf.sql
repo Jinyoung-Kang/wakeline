@@ -15,6 +15,12 @@
 -- 항적 · 선박 위치는 오늘 −2일 00:00 UTC 부터, 30일 보존 표는 29.5일 안에서 시작한다).
 -- 항적 · 선박 위치는 운영과 같이 시각 순서로 넣는다(BRIN(ts) 상관이 운영과 같다).
 \set ON_ERROR_STOP on
+-- 알림 끝 시각(alert_event 를 이 시각까지 넣는다 — 격리 스택이 실제로 쓴 알림 앞). 기본은 앞선 QA 의 값(2026-10-01 17:00 UTC).
+-- QA 2026-10 AWS: 다른 날 다시 넣을 때는 -v alerts_end='2026-10-14 08:00:00+00' 처럼 스택을 띄운 시각으로(앞선 QA 와 같은 '측정 시각까지 약 29일').
+\if :{?alerts_end}
+\else
+\set alerts_end '2026-10-01 17:00:00+00'
+\endif
 SET synchronous_commit = off;
 SET client_min_messages = notice;
 SET TimeZone = 'UTC';
@@ -35,7 +41,7 @@ SELECT date_trunc('hour', now()) AS t_end,
        (date_trunc('day', now()) - interval '2 days') AS t_start,
        date_trunc('hour', now() - interval '29 days 12 hours') AS t_30d,
        date_trunc('hour', now() - interval '250 days') AS t_sig0,
-       timestamptz '2026-10-01 17:00:00+00' AS alerts_end;
+       :'alerts_end'::timestamptz AS alerts_end;
 SELECT t_end, t_start, t_30d, t_sig0 FROM pg_temp.qa_anchor;
 
 -- ---- 파티션(소유자 wakeline_migrator · api 직접 권한 없음 — V5 · V9 의 함수와 같은 꼴) ----
@@ -241,7 +247,7 @@ SELECT 'track_point_1m', count(*) FROM track_point_1m;
 -- id = epoch ms × 1000 + 500(AlertIds 형식, 실제 알림 id 와 겹치지 않는 시각). sigmet_id 는 그 시각에 유효한 합성 SIGMET.
 INSERT INTO alert_event (id, hex, callsign, sigmet_id, kind, entered_at, left_at, eta_s, alt_ft_at_entry, evidence, close_reason)
 SELECT (floor(extract(epoch FROM t) * 1000)::bigint) * 1000 + 500, hex, 'QA' || lpad((j % 9000)::text, 4, '0'),
-       'qa-' || greatest(0, floor(extract(epoch FROM t - a.t_sig0) / 108)::int - 1 - (j % 15)), kind, t,
+       'qa-' || least(199999, greatest(0, floor(extract(epoch FROM t - a.t_sig0) / 108)::int - 1 - (j % 15))), kind, t,  -- least: alerts_end 가 실행 시각에 가까우면 마지막 SIGMET 뒤를 가리킨다(FK)
        t + make_interval(secs => 120 + floor(3480 * pg_temp.u(j * 3 + 1))),
        CASE WHEN kind = 'PREDICTED' THEN 60 + floor(540 * pg_temp.u(j * 3 + 2))::int END, alt,
        jsonb_build_object('entry', 'lateral', 'gs_kt', 420.5, 'method', CASE WHEN kind = 'PREDICTED' THEN 'dead_reckoning_10min' ELSE 'observed_inside' END,

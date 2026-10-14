@@ -14,6 +14,10 @@ Redis 스트림에 운영 모양의 메시지를 넣는다:
     python3 tools/qa/perf_feed.py [초]      # 기본 7200 s. 8701 스택(wakeline-e2e)만.
     touch /tmp/wakeline-qa-perf-feed.stop    # 다음 루프(0.2 s 안)에서 스스로 끝난다(프로세스를 죽이지 않고 멈추는 길)
 비밀번호는 redis 컨테이너 자신의 환경 변수에서 redis-cli 가 읽는다(inject_stream.py 와 같은 방식 — 출력하지 않는다).
+
+(QA 2026-10 AWS) 환경 변수로 다른 격리 스택 · 다른 규모: PERF_PROJECT(기본 wakeline-e2e — 예 wlqa-a) · PERF_GLOBAL_N(기본 10000 — 0 이면 전세계를 싣지
+않는다: AWS 판은 OpenSky 를 끈다) · PERF_SHIPS_N(기본 15000) · PERF_SHIP_BATCH(기본 200 — 5 s 마다, AWS 규모는 30 = 초당 6건 ≈ PERF §3 동아시아 5.3 msg/s) ·
+PERF_FEED_STOP(멈춤 표식 파일, 기본 /tmp/wakeline-qa-perf-feed.stop).
 """
 
 from __future__ import annotations
@@ -29,14 +33,14 @@ import sys
 import time
 from datetime import datetime, timezone
 
-PROJECT = "wakeline-e2e"
+PROJECT = os.environ.get("PERF_PROJECT") or "wakeline-e2e"
 REDIS = f"{PROJECT}-redis-1"
 DB = f"{PROJECT}-db-1"
-GLOBAL_N = 10_000
-SHIPS_N = 15_000
-SHIP_BATCH = 200
+GLOBAL_N = int(os.environ.get("PERF_GLOBAL_N", "10000"))
+SHIPS_N = int(os.environ.get("PERF_SHIPS_N", "15000"))
+SHIP_BATCH = int(os.environ.get("PERF_SHIP_BATCH", "200"))
 SHIP_EVERY_S = 5.0
-STOP_FILE = "/tmp/wakeline-qa-perf-feed.stop"
+STOP_FILE = os.environ.get("PERF_FEED_STOP") or "/tmp/wakeline-qa-perf-feed.stop"
 
 
 def iso(t: float) -> str:
@@ -196,7 +200,8 @@ def main() -> int:
     dur = float(sys.argv[1]) if len(sys.argv) > 1 else 7200.0
     f = Feed()
     end = time.monotonic() + dur
-    f.publish_global()
+    if GLOBAL_N > 0:
+        f.publish_global()
     next_ships = time.monotonic()
     next_check = time.monotonic()
     while time.monotonic() < end and not os.path.exists(STOP_FILE):
@@ -204,7 +209,7 @@ def main() -> int:
         if now >= next_ships:
             f.publish_ships()
             next_ships += SHIP_EVERY_S
-        if now >= next_check:
+        if GLOBAL_N > 0 and now >= next_check:
             next_check = now + 2.0
             try:
                 if f.latest_global_is_fixture() or time.time() - f.last_global_at > 125:

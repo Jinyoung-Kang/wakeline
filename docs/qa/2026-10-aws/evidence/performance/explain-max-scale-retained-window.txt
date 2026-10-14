@@ -1,0 +1,213 @@
+Timing is on.
+SET
+Time: 0.151 ms
+== 특보 끝내기 UPDATE(기본 키 한 건 — 고친 측정)
+Time: 28.308 ms
+BEGIN
+Time: 0.096 ms
+                                            QUERY PLAN                                             
+---------------------------------------------------------------------------------------------------
+ Update on wx_warning (actual time=0.432..0.433 rows=0.00 loops=1)
+   Buffers: shared hit=24
+   ->  Index Scan using wx_warning_pkey on wx_warning (actual time=0.080..0.082 rows=1.00 loops=1)
+         Index Cond: (id = 112061)
+         Filter: ((ended_at IS NULL) AND (last_seen < now()))
+         Index Searches: 1
+         Buffers: shared hit=6
+ Planning:
+   Buffers: shared hit=8
+ Planning Time: 0.251 ms
+ Execution Time: 0.555 ms
+(11 rows)
+
+Time: 1.941 ms
+ROLLBACK
+Time: 0.381 ms
+== 지정 보존 복사(항공기 10) — 창 70 hours
+BEGIN
+Time: 0.114 ms
+                                                                                                                              QUERY PLAN                                                                                                                               
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Insert on retained_track (actual time=13351.741..13351.755 rows=0.00 loops=1)
+   Conflict Resolution: NOTHING
+   Conflict Arbiter Indexes: retained_track_pkey
+   Tuples Inserted: 0
+   Conflicting Tuples: 33600
+   Buffers: shared hit=206317 read=117356 written=10981, temp read=2446 written=2452
+   ->  Subquery Scan on "*SELECT*" (actual time=13171.896..13230.991 rows=33600.00 loops=1)
+         Buffers: shared hit=72809 read=116460 written=10981, temp read=2446 written=2452
+         ->  Unique (actual time=13171.866..13227.185 rows=33600.00 loops=1)
+               Buffers: shared hit=72809 read=116460 written=10981, temp read=2446 written=2452
+               ->  Sort (actual time=13171.854..13207.034 rows=201600.00 loops=1)
+                     Sort Key: ((track_point.hex)::text), (date_trunc('minute'::text, track_point.ts)), track_point.ts
+                     Sort Method: external merge  Disk: 19568kB
+                     Buffers: shared hit=72809 read=116460 written=10981, temp read=2446 written=2452
+                     ->  Append (actual time=213.472..13003.333 rows=201600.00 loops=1)
+                           Buffers: shared hit=72803 read=116460 written=10981
+                           Subplans Removed: 3
+                           ->  Index Scan using track_point_20261012_pkey on track_point_20261012 track_point_1 (actual time=213.471..7673.018 rows=86400.00 loops=1)
+                                 Index Cond: ((hex = ANY ('{f10000,f10040,f10080,f100c0,f10100,f10140,f10180,f101c0,f10200,f10240}'::bpchar[])) AND (ts >= (date_trunc('hour'::text, now()) - '70:00:00'::interval)) AND (ts < date_trunc('hour'::text, now())))
+                                 Index Searches: 1
+                                 Buffers: shared hit=36338 read=50576 written=9705
+                           ->  Index Scan using track_point_20261013_pkey on track_point_20261013 track_point_2 (actual time=1.066..4879.842 rows=86400.00 loops=1)
+                                 Index Cond: ((hex = ANY ('{f10000,f10040,f10080,f100c0,f10100,f10140,f10180,f101c0,f10200,f10240}'::bpchar[])) AND (ts >= (date_trunc('hour'::text, now()) - '70:00:00'::interval)) AND (ts < date_trunc('hour'::text, now())))
+                                 Index Searches: 1
+                                 Buffers: shared hit=36463 read=50451 written=1276
+                           ->  Bitmap Heap Scan on track_point_20261014 track_point_3 (actual time=20.186..419.954 rows=28800.00 loops=1)
+                                 Recheck Cond: ((hex = ANY ('{f10000,f10040,f10080,f100c0,f10100,f10140,f10180,f101c0,f10200,f10240}'::bpchar[])) AND (ts >= (date_trunc('hour'::text, now()) - '70:00:00'::interval)) AND (ts < date_trunc('hour'::text, now())))
+                                 Heap Blocks: exact=15277
+                                 Buffers: shared hit=2 read=15433
+                                 ->  Bitmap Index Scan on track_point_20261014_pkey (actual time=18.020..18.020 rows=28800.00 loops=1)
+                                       Index Cond: ((hex = ANY ('{f10000,f10040,f10080,f100c0,f10100,f10140,f10180,f101c0,f10200,f10240}'::bpchar[])) AND (ts >= (date_trunc('hour'::text, now()) - '70:00:00'::interval)) AND (ts < date_trunc('hour'::text, now())))
+                                       Index Searches: 1
+                                       Buffers: shared hit=2 read=156
+ Planning:
+   Buffers: shared hit=565 read=31
+ Planning Time: 4.702 ms
+ Execution Time: 13385.848 ms
+(37 rows)
+
+Time: 13392.368 ms (00:13.392)
+ROLLBACK
+Time: 0.314 ms
+== 지정 보존 복사(항공기 10) — 창 365 days
+BEGIN
+Time: 0.158 ms
+                                                                                                                              QUERY PLAN                                                                                                                               
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Insert on retained_track (actual time=12719.416..12719.419 rows=0.00 loops=1)
+   Conflict Resolution: NOTHING
+   Conflict Arbiter Indexes: retained_track_pkey
+   Tuples Inserted: 0
+   Conflicting Tuples: 33600
+   Buffers: shared hit=206502 read=117161, temp read=2446 written=2452
+   ->  Subquery Scan on "*SELECT*" (actual time=12550.207..12605.500 rows=33600.00 loops=1)
+         Buffers: shared hit=72994 read=116269, temp read=2446 written=2452
+         ->  Unique (actual time=12550.163..12601.743 rows=33600.00 loops=1)
+               Buffers: shared hit=72994 read=116269, temp read=2446 written=2452
+               ->  Sort (actual time=12550.161..12582.651 rows=201600.00 loops=1)
+                     Sort Key: ((track_point.hex)::text), (date_trunc('minute'::text, track_point.ts)), track_point.ts
+                     Sort Method: external merge  Disk: 19568kB
+                     Buffers: shared hit=72994 read=116269, temp read=2446 written=2452
+                     ->  Append (actual time=100.613..12397.231 rows=201600.00 loops=1)
+                           Buffers: shared hit=72994 read=116269
+                           Subplans Removed: 3
+                           ->  Index Scan using track_point_20261012_pkey on track_point_20261012 track_point_1 (actual time=100.612..7478.430 rows=86400.00 loops=1)
+                                 Index Cond: ((hex = ANY ('{f10000,f10040,f10080,f100c0,f10100,f10140,f10180,f101c0,f10200,f10240}'::bpchar[])) AND (ts >= (date_trunc('hour'::text, now()) - '365 days'::interval)) AND (ts < date_trunc('hour'::text, now())))
+                                 Index Searches: 1
+                                 Buffers: shared hit=36514 read=50400
+                           ->  Index Scan using track_point_20261013_pkey on track_point_20261013 track_point_2 (actual time=1.195..4406.562 rows=86400.00 loops=1)
+                                 Index Cond: ((hex = ANY ('{f10000,f10040,f10080,f100c0,f10100,f10140,f10180,f101c0,f10200,f10240}'::bpchar[])) AND (ts >= (date_trunc('hour'::text, now()) - '365 days'::interval)) AND (ts < date_trunc('hour'::text, now())))
+                                 Index Searches: 1
+                                 Buffers: shared hit=36480 read=50434
+                           ->  Bitmap Heap Scan on track_point_20261014 track_point_3 (actual time=21.132..481.511 rows=28800.00 loops=1)
+                                 Recheck Cond: ((hex = ANY ('{f10000,f10040,f10080,f100c0,f10100,f10140,f10180,f101c0,f10200,f10240}'::bpchar[])) AND (ts >= (date_trunc('hour'::text, now()) - '365 days'::interval)) AND (ts < date_trunc('hour'::text, now())))
+                                 Heap Blocks: exact=15277
+                                 Buffers: shared read=15435
+                                 ->  Bitmap Index Scan on track_point_20261014_pkey (actual time=18.808..18.809 rows=28800.00 loops=1)
+                                       Index Cond: ((hex = ANY ('{f10000,f10040,f10080,f100c0,f10100,f10140,f10180,f101c0,f10200,f10240}'::bpchar[])) AND (ts >= (date_trunc('hour'::text, now()) - '365 days'::interval)) AND (ts < date_trunc('hour'::text, now())))
+                                       Index Searches: 1
+                                       Buffers: shared read=158
+ Planning:
+   Buffers: shared read=9
+ Planning Time: 0.828 ms
+ Execution Time: 12723.019 ms
+(37 rows)
+
+Time: 12724.731 ms (00:12.725)
+ROLLBACK
+Time: 0.116 ms
+== 지정 보존 복사(항공기 10) — 창 70 hours
+BEGIN
+Time: 0.107 ms
+                                                                                                                              QUERY PLAN                                                                                                                               
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Insert on retained_track (actual time=12606.521..12606.533 rows=0.00 loops=1)
+   Conflict Resolution: NOTHING
+   Conflict Arbiter Indexes: retained_track_pkey
+   Tuples Inserted: 0
+   Conflicting Tuples: 33600
+   Buffers: shared hit=206494 read=117169, temp read=2446 written=2452
+   ->  Subquery Scan on "*SELECT*" (actual time=12431.873..12489.113 rows=33600.00 loops=1)
+         Buffers: shared hit=72986 read=116277, temp read=2446 written=2452
+         ->  Unique (actual time=12431.749..12485.044 rows=33600.00 loops=1)
+               Buffers: shared hit=72986 read=116277, temp read=2446 written=2452
+               ->  Sort (actual time=12431.744..12465.238 rows=201600.00 loops=1)
+                     Sort Key: ((track_point.hex)::text), (date_trunc('minute'::text, track_point.ts)), track_point.ts
+                     Sort Method: external merge  Disk: 19568kB
+                     Buffers: shared hit=72986 read=116277, temp read=2446 written=2452
+                     ->  Append (actual time=95.892..12279.126 rows=201600.00 loops=1)
+                           Buffers: shared hit=72986 read=116277
+                           Subplans Removed: 3
+                           ->  Index Scan using track_point_20261012_pkey on track_point_20261012 track_point_1 (actual time=95.891..6948.121 rows=86400.00 loops=1)
+                                 Index Cond: ((hex = ANY ('{f10000,f10040,f10080,f100c0,f10100,f10140,f10180,f101c0,f10200,f10240}'::bpchar[])) AND (ts >= (date_trunc('hour'::text, now()) - '70:00:00'::interval)) AND (ts < date_trunc('hour'::text, now())))
+                                 Index Searches: 1
+                                 Buffers: shared hit=36511 read=50403
+                           ->  Index Scan using track_point_20261013_pkey on track_point_20261013 track_point_2 (actual time=0.734..4826.350 rows=86400.00 loops=1)
+                                 Index Cond: ((hex = ANY ('{f10000,f10040,f10080,f100c0,f10100,f10140,f10180,f101c0,f10200,f10240}'::bpchar[])) AND (ts >= (date_trunc('hour'::text, now()) - '70:00:00'::interval)) AND (ts < date_trunc('hour'::text, now())))
+                                 Index Searches: 1
+                                 Buffers: shared hit=36475 read=50439
+                           ->  Bitmap Heap Scan on track_point_20261014 track_point_3 (actual time=19.418..473.138 rows=28800.00 loops=1)
+                                 Recheck Cond: ((hex = ANY ('{f10000,f10040,f10080,f100c0,f10100,f10140,f10180,f101c0,f10200,f10240}'::bpchar[])) AND (ts >= (date_trunc('hour'::text, now()) - '70:00:00'::interval)) AND (ts < date_trunc('hour'::text, now())))
+                                 Heap Blocks: exact=15277
+                                 Buffers: shared read=15435
+                                 ->  Bitmap Index Scan on track_point_20261014_pkey (actual time=17.350..17.353 rows=28800.00 loops=1)
+                                       Index Cond: ((hex = ANY ('{f10000,f10040,f10080,f100c0,f10100,f10140,f10180,f101c0,f10200,f10240}'::bpchar[])) AND (ts >= (date_trunc('hour'::text, now()) - '70:00:00'::interval)) AND (ts < date_trunc('hour'::text, now())))
+                                       Index Searches: 1
+                                       Buffers: shared read=158
+ Planning:
+   Buffers: shared read=9
+ Planning Time: 0.634 ms
+ Execution Time: 12610.220 ms
+(37 rows)
+
+Time: 12611.660 ms (00:12.612)
+ROLLBACK
+Time: 0.119 ms
+== 지정 보존 복사(항공기 10) — 창 365 days
+BEGIN
+Time: 0.050 ms
+                                                                                                                              QUERY PLAN                                                                                                                               
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Insert on retained_track (actual time=13175.675..13175.679 rows=0.00 loops=1)
+   Conflict Resolution: NOTHING
+   Conflict Arbiter Indexes: retained_track_pkey
+   Tuples Inserted: 0
+   Conflicting Tuples: 33600
+   Buffers: shared hit=206499 read=117164 written=46, temp read=2446 written=2452
+   ->  Subquery Scan on "*SELECT*" (actual time=13005.836..13061.761 rows=33600.00 loops=1)
+         Buffers: shared hit=72991 read=116272 written=46, temp read=2446 written=2452
+         ->  Unique (actual time=13005.808..13058.062 rows=33600.00 loops=1)
+               Buffers: shared hit=72991 read=116272 written=46, temp read=2446 written=2452
+               ->  Sort (actual time=13005.806..13038.223 rows=201600.00 loops=1)
+                     Sort Key: ((track_point.hex)::text), (date_trunc('minute'::text, track_point.ts)), track_point.ts
+                     Sort Method: external merge  Disk: 19568kB
+                     Buffers: shared hit=72991 read=116272 written=46, temp read=2446 written=2452
+                     ->  Append (actual time=105.979..12849.587 rows=201600.00 loops=1)
+                           Buffers: shared hit=72991 read=116272 written=46
+                           Subplans Removed: 3
+                           ->  Index Scan using track_point_20261012_pkey on track_point_20261012 track_point_1 (actual time=105.978..7245.924 rows=86400.00 loops=1)
+                                 Index Cond: ((hex = ANY ('{f10000,f10040,f10080,f100c0,f10100,f10140,f10180,f101c0,f10200,f10240}'::bpchar[])) AND (ts >= (date_trunc('hour'::text, now()) - '365 days'::interval)) AND (ts < date_trunc('hour'::text, now())))
+                                 Index Searches: 1
+                                 Buffers: shared hit=36523 read=50391
+                           ->  Index Scan using track_point_20261013_pkey on track_point_20261013 track_point_2 (actual time=0.847..5161.072 rows=86400.00 loops=1)
+                                 Index Cond: ((hex = ANY ('{f10000,f10040,f10080,f100c0,f10100,f10140,f10180,f101c0,f10200,f10240}'::bpchar[])) AND (ts >= (date_trunc('hour'::text, now()) - '365 days'::interval)) AND (ts < date_trunc('hour'::text, now())))
+                                 Index Searches: 1
+                                 Buffers: shared hit=36465 read=50449
+                           ->  Bitmap Heap Scan on track_point_20261014 track_point_3 (actual time=23.922..405.688 rows=28800.00 loops=1)
+                                 Recheck Cond: ((hex = ANY ('{f10000,f10040,f10080,f100c0,f10100,f10140,f10180,f101c0,f10200,f10240}'::bpchar[])) AND (ts >= (date_trunc('hour'::text, now()) - '365 days'::interval)) AND (ts < date_trunc('hour'::text, now())))
+                                 Heap Blocks: exact=15277
+                                 Buffers: shared hit=3 read=15432 written=46
+                                 ->  Bitmap Index Scan on track_point_20261014_pkey (actual time=21.864..21.864 rows=28800.00 loops=1)
+                                       Index Cond: ((hex = ANY ('{f10000,f10040,f10080,f100c0,f10100,f10140,f10180,f101c0,f10200,f10240}'::bpchar[])) AND (ts >= (date_trunc('hour'::text, now()) - '365 days'::interval)) AND (ts < date_trunc('hour'::text, now())))
+                                       Index Searches: 1
+                                       Buffers: shared hit=3 read=155
+ Planning:
+   Buffers: shared hit=1 read=8
+ Planning Time: 0.838 ms
+ Execution Time: 13179.412 ms
+(37 rows)
+
+Time: 13180.806 ms (00:13.181)
+ROLLBACK
+Time: 0.154 ms

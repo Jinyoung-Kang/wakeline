@@ -1,0 +1,2607 @@
+{
+ "metrics": {
+  "http_reqs{name:alerts_history}": {
+   "type": "counter",
+   "contains": "default",
+   "values": {
+    "rate": 8.83857925577059,
+    "count": 1061
+   },
+   "thresholds": {
+    "count>=0": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_failed{name:stats_sigmet}": {
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 1102
+   },
+   "thresholds": {
+    "rate<0.01": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_failed{name:replay_1m}": {
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 1110
+   },
+   "thresholds": {
+    "rate<0.01": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_duration{name:alerts_active}": {
+   "thresholds": {
+    "p(95)<300": {
+     "ok": true
+    }
+   },
+   "type": "trend",
+   "contains": "time",
+   "values": {
+    "p(99)": 109.98795064,
+    "max": 255.020416,
+    "avg": 10.872272248322142,
+    "med": 3.784041,
+    "p(95)": 48.67365859999993
+   }
+  },
+  "status_503{name:radar_frames}": {
+   "thresholds": {
+    "rate>=0": {
+     "ok": true
+    }
+   },
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 1093
+   }
+  },
+  "http_req_duration{expected_response:true}": {
+   "type": "trend",
+   "contains": "time",
+   "values": {
+    "avg": 12.92566179914735,
+    "med": 2.942375,
+    "p(95)": 57.472199999999994,
+    "p(99)": 176.22501243,
+    "max": 607.812709
+   }
+  },
+  "http_req_duration{name:ships_coverage}": {
+   "type": "trend",
+   "contains": "time",
+   "values": {
+    "p(95)": 69.72456884999994,
+    "p(99)": 130.02658190999998,
+    "max": 258.974917,
+    "avg": 19.712554040968346,
+    "med": 9.968395999999998
+   },
+   "thresholds": {
+    "p(95)<300": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_duration{name:aircraft_detail}": {
+   "type": "trend",
+   "contains": "time",
+   "values": {
+    "avg": 12.374981428050997,
+    "med": 1.7883335,
+    "p(95)": 74.00849109999997,
+    "p(99)": 167.09911772999996,
+    "max": 351.243084
+   },
+   "thresholds": {
+    "p(95)<300": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_failed{name:sigmets}": {
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 2110
+   },
+   "thresholds": {
+    "rate<0.01": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_duration{name:airspace}": {
+   "type": "trend",
+   "contains": "time",
+   "values": {
+    "avg": 5.5018415907859115,
+    "med": 1.05825,
+    "p(95)": 26.22176269999999,
+    "p(99)": 73.141352,
+    "max": 285.904
+   },
+   "thresholds": {
+    "p(95)<300": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_tls_handshaking": {
+   "type": "trend",
+   "contains": "time",
+   "values": {
+    "avg": 0,
+    "med": 0,
+    "p(95)": 0,
+    "p(99)": 0,
+    "max": 0
+   }
+  },
+  "http_reqs{name:airports}": {
+   "type": "counter",
+   "contains": "default",
+   "values": {
+    "count": 1036,
+    "rate": 8.630318670102103
+   },
+   "thresholds": {
+    "count>=0": {
+     "ok": true
+    }
+   }
+  },
+  "status_503{stage:s0}": {
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 17987
+   },
+   "thresholds": {
+    "rate>=0": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_failed{name:traffic_grid}": {
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "fails": 1097,
+    "rate": 0,
+    "passes": 0
+   },
+   "thresholds": {
+    "rate<0.01": {
+     "ok": true
+    }
+   }
+  },
+  "http_reqs{name:replay_1m}": {
+   "type": "counter",
+   "contains": "default",
+   "values": {
+    "count": 1110,
+    "rate": 9.246770003680824
+   },
+   "thresholds": {
+    "count>=0": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_duration{name:warnings}": {
+   "type": "trend",
+   "contains": "time",
+   "values": {
+    "avg": 5.5371410538461525,
+    "med": 0.9941245000000001,
+    "p(95)": 24.700166049999954,
+    "p(99)": 75.48334375999997,
+    "max": 176.497041
+   },
+   "thresholds": {
+    "p(95)<300": {
+     "ok": true
+    }
+   }
+  },
+  "http_reqs{name:sigmet_one}": {
+   "values": {
+    "count": 1100,
+    "rate": 9.16346576941343
+   },
+   "thresholds": {
+    "count>=0": {
+     "ok": true
+    }
+   },
+   "type": "counter",
+   "contains": "default"
+  },
+  "http_req_duration{name:alert_one}": {
+   "type": "trend",
+   "contains": "time",
+   "values": {
+    "p(95)": 76.04783954999994,
+    "p(99)": 194.4352175799998,
+    "max": 421.763209,
+    "avg": 13.477492527272714,
+    "med": 1.8482915
+   },
+   "thresholds": {
+    "p(95)<300": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_failed{name:aircraft_search}": {
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 1050
+   },
+   "thresholds": {
+    "rate<0.01": {
+     "ok": true
+    }
+   }
+  },
+  "http_reqs{name:radar_kr}": {
+   "type": "counter",
+   "contains": "default",
+   "values": {
+    "count": 1076,
+    "rate": 8.963535607171682
+   },
+   "thresholds": {
+    "count>=0": {
+     "ok": true
+    }
+   }
+  },
+  "status_503{name:stats_alerts}": {
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 1069
+   },
+   "thresholds": {
+    "rate>=0": {
+     "ok": true
+    }
+   },
+   "type": "rate",
+   "contains": "default"
+  },
+  "status_503{name:aircraft_search}": {
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "passes": 0,
+    "fails": 1050,
+    "rate": 0
+   },
+   "thresholds": {
+    "rate>=0": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_failed{name:ship_track}": {
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 1050
+   },
+   "thresholds": {
+    "rate<0.01": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_duration{name:watch_50}": {
+   "type": "trend",
+   "contains": "time",
+   "values": {
+    "avg": 11.93983872340425,
+    "med": 2.290625,
+    "p(95)": 58.502042,
+    "p(99)": 185.33391699999987,
+    "max": 336.912833
+   },
+   "thresholds": {
+    "p(95)<300": {
+     "ok": true
+    }
+   }
+  },
+  "status_503{name:alert_one}": {
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 1100
+   },
+   "thresholds": {
+    "rate>=0": {
+     "ok": true
+    }
+   }
+  },
+  "data_sent": {
+   "type": "counter",
+   "contains": "data",
+   "values": {
+    "count": 4775300,
+    "rate": 39780.270989709046
+   }
+  },
+  "http_req_failed{name:alerts_history}": {
+   "contains": "default",
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 1061
+   },
+   "thresholds": {
+    "rate<0.01": {
+     "ok": true
+    }
+   },
+   "type": "rate"
+  },
+  "iteration_duration": {
+   "type": "trend",
+   "contains": "time",
+   "values": {
+    "avg": 13.322938742197383,
+    "med": 3.231875,
+    "p(95)": 58.1788584,
+    "p(99)": 176.9524929999999,
+    "max": 608.234708
+   }
+  },
+  "status_503{name:ship_detail}": {
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 1060
+   },
+   "thresholds": {
+    "rate>=0": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_duration{name:airport_wx}": {
+   "type": "trend",
+   "contains": "time",
+   "values": {
+    "max": 542.631626,
+    "avg": 19.31089896285982,
+    "med": 1.988417,
+    "p(95)": 118.23873339999999,
+    "p(99)": 332.74510016
+   },
+   "thresholds": {
+    "p(95)<300": {
+     "ok": true
+    }
+   }
+  },
+  "http_reqs{name:healthz}": {
+   "type": "counter",
+   "contains": "default",
+   "values": {
+    "rate": 8.771935868356675,
+    "count": 1053
+   },
+   "thresholds": {
+    "count>=0": {
+     "ok": true
+    }
+   }
+  },
+  "status_503{name:replay_1m}": {
+   "thresholds": {
+    "rate>=0": {
+     "ok": true
+    }
+   },
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 1110
+   }
+  },
+  "http_reqs{name:client_errors}": {
+   "type": "counter",
+   "contains": "default",
+   "values": {
+    "count": 1106,
+    "rate": 9.213448309973867
+   },
+   "thresholds": {
+    "count>=0": {
+     "ok": true
+    }
+   }
+  },
+  "status_503{name:sigmets}": {
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 2110
+   },
+   "thresholds": {
+    "rate>=0": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_failed{name:ships_region}": {
+   "thresholds": {
+    "rate<0.01": {
+     "ok": true
+    }
+   },
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 2134
+   }
+  },
+  "http_req_duration{name:sigmets}": {
+   "contains": "time",
+   "values": {
+    "med": 2.1327505,
+    "p(95)": 29.666170349999955,
+    "p(99)": 81.14016762999998,
+    "max": 256.490459,
+    "avg": 7.111485095734589
+   },
+   "thresholds": {
+    "p(95)<300": {
+     "ok": true
+    }
+   },
+   "type": "trend"
+  },
+  "http_reqs{name:traffic_grid}": {
+   "type": "counter",
+   "contains": "default",
+   "values": {
+    "count": 1097,
+    "rate": 9.138474499133212
+   },
+   "thresholds": {
+    "count>=0": {
+     "ok": true
+    }
+   }
+  },
+  "http_reqs{name:warnings_history}": {
+   "type": "counter",
+   "contains": "default",
+   "values": {
+    "count": 1016,
+    "rate": 8.463710201567313
+   },
+   "thresholds": {
+    "count>=0": {
+     "ok": true
+    }
+   }
+  },
+  "http_reqs{name:ais_gaps}": {
+   "type": "counter",
+   "contains": "default",
+   "values": {
+    "count": 1091,
+    "rate": 9.088491958572774
+   },
+   "thresholds": {
+    "count>=0": {
+     "ok": true
+    }
+   }
+  },
+  "status_503{name:watch_50}": {
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 1081
+   },
+   "thresholds": {
+    "rate>=0": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_duration": {
+   "type": "trend",
+   "contains": "time",
+   "values": {
+    "max": 607.812709,
+    "avg": 12.92566179914735,
+    "med": 2.942375,
+    "p(95)": 57.472199999999994,
+    "p(99)": 176.22501243
+   }
+  },
+  "http_reqs{name:aircraft_search}": {
+   "type": "counter",
+   "contains": "default",
+   "values": {
+    "count": 1050,
+    "rate": 8.746944598076455
+   },
+   "thresholds": {
+    "count>=0": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_duration{name:airports}": {
+   "contains": "time",
+   "values": {
+    "avg": 10.761254667953658,
+    "med": 1.7763330000000002,
+    "p(95)": 43.25335449999997,
+    "p(99)": 210.01511284999995,
+    "max": 369.726292
+   },
+   "thresholds": {
+    "p(95)<300": {
+     "ok": true
+    }
+   },
+   "type": "trend"
+  },
+  "checks": {
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "rate": 1,
+    "passes": 41749,
+    "fails": 0
+   }
+  },
+  "status_503{name:airspace}": {
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "fails": 1107,
+    "rate": 0,
+    "passes": 0
+   },
+   "thresholds": {
+    "rate>=0": {
+     "ok": true
+    }
+   }
+  },
+  "http_reqs": {
+   "type": "counter",
+   "contains": "default",
+   "values": {
+    "count": 41752,
+    "rate": 347.81183891322684
+   }
+  },
+  "http_req_duration{name:radar_kr_png}": {
+   "contains": "time",
+   "values": {
+    "avg": 7.923903829020329,
+    "med": 1.4893545,
+    "p(95)": 39.92397854999999,
+    "p(99)": 96.38603624999995,
+    "max": 368.193625
+   },
+   "thresholds": {
+    "p(95)<300": {
+     "ok": true
+    }
+   },
+   "type": "trend"
+  },
+  "http_req_duration{name:client_errors}": {
+   "values": {
+    "avg": 7.591745270343578,
+    "med": 1.5671875000000002,
+    "p(95)": 36.204375249999956,
+    "p(99)": 94.96251249999997,
+    "max": 231.930417
+   },
+   "thresholds": {
+    "p(95)<300": {
+     "ok": true
+    }
+   },
+   "type": "trend",
+   "contains": "time"
+  },
+  "status_503{name:airports}": {
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 1036
+   },
+   "thresholds": {
+    "rate>=0": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_failed{stage:s1}": {
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 23762
+   },
+   "thresholds": {
+    "rate<0.01": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_failed{name:radar_kr_png}": {
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 1082
+   },
+   "thresholds": {
+    "rate<0.01": {
+     "ok": true
+    }
+   }
+  },
+  "http_reqs{name:watch_50}": {
+   "type": "counter",
+   "contains": "default",
+   "values": {
+    "count": 1081,
+    "rate": 9.00518772430538
+   },
+   "thresholds": {
+    "count>=0": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_failed{name:alert_one}": {
+   "contains": "default",
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 1100
+   },
+   "thresholds": {
+    "rate<0.01": {
+     "ok": true
+    }
+   },
+   "type": "rate"
+  },
+  "status_503{name:replay_72h}": {
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "fails": 1049,
+    "rate": 0,
+    "passes": 0
+   },
+   "thresholds": {
+    "rate>=0": {
+     "ok": true
+    }
+   }
+  },
+  "status_503{name:aircraft_region}": {
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 3165
+   },
+   "thresholds": {
+    "rate>=0": {
+     "ok": true
+    }
+   }
+  },
+  "status_503{name:warnings_history}": {
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 1016
+   },
+   "thresholds": {
+    "rate>=0": {
+     "ok": true
+    }
+   }
+  },
+  "status_503{name:healthz}": {
+   "contains": "default",
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 1053
+   },
+   "thresholds": {
+    "rate>=0": {
+     "ok": true
+    }
+   },
+   "type": "rate"
+  },
+  "status_503{name:warnings}": {
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 1040
+   },
+   "thresholds": {
+    "rate>=0": {
+     "ok": true
+    }
+   }
+  },
+  "http_reqs{name:airport_wx}": {
+   "type": "counter",
+   "contains": "default",
+   "values": {
+    "count": 1077,
+    "rate": 8.971866030598422
+   },
+   "thresholds": {
+    "count>=0": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_failed{name:replay_72h}": {
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 1049
+   },
+   "thresholds": {
+    "rate<0.01": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_duration{name:stats_alerts}": {
+   "type": "trend",
+   "contains": "time",
+   "values": {
+    "p(95)": 83.00496659999985,
+    "p(99)": 212.29662987999995,
+    "max": 450.861834,
+    "avg": 14.043187748362943,
+    "med": 2.053834
+   },
+   "thresholds": {
+    "p(95)<300": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_blocked": {
+   "type": "trend",
+   "contains": "time",
+   "values": {
+    "avg": 0.02209176901705361,
+    "med": 0.003875,
+    "p(95)": 0.014041449999999999,
+    "p(99)": 0.18714391999999994,
+    "max": 83.4685
+   }
+  },
+  "http_reqs{name:alerts_active}": {
+   "thresholds": {
+    "count>=0": {
+     "ok": true
+    }
+   },
+   "type": "counter",
+   "contains": "default",
+   "values": {
+    "count": 1043,
+    "rate": 8.68863163408928
+   }
+  },
+  "status_503{stage:s1}": {
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 23762
+   },
+   "thresholds": {
+    "rate>=0": {
+     "ok": true
+    }
+   }
+  },
+  "status_503{name:airport_wx}": {
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "passes": 0,
+    "fails": 1077,
+    "rate": 0
+   },
+   "thresholds": {
+    "rate>=0": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_duration{name:stats_sigmet}": {
+   "thresholds": {
+    "p(95)<300": {
+     "ok": true
+    }
+   },
+   "type": "trend",
+   "contains": "time",
+   "values": {
+    "med": 2.8540205,
+    "p(95)": 86.12709375,
+    "p(99)": 213.44820708999995,
+    "max": 427.41625,
+    "avg": 15.100017071687834
+   }
+  },
+  "http_req_duration{name:ships_search}": {
+   "type": "trend",
+   "contains": "time",
+   "values": {
+    "avg": 15.024896136322047,
+    "med": 4.225375,
+    "p(95)": 62.04471699999986,
+    "p(99)": 209.88055599999996,
+    "max": 435.339959
+   },
+   "thresholds": {
+    "p(95)<300": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_failed{name:stats_traffic}": {
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 1075
+   },
+   "thresholds": {
+    "rate<0.01": {
+     "ok": true
+    }
+   }
+  },
+  "http_reqs{name:alert_one}": {
+   "type": "counter",
+   "contains": "default",
+   "values": {
+    "count": 1100,
+    "rate": 9.16346576941343
+   },
+   "thresholds": {
+    "count>=0": {
+     "ok": true
+    }
+   }
+  },
+  "status_503{name:radar_kr}": {
+   "thresholds": {
+    "rate>=0": {
+     "ok": true
+    }
+   },
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 1076
+   }
+  },
+  "http_reqs{name:aircraft_detail}": {
+   "type": "counter",
+   "contains": "default",
+   "values": {
+    "count": 1098,
+    "rate": 9.146804922559951
+   },
+   "thresholds": {
+    "count>=0": {
+     "ok": true
+    }
+   }
+  },
+  "http_reqs{stage:s0}": {
+   "type": "counter",
+   "contains": "default",
+   "values": {
+    "count": 17987,
+    "rate": 149.83932617676305
+   },
+   "thresholds": {
+    "count>=0": {
+     "ok": true
+    }
+   }
+  },
+  "http_reqs{name:stats_traffic}": {
+   "type": "counter",
+   "contains": "default",
+   "values": {
+    "count": 1075,
+    "rate": 8.955205183744942
+   },
+   "thresholds": {
+    "count>=0": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_failed{name:status}": {
+   "contains": "default",
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 2077
+   },
+   "thresholds": {
+    "rate<0.01": {
+     "ok": true
+    }
+   },
+   "type": "rate"
+  },
+  "status_503{name:status}": {
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 2077
+   },
+   "thresholds": {
+    "rate>=0": {
+     "ok": true
+    }
+   }
+  },
+  "http_reqs{name:stats_alerts}": {
+   "type": "counter",
+   "contains": "default",
+   "values": {
+    "count": 1069,
+    "rate": 8.905222643184505
+   },
+   "thresholds": {
+    "count>=0": {
+     "ok": true
+    }
+   }
+  },
+  "status_503{name:aircraft_track}": {
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "passes": 0,
+    "fails": 1096,
+    "rate": 0
+   },
+   "thresholds": {
+    "rate>=0": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_receiving": {
+   "type": "trend",
+   "contains": "time",
+   "values": {
+    "max": 256.216417,
+    "avg": 1.7487191472025323,
+    "med": 0.1335,
+    "p(95)": 8.24271905,
+    "p(99)": 26.78457757999999
+   }
+  },
+  "http_req_failed{stage:s0}": {
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 17987
+   },
+   "thresholds": {
+    "rate<0.01": {
+     "ok": true
+    }
+   }
+  },
+  "status_503{name:ais_gaps}": {
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 1091
+   },
+   "thresholds": {
+    "rate>=0": {
+     "ok": true
+    }
+   }
+  },
+  "status_503{name:traffic_grid}": {
+   "contains": "default",
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 1097
+   },
+   "thresholds": {
+    "rate>=0": {
+     "ok": true
+    }
+   },
+   "type": "rate"
+  },
+  "http_req_duration{name:aircraft_track}": {
+   "contains": "time",
+   "values": {
+    "avg": 10.753028790145974,
+    "med": 1.917833,
+    "p(95)": 51.11384349999989,
+    "p(99)": 166.1165356999998,
+    "max": 329.15525
+   },
+   "thresholds": {
+    "p(95)<300": {
+     "ok": true
+    }
+   },
+   "type": "trend"
+  },
+  "status_503{name:client_errors}": {
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "passes": 0,
+    "fails": 1106,
+    "rate": 0
+   },
+   "thresholds": {
+    "rate>=0": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_duration{name:ship_track}": {
+   "thresholds": {
+    "p(95)<300": {
+     "ok": true
+    }
+   },
+   "type": "trend",
+   "contains": "time",
+   "values": {
+    "p(95)": 97.99131439999998,
+    "p(99)": 298.55221865999994,
+    "max": 552.705333,
+    "avg": 21.84681206666665,
+    "med": 5.7748125
+   }
+  },
+  "status_503{name:stats_traffic}": {
+   "thresholds": {
+    "rate>=0": {
+     "ok": true
+    }
+   },
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 1075
+   }
+  },
+  "http_req_failed{name:ship_detail}": {
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 1060
+   },
+   "thresholds": {
+    "rate<0.01": {
+     "ok": true
+    }
+   },
+   "type": "rate",
+   "contains": "default"
+  },
+  "http_req_failed{name:ships_search}": {
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 1093
+   },
+   "thresholds": {
+    "rate<0.01": {
+     "ok": true
+    }
+   }
+  },
+  "http_reqs{stage:s1}": {
+   "type": "counter",
+   "contains": "default",
+   "values": {
+    "count": 23762,
+    "rate": 197.94752146618356
+   },
+   "thresholds": {
+    "count>=0": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_duration{name:radar_kr}": {
+   "type": "trend",
+   "contains": "time",
+   "values": {
+    "avg": 7.212382134758373,
+    "med": 1.386625,
+    "p(95)": 37.7384475,
+    "p(99)": 88.822896,
+    "max": 291.610375
+   },
+   "thresholds": {
+    "p(95)<300": {
+     "ok": true
+    }
+   }
+  },
+  "status_503{name:alerts_active}": {
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "passes": 0,
+    "fails": 1043,
+    "rate": 0
+   },
+   "thresholds": {
+    "rate>=0": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_failed{name:airports}": {
+   "contains": "default",
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 1036
+   },
+   "thresholds": {
+    "rate<0.01": {
+     "ok": true
+    }
+   },
+   "type": "rate"
+  },
+  "http_req_duration{name:aircraft_search}": {
+   "type": "trend",
+   "contains": "time",
+   "values": {
+    "med": 4.014979,
+    "p(95)": 51.412548249999986,
+    "p(99)": 142.87626591999995,
+    "max": 248.543125,
+    "avg": 11.351696742857142
+   },
+   "thresholds": {
+    "p(95)<300": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_failed{name:watch_50}": {
+   "thresholds": {
+    "rate<0.01": {
+     "ok": true
+    }
+   },
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 1081
+   }
+  },
+  "http_req_failed{name:ais_gaps}": {
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 1091
+   },
+   "thresholds": {
+    "rate<0.01": {
+     "ok": true
+    }
+   }
+  },
+  "data_received": {
+   "values": {
+    "count": 4606414207,
+    "rate": 38373380.82325837
+   },
+   "type": "counter",
+   "contains": "data"
+  },
+  "status_503{name:radar_kr_png}": {
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 1082
+   },
+   "thresholds": {
+    "rate>=0": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_failed{name:airport_wx}": {
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 1077
+   },
+   "thresholds": {
+    "rate<0.01": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_failed{name:radar_frames}": {
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 1093
+   },
+   "thresholds": {
+    "rate<0.01": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_duration{name:replay_72h}": {
+   "type": "trend",
+   "contains": "time",
+   "values": {
+    "med": 26.843125,
+    "p(95)": 167.18146699999997,
+    "p(99)": 300.25035332,
+    "max": 546.346625,
+    "avg": 47.68366389513818
+   },
+   "thresholds": {
+    "p(95)<300": {
+     "ok": true
+    }
+   }
+  },
+  "http_reqs{name:aircraft_track}": {
+   "type": "counter",
+   "contains": "default",
+   "values": {
+    "count": 1096,
+    "rate": 9.130144075706472
+   },
+   "thresholds": {
+    "count>=0": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_failed{name:aircraft_track}": {
+   "contains": "default",
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 1096
+   },
+   "thresholds": {
+    "rate<0.01": {
+     "ok": true
+    }
+   },
+   "type": "rate"
+  },
+  "http_req_failed{name:warnings_history}": {
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 1016
+   },
+   "thresholds": {
+    "rate<0.01": {
+     "ok": true
+    }
+   }
+  },
+  "status_503{name:ships_region}": {
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 2134
+   },
+   "thresholds": {
+    "rate>=0": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_failed{name:alerts_active}": {
+   "thresholds": {
+    "rate<0.01": {
+     "ok": true
+    }
+   },
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 1043
+   }
+  },
+  "http_reqs{name:ship_detail}": {
+   "type": "counter",
+   "contains": "default",
+   "values": {
+    "count": 1060,
+    "rate": 8.83024883234385
+   },
+   "thresholds": {
+    "count>=0": {
+     "ok": true
+    }
+   }
+  },
+  "status_503{name:stats_sigmet}": {
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 1102
+   },
+   "thresholds": {
+    "rate>=0": {
+     "ok": true
+    }
+   }
+  },
+  "status_503{name:ships_coverage}": {
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 1074
+   },
+   "thresholds": {
+    "rate>=0": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_failed{name:client_errors}": {
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "fails": 1106,
+    "rate": 0,
+    "passes": 0
+   },
+   "thresholds": {
+    "rate<0.01": {
+     "ok": true
+    }
+   }
+  },
+  "status_503": {
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 41749
+   },
+   "thresholds": {
+    "rate>=0": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_failed": {
+   "values": {
+    "fails": 41752,
+    "rate": 0,
+    "passes": 0
+   },
+   "type": "rate",
+   "contains": "default"
+  },
+  "http_reqs{name:stats_sigmet}": {
+   "thresholds": {
+    "count>=0": {
+     "ok": true
+    }
+   },
+   "type": "counter",
+   "contains": "default",
+   "values": {
+    "count": 1102,
+    "rate": 9.180126616266909
+   }
+  },
+  "http_reqs{name:radar_frames}": {
+   "contains": "default",
+   "values": {
+    "count": 1093,
+    "rate": 9.105152805426254
+   },
+   "thresholds": {
+    "count>=0": {
+     "ok": true
+    }
+   },
+   "type": "counter"
+  },
+  "status_503{name:sigmet_one}": {
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "passes": 0,
+    "fails": 1100,
+    "rate": 0
+   },
+   "thresholds": {
+    "rate>=0": {
+     "ok": true
+    }
+   }
+  },
+  "status_503{name:aircraft_detail}": {
+   "thresholds": {
+    "rate>=0": {
+     "ok": true
+    }
+   },
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 1098
+   }
+  },
+  "http_reqs{name:radar_kr_png}": {
+   "type": "counter",
+   "contains": "default",
+   "values": {
+    "count": 1082,
+    "rate": 9.01351814773212
+   },
+   "thresholds": {
+    "count>=0": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_failed{name:healthz}": {
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 1053
+   },
+   "thresholds": {
+    "rate<0.01": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_duration{name:healthz}": {
+   "thresholds": {
+    "p(95)<300": {
+     "ok": true
+    }
+   },
+   "type": "trend",
+   "contains": "time",
+   "values": {
+    "avg": 3.0012029145299186,
+    "med": 0.625417,
+    "p(95)": 15.148474999999989,
+    "p(99)": 43.37296199999999,
+    "max": 71.08025
+   }
+  },
+  "http_req_connecting": {
+   "type": "trend",
+   "contains": "time",
+   "values": {
+    "avg": 0.008755839145430178,
+    "med": 0,
+    "p(95)": 0,
+    "p(99)": 0.12628816999999987,
+    "max": 35.340041
+   }
+  },
+  "http_req_duration{name:ais_gaps}": {
+   "type": "trend",
+   "contains": "time",
+   "values": {
+    "avg": 13.139819405132917,
+    "med": 3.086542,
+    "p(95)": 54.50929199999995,
+    "p(99)": 227.3834625,
+    "max": 411.281042
+   },
+   "thresholds": {
+    "p(95)<300": {
+     "ok": true
+    }
+   }
+  },
+  "iterations": {
+   "type": "counter",
+   "contains": "default",
+   "values": {
+    "rate": 347.7868476429466,
+    "count": 41749
+   }
+  },
+  "http_req_duration{stage:s0}": {
+   "type": "trend",
+   "contains": "time",
+   "values": {
+    "avg": 9.495415976927855,
+    "med": 2.587208,
+    "p(95)": 39.7191626,
+    "p(99)": 127.03305161999995,
+    "max": 452.029959
+   },
+   "thresholds": {
+    "p(95)<300": {
+     "ok": true
+    }
+   }
+  },
+  "http_reqs{name:status}": {
+   "type": "counter",
+   "contains": "default",
+   "values": {
+    "count": 2077,
+    "rate": 17.302289457337903
+   },
+   "thresholds": {
+    "count>=0": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_duration{name:alerts_history}": {
+   "type": "trend",
+   "contains": "time",
+   "values": {
+    "avg": 16.9818151592837,
+    "med": 4.576125,
+    "p(95)": 66.19125,
+    "p(99)": 234.26530899999997,
+    "max": 444.240959
+   },
+   "thresholds": {
+    "p(95)<300": {
+     "ok": true
+    }
+   }
+  },
+  "http_reqs{name:sigmets}": {
+   "type": "counter",
+   "contains": "default",
+   "values": {
+    "count": 2110,
+    "rate": 17.577193430420305
+   },
+   "thresholds": {
+    "count>=0": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_duration{name:sigmet_one}": {
+   "type": "trend",
+   "contains": "time",
+   "values": {
+    "avg": 6.497832908181815,
+    "med": 1.285396,
+    "p(95)": 25.55467854999995,
+    "p(99)": 80.55933508999985,
+    "max": 374.669458
+   },
+   "thresholds": {
+    "p(95)<300": {
+     "ok": true
+    }
+   }
+  },
+  "vus_max": {
+   "type": "gauge",
+   "contains": "default",
+   "values": {
+    "value": 200,
+    "min": 200,
+    "max": 200
+   }
+  },
+  "http_reqs{name:ship_track}": {
+   "type": "counter",
+   "contains": "default",
+   "values": {
+    "count": 1050,
+    "rate": 8.746944598076455
+   },
+   "thresholds": {
+    "count>=0": {
+     "ok": true
+    }
+   }
+  },
+  "http_reqs{name:airspace}": {
+   "type": "counter",
+   "contains": "default",
+   "values": {
+    "count": 1107,
+    "rate": 9.221778733400606
+   },
+   "thresholds": {
+    "count>=0": {
+     "ok": true
+    }
+   }
+  },
+  "vus": {
+   "type": "gauge",
+   "contains": "default",
+   "values": {
+    "value": 7,
+    "min": 0,
+    "max": 60
+   }
+  },
+  "status_503{name:alerts_history}": {
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "passes": 0,
+    "fails": 1061,
+    "rate": 0
+   },
+   "thresholds": {
+    "rate>=0": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_failed{name:aircraft_detail}": {
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 1098
+   },
+   "thresholds": {
+    "rate<0.01": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_failed{name:aircraft_region}": {
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 3165
+   },
+   "thresholds": {
+    "rate<0.01": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_duration{name:replay_1m}": {
+   "values": {
+    "avg": 34.75360204774776,
+    "med": 12.625812,
+    "p(95)": 145.18380464999993,
+    "p(99)": 365.74376824999996,
+    "max": 607.812709
+   },
+   "thresholds": {
+    "p(95)<300": {
+     "ok": true
+    }
+   },
+   "type": "trend",
+   "contains": "time"
+  },
+  "http_req_duration{name:warnings_history}": {
+   "type": "trend",
+   "contains": "time",
+   "values": {
+    "p(95)": 67.39498924999998,
+    "p(99)": 174.73951689999998,
+    "max": 337.443792,
+    "avg": 13.48752653051182,
+    "med": 3.2210625
+   },
+   "thresholds": {
+    "p(95)<300": {
+     "ok": true
+    }
+   }
+  },
+  "http_reqs{name:ships_region}": {
+   "type": "counter",
+   "contains": "default",
+   "values": {
+    "count": 2134,
+    "rate": 17.777123592662054
+   },
+   "thresholds": {
+    "count>=0": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_failed{name:ships_coverage}": {
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 1074
+   },
+   "thresholds": {
+    "rate<0.01": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_failed{name:aircraft_wide}": {
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "fails": 1078,
+    "rate": 0,
+    "passes": 0
+   },
+   "thresholds": {
+    "rate<0.01": {
+     "ok": true
+    }
+   }
+  },
+  "http_reqs{name:replay_72h}": {
+   "type": "counter",
+   "contains": "default",
+   "values": {
+    "count": 1049,
+    "rate": 8.738614174649715
+   },
+   "thresholds": {
+    "count>=0": {
+     "ok": true
+    }
+   }
+  },
+  "http_reqs{name:ships_coverage}": {
+   "type": "counter",
+   "contains": "default",
+   "values": {
+    "count": 1074,
+    "rate": 8.946874760318202
+   },
+   "thresholds": {
+    "count>=0": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_failed{name:warnings}": {
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 1040
+   },
+   "thresholds": {
+    "rate<0.01": {
+     "ok": true
+    }
+   },
+   "type": "rate",
+   "contains": "default"
+  },
+  "http_req_duration{name:aircraft_wide}": {
+   "type": "trend",
+   "contains": "time",
+   "values": {
+    "max": 189.397792,
+    "avg": 16.21246508627088,
+    "med": 7.912896,
+    "p(95)": 60.3871268,
+    "p(99)": 109.47423874999997
+   },
+   "thresholds": {
+    "p(95)<300": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_duration{stage:s1}": {
+   "type": "trend",
+   "contains": "time",
+   "values": {
+    "avg": 15.522858529795323,
+    "med": 3.2880000000000003,
+    "p(95)": 69.96800559999987,
+    "p(99)": 213.73909137999985,
+    "max": 607.812709
+   },
+   "thresholds": {
+    "p(95)<300": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_duration{name:radar_frames}": {
+   "type": "trend",
+   "contains": "time",
+   "values": {
+    "avg": 5.453774160109794,
+    "med": 1.06075,
+    "p(95)": 28.309800199999984,
+    "p(99)": 83.31506499999999,
+    "max": 161.822458
+   },
+   "thresholds": {
+    "p(95)<300": {
+     "ok": true
+    }
+   }
+  },
+  "status_503{name:aircraft_wide}": {
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 1078
+   },
+   "thresholds": {
+    "rate>=0": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_failed{name:radar_kr}": {
+   "values": {
+    "fails": 1076,
+    "rate": 0,
+    "passes": 0
+   },
+   "thresholds": {
+    "rate<0.01": {
+     "ok": true
+    }
+   },
+   "type": "rate",
+   "contains": "default"
+  },
+  "http_req_duration{name:ship_detail}": {
+   "thresholds": {
+    "p(95)<300": {
+     "ok": true
+    }
+   },
+   "type": "trend",
+   "contains": "time",
+   "values": {
+    "avg": 17.274308154716977,
+    "med": 2.5851665,
+    "p(95)": 87.27129199999993,
+    "p(99)": 286.1512064399999,
+    "max": 467.9835
+   }
+  },
+  "http_reqs{name:warnings}": {
+   "type": "counter",
+   "contains": "default",
+   "values": {
+    "count": 1040,
+    "rate": 8.66364036380906
+   },
+   "thresholds": {
+    "count>=0": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_duration{name:status}": {
+   "thresholds": {
+    "p(95)<300": {
+     "ok": true
+    }
+   },
+   "type": "trend",
+   "contains": "time",
+   "values": {
+    "avg": 5.142998043331733,
+    "med": 0.997708,
+    "p(95)": 23.808657799999978,
+    "p(99)": 82.89087692,
+    "max": 353.234583
+   }
+  },
+  "http_req_duration{name:ships_region}": {
+   "values": {
+    "p(95)": 64.65792499999998,
+    "p(99)": 122.35378749999997,
+    "max": 274.936042,
+    "avg": 19.767588382380538,
+    "med": 10.648792
+   },
+   "thresholds": {
+    "p(95)<300": {
+     "ok": true
+    }
+   },
+   "type": "trend",
+   "contains": "time"
+  },
+  "http_req_waiting": {
+   "type": "trend",
+   "contains": "time",
+   "values": {
+    "avg": 11.128293717307006,
+    "med": 2.108854,
+    "p(95)": 50.06877484999998,
+    "p(99)": 171.39744608,
+    "max": 607.763125
+   }
+  },
+  "status_503{name:ship_track}": {
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "fails": 1050,
+    "rate": 0,
+    "passes": 0
+   },
+   "thresholds": {
+    "rate>=0": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_duration{name:stats_traffic}": {
+   "thresholds": {
+    "p(95)<300": {
+     "ok": true
+    }
+   },
+   "type": "trend",
+   "contains": "time",
+   "values": {
+    "avg": 18.746591699534882,
+    "med": 1.944209,
+    "p(95)": 87.0077045,
+    "p(99)": 415.81340076,
+    "max": 550.749417
+   }
+  },
+  "http_req_failed{name:sigmet_one}": {
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 1100
+   },
+   "thresholds": {
+    "rate<0.01": {
+     "ok": true
+    }
+   }
+  },
+  "http_reqs{name:aircraft_wide}": {
+   "thresholds": {
+    "count>=0": {
+     "ok": true
+    }
+   },
+   "type": "counter",
+   "contains": "default",
+   "values": {
+    "rate": 8.980196454025162,
+    "count": 1078
+   }
+  },
+  "http_req_sending": {
+   "type": "trend",
+   "contains": "time",
+   "values": {
+    "p(95)": 0.052708,
+    "p(99)": 0.19910191999999993,
+    "max": 181.209334,
+    "avg": 0.04864893463786132,
+    "med": 0.015125
+   }
+  },
+  "http_req_failed{name:stats_alerts}": {
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 1069
+   },
+   "thresholds": {
+    "rate<0.01": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_failed{name:airspace}": {
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 1107
+   },
+   "thresholds": {
+    "rate<0.01": {
+     "ok": true
+    }
+   }
+  },
+  "http_reqs{name:aircraft_region}": {
+   "thresholds": {
+    "count>=0": {
+     "ok": true
+    }
+   },
+   "type": "counter",
+   "contains": "default",
+   "values": {
+    "count": 3165,
+    "rate": 26.36579014563046
+   }
+  },
+  "status_503{name:ships_search}": {
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 1093
+   },
+   "thresholds": {
+    "rate>=0": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_duration{name:traffic_grid}": {
+   "type": "trend",
+   "contains": "time",
+   "values": {
+    "p(95)": 23.75248339999999,
+    "p(99)": 77.49481895999996,
+    "max": 192.630292,
+    "avg": 4.955735554238841,
+    "med": 1.135042
+   },
+   "thresholds": {
+    "p(95)<300": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_duration{name:aircraft_region}": {
+   "type": "trend",
+   "contains": "time",
+   "values": {
+    "avg": 7.0781476650868775,
+    "med": 2.220666,
+    "p(95)": 31.58092539999999,
+    "p(99)": 76.85739712,
+    "max": 339.3685
+   },
+   "thresholds": {
+    "p(95)<300": {
+     "ok": true
+    }
+   }
+  },
+  "http_reqs{name:ships_search}": {
+   "type": "counter",
+   "contains": "default",
+   "values": {
+    "count": 1093,
+    "rate": 9.105152805426254
+   },
+   "thresholds": {
+    "count>=0": {
+     "ok": true
+    }
+   }
+  }
+ },
+ "setup_data": {
+  "ids": [
+   1791971598482007,
+   1791971598482006,
+   1791971598482005,
+   1791971598482004,
+   1791971598482003,
+   1791971598482002,
+   1791971598482001,
+   1791971598482000,
+   1791971588173001,
+   1791971588173000,
+   1791971588172000,
+   1791971580172215,
+   1791971580172214,
+   1791971580172213,
+   1791971580172212,
+   1791971580172211,
+   1791971580172210,
+   1791971580172209,
+   1791971580172208,
+   1791971580172207,
+   1791971580172206,
+   1791971580172205,
+   1791971580172204,
+   1791971580172203,
+   1791971580172202,
+   1791971580172201,
+   1791971580172200,
+   1791971580172199,
+   1791971580172198,
+   1791971580172197,
+   1791971580172196,
+   1791971580172195,
+   1791971580172194,
+   1791971580172193,
+   1791971580172192,
+   1791971580172191,
+   1791971580172190,
+   1791971580172189,
+   1791971580172188,
+   1791971580172187,
+   1791971580172186,
+   1791971580172185,
+   1791971580172184,
+   1791971580172183,
+   1791971580172182,
+   1791971580172181,
+   1791971580172180,
+   1791971580172179,
+   1791971580172178,
+   1791971580172177,
+   1791971580172176,
+   1791971580172175,
+   1791971580172174,
+   1791971580172173,
+   1791971580172172,
+   1791971580172171,
+   1791971580172170,
+   1791971580172169,
+   1791971580172168,
+   1791971580172167,
+   1791971580172166,
+   1791971580172165,
+   1791971580172164,
+   1791971580172163,
+   1791971580172162,
+   1791971580172161,
+   1791971580172160,
+   1791971580172159,
+   1791971580172158,
+   1791971580172157,
+   1791971580172156,
+   1791971580172155,
+   1791971580172154,
+   1791971580172153,
+   1791971580172152,
+   1791971580172151,
+   1791971580172150,
+   1791971580172149,
+   1791971580172148,
+   1791971580172147,
+   1791971580172146,
+   1791971580172145,
+   1791971580172144,
+   1791971580172143,
+   1791971580172142,
+   1791971580172141,
+   1791971580172140,
+   1791971580172139,
+   1791971580172138,
+   1791971580172137,
+   1791971580172136,
+   1791971580172135,
+   1791971580172134,
+   1791971580172133,
+   1791971580172132,
+   1791971580172131,
+   1791971580172130,
+   1791971580172129,
+   1791971580172128,
+   1791971580172127,
+   1791971580172126,
+   1791971580172125,
+   1791971580172124,
+   1791971580172123,
+   1791971580172122,
+   1791971580172121,
+   1791971580172120,
+   1791971580172119,
+   1791971580172118,
+   1791971580172117,
+   1791971580172116,
+   1791971580172115,
+   1791971580172114,
+   1791971580172113,
+   1791971580172112,
+   1791971580172111,
+   1791971580172110,
+   1791971580172109,
+   1791971580172108,
+   1791971580172107,
+   1791971580172106,
+   1791971580172105,
+   1791971580172104,
+   1791971580172103,
+   1791971580172102,
+   1791971580172101,
+   1791971580172100,
+   1791971580172099,
+   1791971580172098,
+   1791971580172097,
+   1791971580172096,
+   1791971580172095,
+   1791971580172094,
+   1791971580172093,
+   1791971580172092,
+   1791971580172091,
+   1791971580172090,
+   1791971580172089,
+   1791971580172088,
+   1791971580172087,
+   1791971580172086,
+   1791971580172085,
+   1791971580172084,
+   1791971580172083,
+   1791971580172082,
+   1791971580172081,
+   1791971580172080,
+   1791971580172079,
+   1791971580172078,
+   1791971580172077,
+   1791971580172076,
+   1791971580172075,
+   1791971580172074,
+   1791971580172073,
+   1791971580172072,
+   1791971580172071,
+   1791971580172070,
+   1791971580172069,
+   1791971580172068,
+   1791971580172067,
+   1791971580172066,
+   1791971580172065,
+   1791971580172064,
+   1791971580172063,
+   1791971580172062,
+   1791971580172061,
+   1791971580172060,
+   1791971580172059,
+   1791971580172058,
+   1791971580172057,
+   1791971580172056,
+   1791971580172055,
+   1791971580172054,
+   1791971580172053,
+   1791971580172052,
+   1791971580172051,
+   1791971580172050,
+   1791971580172049,
+   1791971580172048,
+   1791971580172047,
+   1791971580172046,
+   1791971580172045,
+   1791971580172044,
+   1791971580172043,
+   1791971580172042,
+   1791971580172041,
+   1791971580172040,
+   1791971580172039,
+   1791971580172038,
+   1791971580172037,
+   1791971580172036,
+   1791971580172035,
+   1791971580172034,
+   1791971580172033,
+   1791971580172032,
+   1791971580172031,
+   1791971580172030,
+   1791971580172029,
+   1791971580172028,
+   1791971580172027
+  ],
+  "sigmets": [
+   "LPPO:U02:1791969582",
+   "SBAZ:46:1791969582",
+   "SBAO:6:1791969582",
+   "KZAK:SIERRA 4:1791969582",
+   "SBCW:5:1791969582",
+   "NZZC:31:1791969582",
+   "FAJA:B01:1791969582",
+   "YMMM:D03:1791969582",
+   "SBAZ:41:1791969582",
+   "OIIX:04:1791969582",
+   "FCCC:B1:1791969582",
+   "EGPX:02:1791969582",
+   "ZGZU:2:1791969582",
+   "KZAK:OSCAR 17:1791969582",
+   "SKED:1:1791969582",
+   "SVZM:A2:1791969582",
+   "YMMM:N18:1791969582",
+   "LPPO:T01:1791969582",
+   "MMEX:1:1791969582",
+   "WIIF:04:1791969582",
+   "SAEF:A4:1791969582",
+   "WAAF:02:1791969582",
+   "FAJO:C01:1791969582",
+   "SEFG:03:1791969582",
+   "KZWY:JULIETT 3:1791969582",
+   "BGGL:U02:1791969582",
+   "SEFG:1:1791969582",
+   "NZZC:37:1791969582",
+   "WAAF:05:1791969582",
+   "SBAO:7:1791969582",
+   "SAVF:2:1791969582",
+   "SAVF:A1:1791969582",
+   "WBFC:5:1791969582",
+   "KZWY:KILO 2:1791969582",
+   "SBAZ:42:1791969582",
+   "SBRE:4:1791969582",
+   "YMMM:E03:1791969582",
+   "SBBS:10:1791969582",
+   "SACF:1:1791969582",
+   "GCCC:3:1791969582",
+   "ZSHA:5:1791969582",
+   "NZZC:50:1791969582",
+   "LTBB:1:1791969582",
+   "SUEO:2:1791969582",
+   "SBAZ:45:1791969582",
+   "SCIZ:02:1791969582",
+   "NZZC:40:1791969582",
+   "RKRR:E03:1791969582",
+   "WSJC:B02:1791969582",
+   "SBCW:4:1791969582",
+   "RKRR:FX2:1791969582",
+   "NZZC:30:1791969582",
+   "FAJO:D01:1791969582",
+   "NZZC:53:1791969582",
+   "SAMF:1:1791969582",
+   "UTAA:1:1791969582",
+   "NZZC:43:1791969582",
+   "SBAZ:48:1791969582",
+   "VABF:F01:1791969582",
+   "MHTG:C2:1791969582",
+   "UHHH:4:1791969582",
+   "MHTG:B2:1791969582",
+   "SEFG:02:1791969582",
+   "NZZC:46:1791969582",
+   "TTZP:2:1791969582",
+   "YBBB:C08:1791969582",
+   "VABF:C02:1791969582",
+   "WIIF:06:1791969582",
+   "WAAF:04:1791969582",
+   "SVZM:02:1791969582",
+   "KZAK:ALFA 12:1791969582",
+   "LPPC:T01:1791969582",
+   "KZAK:ECHO 28:1791969582",
+   "YBBB:D02:1791969582",
+   "ZYSH:3:1791969582",
+   "SBRE:3:1791969582",
+   "ZSHA:4:1791969582",
+   "LGGG:T05:1791969582",
+   "GVSC:1:1791969582",
+   "YMMM:K01:1791969582",
+   "VYYF:02:1791969582",
+   "SBCW:3:1791969582",
+   "RKRR:FX1:1791969582",
+   "MMEX:G2:1791969582",
+   "MMEX:F2:1791969582",
+   "FACA:A01:1791969582",
+   "LIRR:1:1791969582",
+   "MMEX:E2:1791969582",
+   "FAJO:A01:1791969582",
+   "MMEX:D2:1791969582",
+   "UHHH:3:1791969582",
+   "EGPX:03:1791969582",
+   "VOMF:2:1791969582",
+   "MHTG:A1:1791969582",
+   "WMFC:2:1791969582",
+   "HLLL:1:1791969582",
+   "YMMM:W07:1791969582",
+   "MMID:R2:1791969582",
+   "WAAF:03:1791969582",
+   "MHTG:H2:1791969582",
+   "KZMA:DELTA 59:1791969582",
+   "FAJA:A01:1791969582",
+   "GOOO:A02:1791969582",
+   "RKRR:F02:1791969582",
+   "SEFG:A1:1791969582",
+   "ZJSA:1:1791969582",
+   "ZYSH:2:1791969582",
+   "KKCI:SIGMET:27C:1791969582",
+   "RJJJ:G03:1791969582",
+   "EISN:02:1791969582",
+   "KKCI:SIGMET:26C:1791969582",
+   "SBAO:8:1791969582",
+   "WAAF:06:1791969582",
+   "RJJJ:I01:1791969582",
+   "FQBE:A01:1791969582",
+   "KKCI:SIGMET:25C:1791969582",
+   "VABF:E02:1791969582",
+   "WBFC:6:1791969582",
+   "SKED:A1:1791969582",
+   "SBAZ:43:1791969582",
+   "FACA:B01:1791969582",
+   "RJJJ:E03:1791969582",
+   "CZEG:G3:1791969582",
+   "KZAK:UNIFORM 1:1791969582",
+   "SAEF:7:1791969582",
+   "SBBS:11:1791969582",
+   "FAJO:B01:1791969582",
+   "KKCI:SIGMET:24C:1791969582",
+   "GCCC:4:1791969582",
+   "MMID:L2:1791969582",
+   "WMFC:3:1791969582",
+   "VDPF:1:1791969582"
+  ],
+  "tm": "202610140940"
+ },
+ "root_group": {
+  "id": "d41d8cd98f00b204e9800998ecf8427e",
+  "groups": [],
+  "checks": [
+    {
+     "path": "::2xx/304",
+     "id": "d6c700da3d4dfd0779dbd9d968ee716b",
+     "passes": 41749,
+     "fails": 0,
+     "name": "2xx/304"
+    }
+   ],
+  "name": "",
+  "path": ""
+ },
+ "options": {
+  "summaryTrendStats": [
+   "avg",
+   "med",
+   "p(95)",
+   "p(99)",
+   "max"
+  ],
+  "summaryTimeUnit": "",
+  "noColor": false
+ },
+ "state": {
+  "isStdOutTTY": false,
+  "isStdErrTTY": false,
+  "testRunDurationMs": 120041.917292
+ }
+}

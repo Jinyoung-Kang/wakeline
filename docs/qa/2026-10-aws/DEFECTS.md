@@ -18,6 +18,8 @@
 | QA-1420 | 보통 | browser | 상황판 오른쪽 패널 탭 줄이 넘쳐 데스크톱(≥900 px)에서 'watch'(관심) 탭이 창 밖에 숨고, 키보드로 가면 화면 전체가 옆으로 밀린다 | 재현됨 · 시험 실패 확인 |  | 고침 `678f892d` |
 | QA-1600 | 보통 | config | AWS 공개 HTTPS 판 api 의 세션·CSRF 쿠키 Secure 가 꺼진 채 배포된다(.env.example 의 COOKIE_SECURE=false 가 compose.aws.yml 기본값 true 를 이긴다) | 재현됨 · 시험 실패 확인 |  | 고침 `49104246` |
 | QA-1601 | 보통 | config | 앞단 잠금(gate) 시도 제한이 동시 요청 경쟁(check-then-act)으로 우회된다 — aws-deploy(공유) | aws-deploy(공유) — 보고만, 고치기는 사용자 결정 |  | aws-deploy `0949c0c`(브랜치 fix/qa-aws-2026-10, 배포 전) |
+| QA-1500 | 보통 | performance | `/stats` 모바일 CLS 0.156(AWS 규모 · 0.113–0.159)·0.159(상한 규모) — 6번 모두 0.1 초과(앞선 측정은 fixture 자료로 0.050). FIR 막대 24줄이 들어오며 아래 패널을 민다(추정) | 측정 6회 | Lighthouse 12.8.2 · 실제 GPU | **남음** |
+| QA-1501 | 보통 | performance | 새 화면 `/guide` 모바일 LCP 2,910 ms(2,842–2,955) — 3번 모두 2.5 s 초과. 문서 329 KB · 이미지 297 KB | 측정 3회 | 2026-10-02 수용한 지도 화면 모바일 값과 다른 화면 | **남음** |
 | QA-1621 | 낮음 | rehearsal | README 의 복원 옵션(--exit-on-error)으로 wakeline 덤프를 복원하면 첫 항목(COMMENT ON EXTENSION postgis)에서 멈춰 0행인데, 이어서 띄우면 migrate 가 빈 스키마를 만들어 정상처럼 뜬다(운영 로그인 401 뿐) — aws-deploy(공유) | 재현됨(독립 검증) | 보통 → 낮음: 실패가 rc 1 과 오류 글로 바로 드러나고 근본 원인이 QA-1620 과 같다(독립 검증 의견) | aws-deploy `55ccc4c`(배포 전) |
 | QA-1100 | 낮음 | api-sec | 보안 체인이 끝낸 익명 운영 요청(404 · CSRF 403 · Origin 403)이 공개 요청 제한(IP당 분당 120)에 세지지 않음 | 재현됨 · 시험 실패 확인 |  | 고침 `906cc519` |
 | QA-1102 | 낮음 | api-sec | 익명 로그인(POST /api/v1/ops/session)의 username 에 NUL → 500 + ERROR(실패한 SQL 포함) | 재현됨 · 시험 실패 확인 |  | 고침 `0e074baa` |

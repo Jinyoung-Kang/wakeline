@@ -1,0 +1,346 @@
+Timing is on.
+SET
+Time: 0.347 ms
+SET
+Time: 0.123 ms
+== replay.track_point (TrackRepository.replay) — 관심 지역 bbox, 30분 전
+                                                                                                                      QUERY PLAN                                                                                                                      
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Unique (actual time=6.770..7.137 rows=100.00 loops=1)
+   Buffers: shared hit=659
+   ->  Sort (actual time=6.768..6.881 rows=1663.00 loops=1)
+         Sort Key: track_point.hex, track_point.ts DESC
+         Sort Method: quicksort  Memory: 166kB
+         Buffers: shared hit=659
+         ->  Append (actual time=2.022..5.196 rows=1663.00 loops=1)
+               Buffers: shared hit=653
+               Subplans Removed: 5
+               ->  Bitmap Heap Scan on track_point_20261014 track_point_1 (actual time=2.021..5.074 rows=1663.00 loops=1)
+                     Recheck Cond: ((ts >= ((now() - '00:30:00'::interval) - '00:03:00'::interval)) AND (ts <= (now() - '00:30:00'::interval)))
+                     Rows Removed by Index Recheck: 40230
+                     Filter: (geom && '0103000020E610000001000000050000000000000000005F4000000000008040400000000000005F40000000000080434000000000008060400000000000804340000000000080604000000000008040400000000000005F400000000000804040'::geometry)
+                     Rows Removed by Filter: 623
+                     Heap Blocks: lossy=648
+                     Buffers: shared hit=653
+                     ->  Bitmap Index Scan on track_point_20261014_ts_idx (actual time=0.051..0.052 rows=6480.00 loops=1)
+                           Index Cond: ((ts >= ((now() - '00:30:00'::interval) - '00:03:00'::interval)) AND (ts <= (now() - '00:30:00'::interval)))
+                           Index Searches: 1
+                           Buffers: shared hit=5
+ Planning:
+   Buffers: shared hit=594 read=3
+ Planning Time: 15.511 ms
+ Execution Time: 7.295 ms
+(24 rows)
+
+Time: 24.155 ms
+== replay.track_point — 넓은 bbox(2,500 sq°), 40 h 전
+                                                                                                                      QUERY PLAN                                                                                                                      
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Unique (actual time=1.921..1.922 rows=0.00 loops=1)
+   Buffers: shared hit=2041
+   ->  Incremental Sort (actual time=1.921..1.921 rows=0.00 loops=1)
+         Sort Key: track_point.hex, track_point.ts DESC
+         Presorted Key: track_point.hex
+         Full-sort Groups: 1  Sort Method: quicksort  Average Memory: 25kB  Peak Memory: 25kB
+         Buffers: shared hit=2041
+         ->  Merge Append (actual time=1.918..1.918 rows=0.00 loops=1)
+               Sort Key: track_point.hex
+               Buffers: shared hit=2041
+               Subplans Removed: 5
+               ->  Index Scan using track_point_20261012_pkey on track_point_20261012 track_point_1 (actual time=1.917..1.917 rows=0.00 loops=1)
+                     Index Cond: ((ts >= ((now() - '40:00:00'::interval) - '00:03:00'::interval)) AND (ts <= (now() - '40:00:00'::interval)))
+                     Filter: (geom && '0103000020E610000001000000050000000000000000005940000000000000244000000000000059400000000000004E400000000000C062400000000000004E400000000000C06240000000000000244000000000000059400000000000002440'::geometry)
+                     Index Searches: 611
+                     Buffers: shared hit=2041
+ Planning:
+   Buffers: shared hit=9
+ Planning Time: 0.358 ms
+ Execution Time: 1.947 ms
+(20 rows)
+
+Time: 2.611 ms
+== replay.track_point_1m — 10일 전
+                                                                                                                   QUERY PLAN                                                                                                                   
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Unique (actual time=0.069..0.069 rows=0.00 loops=1)
+   Buffers: shared hit=3
+   ->  Sort (actual time=0.069..0.069 rows=0.00 loops=1)
+         Sort Key: hex, ts_minute DESC
+         Sort Method: quicksort  Memory: 25kB
+         Buffers: shared hit=3
+         ->  Index Scan using track_point_1m_ts on track_point_1m (actual time=0.064..0.064 rows=0.00 loops=1)
+               Index Cond: ((ts_minute >= ((now() - '10 days'::interval) - '00:03:00'::interval)) AND (ts_minute <= (now() - '10 days'::interval)))
+               Filter: (geom && '0103000020E610000001000000050000000000000000005F4000000000008040400000000000005F40000000000080434000000000008060400000000000804340000000000080604000000000008040400000000000005F400000000000804040'::geometry)
+               Index Searches: 1
+               Buffers: shared hit=3
+ Planning:
+   Buffers: shared hit=53 read=3
+ Planning Time: 0.408 ms
+ Execution Time: 0.088 ms
+(15 rows)
+
+Time: 0.771 ms
+== replay.sigmet (SigmetRepository.validAt) — 넓은 bbox, 25일 전
+                                                                                                                                                              QUERY PLAN                                                                                                                                                               
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort (actual time=0.422..0.423 rows=0.00 loops=1)
+   Sort Key: fir_id, series_id
+   Sort Method: quicksort  Memory: 25kB
+   Buffers: shared hit=95
+   ->  Index Scan using sigmet_valid on sigmet (actual time=0.412..0.412 rows=0.00 loops=1)
+         Index Cond: ((valid_to > (now() - '25 days'::interval)) AND (valid_from <= (now() - '25 days'::interval)))
+         Filter: (((geom IS NULL) OR (geom && '0103000020E610000001000000050000000000000000005940000000000000244000000000000059400000000000004E400000000000C062400000000000004E400000000000C06240000000000000244000000000000059400000000000002440'::geometry)) AND (COALESCE(withdrawn_at, valid_to) > (now() - '25 days'::interval)))
+         Index Searches: 1
+         Buffers: shared hit=92
+ Planning:
+   Buffers: shared hit=150 read=1
+ Planning Time: 0.470 ms
+ Execution Time: 0.457 ms
+(13 rows)
+
+Time: 1.325 ms
+== aircraft.track (TrackRepository.track) — 72 h 내내 같은 hex, 기본 2 h · 24 h(상한)
+                                                          QUERY PLAN                                                           
+-------------------------------------------------------------------------------------------------------------------------------
+ Limit (actual time=0.311..0.336 rows=217.00 loops=1)
+   Buffers: shared hit=221
+   ->  Sort (actual time=0.310..0.320 rows=217.00 loops=1)
+         Sort Key: track_point.ts
+         Sort Method: quicksort  Memory: 53kB
+         Buffers: shared hit=221
+         ->  Append (actual time=0.052..0.282 rows=217.00 loops=1)
+               Buffers: shared hit=221
+               Subplans Removed: 5
+               ->  Bitmap Heap Scan on track_point_20261014 track_point_1 (actual time=0.051..0.267 rows=217.00 loops=1)
+                     Recheck Cond: ((hex = 'f10000'::bpchar) AND (ts >= (now() - '02:00:00'::interval)) AND (ts <= now()))
+                     Heap Blocks: exact=217
+                     Buffers: shared hit=221
+                     ->  Bitmap Index Scan on track_point_20261014_pkey (actual time=0.024..0.024 rows=217.00 loops=1)
+                           Index Cond: ((hex = 'f10000'::bpchar) AND (ts >= (now() - '02:00:00'::interval)) AND (ts <= now()))
+                           Index Searches: 1
+                           Buffers: shared hit=4
+ Planning:
+   Buffers: shared hit=9
+ Planning Time: 0.196 ms
+ Execution Time: 0.358 ms
+(21 rows)
+
+Time: 0.738 ms
+                                                          QUERY PLAN                                                           
+-------------------------------------------------------------------------------------------------------------------------------
+ Limit (actual time=4.468..4.779 rows=2737.00 loops=1)
+   Buffers: shared hit=2761
+   ->  Sort (actual time=4.467..4.592 rows=2737.00 loops=1)
+         Sort Key: track_point.ts
+         Sort Method: quicksort  Memory: 460kB
+         Buffers: shared hit=2761
+         ->  Append (actual time=0.051..3.961 rows=2737.00 loops=1)
+               Buffers: shared hit=2761
+               Subplans Removed: 4
+               ->  Bitmap Heap Scan on track_point_20261013 track_point_1 (actual time=0.051..0.502 rows=217.00 loops=1)
+                     Recheck Cond: ((hex = 'f10000'::bpchar) AND (ts >= (now() - '24:00:00'::interval)) AND (ts <= now()))
+                     Heap Blocks: exact=217
+                     Buffers: shared hit=221
+                     ->  Bitmap Index Scan on track_point_20261013_pkey (actual time=0.031..0.031 rows=217.00 loops=1)
+                           Index Cond: ((hex = 'f10000'::bpchar) AND (ts >= (now() - '24:00:00'::interval)) AND (ts <= now()))
+                           Index Searches: 1
+                           Buffers: shared hit=4
+               ->  Bitmap Heap Scan on track_point_20261014 track_point_2 (actual time=0.628..3.259 rows=2520.00 loops=1)
+                     Recheck Cond: ((hex = 'f10000'::bpchar) AND (ts >= (now() - '24:00:00'::interval)) AND (ts <= now()))
+                     Heap Blocks: exact=2520
+                     Buffers: shared hit=2540
+                     ->  Bitmap Index Scan on track_point_20261014_pkey (actual time=0.392..0.392 rows=2520.00 loops=1)
+                           Index Cond: ((hex = 'f10000'::bpchar) AND (ts >= (now() - '24:00:00'::interval)) AND (ts <= now()))
+                           Index Searches: 1
+                           Buffers: shared hit=20
+ Planning:
+   Buffers: shared hit=9
+ Planning Time: 0.148 ms
+ Execution Time: 4.911 ms
+(29 rows)
+
+Time: 5.301 ms
+== ship.track (ShipRepository.track) — 6 h
+                                                            QUERY PLAN                                                             
+-----------------------------------------------------------------------------------------------------------------------------------
+ Limit (actual time=0.598..0.631 rows=284.00 loops=1)
+   Buffers: shared hit=284 read=2
+   ->  Sort (actual time=0.598..0.611 rows=284.00 loops=1)
+         Sort Key: ship_position.ts
+         Sort Method: quicksort  Memory: 62kB
+         Buffers: shared hit=284 read=2
+         ->  Append (actual time=0.118..0.561 rows=284.00 loops=1)
+               Buffers: shared hit=284 read=2
+               Subplans Removed: 5
+               ->  Bitmap Heap Scan on ship_position_20261014 ship_position_1 (actual time=0.117..0.541 rows=284.00 loops=1)
+                     Recheck Cond: ((mmsi = '300000001'::bpchar) AND (ts >= (now() - '06:00:00'::interval)) AND (ts <= now()))
+                     Heap Blocks: exact=281
+                     Buffers: shared hit=284 read=2
+                     ->  Bitmap Index Scan on ship_position_20261014_pkey (actual time=0.090..0.090 rows=284.00 loops=1)
+                           Index Cond: ((mmsi = '300000001'::bpchar) AND (ts >= (now() - '06:00:00'::interval)) AND (ts <= now()))
+                           Index Searches: 1
+                           Buffers: shared hit=3 read=2
+ Planning:
+   Buffers: shared hit=545
+ Planning Time: 0.893 ms
+ Execution Time: 0.654 ms
+(21 rows)
+
+Time: 1.828 ms
+== alerts.history (AlertRepository.history) — 기본 24 h · 오래된 좁은 창(25일 전 1 h) · hex
+                                                      QUERY PLAN                                                       
+-----------------------------------------------------------------------------------------------------------------------
+ Limit (actual time=0.026..0.182 rows=51.00 loops=1)
+   Buffers: shared hit=29
+   ->  Nested Loop (actual time=0.025..0.177 rows=51.00 loops=1)
+         Buffers: shared hit=29
+         ->  Index Scan Backward using alert_event_pkey on alert_event e (actual time=0.008..0.029 rows=51.00 loops=1)
+               Filter: ((entered_at <= now()) AND (entered_at >= (now() - '1 day'::interval)))
+               Index Searches: 1
+               Buffers: shared hit=14
+         ->  Memoize (actual time=0.001..0.001 rows=1.00 loops=51)
+               Cache Key: e.sigmet_id
+               Cache Mode: logical
+               Hits: 46  Misses: 5  Evictions: 0  Overflows: 0  Memory Usage: 1kB
+               Buffers: shared hit=15
+               ->  Index Scan using sigmet_pkey on sigmet s (actual time=0.007..0.007 rows=1.00 loops=5)
+                     Index Cond: (id = e.sigmet_id)
+                     Index Searches: 5
+                     Buffers: shared hit=15
+ Planning:
+   Buffers: shared hit=221
+ Planning Time: 0.560 ms
+ Execution Time: 0.203 ms
+(21 rows)
+
+Time: 1.764 ms
+                                                                         QUERY PLAN                                                                         
+------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Limit (actual time=0.060..0.060 rows=0.00 loops=1)
+   Buffers: shared hit=5
+   ->  Sort (actual time=0.059..0.059 rows=0.00 loops=1)
+         Sort Key: e.id DESC
+         Sort Method: quicksort  Memory: 25kB
+         Buffers: shared hit=5
+         ->  Nested Loop (actual time=0.004..0.004 rows=0.00 loops=1)
+               Buffers: shared hit=2
+               ->  Index Scan using alert_event_entered on alert_event e (actual time=0.003..0.003 rows=0.00 loops=1)
+                     Index Cond: ((entered_at >= (now() - '25 days'::interval)) AND (entered_at <= ((now() - '25 days'::interval) + '01:00:00'::interval)))
+                     Index Searches: 1
+                     Buffers: shared hit=2
+               ->  Index Scan using sigmet_pkey on sigmet s (never executed)
+                     Index Cond: (id = e.sigmet_id)
+                     Index Searches: 0
+ Planning:
+   Buffers: shared hit=13
+ Planning Time: 0.135 ms
+ Execution Time: 0.071 ms
+(19 rows)
+
+Time: 0.467 ms
+== stats.days · stats.sigmet 92일
+                                                  QUERY PLAN                                                   
+---------------------------------------------------------------------------------------------------------------
+ Sort (actual time=0.779..0.805 rows=560.00 loops=1)
+   Sort Key: (to_char((day)::timestamp with time zone, 'YYYY-MM-DD'::text)), dim
+   Sort Method: quicksort  Memory: 46kB
+   Buffers: shared hit=10
+   ->  Seq Scan on stats_daily (actual time=0.069..0.339 rows=560.00 loops=1)
+         Filter: ((metric = 'sigmet_by_fir'::text) AND (day <= CURRENT_DATE) AND (day >= (CURRENT_DATE - 92)))
+         Rows Removed by Filter: 303
+         Buffers: shared hit=10
+ Planning:
+   Buffers: shared hit=57
+ Planning Time: 0.127 ms
+ Execution Time: 0.829 ms
+(12 rows)
+
+Time: 1.216 ms
+== 관측 수신 격자 부트스트랩 한 시(JdbcCoverageSource.SQL)
+                                                                                   QUERY PLAN                                                                                    
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ HashAggregate (actual time=27.186..27.681 rows=3830.00 loops=1)
+   Group Key: ((floor((st_x(ship_position.geom) * '2'::double precision)))::integer), ((floor((st_y(ship_position.geom) * '2'::double precision)))::integer), ship_position.mmsi
+   Batches: 1  Memory Usage: 1049kB
+   Buffers: shared hit=1256
+   ->  Append (actual time=2.085..23.418 rows=19966.00 loops=1)
+         Buffers: shared hit=1256
+         Subplans Removed: 5
+         ->  Bitmap Heap Scan on ship_position_20261014 ship_position_1 (actual time=2.085..21.956 rows=19966.00 loops=1)
+               Recheck Cond: ((ts >= (date_trunc('hour'::text, now()) - '05:00:00'::interval)) AND (ts < (date_trunc('hour'::text, now()) - '04:00:00'::interval)))
+               Rows Removed by Index Recheck: 66855
+               Heap Blocks: lossy=1251
+               Buffers: shared hit=1256
+               ->  Bitmap Index Scan on ship_position_20261014_ts_idx (actual time=0.024..0.024 rows=12510.00 loops=1)
+                     Index Cond: ((ts >= (date_trunc('hour'::text, now()) - '05:00:00'::interval)) AND (ts < (date_trunc('hour'::text, now()) - '04:00:00'::interval)))
+                     Index Searches: 1
+                     Buffers: shared hit=5
+ Planning:
+   Buffers: shared hit=37 read=4
+ Planning Time: 0.400 ms
+ Execution Time: 28.118 ms
+(20 rows)
+
+Time: 29.168 ms
+== 1분 요약 한 시(MaintenanceJobs.summarizeHour — SELECT 부분)
+                                                                                                                      QUERY PLAN                                                                                                                      
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate (actual time=83.161..101.276 rows=7800.00 loops=1)
+   Group Key: track_point.hex, (date_trunc('minute'::text, track_point.ts))
+   Buffers: shared hit=1674, temp read=379 written=380
+   ->  Sort (actual time=83.138..87.398 rows=46800.00 loops=1)
+         Sort Key: track_point.hex, (date_trunc('minute'::text, track_point.ts))
+         Sort Method: external merge  Disk: 3032kB
+         Buffers: shared hit=1674, temp read=379 written=380
+         ->  Append (actual time=1.677..38.806 rows=46800.00 loops=1)
+               Buffers: shared hit=1674
+               Subplans Removed: 5
+               ->  Bitmap Heap Scan on track_point_20261014 track_point_1 (actual time=1.677..35.156 rows=46800.00 loops=1)
+                     Recheck Cond: ((ts >= (date_trunc('hour'::text, now()) - '03:00:00'::interval)) AND (ts < (date_trunc('hour'::text, now()) - '02:00:00'::interval)))
+                     Rows Removed by Index Recheck: 58254
+                     Filter: (geom && '0103000020E610000001000000050000006666666666A65E400AD7A3703D2A40406666666666A65E40F6285C8FC25544400000000000A06040F6285C8FC25544400000000000A060400AD7A3703D2A40406666666666A65E400AD7A3703D2A4040'::geometry)
+                     Heap Blocks: lossy=1672
+                     Buffers: shared hit=1674
+                     ->  Bitmap Index Scan on track_point_20261014_ts_idx (actual time=0.022..0.022 rows=16720.00 loops=1)
+                           Index Cond: ((ts >= (date_trunc('hour'::text, now()) - '03:00:00'::interval)) AND (ts < (date_trunc('hour'::text, now()) - '02:00:00'::interval)))
+                           Index Searches: 1
+                           Buffers: shared hit=2
+ Planning:
+   Buffers: shared hit=39
+ Planning Time: 0.451 ms
+ Execution Time: 102.087 ms
+(24 rows)
+
+Time: 103.165 ms
+== 교통량 하루(MaintenanceJobs.aggregateFamilies — SELECT 부분, work_mem 64MB)
+SET
+Time: 0.162 ms
+                                                                                                                                                                                                                   QUERY PLAN                                                                                                                                                                                                                    
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ GroupAggregate (actual time=786.019..831.767 rows=9.00 loops=1)
+   Group Key: (lpad(((EXTRACT(hour FROM (track_point.ts AT TIME ZONE 'Asia/Seoul'::text)))::integer)::text, 2, '0'::text))
+   Buffers: shared hit=7920 read=1024
+   ->  Sort (actual time=780.208..801.454 rows=421200.00 loops=1)
+         Sort Key: (lpad(((EXTRACT(hour FROM (track_point.ts AT TIME ZONE 'Asia/Seoul'::text)))::integer)::text, 2, '0'::text)), track_point.hex
+         Sort Method: quicksort  Memory: 25451kB
+         Buffers: shared hit=7920 read=1024
+         ->  Append (actual time=1.802..430.284 rows=421200.00 loops=1)
+               Buffers: shared hit=7920 read=1024
+               Subplans Removed: 4
+               ->  Index Scan using track_point_20261012_pkey on track_point_20261012 track_point_1 (actual time=1.759..1.759 rows=0.00 loops=1)
+                     Index Cond: ((ts >= (((CURRENT_DATE - 1))::timestamp without time zone AT TIME ZONE 'Asia/Seoul'::text)) AND (ts < ((CURRENT_DATE)::timestamp without time zone AT TIME ZONE 'Asia/Seoul'::text)))
+                     Filter: (geom && '0103000020E610000001000000050000006666666666A65E400AD7A3703D2A40406666666666A65E40F6285C8FC25544400000000000A06040F6285C8FC25544400000000000A060400AD7A3703D2A40406666666666A65E400AD7A3703D2A4040'::geometry)
+                     Index Searches: 611
+                     Buffers: shared hit=2039
+               ->  Seq Scan on track_point_20261013 track_point_2 (actual time=0.043..397.730 rows=421200.00 loops=1)
+                     Filter: ((geom && '0103000020E610000001000000050000006666666666A65E400AD7A3703D2A40406666666666A65E40F6285C8FC25544400000000000A06040F6285C8FC25544400000000000A060400AD7A3703D2A40406666666666A65E400AD7A3703D2A4040'::geometry) AND (ts < ((CURRENT_DATE)::timestamp without time zone AT TIME ZONE 'Asia/Seoul'::text)) AND (ts >= (((CURRENT_DATE - 1))::timestamp without time zone AT TIME ZONE 'Asia/Seoul'::text)))
+                     Buffers: shared hit=5881 read=1024
+ Planning:
+   Buffers: shared hit=15
+ Planning Time: 0.616 ms
+ Execution Time: 832.725 ms
+(22 rows)
+
+Time: 834.042 ms
+RESET
+Time: 0.493 ms
