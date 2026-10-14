@@ -34,6 +34,10 @@ export function statsRunHeader(s: StatsSchedule): { text: string; title: string 
     : { text: "켜진 뒤 따라잡기로 전날까지(KST 날짜) 집계",
         title: `공개 데모는 서버를 늘 켜 두지 않아 정시 집계가 돌지 않는다 — 켜진 뒤 따라잡기(마지막 성공 뒤 ${STATS_CATCH_UP_EVERY_H}시간마다 · 최근 ${STATS_CATCH_UP_DAYS}일)가 지난 날을 센다. 날짜는 한국 표준시 날짜(00:00–24:00 KST)` };
 }
+/** 일 집계가 도는 방식 한마디(설명서 번호 설명의 {stats-run} — lib/guide fillGuideText) */
+export function statsRunPhrase(s: StatsSchedule): string {
+  return s === "daily" ? `매일 ${STATS_RUN_KST} 에 전날을 셉니다` : "켜진 뒤 따라잡기로 전날까지 셉니다";
+}
 /** 아직 집계 전인 날이 언제 채워지는가 */
 function nextRunText(s: StatsSchedule): string {
   return s === "daily" ? `다음 ${STATS_RUN_KST} 집계 뒤 채워집니다(놓친 최근 ${STATS_CATCH_UP_DAYS}일은 3시간마다 따라잡기)`

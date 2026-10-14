@@ -83,6 +83,17 @@ export const SHORTCUTS: readonly Shortcut[] = [
 export const ANCHORS = ["tl", "tr", "bl", "br", "c", "l", "r", "t", "b"] as const;
 export type Anchor = (typeof ANCHORS)[number];
 export interface GuideCallout { n: number; label: string; text: string; target: string; anchor: Anchor }
+
+/**
+ * 번호 설명 글 안의 자리 "{이름}" — 그 서버의 구성에 따라 달라지는 말을 화면(GuideView)이 채운다(fillGuideText). 모르는 자리는 계획 검증이 던진다.
+ * stats-run = 통계 일 집계가 도는 방식(lib/stats statsRunPhrase — 늘 켜 둔 서버는 매일 03:30 KST, 공개 데모는 켜진 뒤 따라잡기 · QA-1461).
+ */
+export const GUIDE_TEXT_SLOTS = ["stats-run"] as const;
+export type GuideTextSlot = (typeof GUIDE_TEXT_SLOTS)[number];
+const SLOT_RE = /\{([^{}]*)\}/g;
+export function fillGuideText(text: string, values: Readonly<Record<GuideTextSlot, string>>): string {
+  return text.replace(SLOT_RE, (m, k: string) => ((GUIDE_TEXT_SLOTS as readonly string[]).includes(k) ? values[k as GuideTextSlot] : m));
+}
 /**
  * 찍을 때 가리는 자리(설명서는 로그인 없이 누구나 본다 — 운영자 전용 화면의 운영 정보 · 브라우저가 보낸 글자를 싣지 않는다).
  * session_user: 로그인한 운영자 이름이 보이는 모든 자리. table + header: 그 표(CSS 선택자)에서 머리글 글자가 header 인 열의 모든 칸.
@@ -131,6 +142,7 @@ export function parsePlan(raw: unknown): GuidePlan {
       if (c.n !== j + 1) errs.push(`${cat}.n: 번호는 1부터 빠짐없이 차례로(기대 ${j + 1}, 받은 ${String(c.n)})`);
       if (!str(c.label)) errs.push(`${cat}.label: 비어 있음`);
       if (!str(c.text)) errs.push(`${cat}.text: 비어 있음`);
+      else for (const m of c.text.matchAll(SLOT_RE)) if (!(GUIDE_TEXT_SLOTS as readonly string[]).includes(m[1])) errs.push(`${cat}.text: 모르는 자리 {${m[1]}}(${GUIDE_TEXT_SLOTS.join(" · ")})`);
       if (!str(c.target)) errs.push(`${cat}.target: CSS 선택자가 비어 있음`);
       if (!(ANCHORS as readonly unknown[]).includes(c.anchor)) errs.push(`${cat}.anchor: ${ANCHORS.join("|")} 중 하나`);
     });

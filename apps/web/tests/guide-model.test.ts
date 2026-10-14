@@ -35,6 +35,13 @@ describe("capture plan (lib/guide-shots.json)", () => {
     }
     expect(plan.viewport).toEqual({ width: 1440, height: 900 });
   });
+  it("callout text slots: known ones are filled per server setup, unknown ones are refused (QA-1461 — {stats-run})", () => {
+    expect(G.GUIDE_TEXT_SLOTS).toEqual(["stats-run"]);
+    expect(PLAN.shots.flatMap((s) => s.callouts).filter((c) => c.text.includes("{stats-run}"))).toHaveLength(1);
+    expect(G.fillGuideText("집계 전 — {stats-run}).", { "stats-run": "켜진 뒤 따라잡기로 전날까지 셉니다" })).toBe("집계 전 — 켜진 뒤 따라잡기로 전날까지 셉니다).");
+    const bad = clone(planJson); bad.shots[0].callouts[0].text = "모르는 {nope} 자리";
+    expect(() => parsePlan(bad)).toThrow(/모르는 자리 \{nope\}/);
+  });
   it("every usage section (2 · 3 · 4 · 5 · 6) has at least one screenshot", () => {
     const secOf = (id: string) => GUIDE_TOC.find((t) => t.id === id || t.children?.some((c) => c.id === id))!.id;
     const covered = new Set(PLAN.shots.map((s) => secOf(s.section)));

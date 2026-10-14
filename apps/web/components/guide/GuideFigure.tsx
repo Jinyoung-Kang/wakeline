@@ -11,8 +11,9 @@ import type { GuideShot, ShotView } from "@/lib/guide";
  *   그림이 첫 그리기 전에 요청되어 첫 문단(LCP)과 망을 나눴다. 그 전에는 자리(비율)와 대체 글만 있다 — 대체 글 글자는 그리지 않는다(text-transparent).
  *   스크립트가 없으면 noscript 의 같은 그림이 그 자리를 덮는다(대체 글은 위 그림에 한 번만).
  * - 모양은 globals.css 의 .g-* (번호 칸 .g-num 등) — 그림 11장 · 번호 50여 개에 같은 긴 클래스 글자를 싣지 않는다.
+ * - fill: 번호 설명 글의 자리({stats-run} 등 — lib/guide fillGuideText)를 그 서버 구성의 말로 채운다(GuideView, QA-1461).
  */
-export function GuideFigure({ shot, view, no }: { shot: GuideShot; view: ShotView; no: number }) {
+export function GuideFigure({ shot, view, no, fill = (t) => t }: { shot: GuideShot; view: ShotView; no: number; fill?: (text: string) => string }) {
   const capId = `fig-${shot.id}-title`;
   return (
     <figure className="my-4 border border-line bg-bg-1" data-guide-shot={shot.id} aria-labelledby={capId}>
@@ -53,7 +54,7 @@ export function GuideFigure({ shot, view, no }: { shot: GuideShot; view: ShotVie
           return (
             <li key={c.n} data-callout-item={c.n}>
               <span aria-hidden="true" className="g-num">{c.n}</span>
-              <span><b>{c.label}</b> <span className="text-fg-2">— {c.text}</span>
+              <span><b>{c.label}</b> <span className="text-fg-2">— {fill(c.text)}</span>
                 {seen ? null : <span className="text-fg-3"> (이 스크린샷에는 보이지 않음 — 찍을 때 화면에 없었음)</span>}</span>
             </li>
           );

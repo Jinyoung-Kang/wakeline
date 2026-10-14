@@ -297,6 +297,18 @@ describe("features the guide describes exist in the screens", () => {
     expect(section(render(EMPTY), "dashboard-layers")).toContain(RECEPTION_LAYER_LABEL);
     expect(section(render(EMPTY), "dashboard-legend")).toContain("관측 수신 범위");
   });
+  it("4 says when the daily stats are counted as the stats screen does: 03:30 KST locally, catch-up after start on the public demo (QA-1461)", () => {
+    const html = (demo: boolean) => renderToStaticMarkup(createElement(GuideView, { manifest: FULL, dropped: [], demo }));
+    const local = text(section(html(false), "stats"));
+    expect(local).toContain("매일 03:30 KST 에 전날(KST 날짜 — 00:00–24:00 KST)을 집계합니다");
+    expect(local).toContain("오늘은 아직 집계 전 — 매일 03:30 KST 에 전날을 셉니다"); // 그림의 번호 4 설명({stats-run})
+    const demo = text(section(html(true), "stats"));
+    expect(demo).not.toContain("03:30");
+    expect(demo).toContain("오늘은 아직 집계 전 — 켜진 뒤 따라잡기로 전날까지 셉니다");
+    expect(demo).toMatch(/이 공개 데모는 서버를 늘 켜 두지 않아 매일 정해진 시각의 집계가 돌지 않습니다\. 켜진 뒤 따라잡기\(마지막 성공 뒤 3시간마다 · 최근 7일\)/);
+    expect(demo).toMatch(/통계 그림\(그림 \d+\)은 늘 켜 둔 서버에서 찍어/);
+    expect(html(true)).not.toContain("{stats-run}");
+  });
   it("2.8 explains the KMA composite size '합성 N/M곳'", () => {
     expect(section(render(EMPTY), "dashboard-radar")).toMatch(/합성 N\/M곳/);
   });

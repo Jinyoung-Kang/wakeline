@@ -536,7 +536,7 @@
         {
           "n": 4,
           "label": "집계 날짜",
-          "text": "KST 날짜로 고릅니다(오늘은 아직 집계 전 — 매일 03:30 KST 에 전날을 셉니다).",
+          "text": "KST 날짜로 고릅니다(오늘은 아직 집계 전 — {stats-run}).",
           "target": "input[aria-label=\"집계 날짜(KST)\"]",
           "anchor": "l"
         },
