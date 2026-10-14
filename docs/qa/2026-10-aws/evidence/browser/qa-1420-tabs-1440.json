@@ -1,0 +1,60 @@
+{
+  "innerWidth": 1440,
+  "docScrollWidth": 1508,
+  "row": {
+    "left": 1061,
+    "right": 1440,
+    "scrollWidth": 447,
+    "clientWidth": 379,
+    "overflowX": "visible"
+  },
+  "tabs": [
+    {
+      "id": "tab-alerts",
+      "left": 1061,
+      "right": 1129,
+      "inside": true
+    },
+    {
+      "id": "tab-aircraft",
+      "left": 1129,
+      "right": 1210,
+      "inside": true
+    },
+    {
+      "id": "tab-ship",
+      "left": 1210,
+      "right": 1260,
+      "inside": true
+    },
+    {
+      "id": "tab-sigmet",
+      "left": 1260,
+      "right": 1327,
+      "inside": true
+    },
+    {
+      "id": "tab-airport",
+      "left": 1327,
+      "right": 1402,
+      "inside": true
+    },
+    {
+      "id": "tab-wx",
+      "left": 1402,
+      "right": 1443,
+      "inside": false
+    },
+    {
+      "id": "tab-watch",
+      "left": 1443,
+      "right": 1508,
+      "inside": false
+    }
+  ],
+  "afterFocus": {
+    "scrollX": 68,
+    "bodyScroll": 0,
+    "mapLeft": -68
+  }
+}

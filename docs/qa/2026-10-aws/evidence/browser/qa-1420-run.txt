@@ -1,0 +1,190 @@
+
+Running 3 tests using 1 worker
+
+QA-1420 1440px doc=1508 > window=1440? tabs outside: tab-wx(right 1443), tab-watch(right 1508) · after keyboard focus on watch: scrollLeft=68 map.left=-68
+  ✘  1 e2e/qa/qa-1420-side-panel-tabs-offscreen.spec.ts:13:7 › QA-1420 every side-panel tab is inside the window at 1440 px and the page does not overflow (3.8s)
+QA-1420 375px doc=447 > window=375? tabs outside: tab-wx(right 382), tab-watch(right 447) · after keyboard focus on watch: scrollLeft=72 map.left=-72
+  ✘  2 e2e/qa/qa-1420-side-panel-tabs-offscreen.spec.ts:13:7 › QA-1420 every side-panel tab is inside the window at 375 px and the page does not overflow (3.6s)
+QA-1420 320px doc=447 > window=320? tabs outside: tab-airport(right 341), tab-wx(right 382), tab-watch(right 447) · after keyboard focus on watch: scrollLeft=127 map.left=-127
+  ✘  3 e2e/qa/qa-1420-side-panel-tabs-offscreen.spec.ts:13:7 › QA-1420 every side-panel tab is inside the window at 320 px and the page does not overflow (3.6s)
+
+
+  1) e2e/qa/qa-1420-side-panel-tabs-offscreen.spec.ts:13:7 › QA-1420 every side-panel tab is inside the window at 1440 px and the page does not overflow 
+
+    Error: tabs outside the window
+
+    expect(received).toEqual(expected) // deep equality
+
+    - Expected  - 1
+    + Received  + 4
+
+    - Array []
+    + Array [
+    +   "tab-wx",
+    +   "tab-watch",
+    + ]
+
+      35 |     saveJson(`qa-1420-tabs-${w}.json`, { ...m, afterFocus });
+      36 |     console.log(`QA-1420 ${w}px doc=${m.docScrollWidth} > window=${m.innerWidth}? tabs outside: ${m.tabs.filter((t) => !t.inside).map((t) => `${t.id}(right ${t.right})`).join(", ") || "none"} · after keyboard focus on watch: scrollLeft=${afterFocus.scrollX} map.left=${afterFocus.mapLeft}`);
+    > 37 |     expect.soft(m.tabs.filter((t) => !t.inside).map((t) => t.id), "tabs outside the window").toEqual([]);
+         |                                                                                              ^
+      38 |     expect.soft(m.docScrollWidth, "document wider than the window").toBeLessThanOrEqual(m.innerWidth);
+      39 |     expect(afterFocus.scrollX, "keyboard focus on the watch tab shifts the whole page sideways").toBe(0);
+      40 |   });
+        at /Users/jinyoung/Projects/wakeline/apps/web/e2e/qa/qa-1420-side-panel-tabs-offscreen.spec.ts:37:94
+
+    Error: document wider than the window
+
+    expect(received).toBeLessThanOrEqual(expected)
+
+    Expected: <= 1440
+    Received:    1508
+
+      36 |     console.log(`QA-1420 ${w}px doc=${m.docScrollWidth} > window=${m.innerWidth}? tabs outside: ${m.tabs.filter((t) => !t.inside).map((t) => `${t.id}(right ${t.right})`).join(", ") || "none"} · after keyboard focus on watch: scrollLeft=${afterFocus.scrollX} map.left=${afterFocus.mapLeft}`);
+      37 |     expect.soft(m.tabs.filter((t) => !t.inside).map((t) => t.id), "tabs outside the window").toEqual([]);
+    > 38 |     expect.soft(m.docScrollWidth, "document wider than the window").toBeLessThanOrEqual(m.innerWidth);
+         |                                                                     ^
+      39 |     expect(afterFocus.scrollX, "keyboard focus on the watch tab shifts the whole page sideways").toBe(0);
+      40 |   });
+      41 | }
+        at /Users/jinyoung/Projects/wakeline/apps/web/e2e/qa/qa-1420-side-panel-tabs-offscreen.spec.ts:38:69
+
+    Error: keyboard focus on the watch tab shifts the whole page sideways
+
+    expect(received).toBe(expected) // Object.is equality
+
+    Expected: 0
+    Received: 68
+
+      37 |     expect.soft(m.tabs.filter((t) => !t.inside).map((t) => t.id), "tabs outside the window").toEqual([]);
+      38 |     expect.soft(m.docScrollWidth, "document wider than the window").toBeLessThanOrEqual(m.innerWidth);
+    > 39 |     expect(afterFocus.scrollX, "keyboard focus on the watch tab shifts the whole page sideways").toBe(0);
+         |                                                                                                  ^
+      40 |   });
+      41 | }
+      42 |
+        at /Users/jinyoung/Projects/wakeline/apps/web/e2e/qa/qa-1420-side-panel-tabs-offscreen.spec.ts:39:98
+
+    Error Context: test-results/qa/qa-1420-side-panel-tabs-of-8e394--the-page-does-not-overflow/error-context.md
+
+  2) e2e/qa/qa-1420-side-panel-tabs-offscreen.spec.ts:13:7 › QA-1420 every side-panel tab is inside the window at 375 px and the page does not overflow 
+
+    Error: tabs outside the window
+
+    expect(received).toEqual(expected) // deep equality
+
+    - Expected  - 1
+    + Received  + 4
+
+    - Array []
+    + Array [
+    +   "tab-wx",
+    +   "tab-watch",
+    + ]
+
+      35 |     saveJson(`qa-1420-tabs-${w}.json`, { ...m, afterFocus });
+      36 |     console.log(`QA-1420 ${w}px doc=${m.docScrollWidth} > window=${m.innerWidth}? tabs outside: ${m.tabs.filter((t) => !t.inside).map((t) => `${t.id}(right ${t.right})`).join(", ") || "none"} · after keyboard focus on watch: scrollLeft=${afterFocus.scrollX} map.left=${afterFocus.mapLeft}`);
+    > 37 |     expect.soft(m.tabs.filter((t) => !t.inside).map((t) => t.id), "tabs outside the window").toEqual([]);
+         |                                                                                              ^
+      38 |     expect.soft(m.docScrollWidth, "document wider than the window").toBeLessThanOrEqual(m.innerWidth);
+      39 |     expect(afterFocus.scrollX, "keyboard focus on the watch tab shifts the whole page sideways").toBe(0);
+      40 |   });
+        at /Users/jinyoung/Projects/wakeline/apps/web/e2e/qa/qa-1420-side-panel-tabs-offscreen.spec.ts:37:94
+
+    Error: document wider than the window
+
+    expect(received).toBeLessThanOrEqual(expected)
+
+    Expected: <= 375
+    Received:    447
+
+      36 |     console.log(`QA-1420 ${w}px doc=${m.docScrollWidth} > window=${m.innerWidth}? tabs outside: ${m.tabs.filter((t) => !t.inside).map((t) => `${t.id}(right ${t.right})`).join(", ") || "none"} · after keyboard focus on watch: scrollLeft=${afterFocus.scrollX} map.left=${afterFocus.mapLeft}`);
+      37 |     expect.soft(m.tabs.filter((t) => !t.inside).map((t) => t.id), "tabs outside the window").toEqual([]);
+    > 38 |     expect.soft(m.docScrollWidth, "document wider than the window").toBeLessThanOrEqual(m.innerWidth);
+         |                                                                     ^
+      39 |     expect(afterFocus.scrollX, "keyboard focus on the watch tab shifts the whole page sideways").toBe(0);
+      40 |   });
+      41 | }
+        at /Users/jinyoung/Projects/wakeline/apps/web/e2e/qa/qa-1420-side-panel-tabs-offscreen.spec.ts:38:69
+
+    Error: keyboard focus on the watch tab shifts the whole page sideways
+
+    expect(received).toBe(expected) // Object.is equality
+
+    Expected: 0
+    Received: 72
+
+      37 |     expect.soft(m.tabs.filter((t) => !t.inside).map((t) => t.id), "tabs outside the window").toEqual([]);
+      38 |     expect.soft(m.docScrollWidth, "document wider than the window").toBeLessThanOrEqual(m.innerWidth);
+    > 39 |     expect(afterFocus.scrollX, "keyboard focus on the watch tab shifts the whole page sideways").toBe(0);
+         |                                                                                                  ^
+      40 |   });
+      41 | }
+      42 |
+        at /Users/jinyoung/Projects/wakeline/apps/web/e2e/qa/qa-1420-side-panel-tabs-offscreen.spec.ts:39:98
+
+    Error Context: test-results/qa/qa-1420-side-panel-tabs-of-1e9e5--the-page-does-not-overflow/error-context.md
+
+  3) e2e/qa/qa-1420-side-panel-tabs-offscreen.spec.ts:13:7 › QA-1420 every side-panel tab is inside the window at 320 px and the page does not overflow 
+
+    Error: tabs outside the window
+
+    expect(received).toEqual(expected) // deep equality
+
+    - Expected  - 1
+    + Received  + 5
+
+    - Array []
+    + Array [
+    +   "tab-airport",
+    +   "tab-wx",
+    +   "tab-watch",
+    + ]
+
+      35 |     saveJson(`qa-1420-tabs-${w}.json`, { ...m, afterFocus });
+      36 |     console.log(`QA-1420 ${w}px doc=${m.docScrollWidth} > window=${m.innerWidth}? tabs outside: ${m.tabs.filter((t) => !t.inside).map((t) => `${t.id}(right ${t.right})`).join(", ") || "none"} · after keyboard focus on watch: scrollLeft=${afterFocus.scrollX} map.left=${afterFocus.mapLeft}`);
+    > 37 |     expect.soft(m.tabs.filter((t) => !t.inside).map((t) => t.id), "tabs outside the window").toEqual([]);
+         |                                                                                              ^
+      38 |     expect.soft(m.docScrollWidth, "document wider than the window").toBeLessThanOrEqual(m.innerWidth);
+      39 |     expect(afterFocus.scrollX, "keyboard focus on the watch tab shifts the whole page sideways").toBe(0);
+      40 |   });
+        at /Users/jinyoung/Projects/wakeline/apps/web/e2e/qa/qa-1420-side-panel-tabs-offscreen.spec.ts:37:94
+
+    Error: document wider than the window
+
+    expect(received).toBeLessThanOrEqual(expected)
+
+    Expected: <= 320
+    Received:    447
+
+      36 |     console.log(`QA-1420 ${w}px doc=${m.docScrollWidth} > window=${m.innerWidth}? tabs outside: ${m.tabs.filter((t) => !t.inside).map((t) => `${t.id}(right ${t.right})`).join(", ") || "none"} · after keyboard focus on watch: scrollLeft=${afterFocus.scrollX} map.left=${afterFocus.mapLeft}`);
+      37 |     expect.soft(m.tabs.filter((t) => !t.inside).map((t) => t.id), "tabs outside the window").toEqual([]);
+    > 38 |     expect.soft(m.docScrollWidth, "document wider than the window").toBeLessThanOrEqual(m.innerWidth);
+         |                                                                     ^
+      39 |     expect(afterFocus.scrollX, "keyboard focus on the watch tab shifts the whole page sideways").toBe(0);
+      40 |   });
+      41 | }
+        at /Users/jinyoung/Projects/wakeline/apps/web/e2e/qa/qa-1420-side-panel-tabs-offscreen.spec.ts:38:69
+
+    Error: keyboard focus on the watch tab shifts the whole page sideways
+
+    expect(received).toBe(expected) // Object.is equality
+
+    Expected: 0
+    Received: 127
+
+      37 |     expect.soft(m.tabs.filter((t) => !t.inside).map((t) => t.id), "tabs outside the window").toEqual([]);
+      38 |     expect.soft(m.docScrollWidth, "document wider than the window").toBeLessThanOrEqual(m.innerWidth);
+    > 39 |     expect(afterFocus.scrollX, "keyboard focus on the watch tab shifts the whole page sideways").toBe(0);
+         |                                                                                                  ^
+      40 |   });
+      41 | }
+      42 |
+        at /Users/jinyoung/Projects/wakeline/apps/web/e2e/qa/qa-1420-side-panel-tabs-offscreen.spec.ts:39:98
+
+    Error Context: test-results/qa/qa-1420-side-panel-tabs-of-f38f5--the-page-does-not-overflow/error-context.md
+
+  3 failed
+    e2e/qa/qa-1420-side-panel-tabs-offscreen.spec.ts:13:7 › QA-1420 every side-panel tab is inside the window at 1440 px and the page does not overflow 
+    e2e/qa/qa-1420-side-panel-tabs-offscreen.spec.ts:13:7 › QA-1420 every side-panel tab is inside the window at 375 px and the page does not overflow 
+    e2e/qa/qa-1420-side-panel-tabs-offscreen.spec.ts:13:7 › QA-1420 every side-panel tab is inside the window at 320 px and the page does not overflow 

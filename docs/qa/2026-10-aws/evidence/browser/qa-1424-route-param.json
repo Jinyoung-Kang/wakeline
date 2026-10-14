@@ -1,0 +1,10 @@
+{
+  "alertsH1": "ALERT EVIDENCE · #%EF%BC%90%EF%BC%91",
+  "airportH1": [
+    "AIRPORT WEATHER · %EA%B9%80%ED%8F%AC%20%EA%B3%B5%ED%95%AD"
+  ],
+  "airportText": "AIRPORT WEATHER · %EA%B9%80%ED%8F%AC%20%EA%B3%B5%ED%95%AD 공항 코드 형식이 올바르지 않습니다: %EA%B9%80%ED%8F%AC%20%EA%B3%B5%ED%95%AD 요청 id f53287df98300ce824c24be3309f1933 복사 로그 보기",
+  "airportApi": [
+    "/api/v1/airports/%25EA%25B9%2580%25ED%258F%25AC%2520%25EA%25B3%25B5%25ED%2595%25AD/wx"
+  ]
+}

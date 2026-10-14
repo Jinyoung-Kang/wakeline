@@ -1,0 +1,353 @@
+{
+  "settings409": {
+    "orig": "300",
+    "ver0": 12,
+    "otherPut": 200,
+    "conflictText": "편집하는 동안 서버 값이 바뀜(v12 → v13: 301)새 값 보기내 값으로 덮어쓰기",
+    "saveDisabled": true,
+    "afterRebaseInput": "302",
+    "savedText": "sigmet_poll_s 저장됨 — 다음 주기부터 적용",
+    "afterSaveVersion": "14",
+    "afterSaveInput": "302",
+    "otherPut2": 200,
+    "afterDropInput": "300",
+    "afterDropFocus": {
+      "tag": "body",
+      "name": "",
+      "visible": false,
+      "outline": "",
+      "testid": "",
+      "inViewport": false
+    },
+    "saveRace409": {
+      "error": "sigmet_poll_s: 편집하는 동안 다른 곳에서 바뀌었습니다 — 새 값을 확인한 뒤 다시 저장하세요\n요청 id\n03e9d26b18ac1f3535d6b5e9bdcfb09f\n복사\n로그 보기\n알림 닫기",
+      "conflictShown": true
+    },
+    "errors": {
+      "consoleErrors": [
+        "Failed to load resource: the server responded with a status of 409 ()"
+      ],
+      "pageErrors": [],
+      "bad": [
+        "409 PUT /api/v1/ops/settings/sigmet_poll_s"
+      ],
+      "failed": []
+    },
+    "restored": 200
+  },
+  "resolveConfirm": {
+    "report": 204,
+    "panelText": "해결 처리 확인 지문 묶음 041c6c20bd07b181 · upto 10-14 04:45:01 KST (이 묶음의 마지막 항목 시각) upto 이하의 이 지문 항목을 목록 · 묶음에서 숨깁니다(기본 보기). 지우지 않습니다 — '해결된 항목 보기'로 다시 보고 되돌릴 수 있습니다. upto 뒤에 같은 지문이 다시 나면 다시 보입니다. 감사 기록(RESOLVE)에 남습니다. 메모 해결 처리 확인 취소",
+    "focusInPanel": {
+      "tag": "input",
+      "name": "해결 메모",
+      "visible": true,
+      "outline": "solid 2px rgb(76, 144, 240)",
+      "testid": "",
+      "inViewport": true
+    },
+    "openerExpanded": "true",
+    "afterEsc": {
+      "visible": false,
+      "focus": {
+        "tag": "button",
+        "name": "해결 처리: 지문 041c6c20bd07b181",
+        "visible": true,
+        "outline": "solid 2px rgb(76, 144, 240)",
+        "testid": "",
+        "inViewport": true
+      }
+    },
+    "afterCancel": {
+      "visible": false,
+      "focus": {
+        "tag": "button",
+        "name": "해결 처리: 지문 041c6c20bd07b181",
+        "visible": false,
+        "outline": "none 3px rgb(230, 232, 235)",
+        "testid": "",
+        "inViewport": true
+      }
+    },
+    "noteTooLong": "메모는 200자 이하입니다(지금 201자).",
+    "afterResolve": {
+      "focus": {
+        "tag": "body",
+        "name": "",
+        "visible": false,
+        "outline": "",
+        "testid": "",
+        "inViewport": false
+      },
+      "groupVisible": false,
+      "status": [
+        "해결 처리됨: 묶음 041c6c20bd07b181(해결 #4) — 목록을 다시 불러옴(가린 항목은 '해결된 항목 보기'로)"
+      ]
+    },
+    "revokePanel": "해결 되돌리기 확인 해결 #4 · 지문 묶음 041c6c20bd07b181 · upto 10-14 04:45:01 KST · qa-ops 되돌리면 이 해결로 가렸던 오류가 다시 보입니다 — 같은 대상에 앞선 해결이 있으면 그 범위는 계속 가립니다. 해결 기록은 지우지 않고 되돌린 사람 · 시각을 남깁니다(감사 UNRESOLVE). 되돌리기 확인 취소",
+    "afterRevoke": {
+      "focus": {
+        "tag": "button",
+        "name": "해결 처리: 지문 041c6c20bd07b181",
+        "visible": false,
+        "outline": "none 3px rgb(230, 232, 235)",
+        "testid": "",
+        "inViewport": true
+      },
+      "resolvedMark": 0
+    },
+    "errors": {
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": []
+    }
+  },
+  "errorScreens": {
+    "notFound": {
+      "status": 404,
+      "title": "Wakeline — 실시간 항공기 · 선박 · 위험기상 상황판",
+      "lang": "ko",
+      "text": "본문으로 건너뛰기 WAKELINE AIRCRAFT · SHIPS · HAZARDOUS WEATHER 상황판 재생 통계 운영 로그 출처·한계 설명서 PORTFOLIO · NON-COMMERCIAL · LOCAL 404 This page could not be found. SOURCESAircraftadsb.lol (ODbL) · adsb.fi · OpenSky Network|SIGMET · METAR · TAFAviationWeather.gov|Shipsaisstream.io (AIS)|노선adsbdb.com (flight route",
+      "links": 25,
+      "h1": [
+        "404"
+      ],
+      "consoleErrors": [
+        "Failed to load resource: the server responded with a status of 404 (Not Found)"
+      ],
+      "pageErrors": [],
+      "bad": [
+        "404 GET /no-such-page-qa"
+      ],
+      "failed": []
+    },
+    "forced": {
+      "text": "본문으로 건너뛰기 WAKELINE AIRCRAFT · SHIPS · HAZARDOUS WEATHER 상황판 재생 통계 운영 로그 출처·한계 설명서 PORTFOLIO · NON-COMMERCIAL · LOCAL STATISTICS 매일 03:30 KST 에 전날(KST 날짜) 집계 · 최근 7일 · 빈 칸은 집계 전·자료 없음을 구분해 표시 SIGMET BY FIR (7D, TOP 24) 최근 7일 자료가 없습니다(집계됨 · 해당 기록 없음). SIGMET BY HAZARD (7D) 최근 7일 자료가 없습니다(집계됨 · 해당 기록 없음). DISTINCT AIRCRAFT BY HOUR (KST) 집계되지 않은 날짜입니다 — 따라잡기 범위(최근 7일) 밖이라 채워지지 않습니다(서비스 기록 전 · 집계가 빠진 날 · KST 날짜 집계로 바꾸기 전 날짜). ALERTS BY KIND (7D) · AVG DWELL 최근 7일 자료가 없습니다(집계됨 · 해당 기록 없음). SOURCESAircraftadsb.lol (ODbL) · adsb.fi · OpenSky Network|SIGMET · METAR · TAFAviationWeather.gov|Shipsaisstre",
+      "hasRetry": 0,
+      "nav": 1,
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": []
+    }
+  },
+  "oldChunks": {
+    "lazy": {
+      "count": 0,
+      "items": [],
+      "blocked": []
+    },
+    "nav": {
+      "from": "http://localhost:8701/#6/36.5/127.8",
+      "to": "http://localhost:8701/stats",
+      "text": "본문으로 건너뛰기 WAKELINE AIRCRAFT · SHIPS · HAZARDOUS WEATHER 상황판 재생 통계 운영 로그 출처·한계 설명서 PORTFOLIO · NON-COMMERCIAL · LOCAL CLIENT ERROR · 화면 오류 이 화면을 그리는 중 오류가 났습니다 “다시 시도”는 이 화면을 다시 불러와 그립니다. 계속되면 “오류 내용 복사”로 아래 전체를 복사해 전달하세요(운영자는 /logs 에서 같은 내용을 봅니다). 다시 시도 오류 내용 복사 상황판으로 종류 ChunkLoadError 메시지 Failed to",
+      "blockedNow": 2
+    },
+    "retryWhileGone": {
+      "url": "http://localhost:8701/stats",
+      "errorScreen": 1,
+      "text": "CLIENT ERROR · 화면 오류 이 화면을 그리는 중 오류가 났습니다 “다시 시도”는 이 화면을 다시 불러와 그립니다. 계속되면 “오류 내용 복사”로 아래 전체를 복사해 전달하세요(운영자는 /logs 에서 같은 내용을 봅니다). 다시 시도 오류 내용 복사 상황판으로 종류 Chunk"
+    },
+    "retryAfterBack": {
+      "url": "http://localhost:8701/stats",
+      "errorScreen": 0,
+      "statsPanels": 4
+    },
+    "errors": {
+      "consoleErrors": [
+        "Failed to load resource: the server responded with a status of 404 (Not Found)",
+        "Failed to load resource: the server responded with a status of 404 (Not Found)",
+        "ChunkLoadError: Failed to load chunk /_next/static/chunks/1awa_ee_e81cl.js from module 64893\n    at http://localhost:8701/_next/static/chunks/turbopack-28l0cw9814-ou.js:1:5001",
+        "Failed to load resource: the server responded with a status of 404 (Not Found)",
+        "Failed to load resource: the server responded with a status of 404 (Not Found)",
+        "ChunkLoadError: Failed to load chunk /_next/static/chunks/1awa_ee_e81cl.js from module 64893\n    at http://localhost:8701/_next/static/chunks/turbopack-28l0cw9814-ou.js:1:5001"
+      ],
+      "pageErrors": [],
+      "bad": [
+        "404 GET /_next/static/chunks/1awa_ee_e81cl.js",
+        "404 GET /_next/static/chunks/1awa_ee_e81cl.js",
+        "404 GET /_next/static/chunks/1awa_ee_e81cl.js",
+        "404 GET /_next/static/chunks/1awa_ee_e81cl.js"
+      ],
+      "failed": []
+    }
+  },
+  "wsDrop": {
+    "before": "WS OPEN",
+    "downPanel": "연결 끊김 — 마지막으로 받은 목록 · 갱신 안 됨 · ETA 멈춤",
+    "after": {
+      "chip": "WS OPEN",
+      "upAt": 65940,
+      "panel": null
+    },
+    "samples": [
+      {
+        "t": 5970,
+        "chip": "WS CLOSED · RETRY 6",
+        "title": "연결 끊김 — 6번째 재연결을 기다리는 중(지수 백오프, 최대 30 s)",
+        "alerts": "ALERTS"
+      },
+      {
+        "t": 8486,
+        "chip": "WS CLOSED · RETRY 6",
+        "title": "연결 끊김 — 6번째 재연결을 기다리는 중(지수 백오프, 최대 30 s)",
+        "alerts": "ALERTS"
+      },
+      {
+        "t": 11040,
+        "chip": "WS CLOSED · RETRY 6",
+        "title": "연결 끊김 — 6번째 재연결을 기다리는 중(지수 백오프, 최대 30 s)",
+        "alerts": "ALERTS"
+      },
+      {
+        "t": 13548,
+        "chip": "WS CLOSED · RETRY 6",
+        "title": "연결 끊김 — 6번째 재연결을 기다리는 중(지수 백오프, 최대 30 s)",
+        "alerts": "ALERTS"
+      },
+      {
+        "t": 16062,
+        "chip": "WS CLOSED · RETRY 6",
+        "title": "연결 끊김 — 6번째 재연결을 기다리는 중(지수 백오프, 최대 30 s)",
+        "alerts": "ALERTS"
+      },
+      {
+        "t": 18624,
+        "chip": "WS CLOSED · RETRY 6",
+        "title": "연결 끊김 — 6번째 재연결을 기다리는 중(지수 백오프, 최대 30 s)",
+        "alerts": "ALERTS"
+      },
+      {
+        "t": 21135,
+        "chip": "WS CLOSED · RETRY 6",
+        "title": "연결 끊김 — 6번째 재연결을 기다리는 중(지수 백오프, 최대 30 s)",
+        "alerts": "ALERTS"
+      },
+      {
+        "t": 23650,
+        "chip": "WS CLOSED · RETRY 6",
+        "title": "연결 끊김 — 6번째 재연결을 기다리는 중(지수 백오프, 최대 30 s)",
+        "alerts": "ALERTS"
+      },
+      {
+        "t": 26163,
+        "chip": "WS CLOSED · RETRY 6",
+        "title": "연결 끊김 — 6번째 재연결을 기다리는 중(지수 백오프, 최대 30 s)",
+        "alerts": "ALERTS"
+      },
+      {
+        "t": 28671,
+        "chip": "WS CLOSED · RETRY 6",
+        "title": "연결 끊김 — 6번째 재연결을 기다리는 중(지수 백오프, 최대 30 s)",
+        "alerts": "ALERTS"
+      },
+      {
+        "t": 31185,
+        "chip": "WS CLOSED · RETRY 6",
+        "title": "연결 끊김 — 6번째 재연결을 기다리는 중(지수 백오프, 최대 30 s)",
+        "alerts": "ALERTS"
+      },
+      {
+        "t": 33694,
+        "chip": "WS CLOSED · RETRY 7",
+        "title": "연결 끊김 — 7번째 재연결을 기다리는 중(지수 백오프, 최대 30 s)",
+        "alerts": "ALERTS"
+      }
+    ],
+    "socketOpens": [
+      328,
+      4497,
+      33528,
+      65587
+    ],
+    "errors": {
+      "consoleErrors": [],
+      "pageErrors": [],
+      "bad": [],
+      "failed": []
+    }
+  },
+  "login429AndExpiry": {
+    "login429": {
+      "text": "로그인 시도가 너무 많습니다 — 37초 뒤 다시 시도하세요.\n요청 id\nqa1420rid\n복사\n로그 보기",
+      "focus": {
+        "tag": "body",
+        "name": "",
+        "visible": false,
+        "outline": "",
+        "testid": "",
+        "inViewport": false
+      },
+      "submitDisabled": false
+    },
+    "expired": {
+      "notice": "세션이 만료되었습니다 — 다시 로그인하세요.",
+      "focus": {
+        "tag": "input#ops-user",
+        "name": "",
+        "visible": true,
+        "outline": "solid 2px rgb(76, 144, 240)",
+        "testid": "",
+        "inViewport": true
+      },
+      "hadCookie": 1,
+      "consoleErrors": [
+        "Failed to load resource: the server responded with a status of 404 ()",
+        "Failed to load resource: the server responded with a status of 404 ()",
+        "Failed to load resource: the server responded with a status of 404 ()",
+        "Failed to load resource: the server responded with a status of 404 ()",
+        "Failed to load resource: the server responded with a status of 404 ()",
+        "Failed to load resource: the server responded with a status of 404 ()",
+        "Failed to load resource: the server responded with a status of 404 ()",
+        "Failed to load resource: the server responded with a status of 404 ()"
+      ],
+      "pageErrors": [],
+      "bad": [
+        "404 GET /api/v1/ops/audit",
+        "404 GET /api/v1/ops/providers",
+        "404 GET /api/v1/ops/settings",
+        "404 GET /api/v1/ops/dlq",
+        "404 GET /api/v1/ops/quality",
+        "404 GET /api/v1/ops/runs?limit=50&resolved=hide",
+        "404 GET /api/v1/ops/pipeline",
+        "404 GET /api/v1/ops/session"
+      ],
+      "failed": []
+    },
+    "backTab": "ops-tab-providers",
+    "logsExpired": {
+      "url": "http://localhost:8701/logs#level=ERROR",
+      "loginShown": true,
+      "text": "시스템 로그 — 로그인 OPERATOR SIGN-IN 세션이 만료되었습니다 — 다시 로그인하세요. USERNAME PASSWORD (8자 이상) SIGN IN 계정은 `make ops-user` 로만 만듭니다. 세션 8 h · HttpOnly · SameSite=Strict · CSRF 이중 제출."
+    },
+    "errors": {
+      "consoleErrors": [
+        "Failed to load resource: the server responded with a status of 404 ()",
+        "Failed to load resource: the server responded with a status of 404 ()",
+        "Failed to load resource: the server responded with a status of 404 ()",
+        "Failed to load resource: the server responded with a status of 404 ()",
+        "Failed to load resource: the server responded with a status of 404 ()",
+        "Failed to load resource: the server responded with a status of 404 ()",
+        "Failed to load resource: the server responded with a status of 404 ()",
+        "Failed to load resource: the server responded with a status of 404 ()",
+        "Failed to load resource: the server responded with a status of 404 ()",
+        "Failed to load resource: the server responded with a status of 404 ()"
+      ],
+      "pageErrors": [],
+      "bad": [
+        "404 GET /api/v1/ops/audit",
+        "404 GET /api/v1/ops/providers",
+        "404 GET /api/v1/ops/settings",
+        "404 GET /api/v1/ops/dlq",
+        "404 GET /api/v1/ops/quality",
+        "404 GET /api/v1/ops/runs?limit=50&resolved=hide",
+        "404 GET /api/v1/ops/pipeline",
+        "404 GET /api/v1/ops/session",
+        "404 GET /api/v1/ops/logs?since=2026-10-13T18%3A46%3A49.522Z&limit=100&resolved=hide",
+        "404 GET /api/v1/ops/session"
+      ],
+      "failed": []
+    }
+  }
+}

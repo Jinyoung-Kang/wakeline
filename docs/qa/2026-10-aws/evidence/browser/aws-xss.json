@@ -1,0 +1,92 @@
+{
+  "sigmet list": {
+    "flag": null,
+    "els": [],
+    "bad": []
+  },
+  "sigmetCardText": "RKRR SIGMET Q9 <img src=x onerror=window.__qa_xss=11> <script>window.__qa_xss=14</script> javascript:alert(1)=",
+  "sigmet card": {
+    "flag": null,
+    "els": [],
+    "bad": []
+  },
+  "alert panel evidence": {
+    "flag": null,
+    "els": [],
+    "bad": []
+  },
+  "watch tab": {
+    "flag": null,
+    "els": [],
+    "bad": []
+  },
+  "notifications": [],
+  "alertPageText": "ALERT EVIDENCE · #1791920831270031 AAR751 (71c361) SIGMET · <i id=qaxh>TS <b>EMBD · RKRR 열림(지금 판정 중) 진입 10-14 04:47:11 KST · 출처 엔진(실시간) JSON 내려받기 인쇄 관측 · 경보 안 관측 경보 RKRR · <i id=qaxh>TS <b>EMBD SIGMET id RKRR:Q9:1791919800 고도대 하한 미발표(SFC 가정) – FL450 (13,716 m) 항공기 고도 FL184 · 5,593 m 유효시간 10-14 04:30:00 – 10-14 08:30:00 KST 판정 시각 10-14 04:47:11 KST 방법 observed_point_in_polygon 연속 확인 2회 출처 / 관측 fixture · 10-14 04:47:10 KST 판정 시 위치 경과 1 s 판정 가정: 하한 미발표 → 지상(SFC)부터로 가정 판정 때 ■ 위치 1s 전 (정상) □ 공급자 지연 기록 없음 (모름) □ 수신 공백 기록 없음 (모름) 그 시각 재생 판정 때 위치(지도 대신 좌표) 위도 · 경도 36.2599, 126.3153 고도 FL184 · 5,593 m ",
+  "/alerts/[id]": {
+    "flag": null,
+    "els": [],
+    "bad": []
+  },
+  "download": {
+    "name": "wakeline-alert-1791920831270031.json",
+    "bytes": 2149,
+    "parses": true,
+    "hasMark": true
+  },
+  "after JSON download": {
+    "flag": null,
+    "els": [],
+    "bad": []
+  },
+  "/m": {
+    "flag": null,
+    "els": [],
+    "bad": []
+  },
+  "/replay?hex=0a5ec1": {
+    "flag": null,
+    "els": [],
+    "bad": []
+  },
+  "wx tab": {
+    "flag": null,
+    "els": [],
+    "bad": []
+  },
+  "ship card": {
+    "flag": null,
+    "els": [],
+    "bad": []
+  },
+  "clientErrorStatus": 204,
+  "/logs list": {
+    "flag": null,
+    "els": [],
+    "bad": []
+  },
+  "/logs detail": {
+    "flag": null,
+    "els": [],
+    "bad": []
+  },
+  "/logs groups": {
+    "flag": null,
+    "els": [],
+    "bad": []
+  },
+  "airspaceStatus": [
+    "공역",
+    "공역QA판 <img src=x onerror=window.__qa_xss=31><i id=\"qa-xss-el\">A</i> 기준 · 국토교통부 · 최신 여부 확인 안 함 · 가져옴 10-14 03:29 KST · 그린 도"
+  ],
+  "airspace layer status": {
+    "flag": null,
+    "els": [],
+    "bad": []
+  },
+  "aircraftAirspace": "AIRSPACE · QA판 <img src=x onerror=window.__qa_xss=31><i id=\"qa-xss-el\">A</i> 기준 · 국토교통부 <img src=x onerror=window.__qa_xss=31><i id=\"qa-xss-el\">A</i>P-73 <b>금지 고도대 안",
+  "aircraft card airspace row": {
+    "flag": null,
+    "els": [],
+    "bad": []
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "/stats": {
+    "focused": true,
+    "type": "date",
+    "outline": "solid 2px rgb(76, 144, 240)",
+    "boxShadow": "none",
+    "border": "solid 1px rgb(51, 58, 67)",
+    "focusVisible": true,
+    "focus": true
+  },
+  "/replay": {
+    "focused": true,
+    "type": "datetime-local",
+    "outline": "solid 2px rgb(76, 144, 240)",
+    "boxShadow": "none",
+    "border": "solid 1px rgb(51, 58, 67)",
+    "focusVisible": true,
+    "focus": true
+  }
+}

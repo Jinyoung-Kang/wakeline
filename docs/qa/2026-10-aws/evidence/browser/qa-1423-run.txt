@@ -1,0 +1,74 @@
+
+Running 3 tests using 1 worker
+
+QA-1423 (1) focus at Esc=runs-drill-open "실행 목록 닫기: focus · fixture · ok" → run list still open=true
+  ✘  1 e2e/qa/qa-1423-esc-after-keyboard-open.spec.ts:13:5 › QA-1423 (1) /ops runs: Enter on '실행 목록 열기' then Esc closes the run list (1.7s)
+QA-1423 (2) focus at Esc=log-grid → detail still open=true
+  ✘  2 e2e/qa/qa-1423-esc-after-keyboard-open.spec.ts:32:5 › QA-1423 (2) /logs: Enter on the log grid then Esc closes the detail (1.8s)
+QA-1423 (3) focus at Esc=replay-list-sigmet "TS FRQRJJJ" → inspector still open=true
+  ✘  3 e2e/qa/qa-1423-esc-after-keyboard-open.spec.ts:53:5 › QA-1423 (3) /replay: Enter on a list item then Esc closes the inspector (4.9s)
+
+
+  1) e2e/qa/qa-1423-esc-after-keyboard-open.spec.ts:13:5 › QA-1423 (1) /ops runs: Enter on '실행 목록 열기' then Esc closes the run list 
+
+    Error: run list open after Esc
+
+    expect(received).toBe(expected) // Object.is equality
+
+    Expected: false
+    Received: true
+
+      27 |   saveJson("qa-1423-runs.json", { focusWhenEsc: before, openAfterEsc: open });
+      28 |   console.log(`QA-1423 (1) focus at Esc=${before.testid || before.tag} "${before.name}" → run list still open=${open}`);
+    > 29 |   expect(open, "run list open after Esc").toBe(false);
+         |                                           ^
+      30 | });
+      31 |
+      32 | test("QA-1423 (2) /logs: Enter on the log grid then Esc closes the detail", async ({ page, baseURL }) => {
+        at /Users/jinyoung/Projects/wakeline/apps/web/e2e/qa/qa-1423-esc-after-keyboard-open.spec.ts:29:43
+
+    Error Context: test-results/qa/qa-1423-esc-after-keyboard-98c67-hen-Esc-closes-the-run-list/error-context.md
+
+  2) e2e/qa/qa-1423-esc-after-keyboard-open.spec.ts:32:5 › QA-1423 (2) /logs: Enter on the log grid then Esc closes the detail 
+
+    Error: log detail open after Esc
+
+    expect(received).toBe(expected) // Object.is equality
+
+    Expected: false
+    Received: true
+
+      48 |   saveJson("qa-1423-logs.json", { focusWhenEsc: before, openAfterEsc: open });
+      49 |   console.log(`QA-1423 (2) focus at Esc=${before.testid || before.tag} → detail still open=${open}`);
+    > 50 |   expect(open, "log detail open after Esc").toBe(false);
+         |                                             ^
+      51 | });
+      52 |
+      53 | test("QA-1423 (3) /replay: Enter on a list item then Esc closes the inspector", async ({ page, baseURL }) => {
+        at /Users/jinyoung/Projects/wakeline/apps/web/e2e/qa/qa-1423-esc-after-keyboard-open.spec.ts:50:45
+
+    Error Context: test-results/qa/qa-1423-esc-after-keyboard-6af94--then-Esc-closes-the-detail/error-context.md
+
+  3) e2e/qa/qa-1423-esc-after-keyboard-open.spec.ts:53:5 › QA-1423 (3) /replay: Enter on a list item then Esc closes the inspector 
+
+    Error: replay inspector open after Esc
+
+    expect(received).toBe(expected) // Object.is equality
+
+    Expected: false
+    Received: true
+
+      69 |   saveJson("qa-1423-replay.json", { focusWhenEsc: before, openAfterEsc: open });
+      70 |   console.log(`QA-1423 (3) focus at Esc=${before.testid || before.tag} "${before.name}" → inspector still open=${open}`);
+    > 71 |   expect(open, "replay inspector open after Esc").toBe(false);
+         |                                                   ^
+      72 | });
+      73 |
+        at /Users/jinyoung/Projects/wakeline/apps/web/e2e/qa/qa-1423-esc-after-keyboard-open.spec.ts:71:51
+
+    Error Context: test-results/qa/qa-1423-esc-after-keyboard-4feaf-en-Esc-closes-the-inspector/error-context.md
+
+  3 failed
+    e2e/qa/qa-1423-esc-after-keyboard-open.spec.ts:13:5 › QA-1423 (1) /ops runs: Enter on '실행 목록 열기' then Esc closes the run list 
+    e2e/qa/qa-1423-esc-after-keyboard-open.spec.ts:32:5 › QA-1423 (2) /logs: Enter on the log grid then Esc closes the detail 
+    e2e/qa/qa-1423-esc-after-keyboard-open.spec.ts:53:5 › QA-1423 (3) /replay: Enter on a list item then Esc closes the inspector 

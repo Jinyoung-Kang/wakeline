@@ -1,0 +1,51 @@
+{
+  "/m": {
+    "startUrl": "http://localhost:8701/m",
+    "endUrl": "http://localhost:8701/m",
+    "clicks": 0,
+    "problems": [],
+    "axe": []
+  },
+  "/alerts/1791920093721002": {
+    "startUrl": "http://localhost:8701/alerts/1791920093721002",
+    "endUrl": "http://localhost:8701/alerts/1791920093721002",
+    "clicks": 1,
+    "problems": [],
+    "axe": []
+  },
+  "/stats": {
+    "startUrl": "http://localhost:8701/stats",
+    "endUrl": "http://localhost:8701/stats",
+    "clicks": 0,
+    "problems": [],
+    "axe": []
+  },
+  "/airports/RKSI": {
+    "startUrl": "http://localhost:8701/airports/RKSI",
+    "endUrl": "http://localhost:8701/airports/RKSI",
+    "clicks": 0,
+    "problems": [],
+    "axe": []
+  },
+  "/about": {
+    "startUrl": "http://localhost:8701/about",
+    "endUrl": "http://localhost:8701/about",
+    "clicks": 0,
+    "problems": [],
+    "axe": []
+  },
+  "/guide": {
+    "startUrl": "http://localhost:8701/guide",
+    "endUrl": "http://localhost:8701/guide",
+    "clicks": 0,
+    "problems": [],
+    "axe": []
+  },
+  "/replay": {
+    "startUrl": "http://localhost:8701/replay",
+    "endUrl": "http://localhost:8701/replay",
+    "clicks": 17,
+    "problems": [],
+    "axe": []
+  }
+}

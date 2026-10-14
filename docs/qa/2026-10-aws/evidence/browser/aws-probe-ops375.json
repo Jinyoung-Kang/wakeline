@@ -1,0 +1,87 @@
+{
+  "providers": {
+    "iw": 375,
+    "doc": 768,
+    "body": 375,
+    "scrollX": 0,
+    "wide": [
+      "a.btn right=402",
+      "a.btn right=458",
+      "table. right=787",
+      "thead. right=787",
+      "tr. right=787"
+    ]
+  },
+  "runs": {
+    "iw": 375,
+    "doc": 456,
+    "body": 375,
+    "scrollX": 0,
+    "wide": [
+      "a.btn right=402",
+      "a.btn right=458",
+      "table.mb-4 right=571",
+      "thead. right=571",
+      "tr. right=571"
+    ]
+  },
+  "quality": {
+    "iw": 375,
+    "doc": 375,
+    "body": 375,
+    "scrollX": 0,
+    "wide": [
+      "a.btn right=402",
+      "a.btn right=458"
+    ]
+  },
+  "settings": {
+    "iw": 375,
+    "doc": 641,
+    "body": 375,
+    "scrollX": 0,
+    "wide": [
+      "a.btn right=402",
+      "a.btn right=458",
+      "table. right=660",
+      "thead. right=660",
+      "tr. right=660"
+    ]
+  },
+  "audit": {
+    "iw": 375,
+    "doc": 375,
+    "body": 375,
+    "scrollX": 0,
+    "wide": [
+      "a.btn right=402",
+      "a.btn right=458",
+      "table. right=1362",
+      "thead. right=1362",
+      "tr. right=1362"
+    ]
+  },
+  "dlq": {
+    "iw": 375,
+    "doc": 375,
+    "body": 375,
+    "scrollX": 0,
+    "wide": [
+      "a.btn right=402",
+      "a.btn right=458"
+    ]
+  },
+  "pipeline": {
+    "iw": 375,
+    "doc": 375,
+    "body": 375,
+    "scrollX": 0,
+    "wide": [
+      "a.btn right=402",
+      "a.btn right=458",
+      "table. right=641",
+      "thead. right=641",
+      "tr. right=641"
+    ]
+  }
+}
