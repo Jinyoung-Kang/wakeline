@@ -1,0 +1,44 @@
+# 주요 라이브러리 — 쓰는 판 vs 레지스트리 최신(PyPI JSON · npm 레지스트리 · Maven Central maven-metadata.xml) · 2026-10-14 04:04:03 KST
+## PyPI (수집기 런타임)
+  asyncpg      쓰는 판 0.31.0    (2025-11-24)  최신 0.32.0    (2026-10-06)
+  httpx        쓰는 판 0.28.1    (2024-12-06)  최신 0.28.1    (2024-12-06)
+  httpcore     쓰는 판 1.0.9     (2025-04-24)  최신 1.0.9     (2025-04-24)
+  websockets   쓰는 판 17.1      (2026-08-26)  최신 17.2      (2026-10-03)
+  redis        쓰는 판 8.1.0     (2026-07-30)  최신 8.1.0     (2026-07-30)
+  pydantic     쓰는 판 2.13.5    (2026-08-28)  최신 2.14.1    (2026-10-11)
+  jsonschema   쓰는 판 4.26.0    (2026-01-07)  최신 4.26.0    (2026-01-07)
+  numpy        쓰는 판 2.5.3     (2026-09-06)  최신 2.5.4     (2026-10-10)
+  pillow       쓰는 판 12.3.0    (2026-07-01)  최신 12.3.0    (2026-07-01)
+  pyproj       쓰는 판 3.8.0     (2026-09-05)  최신 3.8.0     (2026-09-05)
+  shapely      쓰는 판 2.1.2     (2025-09-24)  최신 2.2.0     (2026-10-07)
+  orjson       쓰는 판 3.12.0    (2026-08-14)  최신 3.13.0    (2026-10-07)
+## npm (웹)
+  next         쓰는 판 16.3.8    (2026-09-30)  최신 16.4.0    (2026-10-06)
+  react        쓰는 판 19.3.0    (2026-09-09)  최신 19.3.0    (2026-09-09)
+  react-dom    쓰는 판 19.3.0    (2026-09-09)  최신 19.3.0    (2026-09-09)
+  maplibre-gl  쓰는 판 6.11.2    (2026-09-24)  최신 6.14.0    (2026-10-11)
+  zustand      쓰는 판 5.0.15    (2026-08-13)  최신 5.0.15    (2026-08-13)
+  sharp        쓰는 판 0.35.5    (2026-09-27)  최신 0.35.5    (2026-09-27)
+## Maven Central (api — BOOT-INF/lib)
+  json-schema-validator    쓰는 판 3.0.8            더 새 안정판 없음
+  spring-boot              쓰는 판 4.1.1            더 새 안정판 없음
+  tomcat-embed-core        쓰는 판 11.0.26          더 새 안정판 ['11.0.27']
+  netty-handler            쓰는 판 4.2.17.Final     더 새 안정판 ['4.2.18.Final', '4.2.19.Final']
+  postgresql               쓰는 판 42.7.13          더 새 안정판 ['42.7.14']
+  lettuce-core             쓰는 판 7.5.2.RELEASE    더 새 안정판 ['7.6.0.RELEASE', '7.7.0.RELEASE', '7.8.0.RELEASE']
+  jackson-databind         쓰는 판 3.2.3            더 새 안정판 없음
+  jackson-databind         쓰는 판 2.22.3           더 새 안정판 없음
+  logback-core             쓰는 판 1.5.38           더 새 안정판 ['1.6.0', '1.6.1', '1.6.2', '1.6.3', '1.6.4', '1.6.5']
+  spring-security-core     쓰는 판 7.1.1            더 새 안정판 없음
+## GitHub Advisory DB(전역) — gh api /advisories ?affects=<패키지@판> (같은 질의로 postgresql@42.7.1 은 3건이 나와 필터가 도는 것을 확인)
+  maven org.postgresql:postgresql@42.7.13: 0 건
+  maven org.apache.tomcat.embed:tomcat-embed-core@11.0.26: 0 건
+  maven io.netty:netty-codec-http2@4.2.17.Final: 0 건
+  maven org.springframework:spring-web@7.0.9: 0 건
+  maven com.networknt:json-schema-validator@3.0.8: 0 건
+  npm next@16.3.8: 0 건
+  npm maplibre-gl@6.11.2: 0 건
+  pip websockets@17.1: 0 건
+  pip httpx@0.28.1: 0 건
+  pip asyncpg@0.31.0: 0 건
+  pgjdbc 42.7.14 저장소 공지 GHSA-f64h-wr5q-3qf3(CVSS 5.3) · GHSA-rhp9-mr79-r74h(5.9)는 42.7.13 에 해당 — 전역 DB 에는 아직 없음(위 0 건, trivy 도 못 봄)

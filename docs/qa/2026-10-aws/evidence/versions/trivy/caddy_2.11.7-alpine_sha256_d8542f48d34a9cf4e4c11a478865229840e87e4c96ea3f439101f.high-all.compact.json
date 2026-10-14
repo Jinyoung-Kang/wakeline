@@ -1,0 +1,57 @@
+{
+ "ArtifactName": "/in/image-20862.tar",
+ "CreatedAt": "2026-10-13T18:53:31.142818634Z",
+ "OS": {
+  "Family": "alpine",
+  "Name": "3.23.6"
+ },
+ "ImageID": "sha256:f6a2207268b0f0914df9d3569e1824d6adcfa7b59fbffe0f3cbc5d2d60423f71",
+ "Results": [
+  {
+   "Target": "usr/bin/caddy",
+   "Type": "gobinary",
+   "Vulnerabilities": [
+    {
+     "VulnerabilityID": "CVE-2026-78669",
+     "Severity": "HIGH",
+     "PkgName": "golang.org/x/net",
+     "InstalledVersion": "v0.59.0",
+     "FixedVersion": "0.60.0",
+     "Status": "fixed",
+     "Title": "net/http: net/http/internal/http2: golang: golang.org/x/net/http2: net/http: Denial of Service via excessive HTTP/2 SETTINGS frames",
+     "PublishedDate": "2026-10-08T23:17:04.01Z"
+    },
+    {
+     "VulnerabilityID": "CVE-2026-78667",
+     "Severity": "HIGH",
+     "PkgName": "stdlib",
+     "InstalledVersion": "v1.26.8",
+     "FixedVersion": "1.26.9, 1.27.2",
+     "Status": "fixed",
+     "Title": "net/http: golang: golang: Denial of Service via crafted HTTP Range headers",
+     "PublishedDate": "2026-10-08T23:17:03.88Z"
+    },
+    {
+     "VulnerabilityID": "CVE-2026-78669",
+     "Severity": "HIGH",
+     "PkgName": "stdlib",
+     "InstalledVersion": "v1.26.8",
+     "FixedVersion": "1.26.9, 1.27.2",
+     "Status": "fixed",
+     "Title": "net/http: net/http/internal/http2: golang: golang.org/x/net/http2: net/http: Denial of Service via excessive HTTP/2 SETTINGS frames",
+     "PublishedDate": "2026-10-08T23:17:04.01Z"
+    },
+    {
+     "VulnerabilityID": "CVE-2026-97031",
+     "Severity": "HIGH",
+     "PkgName": "stdlib",
+     "InstalledVersion": "v1.26.8",
+     "FixedVersion": "1.26.9, 1.27.2",
+     "Status": "fixed",
+     "Title": "crypto/tls: golang: crypto/tls: Denial of Service via multiple ECH outer extension references",
+     "PublishedDate": "2026-10-08T23:17:06.037Z"
+    }
+   ]
+  }
+ ]
+}

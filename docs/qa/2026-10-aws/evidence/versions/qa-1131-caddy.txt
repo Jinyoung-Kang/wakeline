@@ -1,0 +1,44 @@
+# QA-1131 — aws-deploy Caddy 이미지(compose.yml 의 고정 다이제스트 그대로, 새 태그 없음) · 2026-10-13T18:58:43Z
+$ grep -n "image: caddy" ~/Projects/aws-deploy/compose.yml
+30:    image: caddy:2.11.7-alpine@sha256:d8542f48d34a9cf4e4c11a478865229840e87e4c96ea3f439101f31a5d35f75f
+
+$ docker image inspect caddy:2.11.7-alpine@sha256:d8542f48d34a9cf4e4c11a478865229840e87e4c96ea3f439101f31a5d35f75f --format '{{.Id}} {{.Created}}'
+sha256:d8542f48d34a9cf4e4c11a478865229840e87e4c96ea3f439101f31a5d35f75f 2026-10-05T18:46:04.065748189Z arm64
+$ docker run --rm --network none --entrypoint caddy caddy:2.11.7-alpine@sha256:d8542f48d34a9cf4e4c11a478865229840e87e4c96ea3f439101f31a5d35f75f version / build-info
+v2.11.7 h1:yj0Y4fYZGPkSvibBJ1sTWE33xC0fxztVyXEW5iIdUT4=
+go	go1.26.8
+dep	golang.org/x/net	v0.59.0	h1:5zfYln+w5XCxwrnMMJPufRgNoXEaGxl0wo5GqPXyues=
+build	CGO_ENABLED=0
+build	GOARCH=arm64
+
+## trivy(게이트와 같은 기준: HIGH·CRITICAL · 고칠 수 있는 것) — trivy-wide-summary.txt · trivy/caddy_*.compact.json
+== caddy_2.11.7-alpine_sha256_d8542f48d34a9cf4e4c11a478865229840e87e4c96ea3f439101f.medium-fixable.json  os=alpine 3.23.6  n=12  {('MEDIUM', 'fixed'): 8, ('HIGH', 'fixed'): 4}
+    HIGH | CVE-2026-78667 | stdlib | v1.26.8 | 1.26.9, 1.27.2 | fixed | usr/bin/caddy
+    HIGH | CVE-2026-78669 | golang.org/x/net | v0.59.0 | 0.60.0 | fixed | usr/bin/caddy
+    HIGH | CVE-2026-78669 | stdlib | v1.26.8 | 1.26.9, 1.27.2 | fixed | usr/bin/caddy
+    HIGH | CVE-2026-97031 | stdlib | v1.26.8 | 1.26.9, 1.27.2 | fixed | usr/bin/caddy
+    MEDIUM | CVE-2026-56866 | stdlib | v1.26.8 | 1.26.9, 1.27.2 | fixed | usr/bin/caddy
+    MEDIUM | CVE-2026-78663 | golang.org/x/net | v0.59.0 | 0.60.0 | fixed | usr/bin/caddy
+    MEDIUM | CVE-2026-78663 | stdlib | v1.26.8 | 1.26.9, 1.27.2 | fixed | usr/bin/caddy
+    MEDIUM | CVE-2026-85091 | zlib | 1.3.2-r0 | 1.3.2-r1 | fixed | /in/image-20862.tar (alpine 3.23.6)
+    MEDIUM | CVE-2026-94439 | stdlib | v1.26.8 | 1.26.9, 1.27.2 | fixed | usr/bin/caddy
+    MEDIUM | CVE-2026-94448 | stdlib | v1.26.8 | 1.26.9, 1.27.2 | fixed | usr/bin/caddy
+    MEDIUM | CVE-2026-97032 | golang.org/x/net | v0.59.0 | 0.60.0 | fixed | usr/bin/caddy
+    MEDIUM | CVE-2026-97032 | stdlib | v1.26.8 | 1.26.9, 1.27.2 | fixed | usr/bin/caddy
+
+
+## 닿는 경로 — 실제 Caddyfile 처럼 auto_https off · 평문 리스너(protocols 미지정 = 기본값)에서 HTTP/2(h2c) 를 받는가
+probe Caddyfile:
+    {
+    	auto_https off
+    	admin off
+    }
+    :8103 {
+    	header -Server
+    	respond "ok" 200
+    }
+$ curl -sS -o /dev/null -w "%{http_version} %{http_code}" http://127.0.0.1:8103/                         (같은 망 이름공간, curl 은 wakeline-api:qa 의 것)
+1.1 200
+$ curl … --http2-prior-knowledge http://127.0.0.1:8103/
+2 200
+→ 평문 리스너가 h2c(사전 지식)를 받는다: HTTP/2 서버 CVE(78669 · 78663 · 97032)는 리스너에 TCP 로 닿는 누구에게나 열린다. 운영의 보안 그룹(CloudFront 원본 대역만 — Caddyfile 머리말)은 이 QA 에서 확인하지 않았다.
