@@ -104,9 +104,11 @@ export function SidePanelView({ panel, hex, sigmet, airport, ship = null, shipsO
   }, [key, panel, id]);
   return (
     <>
-      <div className="flex border-b border-line">
+      {/* 탭 일곱 개는 380 px 패널 · 좁은 창보다 넓다(글꼴 · 대문자 자간에 따라) — 넘치면 다음 줄로 감싼다(QA-1420: 한 줄로 두면 'watch' 가 창 밖에 숨고,
+          키보드로 가면 화면 전체가 옆으로 밀렸다). 아래 테두리는 단추마다(감싼 줄 사이에도 선) */}
+      <div className="flex flex-wrap">
         {(["alerts", "aircraft", "ship", "sigmet", "airport", "wx", "watch"] as const).map((p) => (
-          <button key={p} className="btn flex-1 border-0 border-r border-line" lang="en" aria-pressed={panel === p} onClick={() => setPanel(p)} data-testid={`tab-${p}`}>{p}</button>
+          <button key={p} className="btn flex-1 border-0 border-r border-b border-line" lang="en" aria-pressed={panel === p} onClick={() => setPanel(p)} data-testid={`tab-${p}`}>{p}</button>
         ))}
       </div>
       <div ref={content} className="min-h-0 flex-1 focus-visible:-outline-offset-2" role="region" aria-label={`${PANEL_NAME[panel]}${id ? " 상세" : ""}`} tabIndex={-1}
