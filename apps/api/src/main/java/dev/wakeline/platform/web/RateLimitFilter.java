@@ -5,17 +5,27 @@ import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import org.springframework.boot.security.autoconfigure.web.servlet.SecurityFilterProperties;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
 
-/** /api/** 요청을 IP당 분당 N 회로 제한. 초과 시 429 + Retry-After + RFC 9457 본문. */
+/**
+ * /api/** 요청을 IP당 분당 N 회로 제한. 초과 시 429 + Retry-After + RFC 9457 본문.
+ * <p>보안 필터 체인(Spring Security — 서블릿 필터 순서 {@link SecurityFilterProperties#DEFAULT_FILTER_ORDER})보다 앞에서 돈다(QA-1100): 예전 순서(10)는
+ * 체인 뒤라, 체인이 끝낸 요청 — 익명 운영 요청의 404(존재 비공개) · CSRF 403 · 허용 목록 밖 Origin 403 · 방화벽 400 · 세션 저장소 503 — 이 제한에 세지지
+ * 않았다(몇 번이든 429 가 되지 않고 X-RateLimit-* 도 없었다). 요청 id({@link RequestIdFilter} — 가장 앞)는 그대로 먼저 붙는다. 이 필터가 쓴 429 는
+ * 보안 체인 밖의 응답이라 방화벽 400 처럼 체인의 헤더(CSP · Cache-Control)가 붙지 않는다(edge 의 보안 헤더는 그대로).
+ */
 @org.springframework.context.annotation.Profile("!cli & !migrate")
 @Component
-@Order(10)
+@Order(RateLimitFilter.ORDER)
 public class RateLimitFilter extends OncePerRequestFilter {
+    /** 보안 필터 체인 바로 앞. */
+    public static final int ORDER = SecurityFilterProperties.DEFAULT_FILTER_ORDER - 1;
+
     private final RateLimiter limiter;
     private final AppProperties props;
 
