@@ -1,0 +1,16 @@
+$ cd apps/collector && uv run --offline pytest tests/qa/test_qa_1140_error_body_cut_before_masking.py -q -p no:cacheprovider
+# 2026-10-13T18:57:19Z — 키는 시험 전용 가짜 값(QA1140fakeKmaKey…)
+E       AssertionError: [plain echo across the 200-char exception cut] unmasked key fragments: {'str(e) → traceback · %s logs': 'QA1140fake'}
+E       AssertionError: [plain echo across the 120-char error-text cut] unmasked key fragments: {'describe_error → last_error · error_text · WARN': 'QA1140fake'}
+E       AssertionError: [JSON echo cut before the closing quote] unmasked key fragments: {'describe_error → last_error · error_text · WARN': 'QA1140fakeKmaKey012345678'}
+E       AssertionError: WarningResponseError — not a warning list: '인증키 오류 EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEQA1140fakeK'
+E       AssertionError: {'started_at': '2027-01-15T08:00:00.000Z', 'ended_at': '2027-01-15T08:03:20.000Z', 'reason': 'server closed (1008 yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyQA1140fakeKmaKey0123456789abcdef)'}
+E       AssertionError: unmasked key fragments: {'provider last_error': 'QA1140fakeKm', 'ingest_run.error_text': 'QA1140fakeKm', 'WARN log': 'QA1140fakeKm'}
+WARNING  job.weather:weather.py:134 kma_warning/kma_warning failed: wrn_now_data — HTTP 401 Unauthorized — EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEQA1140fakeKm after 0.0 s
+FAILED tests/qa/test_qa_1140_error_body_cut_before_masking.py::test_qa_1140_a_key_split_by_the_cut_leaks_its_head[plain echo across the 200-char exception cut-190-{key}]
+FAILED tests/qa/test_qa_1140_error_body_cut_before_masking.py::test_qa_1140_a_key_split_by_the_cut_leaks_its_head[plain echo across the 120-char error-text cut-110-{key}]
+FAILED tests/qa/test_qa_1140_error_body_cut_before_masking.py::test_qa_1140_a_key_split_by_the_cut_leaks_its_head[JSON echo cut before the closing quote-95-{{"result":"error","authKey":"{key}"}}]
+FAILED tests/qa/test_qa_1140_error_body_cut_before_masking.py::test_qa_1140_a_200_reply_that_is_not_a_warning_list_cuts_at_80_before_masking
+FAILED tests/qa/test_qa_1140_error_body_cut_before_masking.py::test_qa_1140_an_ais_close_reason_is_cut_at_120_before_redaction_and_becomes_a_public_gap_reason
+FAILED tests/qa/test_qa_1140_error_body_cut_before_masking.py::test_qa_1140_warning_job_stores_and_logs_the_head_of_an_echoed_key
+6 failed, 1 passed in 0.74s

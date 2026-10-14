@@ -1,0 +1,5 @@
+$ cd apps/collector && uv run --offline pytest -q -p no:cacheprovider   (수집기 전체 — QA 시험 포함)
+# 2026-10-13T19:00:23Z — 기준선 1,994 통과 · 27 건너뜀. 아래 실패 중 test_qa_1130_* 은 다른 영역(보안) 에이전트의 시험이다.
+FAILED (이 영역): test_qa_1140 ×6 · test_qa_1220 ×1 · test_qa_1221 ×5 · test_qa_1222 ×2 = 14
+PASSED (이 영역): test_qa_1140 대조군 ×1 · test_qa_aws_fixture_mode_makes_no_external_calls ×1, 건너뜀: test_qa_1220 실 Redis(opt-in) ×1
+16 failed, 1997 passed, 28 skipped in 162.83s (0:02:42)

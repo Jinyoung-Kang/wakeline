@@ -1,0 +1,9 @@
+$ cd apps/collector && uv run --offline python ../../docs/qa/2026-10-aws/evidence/collector/c5b_ais_boot_before_redis.py
+# 2026-10-13T19:01:45Z — T0 = 2027-01-15T08:00:00Z(모의). 로그 줄 일부 생략
+previous ais status unavailable (ConnectionError) — no gap carried over
+[C Redis 가 ais 보다 먼저 준비됨] 프로세스 1 종료 뒤 상태 해시: state=stopped gap_open_since=2027-01-15T08:00:45.000Z
+  ais_gap: [{'started_at': '2027-01-15T08:00:45.000Z', 'ended_at': '2027-01-17T23:00:05.000Z', 'reason': 'ais process stopped'}]
+  프로세스 2 뒤 상태 해시: state=receiving gap_open_since='' last_gap='2027-01-15T08:00:45.000Z'
+[D ais 가 Redis 보다 2 s 먼저 뜸(첫 읽기 실패)] 프로세스 1 종료 뒤 상태 해시: state=stopped gap_open_since=2027-01-15T08:00:45.000Z
+  ais_gap: 없음
+  프로세스 2 뒤 상태 해시: state=receiving gap_open_since='' last_gap=''

@@ -1,0 +1,6 @@
+$ cd apps/collector && uv run --offline python ../../docs/qa/2026-10-aws/evidence/collector/c8_host_429_blocks_other_service.py
+# 2026-10-13T18:55:46Z — respx 로 가로챔(외부 호출 없음)
+PORT-MIS: HTTP 429 — host apis.data.go.kr paused 30 s
+KOMSA 교통(5분 폴링): not sent — Throttled(throttled apis.data.go.kr: cooling down 30 s after HTTP 429)
+해양수산부 격자 WFS: not sent — Throttled(throttled apis.data.go.kr: cooling down 30 s after HTTP 429)
+calls actually sent: PORT-MIS 1 · KOMSA 0 · WFS 0

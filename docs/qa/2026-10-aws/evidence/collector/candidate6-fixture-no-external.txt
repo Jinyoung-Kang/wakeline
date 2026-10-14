@@ -1,0 +1,4 @@
+$ cd apps/collector && uv run --offline pytest tests/qa/test_qa_aws_fixture_mode_makes_no_external_calls.py -q -p no:cacheprovider
+# 2026-10-13T18:51:16Z — 통과(외부 연결 시도 0, 주기 작업 9종이 각각 3회 이상). 대조: 같은 시험을 실시간 모드(fixture 0)로 바꾸면 가로챈 시도가 잡힌다 — ['httpx GET opendata.adsb.fi', 'httpx GET aviationweather.gov', 'httpx GET api.rainviewer.com', …](가로채서 실제로 나가지 않음)
+.                                                                        [100%]
+1 passed in 1.33s
