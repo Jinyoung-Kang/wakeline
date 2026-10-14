@@ -332,7 +332,8 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
                     onClick={() => { drillOpener.current = document.activeElement as HTMLElement | null; if (key) setDrill(open ? null : { k: key, since: summarySince(runs) }); }}>{open ? "접기" : "실행"}</button></td>
                 </tr>
                 {open && drill ? <tr><td colSpan={8}>
-                  <OpsRunsDrill id={RUNS_DRILL_ID} k={drill.k} since={drill.since} onClose={() => { setDrill(null); rescue(() => [drillOpener.current, tabBody.current]); }} onAuthMiss={(e) => { void authMiss(e); }} />
+                  <OpsRunsDrill id={RUNS_DRILL_ID} k={drill.k} since={drill.since} onClose={() => { setDrill(null); rescue(() => [drillOpener.current, tabBody.current]); }} onAuthMiss={(e) => { void authMiss(e); }}
+                    opener={() => drillOpener.current} />
                 </td></tr> : null}
               </Fragment>;
             })}</tbody></table>

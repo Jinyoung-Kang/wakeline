@@ -29,14 +29,17 @@ const RELATED_LIMIT = 50;
  * 해결된 항목은 "해결됨 · <by> · <upto>" + "되돌리기". 쓰기 결과는 onResolveChanged 로 — 부모가 목록과 이 항목을 다시 읽는다(201/204 뒤에만 바뀐다).
  * 같은 지문 묶음 통계는 목록의 해결 표시(resolvedMode)를 따르고, 같은 요청 id 의 다른 항목은 해결 여부와 무관하게 모두(증거의 흐름 — 해결된 것은 표시).
  */
-export function LogDetail({ entry, period, resolvedMode, onClose, onOpen, onFilterFp, onFilterRid, onCopy, onAuthMiss, onResolveChanged }: {
+export function LogDetail({ entry, period, resolvedMode, onClose, onOpen, onFilterFp, onFilterRid, onCopy, onAuthMiss, onResolveChanged, opener }: {
   entry: LogEntry; period: LogPeriod; resolvedMode: ResolvedMode; onClose: () => void; onOpen: (e: LogEntry) => void; onFilterFp: (fp: string) => void;
   onFilterRid: (rid: string) => void; onCopy: (label: string, text: string) => void; onAuthMiss: (e: unknown) => Promise<"expired" | "error">;
   onResolveChanged: (r: ResolveResult) => void;
+  /** 이 상세를 연 요소(로그 표 — ↓ · Enter 로 연다) — 그 자리에서 Esc 가 닫는다(QA-1423) */
+  opener?: () => Element | null;
 }) {
   const [wrap, setWrap] = useState(true);
   const root = useRef<HTMLDivElement>(null);
-  useEscapeClose(true, onClose, { panel: root }); // Esc 로 닫기(lib/escape-stack) — 해결 확인 창의 Esc 는 그 창이 먼저 다룬다. 초점은 onClose 가 목록으로
+  // Esc 로 닫기(lib/escape-stack) — 연 표 위의 Esc 도. 해결 확인 창의 Esc 는 그 창이 먼저 다룬다. 초점은 onClose 가 목록으로
+  useEscapeClose(true, onClose, { panel: root, opener: opener ?? (() => null) });
   const { open: confirm, show, close, closeIf, panelId, openerProps } = useResolveSlot();
   const setConfirm = (t: ResolveTarget) => show("entry", t);
   /*

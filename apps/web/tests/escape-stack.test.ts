@@ -2,7 +2,7 @@
  * QA 2026-10 화면 개선 제안 1 — 겹쳐 뜨는 패널(범례 · 카드 · 상세)을 같은 규칙으로 Esc 로 닫는다(lib/escape-stack): 초점이 있는 곳의 것, 나중에 연 것부터,
  * 한 번에 하나. 다른 요소(검색 입력 · 단추)의 Esc 와 이미 처리된 Esc 는 건드리지 않는다.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { handleEscape, type EscapeLayer } from "@/lib/escape-stack";
 
 /** contains · closest 만 있는 가짜 요소(부모 사슬) */
@@ -57,6 +57,18 @@ describe("handleEscape", () => {
     const closed: string[] = [];
     handleEscape(esc(legendBtn), [layer(legend, closed, legendBtn), layer(card, closed)]);
     expect(closed).toEqual(["legend"]);
+  });
+
+  it("an opener that is the document body (opened with nothing focused) does not claim every Esc (QA-1423)", () => {
+    const body = new Node("body");
+    const input = new Node("input", body);
+    const panel = new Node("inspector", body);
+    vi.stubGlobal("document", { body, documentElement: new Node("html") });
+    try {
+      const closed: string[] = [];
+      expect(handleEscape(esc(input), [layer(panel, closed, body)])).toBe(false); // 다른 입력의 Esc 는 그 입력의 것
+      expect(closed).toEqual([]);
+    } finally { vi.unstubAllGlobals(); }
   });
 
   it("from a neutral place (map, nothing focused, an ancestor) it closes only the top panel — the one opened last", () => {

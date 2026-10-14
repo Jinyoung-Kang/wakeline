@@ -92,7 +92,8 @@ export default function ReplayPage() {
   const onPick = useCallback((p: ReplayPick) => { pickOpener.current = p && typeof document !== "undefined" ? document.activeElement : null; setPick(p); }, []);
   const closePick = () => { setPick(null); rescue(() => [pickOpener.current, listToggle.current]); };
   const inspector = useRef<HTMLDivElement>(null);
-  useEscapeClose(pick != null, closePick, { panel: inspector }); // Esc 로 상세 닫기(lib/escape-stack) — 초점은 closePick 이 연 자리로
+  // Esc 로 상세 닫기(lib/escape-stack) — 연 자리(목록 항목) 위의 Esc 도(QA-1423). 초점은 closePick 이 연 자리로
+  useEscapeClose(pick != null, closePick, { panel: inspector, opener: () => pickOpener.current });
   const ac = pick?.kind === "aircraft" && frame ? frame.aircraft.find((a) => a.hex === pick.hex) ?? null : null;
   const sg = pick?.kind === "sigmet" && frame ? frame.sigmets.find((s) => s.id === pick.id) ?? null : null;
   return (
