@@ -203,10 +203,8 @@ public class MaintenanceJobs {
 
     /** 지정 대상 보존 기간(ADR-038 — 계획 결정 D7) */
     static final int RETAINED_DAYS = 365;
-    /** 매시간 옮기는 창(닫힌 시간까지 거슬러) — 한두 번 놓쳐도 다음 실행이 채운다(겹치면 무시) */
+    /** 매시간 옮기는 창(닫힌 시간까지 거슬러) — 한두 번 놓쳐도 다음 실행이 채운다(겹치면 무시). 기동 뒤 따라잡기는 원본이 남은 모든 시간({@link #runCatchUp}) */
     static final int RETAIN_COPY_HOURS = 3;
-    /** 기동 뒤 따라잡기 창 — 원해상도 보존(72 h)보다 조금 짧게(지워지는 중인 파티션을 읽지 않게) */
-    static final int RETAIN_CATCH_UP_HOURS = 70;
 
     /**
      * 지정 대상 기록 보존(ADR-038 · SPEC F7): 지난 {@value #RETAIN_COPY_HOURS}시간(닫힌 시간까지)을 옮긴다. 매시 1분 요약 작업({@link #summarize1m})이 이어서
@@ -344,10 +342,12 @@ public class MaintenanceJobs {
                 log.warn("catch-up failed (will retry): {}", e.toString());
             }
         }
-        // 지정 대상 보존 복사는 따로 가둔다(ADR-038 결정 3 · QA-601): 위가 실패해도 72 h 파티션 삭제 전에 옮길 기회를 잃지 않는다
+        // 지정 대상 보존 복사는 따로 가둔다(ADR-038 결정 3 · QA-601): 위가 실패해도 72 h 파티션 삭제 전에 옮길 기회를 잃지 않는다.
+        // 창 = 원본이 남아 있는 모든 시간(보존 365일 안 — 남은 파티션만 읽힌다, 대상마다 (hex|mmsi, ts) 기본 키 범위). 70 h 고정이던 때는 그보다 긴 정지
+        // (연휴 · 기동 실패) 직전 시간의 지정 대상 점을 원본이 남아 있는데도 옮기지 않아 원본 삭제와 함께 잃었다(QA-1201 — 매시 복사는 닫힌 3시간만 본다)
         try {
             Instant hour = clock.instant().truncatedTo(ChronoUnit.HOURS);
-            int retained = copyRetained(hour.minus(RETAIN_CATCH_UP_HOURS, ChronoUnit.HOURS), hour); // 기동 · 놓친 시간(겹치면 무시)
+            int retained = copyRetained(hour.minus(RETAINED_DAYS, ChronoUnit.DAYS), hour); // 기동 · 놓친 시간(겹치면 무시)
             if (retained > 0) log.info("catch-up: retained track {} new minute points", retained);
         } catch (RuntimeException e) {
             Instant now = clock.instant();
