@@ -151,10 +151,13 @@ public class MaintenanceJobs {
     public void dropExpiredPartitions() {
         // 기동 뒤 첫 따라잡기가 성공하기 전에는 항적 파티션을 지우지 않는다(상한 DROP_HOLD_MAX — 독립 리뷰 M3): 교통량은 그날 파티션이 있을 때만 다시 센다({@link #families}).
         // 주말에 꺼지는 AWS 데모의 금요일 교통량은 월요일 아침 따라잡기가 세는데, RDS 가 늦게 준비되면 그 전에 목요일 UTC 파티션이 지워져 영구히 빠졌다
-        if (catchUpOkAt == null && clock.instant().isBefore(startedAt.plus(DROP_HOLD_MAX)))
-            log.info("retention track_point partitions: kept until the first catch-up after start (at most {} h)", DROP_HOLD_MAX.toHours());
-        else
-            retention("track_point partitions", () -> db.sql("SELECT track_point_drop_old(:h)").param("h", props.trackRetentionHours()).query(Integer.class).single());
+        // 선박 위치 파티션도 같다(QA-1201 남은 곳 — 독립 리뷰 2026-10-14): 첫 따라잡기가 지정 선박의 점을 보존표로 옮기기 전에 지우면, 긴 정지 직전
+        // 시간의 그 점이 원본과 함께 사라진다(따라잡기가 RDS 를 기다리며 물러나 :02 를 넘길 때)
+        if (catchUpOkAt == null && clock.instant().isBefore(startedAt.plus(DROP_HOLD_MAX))) {
+            log.info("retention track_point · ship_position partitions: kept until the first catch-up after start (at most {} h)", DROP_HOLD_MAX.toHours());
+            return;
+        }
+        retention("track_point partitions", () -> db.sql("SELECT track_point_drop_old(:h)").param("h", props.trackRetentionHours()).query(Integer.class).single());
         retention("ship_position partitions", () -> db.sql("SELECT ship_position_drop_old(:h)").param("h", SHIP_RETENTION_HOURS).query(Integer.class).single());
     }
 
