@@ -1,0 +1,28 @@
+test_qa_1600_aws_api_cookie_secure_is_true_with_the_documented_env (test_qa_1600_aws_cookie_secure.Qa1600AwsCookieSecureTest.test_qa_1600_aws_api_cookie_secure_is_true_with_the_documented_env)
+기대: 공개 HTTPS(CloudFront) 뒤의 AWS 판은 쿠키 Secure(compose.aws.yml 의 기본값 true). 실제(고치기 전): .env.example 의 false. ... FAIL
+test_qa_1600_control_compose_default_is_true_without_the_example_line (test_qa_1600_aws_cookie_secure.Qa1600AwsCookieSecureTest.test_qa_1600_control_compose_default_is_true_without_the_example_line)
+대조(지금도 통과): .env 에 COOKIE_SECURE 줄이 없으면 compose.aws.yml 의 기본값 true 가 든다 — 원인은 .env.example 의 줄이다. ... ok
+
+======================================================================
+FAIL: test_qa_1600_aws_api_cookie_secure_is_true_with_the_documented_env (test_qa_1600_aws_cookie_secure.Qa1600AwsCookieSecureTest.test_qa_1600_aws_api_cookie_secure_is_true_with_the_documented_env)
+기대: 공개 HTTPS(CloudFront) 뒤의 AWS 판은 쿠키 Secure(compose.aws.yml 의 기본값 true). 실제(고치기 전): .env.example 의 false.
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/jinyoung/Projects/wakeline/infra/tests/test_qa_1600_aws_cookie_secure.py", line 77, in test_qa_1600_aws_api_cookie_secure_is_true_with_the_documented_env
+    self.assertEqual(
+    ~~~~~~~~~~~~~~~~^
+        api.get("WAKELINE_COOKIE_SECURE"), "true",
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        "AWS 판 api 의 WAKELINE_COOKIE_SECURE — make init(.env.example 복사) + RDS_HOST · PUBLIC_ORIGIN 으로 만든 .env 에서",
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+AssertionError: 'false' != 'true'
+- false
++ true
+ : AWS 판 api 의 WAKELINE_COOKIE_SECURE — make init(.env.example 복사) + RDS_HOST · PUBLIC_ORIGIN 으로 만든 .env 에서
+
+----------------------------------------------------------------------
+Ran 2 tests in 0.203s
+
+FAILED (failures=1)

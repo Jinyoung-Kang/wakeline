@@ -1,0 +1,8 @@
+# QA-1600 보조 증거 — 익명 공개 요청에도 WAKELINE_CSRF 쿠키가 나간다(스택 A 8701, fixture 모드 · COOKIE_SECURE 기본 false). 값은 가림.
+# 2026-10-13T18:49:06Z
+== GET /api/v1/status
+HTTP/1.1 200 
+Set-Cookie: WAKELINE_CSRF=<redacted>; Path=/; SameSite=Strict
+== GET /api/v1/aircraft?bbox=126,35,128,37
+HTTP/1.1 200 
+Set-Cookie: WAKELINE_CSRF=<redacted>; Path=/; SameSite=Strict
