@@ -1,0 +1,79 @@
+$ cd apps/web && npx vitest run tests/qa/qa-1400-lang-of-parts-remaining.test.ts   # 2026-10-14 03:54 KST · git 0e9b2075
+
+ RUN  v5.0.2 /Users/jinyoung/Projects/wakeline/apps/web
+
+stdout | tests/qa/qa-1400-lang-of-parts-remaining.test.ts > QA-1400 English words left without lang="en" (after QA-313) > dashboard side panel: the tab buttons (main navigation) and the alerts head
+QA-1400 side panel without lang=en: ["tab \"alerts\"","tab \"aircraft\"","tab \"ship\"","tab \"airport\"","tab \"watch\"","head \"Alerts\""]
+
+stdout | tests/qa/qa-1400-lang-of-parts-remaining.test.ts > QA-1400 English words left without lang="en" (after QA-313) > other public panel heads (source lines — same check as tests/lang-of-parts for QA-313)
+QA-1400 heads without lang=en: ["components/WatchPanel.tsx: Watchlist","components/WarningPanel.tsx: Weather warnings","components/RadarTimeline.tsx: Radar","components/AttributionFooter.tsx: Sources","components/AircraftCard.tsx: Active alerts","components/ShipCard.tsx: Ship","app/airports/[icao]/page.tsx: History (latest 24)","app/replay/page.tsx: Replay","components/guide/GuideToc.tsx: Contents","components/Shell.tsx: Aircraft · Ships · Hazardous Weather"]
+
+ ❯ tests/qa/qa-1400-lang-of-parts-remaining.test.ts (2 tests | 2 failed) 17ms
+   ❯ QA-1400 English words left without lang="en" (after QA-313) (2)
+     × dashboard side panel: the tab buttons (main navigation) and the alerts head 12ms
+     × other public panel heads (source lines — same check as tests/lang-of-parts for QA-313) 4ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/qa/qa-1400-lang-of-parts-remaining.test.ts > QA-1400 English words left without lang="en" (after QA-313) > dashboard side panel: the tab buttons (main navigation) and the alerts head
+AssertionError: expected [ 'tab "alerts"', …(5) ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   "tab \"alerts\"",
++   "tab \"aircraft\"",
++   "tab \"ship\"",
++   "tab \"airport\"",
++   "tab \"watch\"",
++   "head \"Alerts\"",
++ ]
+
+ ❯ tests/qa/qa-1400-lang-of-parts-remaining.test.ts:39:21
+     37|     if (head && !langOf(head).startsWith("en")) missing.push('head "Al…
+     38|     console.info(`QA-1400 side panel without lang=en: ${JSON.stringify…
+     39|     expect(missing).toEqual([]);
+       |                     ^
+     40|   });
+     41|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  tests/qa/qa-1400-lang-of-parts-remaining.test.ts > QA-1400 English words left without lang="en" (after QA-313) > other public panel heads (source lines — same check as tests/lang-of-parts for QA-313)
+AssertionError: expected [ …(10) ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   "components/WatchPanel.tsx: Watchlist",
++   "components/WarningPanel.tsx: Weather warnings",
++   "components/RadarTimeline.tsx: Radar",
++   "components/AttributionFooter.tsx: Sources",
++   "components/AircraftCard.tsx: Active alerts",
++   "components/ShipCard.tsx: Ship",
++   "app/airports/[icao]/page.tsx: History (latest 24)",
++   "app/replay/page.tsx: Replay",
++   "components/guide/GuideToc.tsx: Contents",
++   "components/Shell.tsx: Aircraft · Ships · Hazardous Weather",
++ ]
+
+ ❯ tests/qa/qa-1400-lang-of-parts-remaining.test.ts:55:21
+     53|     }).map(([f, w]) => `${f}: ${w}`);
+     54|     console.info(`QA-1400 heads without lang=en: ${JSON.stringify(miss…
+     55|     expect(missing).toEqual([]);
+       |                     ^
+     56|   });
+     57| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed (2)
+   Start at  03:54:16
+   Duration  358ms (transform 64%, import 28%, tests 7%, worker 1%)
+

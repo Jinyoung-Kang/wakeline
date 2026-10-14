@@ -1,0 +1,61 @@
+$ cd apps/web && npx vitest run tests/qa/qa-1302-offline-503-html.test.ts   # 2026-10-14 03:54 KST · git 0e9b2075
+
+ RUN  v5.0.2 /Users/jinyoung/Projects/wakeline/apps/web
+
+stdout | tests/qa/qa-1302-offline-503-html.test.ts > QA-1302 the CloudFront offline page (HTML 503) reaching an open screen > REST (lib/api): the error says what happened, not just the number 503
+QA-1302 apiGet → status=503 code=null message="503" errorLine="503 (HTTP 503)"
+
+stdout | tests/qa/qa-1302-offline-503-html.test.ts > QA-1302 the CloudFront offline page (HTML 503) reaching an open screen > ETag pollers (lib/etag-poller — 특보 · 교통량 · 수신 범위 · 공역): the error says what happened, not just 'HTTP 503'
+QA-1302 EtagPoller error → "HTTP 503"
+
+ ❯ tests/qa/qa-1302-offline-503-html.test.ts (2 tests | 2 failed) 19ms
+   ❯ QA-1302 the CloudFront offline page (HTML 503) reaching an open screen (2)
+     × REST (lib/api): the error says what happened, not just the number 503 18ms
+     × ETag pollers (lib/etag-poller — 특보 · 교통량 · 수신 범위 · 공역): the error says what happened, not just 'HTTP 503' 1ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/qa/qa-1302-offline-503-html.test.ts > QA-1302 the CloudFront offline page (HTML 503) reaching an open screen > REST (lib/api): the error says what happened, not just the number 503
+AssertionError: expected '503' to match /[가-힣]/
+
+- Expected:
+/[가-힣]/
+
++ Received:
+"503"
+
+ ❯ tests/qa/qa-1302-offline-503-html.test.ts:26:23
+     24|     console.info(`QA-1302 apiGet → status=${e.status} code=${e.code} m…
+     25|     expect(e.status).toBe(503);
+     26|     expect(e.message).toMatch(KOREAN); // 지금: "503" → 화면 "503 (HTTP 50…
+       |                       ^
+     27|   });
+     28|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  tests/qa/qa-1302-offline-503-html.test.ts > QA-1302 the CloudFront offline page (HTML 503) reaching an open screen > ETag pollers (lib/etag-poller — 특보 · 교통량 · 수신 범위 · 공역): the error says what happened, not just 'HTTP 503'
+AssertionError: expected 'HTTP 503' to match /[가-힣]/
+
+- Expected:
+/[가-힣]/
+
++ Received:
+"HTTP 503"
+
+ ❯ tests/qa/qa-1302-offline-503-html.test.ts:36:22
+     34|     p.stop();
+     35|     console.info(`QA-1302 EtagPoller error → "${st.error}"`);
+     36|     expect(st.error).toMatch(KOREAN); // 지금: "HTTP 503"
+       |                      ^
+     37|   });
+     38| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed (2)
+   Start at  03:54:14
+   Duration  143ms (transform 46%, tests 35%, import 15%, worker 4%)
+

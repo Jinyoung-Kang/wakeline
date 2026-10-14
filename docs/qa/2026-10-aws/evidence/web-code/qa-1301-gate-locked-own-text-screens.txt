@@ -1,0 +1,95 @@
+$ cd apps/web && npx vitest run tests/qa/qa-1301-gate-locked-own-text-screens.test.ts   # 2026-10-14 03:54 KST · git 0e9b2075
+
+ RUN  v5.0.2 /Users/jinyoung/Projects/wakeline/apps/web
+
+stdout | tests/qa/qa-1301-gate-locked-own-text-screens.test.ts > QA-1301 screens with their own error wording miss the expired access-code notice > /airports/[icao]: airportErrorText
+QA-1301 airportErrorText → "기상 이력을 불러오지 못했습니다(HTTP 401)."
+
+stdout | tests/qa/qa-1301-gate-locked-own-text-screens.test.ts > QA-1301 screens with their own error wording miss the expired access-code notice > /replay: replayErrorText
+QA-1301 replayErrorText → "기록을 불러오지 못함(HTTP 401)"
+
+stdout | tests/qa/qa-1301-gate-locked-own-text-screens.test.ts > QA-1301 screens with their own error wording miss the expired access-code notice > /alerts/[id]: the evidence page
+QA-1301 /alerts/123 → "알림 근거를 받지 못함"
+
+stdout | tests/qa/qa-1301-gate-locked-own-text-screens.test.ts > QA-1301 screens with their own error wording miss the expired access-code notice > dashboard airport tab: the watched-airport list
+QA-1301 airport list → "감시 공항 지도에서 클릭(줌 5.5 이상)하거나 아래에서 고르세요공항 목록을 불러오지 못했습니다 — 지도에서 공항을 클릭하세요."
+
+ ❯ tests/qa/qa-1301-gate-locked-own-text-screens.test.ts (5 tests | 4 failed) 510ms
+   ❯ QA-1301 screens with their own error wording miss the expired access-code notice (5)
+     × /airports/[icao]: airportErrorText 5ms
+     × /replay: replayErrorText 1ms
+     × /alerts/[id]: the evidence page 292ms
+     × dashboard airport tab: the watched-airport list 102ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/qa/qa-1301-gate-locked-own-text-screens.test.ts > QA-1301 screens with their own error wording miss the expired access-code notice > /airports/[icao]: airportErrorText
+AssertionError: expected '기상 이력을 불러오지 못했습니다(HTTP 401).' to contain '접근 코드'
+
+Expected: "접근 코드"
+Received: "기상 이력을 불러오지 못했습니다(HTTP 401)."
+
+ ❯ tests/qa/qa-1301-gate-locked-own-text-screens.test.ts:64:18
+     62|     const text = airportErrorText(await lockedError(), "RKSI");
+     63|     console.info(`QA-1301 airportErrorText → "${text}"`);
+     64|     expect(text).toContain("접근 코드");
+       |                  ^
+     65|   });
+     66|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/4]⎯
+
+ FAIL  tests/qa/qa-1301-gate-locked-own-text-screens.test.ts > QA-1301 screens with their own error wording miss the expired access-code notice > /replay: replayErrorText
+AssertionError: expected '기록을 불러오지 못함(HTTP 401)' to contain '접근 코드'
+
+Expected: "접근 코드"
+Received: "기록을 불러오지 못함(HTTP 401)"
+
+ ❯ tests/qa/qa-1301-gate-locked-own-text-screens.test.ts:70:18
+     68|     const text = replayErrorText(await lockedError());
+     69|     console.info(`QA-1301 replayErrorText → "${text}"`);
+     70|     expect(text).toContain("접근 코드");
+       |                  ^
+     71|   });
+     72|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/4]⎯
+
+ FAIL  tests/qa/qa-1301-gate-locked-own-text-screens.test.ts > QA-1301 screens with their own error wording miss the expired access-code notice > /alerts/[id]: the evidence page
+AssertionError: expected '알림 근거를 받지 못함' to contain '접근 코드'
+
+Expected: "접근 코드"
+Received: "알림 근거를 받지 못함"
+
+ ❯ tests/qa/qa-1301-gate-locked-own-text-screens.test.ts:80:18
+     78|     const text = err ? visibleText(err) : "(오류 줄 없음)";
+     79|     console.info(`QA-1301 /alerts/123 → "${text}"`);
+     80|     expect(text).toContain("접근 코드");
+       |                  ^
+     81|   });
+     82|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/4]⎯
+
+ FAIL  tests/qa/qa-1301-gate-locked-own-text-screens.test.ts > QA-1301 screens with their own error wording miss the expired access-code notice > dashboard airport tab: the watched-airport list
+AssertionError: expected '감시 공항 지도에서 클릭(줌 5.5 이상)하거나 아래에서 고르세요공…' to contain '접근 코드'
+
+Expected: "접근 코드"
+Received: "감시 공항 지도에서 클릭(줌 5.5 이상)하거나 아래에서 고르세요공항 목록을 불러오지 못했습니다 — 지도에서 공항을 클릭하세요."
+
+ ❯ tests/qa/qa-1301-gate-locked-own-text-screens.test.ts:90:18
+     88|     const text = list ? visibleText(list) : "(목록 없음)";
+     89|     console.info(`QA-1301 airport list → "${text}"`);
+     90|     expect(text).toContain("접근 코드");
+       |                  ^
+     91|   });
+     92| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/4]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  4 failed | 1 passed (5)
+   Start at  03:54:13
+   Duration  825ms (tests 77%, transform 18%, import 4%, worker 1%)
+

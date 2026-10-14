@@ -1,0 +1,66 @@
+$ cd apps/web && npx vitest run tests/qa/qa-1303-stats-day-before-1970.test.ts   # 2026-10-14 03:54 KST · git 0e9b2075
+
+ RUN  v5.0.2 /Users/jinyoung/Projects/wakeline/apps/web
+
+stdout | tests/qa/qa-1303-stats-day-before-1970.test.ts > QA-1303 /stats date field has no lower bound > statsPickDay refuses (or clamps) a day the api can never answer — before 1970-01-01
+QA-1303 statsPickDay("1969-12-31") → {"day":"1969-12-31","clamped":false}
+
+stdout | tests/qa/qa-1303-stats-day-before-1970.test.ts > QA-1303 /stats date field has no lower bound > the page does not ask the api for 1969-12-31 and does not show 'no answer — retry' for it
+QA-1303 date input min=null max=2026-10-13
+
+stdout | tests/qa/qa-1303-stats-day-before-1970.test.ts > QA-1303 /stats date field has no lower bound > the page does not ask the api for 1969-12-31 and does not show 'no answer — retry' for it
+QA-1303 asked=["/api/v1/stats/traffic?day=2026-10-13","/api/v1/stats/traffic?day=1969-12-31"] traffic panel state=error text="Distinct aircraft by hour (KST)조회 실패 — invalid parameter: day — out of the supported range 1970-01-01 – 9999-12-31(HTTP 400 · BAD_REQUEST)요청 id0123456789abcdef복사로그 보기응답을 받지 못해 자료가 있는지 알 수 없습니다(‘자료 없음’이 아님).다시 시도"
+
+ ❯ tests/qa/qa-1303-stats-day-before-1970.test.ts (2 tests | 2 failed) 305ms
+   ❯ QA-1303 /stats date field has no lower bound (2)
+     × statsPickDay refuses (or clamps) a day the api can never answer — before 1970-01-01 6ms
+     × the page does not ask the api for 1969-12-31 and does not show 'no answer — retry' for it 231ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/qa/qa-1303-stats-day-before-1970.test.ts > QA-1303 /stats date field has no lower bound > statsPickDay refuses (or clamps) a day the api can never answer — before 1970-01-01
+AssertionError: expected false to be true // Object.is equality
+
+- Expected
++ Received
+
+- true
++ false
+
+ ❯ tests/qa/qa-1303-stats-day-before-1970.test.ts:34:49
+     32|     const p = statsPickDay("1969-12-31", "2026-10-13");
+     33|     console.info(`QA-1303 statsPickDay("1969-12-31") → ${JSON.stringif…
+     34|     expect(p === null || p.day >= "1970-01-01").toBe(true);
+       |                                                 ^
+     35|   });
+     36|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  tests/qa/qa-1303-stats-day-before-1970.test.ts > QA-1303 /stats date field has no lower bound > the page does not ask the api for 1969-12-31 and does not show 'no answer — retry' for it
+AssertionError: expected [ Array(1) ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   "/api/v1/stats/traffic?day=1969-12-31",
++ ]
+
+ ❯ tests/qa/qa-1303-stats-day-before-1970.test.ts:52:63
+     50|     const text = visibleText(panel);
+     51|     console.info(`QA-1303 asked=${JSON.stringify(asked.filter((u) => u…
+     52|     expect(asked.filter((u) => u.includes("day=1969-12-31"))).toEqual(…
+       |                                                               ^
+     53|     expect(text).not.toContain("응답을 받지 못해");
+     54|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed (2)
+   Start at  03:54:15
+   Duration  538ms (tests 78%, transform 17%, import 4%, worker 1%)
+
