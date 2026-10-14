@@ -18,6 +18,27 @@ export const STATS_RUN_KST = "03:30 KST";
 export const STATS_CATCH_UP_DAYS = 7;
 /** api MaintenanceJobs.catchUp 주기(fixedDelay 3 h) — 놓친 날의 다음 집계 시도는 늦어도 이만큼 뒤(api 가 돌고 있을 때) */
 export const STATS_CATCH_UP_EVERY_H = 3;
+
+/**
+ * 일 집계가 도는 방식(QA-1461): daily = 늘 켜 둔 서버(로컬) — 매일 STATS_RUN_KST 정시 + 놓친 날 따라잡기. catch-up = 공개 데모(AWS — ADR-039 덧붙임 2-1):
+ * 늘 켜 두지 않아 03:30 KST 정시 집계가 돌지 않고, 켜진 뒤 따라잡기(마지막 성공 뒤 STATS_CATCH_UP_EVERY_H 시간마다)가 그 몫을 한다 — 정시 집계를 약속하지 않는다.
+ * 화면은 공개 데모 표시(components/PublicDemo)로 고른다.
+ */
+export type StatsSchedule = "daily" | "catch-up";
+export const statsSchedule = (publicDemo: boolean): StatsSchedule => (publicDemo ? "catch-up" : "daily");
+
+/** 통계 화면 머리의 집계 설명(보이는 글 · title) */
+export function statsRunHeader(s: StatsSchedule): { text: string; title: string } {
+  return s === "daily"
+    ? { text: `매일 ${STATS_RUN_KST} 에 전날(KST 날짜) 집계`, title: `api 집계 작업은 매일 ${STATS_RUN_KST} 에 돈다 — 날짜는 한국 표준시 날짜(00:00–24:00 KST)` }
+    : { text: "켜진 뒤 따라잡기로 전날까지(KST 날짜) 집계",
+        title: `공개 데모는 서버를 늘 켜 두지 않아 정시 집계가 돌지 않는다 — 켜진 뒤 따라잡기(마지막 성공 뒤 ${STATS_CATCH_UP_EVERY_H}시간마다 · 최근 ${STATS_CATCH_UP_DAYS}일)가 지난 날을 센다. 날짜는 한국 표준시 날짜(00:00–24:00 KST)` };
+}
+/** 아직 집계 전인 날이 언제 채워지는가 */
+function nextRunText(s: StatsSchedule): string {
+  return s === "daily" ? `다음 ${STATS_RUN_KST} 집계 뒤 채워집니다(놓친 최근 ${STATS_CATCH_UP_DAYS}일은 3시간마다 따라잡기)`
+    : `서버가 켜져 있는 동안 돌아가는 다음 따라잡기 집계 뒤 채워집니다(최근 ${STATS_CATCH_UP_DAYS}일 · 마지막 성공 뒤 ${STATS_CATCH_UP_EVERY_H}시간마다)`;
+}
 /**
  * 교통량(traffic_by_hour)의 원본: 원해상도 항적(track_point) — api application.yml wakeline.track-retention-hours(72).
  * 항적은 UTC 날 파티션에 있고 파티션째 지워진다(api V2 · V9 — 파티션 끝 ≤ now − 72 h). KST 날짜 하루는 두 파티션에 걸치고 앞 파티션(00:00–08:59 KST)이
@@ -80,7 +101,8 @@ export const STATS_MIN_DAY_NOTE = `${STATS_MIN_DAY} 앞 날짜는 통계가 다�
  * STATS_CATCH_UP_EVERY_H 뒤)까지 남아 있을 때만 채워진다고 말한다(R-32). 이미 지워졌으면 채워지지 않는다고, 그 사이면 채워지지 않을 수 있다고 말한다.
  * "집계되지 않은 날짜" 의 이유에는 KST 날짜 집계로 바꾸기 전 날짜(계약 v5 §G20 — 원본이 남은 만큼만 다시 셌다)도 든다.
  */
-export function statsEmptyText(aggregated: boolean | undefined, day: string | null, today: string, source?: { name: string; retentionH: number; nowMs: number }): string {
+export function statsEmptyText(aggregated: boolean | undefined, day: string | null, today: string, source?: { name: string; retentionH: number; nowMs: number },
+  schedule: StatsSchedule = "daily"): string {
   if (aggregated === true) return day ? "이 날짜에 자료가 없습니다(집계됨 · 해당 기록 없음)." : "최근 7일 자료가 없습니다(집계됨 · 해당 기록 없음).";
   // 오늘(KST)보다 뒤 — 집계할 날이 아직 오지 않았다: '다음 집계 뒤 채워집니다'를 약속하지 않는다(QA-309)
   if (day != null && today && day > today) return "아직 오지 않은 날짜입니다 — 집계할 기록이 없습니다(통계 날짜는 어제(KST)까지).";
@@ -95,9 +117,9 @@ export function statsEmptyText(aggregated: boolean | undefined, day: string | nu
       if (keptUntil <= source.nowMs) return `집계되지 않은 날짜입니다 — ${source.name} 보존(${source.retentionH} h)이 지나 다시 셀 수 없어 채워지지 않습니다(${why}).`;
       if (keptUntil <= source.nowMs + STATS_CATCH_UP_EVERY_H * 3600_000) return `아직 집계되지 않았습니다 — ${source.name} 보존(${source.retentionH} h)이 곧 끝나 다음 집계 전에 지워지면 채워지지 않을 수 있습니다.`;
     }
-    return `아직 집계되지 않았습니다 — 다음 ${STATS_RUN_KST} 집계 뒤 채워집니다(놓친 최근 ${STATS_CATCH_UP_DAYS}일은 3시간마다 따라잡기).`;
+    return `아직 집계되지 않았습니다 — ${nextRunText(schedule)}.`;
   }
-  return `자료 없음 — 집계 전인지 기록이 없는지 이 응답으로는 구분할 수 없습니다(집계는 매일 ${STATS_RUN_KST}).`;
+  return `자료 없음 — 집계 전인지 기록이 없는지 이 응답으로는 구분할 수 없습니다(집계는 ${schedule === "daily" ? `매일 ${STATS_RUN_KST}` : "켜진 뒤 따라잡기로"}).`;
 }
 
 /** 최근 7일 응답의 날짜별 집계 여부 — 지난 날(오늘 KST 전)만: done = 집계됨, pending = 집계 전(날짜순, KST 날짜 "YYYY-MM-DD") */
@@ -126,11 +148,11 @@ export function statsDays(resp: unknown, today: string): StatsDays | null {
  * 최근 7일 패널의 빈 상태 문구(행이 하나도 없을 때): 지난 날이 모두 집계됨 → '자료 없음(집계됨)', 모두 집계 전 → 다음 집계 뒤 채워짐,
  * 섞여 있으면 둘을 나눠 말한다(집계 전 날짜를 KST 날짜 MM-DD 로). 날짜별 집계를 모르면(null) '구분할 수 없음'.
  */
-export function statsWeekEmptyText(s: StatsDays | null, today: string): string {
-  if (!s) return statsEmptyText(undefined, null, today);
-  if (!s.pending.length) return statsEmptyText(true, null, today);
-  if (!s.done.length) return statsEmptyText(false, null, today);
-  return `집계된 ${s.done.length}일에는 자료가 없습니다 · 집계 전 ${s.pending.length}일(KST ${s.pending.map((d) => d.slice(5)).join(" · ")})은 다음 ${STATS_RUN_KST} 집계 뒤 채워집니다(놓친 최근 ${STATS_CATCH_UP_DAYS}일은 3시간마다 따라잡기).`;
+export function statsWeekEmptyText(s: StatsDays | null, today: string, schedule: StatsSchedule = "daily"): string {
+  if (!s) return statsEmptyText(undefined, null, today, undefined, schedule);
+  if (!s.pending.length) return statsEmptyText(true, null, today, undefined, schedule);
+  if (!s.done.length) return statsEmptyText(false, null, today, undefined, schedule);
+  return `집계된 ${s.done.length}일에는 자료가 없습니다 · 집계 전 ${s.pending.length}일(KST ${s.pending.map((d) => d.slice(5)).join(" · ")})은 ${nextRunText(schedule)}.`;
 }
 
 // ---- 패널마다의 받기 상태 ----

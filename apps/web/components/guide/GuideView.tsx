@@ -24,7 +24,7 @@ import {
   AIS_GAP_SHOW_MS, AIS_LAG_WARN_S, SHIP_STALE_S, SHIP_TRACK_HOURS, SHIPS_OUT_OF_COVERAGE_TEXT, SHIPS_RULE_TEXT, SHIPS_ZERO_AIS_DOWN_TEXT, SHIPS_ZERO_TEXT, STORED_STATIC_LABEL, STORED_STATIC_TIME_LABEL,
 } from "@/lib/ships";
 import { NOTE_MAX, RESOLUTION_STATE_TEXT, RESOLVE_EFFECT } from "@/lib/resolutions";
-import { STATS_FAILED_TEXT, STATS_LOADING_TEXT, STATS_RUN_KST } from "@/lib/stats";
+import { STATS_CATCH_UP_EVERY_H, STATS_FAILED_TEXT, STATS_LOADING_TEXT, STATS_RUN_KST } from "@/lib/stats";
 import { fmtKstRange, fmtTimeTitle, fmtZuluToken, kstDayStartMs, kstWallMs, RAW_BULLETIN_LABEL, utcDayWindowKst } from "@/lib/time";
 import { TRAFFIC_BINS, TRAFFIC_LAYER_LABEL, TRAFFIC_LEGEND_NOTE, TRAFFIC_POLL_MS } from "@/lib/traffic-grid";
 import { RECEPTION_BINS, RECEPTION_LAYER_LABEL } from "@/lib/reception-meta";
@@ -393,7 +393,8 @@ export function GuideView({ manifest, dropped }: { manifest: GuideManifest; drop
           <Sec id="stats">
             {fig("stats")}
             <UL>
-              <li><B>집계 시각</B> — 매일 <span className="mono">{STATS_RUN_KST}</span> 에 전날(KST 날짜 — 00:00–24:00 KST)을 집계합니다. 오늘 날짜는 아직 없고, 기본 날짜는 어제(KST 날짜)입니다.</li>
+              <li><B>집계 시각</B> — 매일 <span className="mono">{STATS_RUN_KST}</span> 에 전날(KST 날짜 — 00:00–24:00 KST)을 집계합니다. 오늘 날짜는 아직 없고, 기본 날짜는 어제(KST 날짜)입니다.
+                공개 데모(AWS)는 서버를 늘 켜 두지 않아 이 정시 집계가 돌지 않고, 켜진 뒤 따라잡기(마지막 성공 뒤 {STATS_CATCH_UP_EVERY_H}시간마다)가 지난 날을 셉니다 — 통계 화면도 그렇게 적습니다.</li>
               <li><B>SIGMET</B> — 최근 7일 FIR별(상위 24) · 위험 유형별 발표 건수.</li>
               <li><B>시간대별 고유 항공기</B> — 날짜는 KST 날짜이고 막대 이름은 그날의 KST 시(00시 → 23시)입니다. 자료가 없는 시간은 점선 —(수집 중단일 수 있어 0 대와 구분).</li>
               <li><B>알림</B> — 날짜 · 종류별 건수와 평균 체류. † 표시 행은 수정 전 기준으로 판정된 관측 알림이라 이후 날짜와 비교할 수 없습니다.</li>

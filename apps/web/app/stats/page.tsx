@@ -8,11 +8,12 @@ import { BarChart } from "@/components/BarChart";
 import { ErrorNote } from "@/components/logs/ErrorNote";
 import { HYSTERESIS_FIX_AT, HYSTERESIS_FIX_DAY, hourlyRowsKst, topDims, trafficScopeLabel } from "@/lib/chart";
 import {
-  alertStatsRows, daysOf, flagOf, STATS_FAILED_NOTE, STATS_FAILED_TEXT, STATS_LOADING_TEXT, STATS_RUN_KST, STATS_ZONE_ERROR, STATS_ZONE_PANEL, statsEmptyText, statsPanelState, statsPickDay, statsWeekEmptyText, STATS_FUTURE_DAY_NOTE, STATS_MIN_DAY, STATS_MIN_DAY_NOTE,
+  alertStatsRows, daysOf, flagOf, STATS_FAILED_NOTE, STATS_FAILED_TEXT, STATS_LOADING_TEXT, statsRunHeader, statsSchedule, STATS_ZONE_ERROR, STATS_ZONE_PANEL, statsEmptyText, statsPanelState, statsPickDay, statsWeekEmptyText, STATS_FUTURE_DAY_NOTE, STATS_MIN_DAY, STATS_MIN_DAY_NOTE,
   statsZoneOk, todayKst, TRAFFIC_SOURCE, yesterdayKst, zoneBad, type StatsLoad, type StatsPanelState,
 } from "@/lib/stats";
 import { serverNowMs } from "@/lib/store";
 import { KstTime } from "@/components/KstTime";
+import { usePublicDemo } from "@/components/PublicDemo";
 
 /**
  * 통계(FR-24): FIR별 SIGMET · 시간대별 트래픽 · 알림 건수. api 가 매일 03:30 KST 에 전날(KST 날짜)을 센다(계약 v5 §G20 — stats_daily 의 날 = KST 날짜).
@@ -25,11 +26,14 @@ import { KstTime } from "@/components/KstTime";
  * 패널마다 받기 상태를 따로 안다(lib/stats StatsLoad — 2026-09-30 22:49 KST 배포 직후 캡처가 받는 중 · 실패를 '자료 없음'으로 찍었다):
  * 받는 중 = 공유 진행 표시('불러오는 중' — lib/busy 의 나타남 지연 뒤), 받지 못함 = 그 패널만 '조회 실패' + HTTP 상태 · 요청 id + 다시 시도(그 패널만 다시 받는다),
  * 빈 상태 문구는 받은 응답에만. 패널마다 data-state(loading · ready · empty · error). SIGMET · 알림(최근 7일)은 한 번, 교통량은 날짜마다 받는다.
+ * 공개 데모(AWS — ADR-039 덧붙임 2-1)는 03:30 KST 정시 집계가 돌지 않는다 — 머리 · 빈 상태는 '켜진 뒤 따라잡기'로 말한다(QA-1461 · lib/stats StatsSchedule).
  */
 export default function StatsPage() {
   const fir = useLoad("fir", (signal) => sigmetStats("fir", { signal }));
   const haz = useLoad("hazard", (signal) => sigmetStats("hazard", { signal }));
   const alerts = useLoad("alerts", (signal) => alertStats({ signal }));
+  const schedule = statsSchedule(usePublicDemo());
+  const run = statsRunHeader(schedule);
   /** 화면을 연 시각(서버 기준 추정) — 오늘·어제(KST 날짜 — 집계 단위) 계산용 */
   const [openedAt] = useState(() => serverNowMs(Date.now()));
   // 오늘은 아직 집계되지 않는다(매일 03:30 KST 에 전날을 집계) — 기본·최대는 어제(KST 날짜)
@@ -54,16 +58,16 @@ export default function StatsPage() {
   const maxDay = yesterdayKst(openedAt);
   return (
     <ScrollRegion label="통계 본문" main className="h-full overflow-y-auto p-4">
-      <div className="mb-3 flex items-center gap-3"><h1 className="label" lang="en">Statistics</h1><span className="text-[11px] text-fg-3" title="api 집계 작업은 매일 03:30 KST 에 돈다 — 날짜는 한국 표준시 날짜(00:00–24:00 KST)">매일 {STATS_RUN_KST} 에 전날(KST 날짜) 집계 · 최근 7일 · 빈 칸은 집계 전·자료 없음을 구분해 표시</span></div>
+      <div className="mb-3 flex items-center gap-3"><h1 className="label" lang="en">Statistics</h1><span className="text-[11px] text-fg-3" title={run.title}>{run.text} · 최근 7일 · 빈 칸은 집계 전·자료 없음을 구분해 표시</span></div>
       {zoneErr ? <div className="mb-3 text-[11px] text-warn" role="alert" data-testid="stats-zone-error">{STATS_ZONE_ERROR}</div> : null}
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-        <Panel id="fir" head={<h2 className="label mb-2" lang="en">SIGMET by FIR (7d, top 24)</h2>} p={fir} drawable={firRows.length > 0} empty={statsWeekEmptyText(daysOf(fir.load, today), today)}>
+        <Panel id="fir" head={<h2 className="label mb-2" lang="en">SIGMET by FIR (7d, top 24)</h2>} p={fir} drawable={firRows.length > 0} empty={statsWeekEmptyText(daysOf(fir.load, today), today, schedule)}>
           <BarChart id="chart-fir" title="최근 7일 FIR별 SIGMET 발표 건수(상위 24)" rows={topDims(firRows)} />
         </Panel>
-        <Panel id="hazard" head={<h2 className="label mb-2" lang="en">SIGMET by hazard (7d)</h2>} p={haz} drawable={hazRows.length > 0} empty={statsWeekEmptyText(daysOf(haz.load, today), today)}>
+        <Panel id="hazard" head={<h2 className="label mb-2" lang="en">SIGMET by hazard (7d)</h2>} p={haz} drawable={hazRows.length > 0} empty={statsWeekEmptyText(daysOf(haz.load, today), today, schedule)}>
           <BarChart id="chart-hazard" title="최근 7일 위험 유형별 SIGMET 발표 건수" rows={topDims(hazRows)} color="#f59e0b" />
         </Panel>
-        <Panel id="traffic" p={traffic} drawable={trafficRows.length > 0} empty={statsEmptyText(agg.traffic, day, today, { ...TRAFFIC_SOURCE, nowMs: openedAt })}
+        <Panel id="traffic" p={traffic} drawable={trafficRows.length > 0} empty={statsEmptyText(agg.traffic, day, today, { ...TRAFFIC_SOURCE, nowMs: openedAt }, schedule)}
           head={<>
             <div className="mb-2 flex items-center justify-between gap-2"><h2 className="label" lang="en">Distinct aircraft by hour (KST)</h2><input type="date" value={day} min={STATS_MIN_DAY} max={maxDay} aria-label="집계 날짜(KST)" title="집계 날짜 = 한국 표준시 날짜(00:00–24:00 KST) · 어제까지" aria-describedby={clamped ? "stats-day-note" : undefined}
               onChange={(e) => { const p = statsPickDay(e.target.value, maxDay); if (p) { setDay(p.day); setClamped(!p.clamped ? null : p.below ? STATS_MIN_DAY_NOTE : STATS_FUTURE_DAY_NOTE); } }} /></div>
@@ -76,7 +80,7 @@ export default function StatsPage() {
           <div className="mt-1 text-[10px] text-fg-2" data-testid="traffic-hours-note">KST 날짜 {day}(00:00–24:00 KST) · 눈금 = KST 시</div>
           <div className="mt-1 text-[10px] text-fg-3">점선 “—” = 그 시간 자료 없음(수집 중단 또는 집계 전 — 0 대와 구분 불가)</div>
         </Panel>
-        <Panel id="alerts" head={<h2 className="label mb-2" lang="en">Alerts by kind (7d) · avg dwell</h2>} p={alerts} drawable={alertRows.length > 0} empty={statsWeekEmptyText(daysOf(alerts.load, today), today)}>
+        <Panel id="alerts" head={<h2 className="label mb-2" lang="en">Alerts by kind (7d) · avg dwell</h2>} p={alerts} drawable={alertRows.length > 0} empty={statsWeekEmptyText(daysOf(alerts.load, today), today, schedule)}>
           <AlertStatsTable rows={alertRows} />
           {caveat ? <div className="mt-1 text-[10px] text-warn" data-testid="hysteresis-caveat">
             † <KstTime v={HYSTERESIS_FIX_AT} /> 이전에 생성된 관측(OBSERVED) 알림은 수정 전 히스테리시스(엔진 주기를 관측으로 셈 — 위치 보고 1건으로 진입·이탈 확정 가능)로 판정됐습니다.
