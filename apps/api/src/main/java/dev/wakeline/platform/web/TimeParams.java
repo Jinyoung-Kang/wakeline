@@ -1,5 +1,6 @@
 package dev.wakeline.platform.web;
 
+import dev.wakeline.platform.support.Spaces;
 import org.springframework.core.convert.ConversionService;
 import org.springframework.web.bind.WebDataBinder;
 
@@ -61,7 +62,7 @@ public final class TimeParams {
         binder.registerCustomEditor(Instant.class, new Bounded<>(Instant.class, cs, Instant::parse, TimeParams::checked));
         // 날짜는 ISO(yyyy-MM-dd)만 — 변환 서비스는 로캘의 짧은 형식도 읽었고 로캘은 요청의 Accept-Language(없으면 JVM 기본)라 같은 글자(02/10/26)가 클라이언트마다
         // 다른 날(en-US 2월 10일 · en-GB 26년 · ko-KR 400)이 됐다(계약 v5 §G43). 시각(Instant)은 로캘과 상관없는 형식만 읽으므로 그대로.
-        binder.registerCustomEditor(LocalDate.class, new Bounded<>(LocalDate.class, null, s -> LocalDate.parse(s.strip()), TimeParams::checked));
+        binder.registerCustomEditor(LocalDate.class, new Bounded<>(LocalDate.class, null, s -> LocalDate.parse(Spaces.strip(s)), TimeParams::checked));
     }
 
     /** 변환 서비스로 읽고(없으면 ISO) 범위로 거르는 편집기. */
@@ -80,7 +81,7 @@ public final class TimeParams {
 
         @Override
         public void setAsText(String text) {
-            if (text == null || text.isBlank()) {
+            if (Spaces.isBlank(text)) { // 제어 문자만 있는 값은 빈 값이 아니다 — 형식이 틀려 400(QA-1103)
                 setValue(null);
                 return;
             }

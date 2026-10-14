@@ -1,5 +1,7 @@
 package dev.wakeline.platform.web;
 
+import dev.wakeline.platform.support.Spaces;
+
 import java.util.regex.Pattern;
 
 /** 여러 컨트롤러가 같은 규칙으로 읽는 요청 파라미터(api-review §2.5-2 — 예전에는 날씨 컨트롤러가 항공기 컨트롤러의 도우미를 빌려 썼다). */
@@ -24,7 +26,7 @@ public final class Params {
      * ASCII 를 먼저 검사하고 Locale.ROOT 로 바꾼다(QA 2026-10 기능 개선 제안 5 — 바꾼 뒤 검사하면 비 ASCII 글자가 ASCII 로 바뀌어 지날 수 있다).
      */
     public static String hex(String hex) {
-        String h = hex == null ? "" : hex.strip(); // strip: 공백만 — trim() 은 NUL 같은 제어 문자도 지웠다(§G43)
+        String h = hex == null ? "" : Spaces.strip(hex); // 공백 글자만 — strip() · trim() 은 탭 · U+001C–U+001F 같은 제어 문자도 지웠다(§G43 · QA-1103)
         if (!h.matches("^[0-9A-Fa-f]{6}$")) throw Problem.badRequest("BAD_HEX", "hex must be 6 hex chars");
         return h.toLowerCase(java.util.Locale.ROOT);
     }
@@ -35,8 +37,8 @@ public final class Params {
      * 글자)에는 쓰지 않는다.
      */
     public static String choice(String name, String value, String def, String... allowed) {
-        if (value == null || value.isBlank()) return def;
-        String v = value.strip();
+        String v = value == null ? "" : Spaces.strip(value); // 제어 문자만 있는 값은 빈 값이 아니다 — 아래에서 400(QA-1103)
+        if (v.isEmpty()) return def;
         for (String a : allowed) if (a.equalsIgnoreCase(v)) return a;
         throw Problem.badRequest("BAD_FILTER", name + " must be one of " + String.join(", ", allowed));
     }
@@ -46,7 +48,7 @@ public final class Params {
      * 예전에는 대문자로 바꾼 뒤 검사해 'rksı'(점 없는 ı — 어느 로캘에서든 대문자가 I)가 RKSI 로 찾아졌다).
      */
     public static String icao(String icao) {
-        String c = icao == null ? "" : icao.strip();
+        String c = icao == null ? "" : Spaces.strip(icao);
         if (!c.matches("^[A-Za-z0-9]{4}$")) throw Problem.badRequest("BAD_ICAO", "icao must be 4 chars");
         return c.toUpperCase(java.util.Locale.ROOT);
     }

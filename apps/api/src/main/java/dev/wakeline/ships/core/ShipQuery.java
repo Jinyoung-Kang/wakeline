@@ -1,5 +1,7 @@
 package dev.wakeline.ships.core;
 
+import dev.wakeline.platform.support.Spaces;
+
 import java.util.Locale;
 import java.util.Objects;
 import java.util.regex.Matcher;
@@ -29,7 +31,7 @@ public record ShipQuery(String text, Kind kind, Integer imo) {
 
     /** @throws IllegalArgumentException 형식이 틀리면(메시지는 그대로 400 detail 로 나간다) */
     public static ShipQuery parse(String raw) {
-        String t = raw == null ? "" : raw.strip(); // 공백만 — trim() 은 NUL 같은 제어 문자도 지웠다(§G43)
+        String t = raw == null ? "" : Spaces.strip(raw); // 공백 글자만 — trim() 은 NUL, strip() 은 탭 · U+001C–U+001F 도 지웠다(§G43 · QA-1103)
         if (t.length() < MIN_LENGTH || t.length() > MAX_LENGTH)
             throw new IllegalArgumentException("q must be " + MIN_LENGTH + ".." + MAX_LENGTH + " chars after trimming");
         if (!ALPHABET.matcher(t).matches()) throw new IllegalArgumentException("q may contain letters A-Z, digits, space, '.', '-' and '/' only");

@@ -8,6 +8,7 @@ import dev.wakeline.weather.core.Alert;
 import dev.wakeline.weather.core.EngineService;
 import dev.wakeline.geo.Bbox;
 import dev.wakeline.platform.config.AppProperties;
+import dev.wakeline.platform.support.Spaces;
 import dev.wakeline.platform.web.BboxParam;
 import dev.wakeline.platform.web.Etags;
 import dev.wakeline.platform.web.Meta;
@@ -101,7 +102,7 @@ public class AircraftController {
      */
     @GetMapping("/search")
     public ResponseEntity<Map<String, Object>> search(@RequestParam String q, HttpServletRequest req) {
-        String needle = q.strip().toUpperCase(java.util.Locale.ROOT); // 공백만 지운다(§G43)
+        String needle = Spaces.strip(q).toUpperCase(java.util.Locale.ROOT); // 공백 글자만 지운다(§G43 · QA-1103)
         if (needle.length() < 2 || needle.length() > 10) throw Problem.badRequest("BAD_QUERY", "q must be 2..10 chars");
         if (!needle.matches("^[A-Z0-9-]+$")) throw Problem.badRequest("BAD_QUERY", "q may contain letters, digits and '-' only");
         Instant now = Instant.now();
