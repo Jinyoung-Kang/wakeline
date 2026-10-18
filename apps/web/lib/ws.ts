@@ -142,7 +142,7 @@ export class WakelineWsClient {
   private zoom = 7;
   /**
    * 구독이 지도 화면을 따르는가(기본 true) — 그럴 때만 구독한 bbox · 줌을 스토어 viewport 에 둔다(welcome · resume 의 다시 구독도 같다).
-   * false(subscribeWithoutMap — 지도 없는 클라이언트)면 select · selectShip 도 보내지 않는다(집중 추적 수요를 만들지 않는다).
+   * false(subscribeWithoutMap — 지도 없는 클라이언트)면 select · selectShip 도 보내지 않는다(집중 추적 수요를 만들지 않는다 — 그 전의 선택도 그때 비운다).
    */
   private screen = true;
   /** 마지막 connect 때 받은 번호(connectTurn) */
@@ -335,10 +335,15 @@ export class WakelineWsClient {
    * 지도 없이 구독한다(위 NO_MAP_* 의 근거): 두 레이어를 끄고(서버는 항공기 · 선박 목록을 보내지 않는다 — 항공기 수는 모름) 화면 구독이 아님으로 두어
    * (지도 화면이 없다 — viewport 를 쓰지 않는다) 고정 영역을 zoom 5 로 구독한다. 새 클라이언트에서 connect 전에 부른다 — welcome 에서 layers → subscribe 순으로
    * 보낸다. 이 뒤의 select · selectShip 은 아무것도 하지 않는다(선택을 서버에 알리지 않는다 — 집중 추적 수요 없음).
+   * 이보다 먼저 고른 항공기 · 선박도 이 클라이언트에서 비운다 — 남기면 welcome 마다(재연결 포함) select · select_ship 을 보낸다: select 는 집중 추적
+   * 수요가 되고(DemandService.want — 레이어와 관계없이 선택이면 수요), select_ship 은 ship_selected 를 받게 한다. 이 뒤의 select(null) · selectShip(null) 은
+   * 아무것도 하지 않으므로 남은 선택을 지울 길도 없다. 스토어의 selected · shipSelected 는 그대로 둔다(같은 스토어를 쓰는 지도 클라이언트와의 넘겨받기).
    */
   subscribeWithoutMap() {
     this.setLayers(false, false);
     this.screen = false;
+    this.selected = null;
+    this.selectedShip = null;
     this.subscribe(NO_MAP_BBOX, NO_MAP_ZOOM);
   }
 

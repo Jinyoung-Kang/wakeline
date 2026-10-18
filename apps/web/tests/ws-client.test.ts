@@ -442,6 +442,26 @@ describe("map-less subscription (Q4 — the dashboard could not draw the map)", 
     expect(getData().conn).toBe("open");
   });
 
+  it("a selection made before subscribeWithoutMap is dropped: neither connection nor the reconnect sends select · select_ship", () => {
+    // 지도 없는 구독으로 바꾸기 전에 고른 항공기 · 선박이 클라이언트에 남으면 welcome 마다 서버에 알려 집중 추적 수요가 생긴다
+    const t = setup();
+    t.client.select("abc123");
+    t.client.selectShip("440123456");
+    t.client.subscribeWithoutMap();
+    t.client.connect();
+    t.ws().open();
+    t.ws().recv(welcomeOf());
+    const first = t.ws();
+    expect(first.types()).toEqual(["hello", "layers", "subscribe"]);
+    first.serverClose(1006);
+    nextConnectDelay(t);
+    expect(t.sockets).toHaveLength(2);
+    t.ws().open();
+    t.ws().recv(welcomeOf());
+    expect(t.ws().types()).toEqual(["hello", "layers", "subscribe"]);
+    for (const s of t.sockets) expect(s.types().filter((x) => x === "select" || x === "select_ship")).toEqual([]);
+  });
+
   it("never writes the store viewport; a snapshot leaves the aircraft empty while alerts and status are applied", () => {
     const t = setup();
     t.client.subscribeWithoutMap();
