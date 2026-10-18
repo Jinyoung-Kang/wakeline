@@ -2,9 +2,9 @@
 # 같은 파일로 격리된 E2E·데모 스택도 띄운다: -p wakeline-e2e, WAKELINE_PORT=8701, WAKELINE_NET_PREFIX=10.78.0 (Makefile e2e/demo).
 # 프로젝트가 다르면 컨테이너·볼륨·네트워크가 분리되어 개발 DB 에 fixture 데이터가 섞이지 않는다.
 #
-# 컨테이너 권한(SEC-4): 모든 컨테이너가 no-new-privileges 이고 cap_drop ALL 이다. db 를 뺀 전부가 비root·read-only 루트 FS 다.
-#   db 만 엔트리포인트가 데이터 디렉터리 소유권을 맞춘 뒤 postgres(999)로 내려가므로 그 5개 권한(CHOWN·DAC_OVERRIDE·FOWNER·SETGID·SETUID)을 남긴다
-#   — postgres 프로세스 자체는 권한 0 으로 돈다(infra/tests/db_hardening_test.sh).
+# 컨테이너 권한(SEC-4): 모든 컨테이너가 no-new-privileges · cap_drop ALL(추가 권한 없음) · read-only 루트 FS · 비root 다.
+#   db 도 같다 — R-63(ADR-004 재결정) 뒤 이미지가 처음부터 postgres(999)로 돌아 엔트리포인트용 권한 5개(CHOWN 등)가 없어졌다
+#   (infra/tests/db_hardening_test.sh · test_compose_policy).
 # 제3자 이미지는 태그+다이제스트로 고정한다(Dependabot docker-compose 가 매주 갱신 PR).
 # Redis 는 서비스별 ACL 사용자(계약 §6 · v2 §C, infra/redis/start.sh)로 접속한다 — api·collector·ais 는 관리용 default 비밀번호를 모른다.
 # 외부 키는 그것을 쓰는 컨테이너에만 들어간다: OpenSky·기상청 → collector, aisstream.io(.env 의 aisstream_key) → ais.
@@ -37,7 +37,7 @@ services:
     <<: *hardened
     user: "101:101"
     tmpfs: ["/tmp:size=64m"]                        # pid · 프록시 임시 파일(nginx.conf)
-    ports: ["127.0.0.1:${WAKELINE_PORT:-8700}:8700"]   # 8080 은 SmartCollab 이 사용 — Wakeline 는 8700(E2E 8701)
+    ports: ["127.0.0.1:${WAKELINE_PORT:-8700}:8700"]   # 8080 은 다른 프로젝트(Local_macro v3)가 사용 — Wakeline 는 8700(E2E 8701)
     environment:
       NGINX_ENTRYPOINT_QUIET_LOGS: "1"
     labels:

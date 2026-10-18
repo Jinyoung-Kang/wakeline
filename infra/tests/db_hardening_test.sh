@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # db(PostGIS) 컨테이너 권한 축소 회귀 시험 (SEC-4 · SEC-R3).
-# compose 와 같은 방식(cap_drop ALL + 엔트리포인트에 필요한 CHOWN·DAC_OVERRIDE·FOWNER·SETGID·SETUID 만, no-new-privileges,
+# compose 와 같은 방식(cap_drop ALL · 추가 권한 없음 — R-63 뒤 이미지가 처음부터 postgres(999)로 돈다, no-new-privileges,
 # read-only 루트 FS + tmpfs /var/run/postgresql·/tmp, WAKELINE_PG_SUPERUSER_TCP=reject)으로 버리는 db 를 새 볼륨에 초기화(initdb + infra/db/init)하고,
 # 같은 볼륨으로 재기동한 뒤 역할·PostGIS·권한 강하·슈퍼유저 로컬 소켓 전용(SEC-R3)을 확인한다.
 # 마지막으로 규칙 없이 초기화된 '기존 볼륨'에 tools/db-superuser-local-only.sh 를 적용해 본다(멱등).
