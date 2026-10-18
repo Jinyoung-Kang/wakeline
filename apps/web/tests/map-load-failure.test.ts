@@ -11,9 +11,10 @@
  *      '처음 연결하는 중' · '수신 대기 중'이 아니라 실시간 수신을 하지 않는다고 말한다(스토어 conn "off"). 다시 시도로 지도가 뜨면 연결부터 원래대로.
  *    - 2) 에서는 지도 없는 피드(Q4 — components/map/useMaplessFeed)가 워커 없이 연결 하나를 연다: 지도 없는 구독(subscribeWithoutMap)으로 알림 · SIGMET ·
  *      레이더 · 피드 상태만 받고, 상태 바 · 지도 자리 칩은 항공기 · 선박 위치를 받지 않는다고 적는다. 선택해도 select 를 보내지 않는다(집중 추적 안 함 — Q-B).
+ *      탭이 숨겨지면 그 연결을 멈추고(pause) 다시 보이면 잇는다(resume) — 지도 피드와 같다.
  *      관심 대상 실행기 조각은 지도 'load' 를 기다리지 않고 곧바로 받는다(Q-C).
  *    가짜 WS 클라이언트의 connect() 는 실제 것처럼 conn "connecting" 을 적고, close() 는 실제 것처럼 마지막으로 연결한 클라이언트일 때만 conn "closed" 를 적는다
- *    (lib/ws connectTurn). 연결 · 닫기를 지도 없는 구독인지와 함께 순서대로 적는다(events).
+ *    (lib/ws connectTurn). 연결 · 닫기 · 멈춤(pause) · 잇기(resume)를 지도 없는 구독인지와 함께 순서대로 적는다(events).
  * - next/dynamic 은 실제 빌드가 쓰는 구현(next/dist/shared/lib/app-dynamic — 모듈을 평가할 때 lazy 를 한 번 만든다)으로 바꿔 시험한다.
  *   vitest 의 기본 해석은 pages 쪽 구현이라 이 동작이 보이지 않는다.
  * - 경계는 Next 의 실제 ErrorBoundaryHandler 에 실제 app/error.tsx 를 붙인다(라우트의 오류 경계와 같은 자리).
@@ -26,7 +27,7 @@ vi.mock("next/dynamic", async () => ({ default: (await import("next/dist/shared/
 
 const ctl = vi.hoisted(() => ({
   loadFails: false, mapThrows: null as null | "gpu" | "other", loads: 0, maps: 0, connects: 0,
-  workers: 0, subscribes: 0, maplessSubs: 0, selects: 0, closes: 0, watchRunners: 0,
+  workers: 0, subscribes: 0, maplessSubs: 0, selects: 0, closes: 0, pauses: 0, resumes: 0, watchRunners: 0,
   events: [] as string[], open: 0, maxOpen: 0, turn: 0,
 }));
 vi.mock("@/lib/maplibre", async (orig) => {
@@ -77,7 +78,9 @@ vi.mock("@/lib/ws", () => ({
     }
     select() { ctl.selects++; }
     selectShip() { ctl.selects++; }
-    pause() {} resume() {} setLayers() {}
+    pause() { ctl.pauses++; this.log("pause"); }
+    resume() { ctl.resumes++; this.log("resume"); }
+    setLayers() {}
   },
 }));
 // 관심 대상 실행기(ADR-037 — DashboardParts 의 WatchRunnerPart)가 그려졌는가: 조각을 받은 뒤에만 SidePanel 이 그린다
@@ -103,7 +106,8 @@ afterEach(async () => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   reports.length = 0;
-  Object.assign(ctl, { loadFails: false, mapThrows: null, loads: 0, maps: 0, connects: 0, workers: 0, subscribes: 0, maplessSubs: 0, selects: 0, closes: 0, watchRunners: 0, events: [], open: 0, maxOpen: 0, turn: 0 });
+  dom.document.hidden = false;
+  Object.assign(ctl, { loadFails: false, mapThrows: null, loads: 0, maps: 0, connects: 0, workers: 0, subscribes: 0, maplessSubs: 0, selects: 0, closes: 0, pauses: 0, resumes: 0, watchRunners: 0, events: [], open: 0, maxOpen: 0, turn: 0 });
   vi.doUnmock("@/components/MapView");
 });
 
@@ -271,6 +275,20 @@ describe("dashboard '/': a map that cannot be drawn replaces only the map slot",
     await React.act(async () => { r.unmount(); });
     expect(ctl.closes).toBe(1);
     expect(getData().mapless).toBe(false);
+  });
+
+  it("WebGL2 cannot be created: a hidden tab pauses the map-less feed's connection and showing the tab resumes it, like the map's feed (Q4)", async () => {
+    ctl.mapThrows = "gpu";
+    await mount("@/app/page", "/");
+    expect(ctl).toMatchObject({ maps: 0, connects: 1, maplessSubs: 1, pauses: 0, resumes: 0 });
+    dom.document.hidden = true;
+    await React.act(async () => { dom.document.dispatch("visibilitychange"); });
+    expect(ctl).toMatchObject({ pauses: 1, resumes: 0 });
+    dom.document.hidden = false;
+    await React.act(async () => { dom.document.dispatch("visibilitychange"); });
+    expect(ctl).toMatchObject({ pauses: 1, resumes: 1 });
+    // 멈추고 잇는 것은 지도 없는 연결 하나다
+    expect(ctl.events).toEqual(["mapless connect", "mapless pause", "mapless resume"]);
   });
 
   it("any other Map constructor error still goes up to the route error screen (not swallowed)", async () => {
