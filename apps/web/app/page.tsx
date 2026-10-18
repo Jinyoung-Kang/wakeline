@@ -19,16 +19,21 @@ import { afterFirstPaint } from "@/lib/after-paint";
 //   지도 없는 피드(MaplessFeed — components/map/useMaplessFeed: 알림 · SIGMET · 레이더 · 피드 상태만, 서버 수요 없음)를 실패 자리 옆에 둔다.
 //   다시 시도로 지도 조각을 받으면(useLoaded) 내린다 — 그 닫기가 지도를 그린 뒤 지도 피드의 연결보다 먼저다(tests/map-load-failure 가 순서를 고정한다).
 // - 지도 컴포넌트 청크도 받지 못함(Q4 b2 — 피드 코드가 그 청크에 있다): 스토어에 피드가 없다고 적는다(conn "off" — 상태 바 · 알림 패널이 '연결 중'으로
-//   보이지 않게, R9). 다시 시도로 지도가 뜨면 피드가 연결부터 다시 적는다. 위 import() 가 받지 못한 청크를 한 번 더 받아 보므로(Turbopack 런타임은 받지 못한
-//   청크를 기억하지 않는다) 이때 실패 자리는 그 시도가 끝난 뒤에 보인다
-const MapView = dynamic(() => afterFirstPaint().then(() => Promise.all([import("@/components/MapView"), loadMaplibre()])).then(([m]) => m.MapView).catch((e: unknown) => {
+//   보이지 않게, R9). 다시 시도로 지도가 뜨면 피드가 연결부터 다시 적는다. 청크를 받지 못했는지는 처음 import() 의 거절에 붙인 표시(mapViewFailed)로 안다 —
+//   그때는 같은 모듈을 다시 import() 하지 않고 곧바로 실패 자리를 보인다(Turbopack 런타임은 받지 못한 청크를 지워, 다시 부르면 내장 재시도까지 처음부터 다시 받는다).
+//   표시가 없으면(MapLibre 가 먼저 실패해 Promise.all 이 곧바로 거절됨 — 청크는 받았거나 아직 받는 중) 위처럼 같은 import() 를 기다린다(받는 중인 청크는
+//   런타임이 같은 약속을 돌려준다 — 새 받기 없음). 기다린 청크가 끝내 오지 않으면 그때 'off'
+let mapViewFailed = false;
+const markMapViewFailed = (e: unknown): never => { mapViewFailed = true; throw e; };
+const MapView = dynamic(() => afterFirstPaint().then(() => Promise.all([import("@/components/MapView").catch(markMapViewFailed), loadMaplibre()])).then(([m]) => m.MapView).catch((e: unknown) => {
   const Failed = failedPart("지도", e, () => Promise.all([import("@/components/MapView"), loadMaplibre()]).then(([m]) => m.MapView), { frameClassName: "grid-bg flex h-full w-full flex-col justify-center p-3 text-[11px]" });
-  return import("@/components/MapView").then(({ MaplessFeed }) => function MapFailed(p: { onFirstLoad?: () => void }) {
-    return <>{Failed.useLoaded() ? null : <MaplessFeed />}<Failed {...p} /></>;
-  }, () => {
+  const noFeed = () => {
     setNoLiveFeed();
     return Failed;
-  });
+  };
+  return mapViewFailed ? noFeed() : import("@/components/MapView").then(({ MaplessFeed }) => function MapFailed(p: { onFirstLoad?: () => void }) {
+    return <>{Failed.useLoaded() ? null : <MaplessFeed />}<Failed {...p} /></>;
+  }, noFeed);
 }), {
   ssr: false, loading: () => <div className="grid-bg h-full w-full" />,
 });

@@ -7,8 +7,10 @@
  * 3) 지도와 함께 만드는 실시간 피드(WS · 워커 — components/map/useLiveFeed)는 두 경우 모두 없다.
  *    - 1) 중 MapLibre 만 받지 못함(Q4 b1 — 지도 컴포넌트 청크는 받음): 페이지가 그 청크의 지도 없는 피드(MaplessFeed)를 실패 자리 옆에 둔다 — 2) 와 같은
  *      연결 하나. 다시 시도로 지도가 뜨면 내린다 — 넘겨받기 순서는 [지도 없음 연결, 지도 없음 닫기, 지도 연결](동시에 열린 클라이언트 ≤ 1 · 새 연결 상태를 덮지 않음).
+ *      MapLibre 가 지도 청크보다 먼저 실패해도(청크는 아직 받는 중) 같다 — 받는 중을 받지 못함으로 보지 않는다.
  *    - 1) 중 지도 컴포넌트 청크를 받지 못함(Q4 b2 — 피드 코드가 그 청크에 있다): 연결을 시도하지 않는다(R9): 남은 상태 바의 연결 칩과 알림 패널은
- *      '처음 연결하는 중' · '수신 대기 중'이 아니라 실시간 수신을 하지 않는다고 말한다(스토어 conn "off"). 다시 시도로 지도가 뜨면 연결부터 원래대로.
+ *      '처음 연결하는 중' · '수신 대기 중'이 아니라 실시간 수신을 하지 않는다고 말한다(스토어 conn "off"). 실패 자리를 보이기 전에 그 청크를 다시 받지 않는다
+ *      (모듈 받기 시도 1번). 다시 시도로 지도가 뜨면 연결부터 원래대로.
  *    - 2) 에서는 지도 없는 피드(Q4 — components/map/useMaplessFeed)가 워커 없이 연결 하나를 연다: 지도 없는 구독(subscribeWithoutMap)으로 알림 · SIGMET ·
  *      레이더 · 피드 상태만 받고, 상태 바 · 지도 자리 칩은 항공기 · 선박 위치를 받지 않는다고 적는다. 선택해도 select 를 보내지 않는다(집중 추적 안 함 — Q-B).
  *      탭이 숨겨지면 그 연결을 멈추고(pause) 다시 보이면 잇는다(resume) — 지도 피드와 같다.
@@ -28,7 +30,7 @@ vi.mock("next/dynamic", async () => ({ default: (await import("next/dist/shared/
 const ctl = vi.hoisted(() => ({
   loadFails: false, mapThrows: null as null | "gpu" | "other", loads: 0, maps: 0, connects: 0,
   workers: 0, subscribes: 0, maplessSubs: 0, selects: 0, closes: 0, pauses: 0, resumes: 0, watchRunners: 0,
-  events: [] as string[], open: 0, maxOpen: 0, turn: 0,
+  events: [] as string[], open: 0, maxOpen: 0, turn: 0, mapViewLoads: 0,
 }));
 vi.mock("@/lib/maplibre", async (orig) => {
   const fakeMod = (await import("./helpers/fake-maplibre")).fakeMaplibreModule;
@@ -107,7 +109,7 @@ afterEach(async () => {
   vi.restoreAllMocks();
   reports.length = 0;
   dom.document.hidden = false;
-  Object.assign(ctl, { loadFails: false, mapThrows: null, loads: 0, maps: 0, connects: 0, workers: 0, subscribes: 0, maplessSubs: 0, selects: 0, closes: 0, pauses: 0, resumes: 0, watchRunners: 0, events: [], open: 0, maxOpen: 0, turn: 0 });
+  Object.assign(ctl, { loadFails: false, mapThrows: null, loads: 0, maps: 0, connects: 0, workers: 0, subscribes: 0, maplessSubs: 0, selects: 0, closes: 0, pauses: 0, resumes: 0, watchRunners: 0, events: [], open: 0, maxOpen: 0, turn: 0, mapViewLoads: 0 });
   vi.doUnmock("@/components/MapView");
 });
 
@@ -210,11 +212,13 @@ describe("dashboard '/': a map that cannot be drawn replaces only the map slot",
   });
 
   it("the map chunk itself fails to load (Q4 b2): the map slot shows the reason; no feed starts (the feed code is in that chunk) and the status bar says so; retry draws the map and its feed connects", async () => {
-    vi.doMock("@/components/MapView", () => { throw new TypeError("Failed to fetch dynamically imported module: http://localhost:8700/_next/static/chunks/mapview.js"); });
+    vi.doMock("@/components/MapView", () => { ctl.mapViewLoads++; throw new TypeError("Failed to fetch dynamically imported module: http://localhost:8700/_next/static/chunks/mapview.js"); });
     await mount("@/app/page", "/");
     expect(has("error-screen"), "the whole dashboard was replaced by the route error screen").toBe(false);
     for (const id of ["statusbar", "side-panel-content", "radar-timeline"]) expect(has(id), id).toBe(true);
     expect(byId("lazy-error")?.getAttribute("data-part")).toBe("지도");
+    // 받지 못한 지도 청크를 실패 자리를 보이기 전에 또 받지 않는다 — Turbopack 런타임은 받지 못한 청크를 지워 같은 import() 가 처음부터 다시 받는다(내장 재시도 포함)
+    expect(ctl.mapViewLoads, "map chunk load attempts before the error slot shows").toBe(1);
     expect(ctl).toMatchObject({ maps: 0, maplessSubs: 0 });
     expect(ctl.events).toEqual([]);
     expect(has("mapless-chip")).toBe(false);
@@ -229,6 +233,27 @@ describe("dashboard '/': a map that cannot be drawn replaces only the map slot",
     expect(connText()).toContain("WS connecting");
     expect(connText()).not.toContain("실시간 수신 안 함");
     expect(alertsWaitingText()).toContain("알림 목록 수신 대기 중");
+  });
+
+  it("MapLibre fails while the map chunk is still loading (Q4 b1 race): the page does not take that chunk for failed — the map-less feed opens, not 'off'", async () => {
+    let arrive!: () => void;
+    const gate = new Promise<void>((r) => { arrive = r; });
+    // 지도 청크가 MapLibre 의 실패보다 늦게 온다: Promise.all 은 먼저 온 거절로 곧바로 거절하므로 페이지의 catch 가 돌 때 청크는 아직 받는 중이다.
+    // 실제 런타임은 받는 중인 청크의 두 번째 import() 에 같은 약속을 돌려주지만, vitest 는 팩토리가 끝나지 않은 모듈의 두 번째 import() 를 기다리지 않고
+    // 곧바로 푼다 — 그래서 여기서는 기다림이 아니라 '받는 중'을 '받지 못함'(b2 → 'off')으로 잘못 보지 않는지를 본다
+    vi.doMock("@/components/MapView", async (importOriginal) => { await gate; return importOriginal(); });
+    ctl.loadFails = true;
+    await mount("@/app/page", "/");
+    arrive();
+    await settle();
+    expect(has("error-screen")).toBe(false);
+    expect(byId("lazy-error")?.textContent).toContain("maplibre-gl.mjs"); // 까닭은 MapLibre — 지도 청크가 아니다
+    expect(ctl).toMatchObject({ loads: 1, maps: 0, connects: 1, workers: 0, maplessSubs: 1, subscribes: 0 });
+    expect(ctl.events).toEqual(["mapless connect"]);
+    expect((await import("@/lib/store")).getData()).toMatchObject({ conn: "connecting", mapless: true });
+    expect(connText()).toBe("WS connecting · 지도 없음");
+    expect(connText()).not.toContain("실시간 수신 안 함");
+    expect(byId("mapless-chip")?.textContent).toBe("지도 없음 — 항공기 · 선박 위치를 받지 않음");
   });
 
   it("WebGL2 cannot be created (GPUInitializationError): the status bar and alerts panel stay; the map slot says why and links the map-less alerts screen (/m)", async () => {
