@@ -323,11 +323,15 @@ export function withProviderResolutions<P extends { providers: Record<string, un
 // ---- 설정 편집의 낙관적 잠금(R-35) ----
 
 /** 편집 중인 값과 편집을 시작할 때 본 서버 version */
-export interface SettingEdit { value: string; version: number }
+/**
+ * 설정 편집 — value 와 편집을 시작할 때 본 version(If-Match). savedOver: 이 탭의 저장이 편집을 응답 version 으로 옮길 때 그 저장 전 목록 version
+ * ({@link settingAfterSave}) — 목록이 아직 그 version 인 동안만 '편집이 목록보다 새 것'을 충돌로 보지 않는다({@link settingConflict})
+ */
+export interface SettingEdit { value: string; version: number; savedOver?: number }
 
 /** 입력: 처음 편집하면 지금 서버 version 을 기억하고, 이미 편집 중이면 그 version 을 유지한다(새로고침이 바꾸지 않는다). */
 export function editSetting(prev: SettingEdit | undefined, item: { version: number }, value: string): SettingEdit {
-  return { value, version: prev?.version ?? item.version };
+  return { value, version: prev?.version ?? item.version, ...(prev?.savedOver !== undefined ? { savedOver: prev.savedOver } : {}) };
 }
 
 /** 저장 요청의 If-Match — 편집을 시작할 때 본 version */
@@ -336,12 +340,14 @@ export function settingIfMatch(edit: SettingEdit): string {
 }
 
 /**
- * 편집하는 동안 서버 값이 바뀌었는가(다른 운영자·다른 탭) — 목록의 version 이 편집이 본 version 보다 클 때만. 다른 곳의 변경은 목록 version 을 올리기만
- * 하므로, 편집이 목록보다 새 version 인 것은 자기 저장 직후뿐이다: {@link settingAfterSave} 가 남은 편집을 응답 version 으로 옮겼는데 뒤따르는 새로고침
- * (GET /ops/settings)이 아직 오지 않았거나 실패했다. 그것은 충돌이 아니라 '목록이 아직 옛것'이다(R10 — 전에는 v4 → v3 거짓 충돌 줄에 save 가 막혔다)
+ * 편집하는 동안 서버 값이 바뀌었는가(다른 운영자·다른 탭) — 목록의 version 이 편집이 본 version 과 다르면. 예외 하나: 이 탭의 저장이 남은 편집을 응답
+ * version 으로 옮겼고({@link settingAfterSave}) 뒤따르는 새로고침(GET /ops/settings)이 아직 오지 않았거나 실패해 목록이 그 저장 전 version 그대로인 동안 —
+ * 그것은 충돌이 아니라 '목록이 아직 옛것'이다(R10 — 전에는 v4 → v3 거짓 충돌 줄에 save 가 막혔다). 목록이 그보다도 낮아지면(DB 를 백업으로 되돌림 등)
+ * 다시 충돌로 보인다 — 아니면 save 가 If-Match 로 409 를 되풀이하고 충돌 줄의 '새 값 보기' · '덮어쓰기'가 나오지 않는다(R10 재확인)
  */
 export function settingConflict(edit: SettingEdit | undefined, item: { version: number }): boolean {
-  return edit != null && edit.version < item.version;
+  if (edit == null || edit.version === item.version) return false;
+  return !(edit.version > item.version && edit.savedOver === item.version);
 }
 
 /** 운영자가 "내 값으로 덮어쓰기"를 고른 경우: 지금 본 서버 version 으로 옮긴다 */
@@ -359,7 +365,7 @@ export function rebaseSetting(edit: SettingEdit, item: { version: number }): Set
 export function settingAfterSave(now: SettingEdit | undefined, sent: SettingEdit, response: unknown): SettingEdit | undefined {
   if (now === undefined || now.value === sent.value) return undefined;
   const v = typeof response === "object" && response !== null ? (response as { version?: unknown }).version : undefined;
-  return typeof v === "number" && Number.isInteger(v) && v > now.version ? { value: now.value, version: v } : now;
+  return typeof v === "number" && Number.isInteger(v) && v > now.version ? { value: now.value, version: v, savedOver: sent.version } : now;
 }
 
 /**

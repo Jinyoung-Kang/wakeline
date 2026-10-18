@@ -308,9 +308,9 @@ describe("R-35 settings: the version is taken when editing starts, so a refresh 
     expect(opsLib.settingAfterSave({ value: "15", version: 3 }, sent, saved)).toBeUndefined(); // 같은 값을 다시 쳤다 — 서버 값이 이미 그것
     expect(opsLib.settingAfterSave(undefined, sent, saved)).toBeUndefined(); // 기다리는 동안 '새 값 보기'로 편집을 버렸다
     // 수정 전: 무엇이든 지웠다 — 20 은 '저장됨' 문구 아래 말없이 사라졌다
-    expect(opsLib.settingAfterSave({ value: "20", version: 3 }, sent, saved)).toEqual({ value: "20", version: 4 });
-    // 저장 뒤 새로고침이 오기 전 목록은 아직 v3 — 편집이 목록보다 새 version 이면 충돌이 아니다(R10 — 수정 전: v4 → v3 거짓 충돌)
-    expect(opsLib.settingConflict({ value: "20", version: 4 }, { version: 3 })).toBe(false);
+    expect(opsLib.settingAfterSave({ value: "20", version: 3 }, sent, saved)).toEqual({ value: "20", version: 4, savedOver: 3 });
+    // 저장 뒤 새로고침이 오기 전 목록은 아직 v3 — 이 탭의 저장이 옮긴 편집이면 충돌이 아니다(R10 — 수정 전: v4 → v3 거짓 충돌)
+    expect(opsLib.settingConflict(opsLib.settingAfterSave({ value: "20", version: 3 }, sent, saved), { version: 3 })).toBe(false);
     // 같은 값이라 바뀐 것 없음(§G45) — 응답 version 은 보낸 version 그대로
     expect(opsLib.settingAfterSave({ value: "20", version: 3 }, sent, { ...saved, version: 3, changed: false })).toEqual({ value: "20", version: 3 });
     // version 을 모르는 응답 — 편집이 처음 본 version 을 둔다(새로고침이 다른 version 을 보이면 충돌 줄로 고르게 한다)
@@ -320,6 +320,24 @@ describe("R-35 settings: the version is taken when editing starts, so a refresh 
     // 기다리는 동안 다른 곳의 v5 를 보고 '내 값으로 덮어쓰기'를 골랐다 — 더 오래된 v4 로 되돌리지 않는다
     const rebased = { value: "20", version: 5 };
     expect(opsLib.settingAfterSave(rebased, sent, saved)).toBe(rebased);
+  });
+
+  it("an edit newer than the list is 'list not refreshed yet' only right after this tab's own save; a list that drops lower still shows the conflict (R10 recheck)", () => {
+    const sent = { value: "15", version: 3 };
+    const saved = { key: "region_poll_s", value: 15, version: 4, changed: true, mirrored: true };
+    const moved = opsLib.settingAfterSave({ value: "20", version: 3 }, sent, saved)!;
+    expect(moved.version).toBe(4);
+    expect(opsLib.settingConflict(moved, { version: 3 })).toBe(false); // 새로고침 전 · 새로고침 실패 — 목록이 그 저장 전 것
+    expect(opsLib.settingConflict(moved, { version: 4 })).toBe(false); // 새로고침이 왔다
+    expect(opsLib.settingConflict(moved, { version: 5 })).toBe(true); // 다른 곳이 더 바꿨다
+    // 목록이 그 저장 전보다도 낮아졌다(DB 를 백업으로 되돌림) — 충돌로 보이지 않으면 save 가 If-Match 4 로 409 를 되풀이한다
+    expect(opsLib.settingConflict(moved, { version: 2 })).toBe(true);
+    // 저장 없이 편집하는 동안 목록이 낮아짐도 충돌이다
+    expect(opsLib.settingConflict({ value: "20", version: 4 }, { version: 2 })).toBe(true);
+    // 다시 고쳐 쳐도(editSetting) 그 표식은 남고, '내 값으로 덮어쓰기'는 목록 version 으로 옮기며 표식을 버린다
+    const retyped = opsLib.editSetting(moved, { version: 3 }, "25");
+    expect(opsLib.settingConflict(retyped, { version: 3 })).toBe(false);
+    expect(opsLib.settingConflict(opsLib.rebaseSetting(retyped, { version: 2 }), { version: 2 })).toBe(false);
   });
 });
 
