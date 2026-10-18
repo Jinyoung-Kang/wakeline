@@ -18,6 +18,9 @@
 (에포크 정렬 — api ShipRepository.WINDOW_S 와 같은 창)마다 처음 받아들인 위치 하나를 받은 순서대로 모은다. api 는 창마다 첫 보고 하나만 저장하므로
 이것이 장애가 없었다면 DB 에 들어갔을 행과 같다(첫 줄은 보내지 못한 그 발행의 최신값 — 그 창에서 받은 마지막 위치일 수 있다). 예전에는 '바뀜' 표시만
 되돌려 복구 뒤 최신값 하나만 실렸다 — redis 150 s pause 에서 분당 선박 행이 244–284 → 116 · 137 로 줄고 그 빈 곳을 설명하는 기록도 없었다.
+첫 줄에는 그때 '바뀜' 인 모든 선박의 최신값도 든다: 실패를 알기 전, 실패한 XADD 를 기다리는 동안(답하지 않는 Redis 는 socket_timeout 동안) 받아들인
+위치는 모으기 전이라 표시만 남는다 — 그 발행에서 꺼낼 때 '바뀜' 이 아니었던 선박이나 앞 조각으로 이미 보낸 선박의 새 위치다. 장애가 없었다면 다음
+발행에 실렸을 위치다. 예전에는 보내지 못한 선박만 넣어, 그 위치가 장애 중 다음 분의 보고에 덮여 그 분의 행이 공백 기록 없이 빠졌다.
 모으는 수 상한 BACKFILL_MAX(위치 튜플 참조 — 하나 ≈ 350 B, 상한에서 ≈ 35 MB · 운영 2026-10-03 의 분당 표본 ≈ 2,700 으로 ≈ 37분). 넘으면 더 모으지
 않고 (MMSI, 창) 수와 처음 모으지 못한 위치의 시각을 센다 — sink 가 복구 뒤 그 시각부터 공백(ais_gap, 구역 없음)으로 남긴다. 다 보낸 뒤(release) 모으기를 끝낸다.
 보내는 중인 위치도 상한에 든다: sink 는 맨 앞 조각을 보고(peek_backfill) XADD 가 성공한 뒤에야 뗀다(ack_backfill). 예전에는 모두 꺼내 비운 채
@@ -250,9 +253,11 @@ class ShipBook:
         return len(self._backlog)
 
     def hold(self, state_mmsis: Iterable[str]) -> None:
-        """발행이 실패했다 — 이때부터 분당 첫 위치를 모은다. state_mmsis: 보내지 못한 선박(그 최신 위치가 표본의 첫 줄)."""
+        """발행이 실패했다 — 이때부터 분당 첫 위치를 모은다. state_mmsis: 보내지 못한 선박(그 최신 위치가 표본의 첫 줄).
+        지금 '바뀜' 인 다른 선박의 최신 위치도 첫 줄로 넣는다 — 실패한 XADD 를 기다리는 동안(모으기 전) 받아들인 위치다(모듈 설명). 이미 고른
+        창은 _sample 이 건너뛴다(같은 창에 두 번 넣지 않는다)."""
         self.holding = True
-        for m in state_mmsis:
+        for m in (*state_mmsis, *self._dirty_state):
             ship = self._ships.get(m)
             if ship is not None and ship.state is not None:
                 self._sample(m, ship.state, ship.t)

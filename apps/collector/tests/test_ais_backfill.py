@@ -256,6 +256,74 @@ async def test_positions_received_while_a_held_send_waits_on_redis_stay_within_t
     assert not book.holding and book.backlog == 0
 
 
+async def test_a_report_first_received_while_the_first_failed_xadd_waits_is_held():
+    """장애가 시작되는 첫 XADD 를 기다리는 동안(답하지 않는 Redis — socket_timeout) 처음 받은 선박의 그 분 보고도 모은다. 예전에는 hold 가 그
+    발행에 든(보내지 못한) 선박만 표본으로 넣었다 — 기다리는 동안 처음 받은 선박은 모으기 전이라 '바뀜' 표시만 남았고, 장애 중 다음 분의 보고가
+    그 위치를 덮어 복구 뒤 스트림에 실리지 않았다(그 분의 행이 공백 기록 없이 빠졌다). 장애가 없었다면 다음 발행에 실려 그 분의 행이 됐다."""
+    r = HangingRedis()
+    _r, book, sink, clock = _setup(r)
+    _receive(book, clock, ("440000001", T0 + 1))  # 이번 발행에 드는 선박
+    r.hanging = True
+
+    async def receive_while_waiting() -> None:
+        await asyncio.wait_for(r.waiting.wait(), 1)
+        _receive(book, clock, ("440000002", T0 + 59))  # 창 0 의 하나뿐인 보고 — 발행에서 꺼낼 때는 '바뀜' 이 아니었던 선박
+
+    sent, _ = await asyncio.gather(sink.flush(), receive_while_waiting())
+    assert sent == 0 and book.holding
+    r.hanging, r.down = False, True
+    _receive(book, clock, ("440000002", T0 + 75))  # 장애 중 창 1
+    assert await sink.flush() == 0
+
+    r.down = False
+    clock.t = T0 + 90
+    await sink.flush()
+    rows = _rows_like_the_api(_entries(r))
+    assert rows["440000002"] == [iso_ms(T0 + 59), iso_ms(T0 + 75)], "기다리는 동안 받은 창 0 의 보고가 빠졌다"
+    assert rows["440000001"] == [iso_ms(T0 + 1)]
+    assert not book.holding and book.backlog == 0
+
+
+async def test_a_new_minute_received_after_its_part_was_sent_is_held_when_a_later_part_fails(monkeypatch):
+    """여러 조각으로 나눈 발행에서 앞 조각은 보냈고 뒤 조각의 XADD 를 기다리는 동안, 이미 보낸 선박이 새 분(창)의 보고를 보내면 그것도 모은다.
+    hold 가 보내지 못한 조각의 선박만 표본으로 넣던 때에는 그 보고도 '바뀜' 표시만 남아 장애 중 다음 분의 보고에 덮였다."""
+    monkeypatch.setattr(sink_mod, "CHUNK", 1)
+    r = HangingRedis()
+    _r, book, sink, clock = _setup(r)
+    _receive(book, clock, ("440000001", T0 + 1), ("440000003", T0 + 2))
+    orig = r.xadd
+    calls = 0
+
+    async def second_part_hangs(stream, fields, **kw):
+        nonlocal calls
+        calls += 1
+        r.hanging = calls == 2
+        return await orig(stream, fields, **kw)
+
+    r.xadd = second_part_hangs  # type: ignore[method-assign]
+    first_seen: dict[str, str] = {}
+
+    async def receive_while_waiting() -> None:
+        await asyncio.wait_for(r.waiting.wait(), 1)
+        (ship,) = _entries(r)[0]["ships"]  # 보낸 앞 조각의 선박(조각 순서는 집합 순서라 정하지 않는다)
+        first_seen["mmsi"], first_seen["at"] = ship["mmsi"], ship["seen_at"]
+        _receive(book, clock, (ship["mmsi"], T0 + 61))  # 창 1 의 첫 보고
+
+    sent, _ = await asyncio.gather(sink.flush(), receive_while_waiting())
+    assert sent == 1 and book.holding
+    r.xadd = orig  # type: ignore[method-assign]
+    r.hanging, r.down = False, True
+    _receive(book, clock, (first_seen["mmsi"], T0 + 130))  # 장애 중 창 2
+    assert await sink.flush() == 0
+
+    r.down = False
+    clock.t = T0 + 140
+    await sink.flush()
+    rows = _rows_like_the_api(_entries(r))
+    assert rows[first_seen["mmsi"]] == [first_seen["at"], iso_ms(T0 + 61), iso_ms(T0 + 130)], "보낸 뒤 받은 창 1 의 보고가 빠졌다"
+    assert not book.holding and book.backlog == 0
+
+
 async def test_a_held_send_cancelled_mid_xadd_keeps_the_positions_for_the_final_flush():
     """종료 때 발행 루프가 모은 위치를 보내는 XADD 에서 취소돼도 그 위치를 떼지 않는다 — final() 의 flush 가 다시 보낸다."""
     r = HangingRedis()
