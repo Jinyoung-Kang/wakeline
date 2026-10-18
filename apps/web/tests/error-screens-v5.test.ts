@@ -247,7 +247,7 @@ describe("v5-C8 screens show the request id of a failed call", () => {
     expect(replayReduce(failed, { type: "failed", error: new TypeError("Failed to fetch") }).rid).toBeNull();
     expect(replayReduce(failed, { type: "loaded", frame: { at: "2026-09-29T00:00:00Z", aircraft: [], sigmets: [], source: "track_point" }, latencyMs: 5 }).rid).toBeNull();
   });
-  it("stats (ErrorNote) and the airport card (airportErrorText — IM-22) show the request id of the failed call", async () => {
+  it("stats and airport card render the error through ErrorNote (request id visible)", async () => {
     vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ detail: "stats unavailable", code: "STORE_UNAVAILABLE", request_id: "feedface0000beef" }), { status: 503, headers: { "Content-Type": "application/problem+json" } }));
     const StatsPage = (await import("@/app/stats/page")).default;
     await mount(createElement(StatsPage));
@@ -258,6 +258,6 @@ describe("v5-C8 screens show the request id of a failed call", () => {
     const { AirportCard } = await import("@/components/AirportCard");
     await mount(createElement(AirportCard, { icao: "RKSI" }));
     await settle();
-    expect(byTestId("airport-card-error")?.textContent).toContain("feedface0000beef");
+    expect(byTestId("error-note")?.textContent).toContain("feedface0000beef");
   });
 });
