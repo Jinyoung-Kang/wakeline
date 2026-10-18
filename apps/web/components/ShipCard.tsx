@@ -8,7 +8,7 @@ import { useApiResource } from "@/lib/use-api-resource";
 import type { Warnings } from "@/lib/warnings";
 import { countPhases, notYetText } from "@/lib/warning-phase";
 import { useEscapeClose } from "@/lib/use-escape-close";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { shipDetail } from "@/lib/endpoints/ship-detail";
 import { useNow, useServerNow } from "@/lib/clock";
 import { fmtKstTitle, fmtRangeTitle } from "@/lib/time";
@@ -23,16 +23,22 @@ import { ShipTable } from "./ShipTable";
 import { RequestIdCopy, RequestIdOf } from "./logs/ErrorNote";
 import { PortCallsSection } from "./PortCallsSection";
 import { KstRange, KstTime } from "./KstTime";
+import { useRetryAfterOnce, type AutoRetry } from "@/lib/use-retry-after";
+import { RetryNote } from "./RetryNote";
 
 /**
  * 선박 상세(계약 v2 §B4 · v4 §B): 선박명·MMSI·호출부호·IMO·선종(코드+분류)·크기(A+B × C+D, 보고값)·흘수·출발지(보고)·목적지(보고, 원문 + UN/LOCODE 풀이)·ETA(선원 입력값, 연도 없음)·
  * 속력(kn · km/h, 계약 v5 §A)/침로/선수방위·항해 상태·위치 출처·관측 시각(경과). 값이 없으면 "—". 정적 정보는 선원이 입력한 보고값이다(검증하지 않은 값).
  * 상태: WS ship_selected(바뀔 때마다) → 없으면 REST 상세 → 없으면 지도 목록 사본 중 관측이 가장 새로운 것. 경과는 서버 기준 시각.
+ * 상세 조회의 일시적 실패(503 + Retry-After — 공개 조회 허가 고갈)는 그 뒤 한 번 다시 받고, 다시 해 볼 만한 실패에는 '다시 시도'(lib/use-retry-after ·
+ * RetryNote — QA-1463 · IM-22: 전에는 선박을 다시 골라야 '처음 기록 · 마지막 저장 위치'를 받았다).
  */
 export function ShipCard({ mmsi }: { mmsi: string }) {
   const [detail, setDetail] = useState<ShipDetail | null>(null);
-  /** 상세 조회 실패 — 오류 그대로(ApiError 면 요청 id 를 문구에, 계약 v5 §G5) */
-  const [error, setError] = useState<{ mmsi: string; error: unknown } | null>(null);
+  /** 상세 조회 실패 — 오류 그대로(ApiError 면 요청 id 를 문구에, 계약 v5 §G5). attempt = 그 요청의 시도 번호(다시 받는 동안 앞 시도의 실패를 보이지 않는다) */
+  const [error, setError] = useState<{ mmsi: string; attempt: number; error: unknown } | null>(null);
+  /** 다시 받기(자동 · '다시 시도') 횟수 — 바뀌면 효과가 같은 선박을 다시 받는다 */
+  const [attempt, setAttempt] = useState(0);
   const loaded = useRef<ShipDetail | null>(null);
   const now = useServerNow(1000);
   // WS 가 "실시간 목록에 없음(state null)"이라고 하면 상세를 다시 받는다 — 카드를 연 뒤 목록에서 빠진 선박의 '마지막 저장 위치'가
@@ -45,17 +51,19 @@ export function ShipCard({ mmsi }: { mmsi: string }) {
     const ctl = new AbortController();
     shipDetail(mmsi, { signal: ctl.signal })
       .then((p) => { if (!ctl.signal.aborted) { loaded.current = p; setDetail(p); setError(null); } })
-      .catch((e: unknown) => { if (!ctl.signal.aborted) setError({ mmsi, error: e }); });
+      .catch((e: unknown) => { if (!ctl.signal.aborted) setError({ mmsi, attempt, error: e }); });
     return () => ctl.abort();
-  }, [mmsi, gone]);
+  }, [mmsi, gone, attempt]);
+  const retry = useCallback(() => setAttempt((n) => n + 1), []);
   const d = detail && detail.mmsi === mmsi ? detail : null;
-  const err = error && error.mmsi === mmsi ? error.error : null;
-  return <ShipCardView mmsi={mmsi} detail={d} error={err} now={now} />;
+  const err = error && error.mmsi === mmsi && error.attempt === attempt ? error.error : null;
+  const auto = useRetryAfterOnce(mmsi, err != null ? "failed" : "loaded", err, retry);
+  return <ShipCardView mmsi={mmsi} detail={d} error={err} now={now} retry={{ auto, onRetry: retry }} />;
 }
 
 /**
  * 표시 부분(REST 상세·오류·서버 기준 시각을 인자로 — 서버 렌더 시험용). error = 상세 조회 실패(문자열 또는 오류 — ApiError 면 요청 id 를 복사할 수 있게,
- * 계약 v5 §G5), 없으면 null.
+ * 계약 v5 §G5), 없으면 null. retry = 실패 줄 아래의 자동 다시 받기 상태와 '다시 시도'(RetryNote) — 없으면 그리지 않는다.
  */
 /** AIS 지연 — 상태 바 칩(lib/ships aisBadge)과 같은 값 · 같은 등급. 끊김이면 지연 모름(down — 0 s 로 짓지 않는다, QA-703), 꺼짐 · 모르면 null */
 function useAisLag(): { lag: number | null; stale: boolean; warn: boolean; down: boolean } | null {
@@ -69,9 +77,13 @@ function useAisLag(): { lag: number | null; stale: boolean; warn: boolean; down:
   return { lag: b.lag, stale: b.tone === "bad", warn: b.tone === "warn", down: false };
 }
 
-export function ShipCardView({ mmsi, detail: d, error: err, now }: { mmsi: string; detail: ShipDetail | null; error: unknown; now: number }) {
+export function ShipCardView({ mmsi, detail: d, error: err, now, retry = null }: {
+  mmsi: string; detail: ShipDetail | null; error: unknown; now: number; retry?: { auto: AutoRetry; onRetry: () => void } | null;
+}) {
   const selectShip = useUi((s) => s.selectShip);
   const root = useRef<HTMLDivElement>(null);
+  /** '다시 시도'를 누르면 단추가 사라진다 — 초점을 상태 줄로(공항 기상 이력 화면과 같은 목적) */
+  const statusBox = useRef<HTMLDivElement>(null);
   useEscapeClose(true, () => selectShip(null), { panel: root }); // Esc 로 닫기(lib/escape-stack)
   const live = useServerData((x) => (x.shipSelected && x.shipSelected.mmsi === mmsi ? x.shipSelected : null));
   const track = useServerData((x) => (x.shipTrack && x.shipTrack.mmsi === mmsi ? x.shipTrack : null));
@@ -167,9 +179,12 @@ export function ShipCardView({ mmsi, detail: d, error: err, now }: { mmsi: strin
       <ReliabilityLine parts={[positionPart("ship", age), lagPart(aisLag), gapsPart(gaps ? { count: gaps.count, window: track?.error ? "선택 뒤" : `최근 ${hours} h` } : null)]} />
       <div className="min-h-0 flex-1 overflow-y-auto px-2 py-1 text-[12px]">
         <SeaWarningsLine />
-        {err != null ? <div className="text-[11px] text-bad" data-testid="ship-detail-error">
-          상세(REST) 조회 실패 — 실시간으로 받은 값만 표시 ({err instanceof Error ? err.message : String(err)}<RequestIdOf error={err} />)
-        </div> : null}
+        <div ref={statusBox} tabIndex={-1} className="outline-none">
+          {err != null ? <div className="text-[11px] text-bad" data-testid="ship-detail-error">
+            상세(REST) 조회 실패 — 실시간으로 받은 값만 표시 ({err instanceof Error ? err.message : String(err)}<RequestIdOf error={err} />)
+          </div> : null}
+          {err != null && retry ? <RetryNote error={err} auto={retry.auto} onRetry={() => { statusBox.current?.focus(); retry.onRetry(); }} /> : null}
+        </div>
         {d?.db_unavailable ? <div className="text-[11px] text-warn">선박 정보 DB 일시 사용 불가 — 정적 정보는 “—”일 수 있음</div> : null}
         {prov.source === "stored" ? (
           <div className="mt-1 border-l-2 border-warn bg-bg-2 px-2 py-1 text-[11px]" data-testid="ship-static-stored" title={STORED_STATIC_TITLE}>

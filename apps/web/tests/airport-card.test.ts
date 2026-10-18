@@ -23,12 +23,14 @@ describe("AirportCard error belongs to its airport (web-review B5)", () => {
     vi.stubGlobal("fetch", async (url: string) => url === "/api/v1/airports/RKSI/wx" ? problem(503, "wx store unavailable", "feedface0000beef") : new Promise<Response>(() => {}));
     await m.render(m.React.createElement(AirportCard, { icao: "RKSI" }));
     await m.settle();
-    expect(m.byTestId("airport-card")!.textContent).toContain("wx store unavailable");
+    // 문구는 공항 기상 이력 화면과 같은 airportErrorText(IM-22 — 서버 영문 detail 대신 한국어 + HTTP 상태) + 요청 id
+    expect(m.byTestId("airport-card-error")!.textContent).toContain("기상 이력을 불러오지 못했습니다(HTTP 503).");
+    expect(m.byTestId("airport-card-error")!.textContent).toContain("feedface0000beef");
     await m.render(m.React.createElement(AirportCard, { icao: "RKSS" }));
     await m.settle();
     const text = m.byTestId("airport-card")!.textContent;
     expect(text).toContain("Airport · RKSS");
-    expect(text).not.toContain("wx store unavailable");
+    expect(text).not.toContain("HTTP 503");
     expect(text).not.toContain("feedface0000beef");
   });
 
@@ -41,11 +43,13 @@ describe("AirportCard error belongs to its airport (web-review B5)", () => {
     await m.settle();
     await m.render(m.React.createElement(AirportCard, { icao: "RKSS" }));
     await m.settle();
-    expect(m.byTestId("airport-card")!.textContent).toContain("upstream down");
-    expect(m.byTestId("airport-card")!.textContent).not.toContain("wx store unavailable");
+    expect(m.byTestId("airport-card")!.textContent).toContain("기상 이력을 불러오지 못했습니다(HTTP 502).");
+    expect(m.byTestId("airport-card")!.textContent).toContain("cafe0000cafe0000");
+    expect(m.byTestId("airport-card")!.textContent).not.toContain("HTTP 503");
+    expect(m.byTestId("airport-card")!.textContent).not.toContain("feedface0000beef");
     await m.render(m.React.createElement(AirportCard, { icao: "RKPC" }));
     await m.settle();
     expect(m.byTestId("airport-card")!.textContent).toContain("RKPC Intl");
-    expect(m.byTestId("error-note")).toBeNull();
+    expect(m.byTestId("airport-card-error")).toBeNull();
   });
 });

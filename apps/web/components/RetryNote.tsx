@@ -3,7 +3,8 @@ import { ApiError } from "@/lib/api";
 import type { AutoRetry } from "@/lib/use-retry-after";
 
 /**
- * 한 자원 화면(공항 기상 이력 · 알림 근거)의 실패 아래: 자동 다시 받기(503 + Retry-After 에 한 번 — lib/use-retry-after)의 상태와 '다시 시도' 단추(QA-1463).
+ * 한 자원 화면(공항 기상 이력 · 알림 근거)과 상황판 카드(공항 카드 · 공항 탭 목록 · 선박 상세 — IM-22)의 실패 아래: 자동 다시 받기(503 + Retry-After 에 한 번 —
+ * lib/use-retry-after)의 상태와 '다시 시도' 단추(QA-1463).
  * 다시 해도 같은 답인 실패(400 형식 · 404 없음)에는 단추를 두지 않는다. onRetry 는 단추가 사라지기 전에 초점을 옮길 곳을 정한다(부르는 쪽).
  */
 export function RetryNote({ error, auto, onRetry }: { error: unknown; auto: AutoRetry; onRetry: () => void }) {
