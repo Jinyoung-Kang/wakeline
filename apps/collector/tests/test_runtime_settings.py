@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import logging
+from types import SimpleNamespace
+
 from fakes import FakeRedis
 
+from wakeline_collector import runtime_settings
 from wakeline_collector.config import settings
 from wakeline_collector.runtime_settings import KEY, RuntimeSettings
 
@@ -112,3 +116,36 @@ async def test_region_radius_is_cut_to_the_provider_limit_from_redis_and_from_th
     rt = RuntimeSettings(FakeRedis())  # type: ignore[arg-type]
     await rt.refresh()
     assert rt.region[2] == 250
+
+
+async def test_refresh_failures_warn_once_a_minute_with_the_running_count_and_recovery_logs_one_info(monkeypatch, caplog):
+    """IM-26: Redis 장애 동안 region 작업(기본 10 s)이 주기마다 refresh 한다 — 실패 WARN 은 다른 Redis 도우미(budget · status · demand)처럼
+    60 s 에 한 줄(그동안 이어진 실패 수를 싣는다), 다시 읽히면 INFO 한 줄. 첫 실패 WARN 의 문구는 그대로다(로그 지문 — /logs 의 '해결' 표시)."""
+    clk = [0.0]  # 기동 직후처럼 작은 단조 시계 값에서도 첫 실패는 알린다
+    monkeypatch.setattr(runtime_settings, "time", SimpleNamespace(monotonic=lambda: clk[0]), raising=False)
+    caplog.set_level(logging.INFO, logger="settings")
+
+    def lines(level: int) -> list[str]:
+        return [x.getMessage() for x in caplog.records if x.name == "settings" and x.levelno == level]
+
+    r = FakeRedis()
+    await r.hset(KEY, mapping={"region_poll_s": "30"})
+    rt = RuntimeSettings(r)  # type: ignore[arg-type]
+    await rt.refresh()
+    r.down = True
+    for _ in range(6):  # t = 0, 10, … 50 s
+        await rt.refresh()
+        clk[0] += 10
+    assert lines(logging.WARNING) == ["settings refresh failed: ConnectionError"]
+    await rt.refresh()  # t = 60 s — 첫 WARN 뒤 60 s
+    warns = lines(logging.WARNING)
+    assert len(warns) == 2 and warns[1].startswith("settings refresh failed: ConnectionError — 7 failures in a row"), warns
+    assert rt.region_poll_s == 30  # 장애 동안 마지막 값
+    clk[0] += 10
+    r.down = False
+    await r.hset(KEY, mapping={"region_poll_s": "40"})
+    await rt.refresh()  # t = 70 s — 회복
+    await rt.refresh()  # 정상 읽기는 더 남기지 않는다
+    infos = lines(logging.INFO)
+    assert len(infos) == 1 and "recovered after 7 failure(s)" in infos[0], infos
+    assert len(lines(logging.WARNING)) == 2 and rt.region_poll_s == 40

@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import math
 import re
+import time
 from typing import Any, cast
 
 from redis.asyncio import Redis
@@ -18,6 +19,9 @@ from wakeline_collector.config import settings
 
 KEY = "wakeline:settings"
 log = logging.getLogger("settings")
+# 읽기 실패 WARN 은 이만큼에 한 줄 — 다른 Redis 도우미(budget · status · demand)와 같다. region 작업이 주기(5–120 s)마다 refresh 하므로
+# 전에는 Redis 장애 동안 분당 6–12줄이 찍혀 진짜 원인 줄을 가렸다(IM-26)
+WARN_EVERY_S = 60.0
 # 운영 API(SettingsService.validate)가 받는 범위와 같다 — 그 밖의 값은 가장 가까운 끝으로 자른다
 REGION_POLL_RANGE_S = (5, 120)
 GLOBAL_POLL_RANGE_S = (60, 3600)
@@ -74,12 +78,47 @@ class RuntimeSettings:
     def __init__(self, redis: Redis):
         self._r = redis
         self._cache: dict[str, str] = {}
+        self.errors = 0  # 읽기 실패 누적
+        self._streak = 0  # 마지막으로 읽은 뒤 이어진 실패 수(0 = 정상)
+        self._streak_since = 0.0  # 그 첫 실패의 단조 시각
+        # 마지막 WARN 의 단조 시각(None = 아직 없음 — 기동 직후의 작은 시계 값에서도 첫 실패는 알린다)
+        self._warned_at: float | None = None
 
     async def refresh(self) -> None:
         try:
-            self._cache = cast(dict[str, str], await self._r.hgetall(KEY)) or {}
+            values = cast(dict[str, str], await self._r.hgetall(KEY)) or {}
         except Exception as e:  # noqa: BLE001 — Redis 장애 시 마지막 값 유지
+            self._failed(e)
+            return
+        self._cache = values
+        if self._streak:
+            log.info(
+                "settings refresh recovered after %d failure(s) over %.0f s — using the Redis values again",
+                self._streak,
+                time.monotonic() - self._streak_since,
+            )
+            self._streak = 0
+
+    def _failed(self, e: Exception) -> None:
+        """실패는 모두 세고, WARN 은 WARN_EVERY_S 에 한 줄. 이어진 실패의 첫 줄은 예전 문구 그대로(로그 지문이 같아야 /logs 의 '해결' 표시가
+        풀리지 않는다), 그 뒤 줄은 이어진 실패 수와 시간을 싣는다. 억제된 실패는 다음 WARN 이나 회복 INFO 의 수에 들어간다."""
+        self.errors += 1
+        self._streak += 1
+        now = time.monotonic()
+        if self._streak == 1:
+            self._streak_since = now
+        if self._warned_at is not None and now - self._warned_at < WARN_EVERY_S:
+            return
+        self._warned_at = now
+        if self._streak == 1:
             log.warning("settings refresh failed: %s", type(e).__name__)
+        else:
+            log.warning(
+                "settings refresh failed: %s — %d failures in a row over %.0f s, keeping the last values",
+                type(e).__name__,
+                self._streak,
+                now - self._streak_since,
+            )
 
     def _get(self, key: str, default: Any) -> Any:
         v = self._cache.get(key)
