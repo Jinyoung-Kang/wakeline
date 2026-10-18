@@ -203,6 +203,16 @@ public class ProblemAdvice {
     }
 
     /**
+     * 컨트롤러 밖(보안 필터 체인 — 이 advice 가 닿지 않는다)에서 저장소를 못 써 부르는 쪽이 503 + Retry-After 로 답할 때: 저장소를 못 쓰는 예외면
+     * {@link #unavailable} 과 같은 모양의 WARN 한 줄을 남기고 돌아온다. 그 밖의 예외(결함 — 문법 · 권한 · 코드)는 그대로 던진다 → 필터 밖으로 나가
+     * 컨테이너가 500 + ERROR(스택)로 남긴다('잠시 뒤 재시도' 503 에 숨기지 않는다 — IM-24, OpsSessionLifetimeFilter 의 자격 확인).
+     */
+    public static void answeredUnavailable(RuntimeException e, HttpServletRequest req) {
+        if (!isUnavailable(e)) throw e;
+        warnUnavailable(e, req, ANSWERED_503);
+    }
+
+    /**
      * 저장소를 못 써서 503 또는 DB 없이 답한 요청의 WARN 한 줄(스택 없음):
      * {원인} request_id=… path=… [query="…"] elapsed_ms=… [statement=… statement_limit_s=…] → {무엇으로 답했는지}: {예외 종류 ← 가장 안쪽 원인: 메시지}.
      */
