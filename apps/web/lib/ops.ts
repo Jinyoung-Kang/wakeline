@@ -526,6 +526,14 @@ export function providersNowMs(resp: unknown): number {
 }
 
 /**
+ * 수집기 heartbeat 해시(wakeline:collector — /ops/providers 의 collector) → 작업 heartbeat 시각 칩의 [필드, 값](해시 순서 그대로). 이름이 _at 으로
+ * 끝나는 필드 — 채우기 시각 둘(traffic_grid_fill_pass_at · _resume_at)은 채우기 줄(TrafficGridFill)이 뜻과 함께 보인다 — 칩으로 겹쳐 적지 않는다.
+ */
+export function jobHeartbeatEntries(collector: Record<string, unknown> | null | undefined): [string, unknown][] {
+  return Object.entries(collector ?? {}).filter(([k]) => k.endsWith("_at") && !k.startsWith("traffic_grid_fill_"));
+}
+
+/**
  * 공급자 해시(수집기 wakeline:provider:kma_radar — /ops/providers 가 그대로 싣는다)의 missing_* 문자열 → 기상청 내려받기 '파일 없음' 연속(lib/kr-radar
  * krMissing 과 같은 글자). 빈 값 = 닫힌 연속 · 다른 공급자 → null. 해시 값은 api 가 검증하지 않은 수집기 글자라 여기서 형식을 본다(틀리면 null).
  * nowMs = 서버 기준 지금(providersNowMs — 응답의 generated_at). 모르면 0 을 준다 — '확인 멈춤'을 판정하지 않는다(브라우저 시계로 짐작하지 않는다).
