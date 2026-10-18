@@ -192,6 +192,60 @@ class AlertStateMachineTest {
         assertThat(fsm.activeObserved()).hasSize(1);
     }
 
+    // ---------- 데이터 시각(IM-07): 위치 신선도 · 부재는 ref(마지막 스냅샷 시각)로, 사건 시각은 now 로 ----------
+
+    /**
+     * 장애 뒤 다시 온 region 스냅샷: 관측은 10 s 마다 끊김 없이 안쪽인데 전달이 150 s 늦었다(now = seen_at + 150 s, ref = 그 스냅샷 시각).
+     * 데이터 시각으로 재면 관측이 이어지므로 아무 사건도 없다. 같은 전달을 벽시계로 재면(ref 없는 step — 예전 동작) 세 번째에 LOST.
+     */
+    @Test void lateDeliveredObservations_areJudgedOnDataTime_noFalseLost() {
+        AlertStateMachine onData = new AlertStateMachine(ids::incrementAndGet);
+        AlertStateMachine onWall = new AlertStateMachine(ids::incrementAndGet);
+        for (AlertStateMachine fsm : List.of(onData, onWall)) {
+            stepObs(fsm, 1, true);
+            assertThat(types(stepObs(fsm, 2, true))).containsExactly(ENTERED);
+        }
+        List<AlertStateMachine.Event> data = new ArrayList<>(), wall = new ArrayList<>();
+        for (int i = 3; i <= 12; i++) {
+            AircraftState a = obs(i, true);
+            Instant now = a.seenAt().plusSeconds(150);
+            data.addAll(onData.step(hitsFor(a, true), List.of(), Map.of(HEX, a), now, a.seenAt(), cycle(i, 0, REGION)));
+            // 벽시계 판정: 관측 교차(observe(now))가 오래된 위치를 거르므로 hits 없음, region 피드도 벽시계로 끊김
+            wall.addAll(onWall.step(Map.of(), List.of(), Map.of(HEX, a), now, new AlertStateMachine.Cycle(i, 0, true, false, REGION)));
+        }
+        assertThat(data).isEmpty();
+        assertThat(onData.activeObserved()).singleElement().satisfies(al -> assertThat(al.enteredAt()).isEqualTo(NOW.plusSeconds(20)));
+        assertThat(types(wall)).containsExactly(LOST); // 고치기 전 엔진이 낸 거짓 신호 소실
+    }
+
+    /** 데이터 시각으로 재도, 피드는 이어지는데(ref 가 오름) 그 기체 위치만 60 s 넘게 멈추면 부재 — 얼어붙은 위치로 '안' 이 유지되지 않는다. */
+    @Test void stalePositionOnDataTime_countsAsAbsence() {
+        AlertStateMachine fsm = new AlertStateMachine(ids::incrementAndGet);
+        stepObs(fsm, 1, true);
+        stepObs(fsm, 2, true);
+        AircraftState frozen = obs(2, true); // seen_at = NOW+20 s 그대로
+        List<AlertStateMachine.Event> all = new ArrayList<>();
+        for (int v = 3; v <= 12; v++) {
+            Instant ref = NOW.plusSeconds(10L * v + 20);           // 그 region 스냅샷의 시각(데이터 시각으로 위치 나이 10·v s)
+            Instant now = ref.plusSeconds(150);                    // 전달은 늦었다 — 신선도에는 벽시계를 쓰지 않는다
+            all.addAll(fsm.step(hitsFor(frozen, true), List.of(), Map.of(HEX, frozen), now, ref, cycle(v, 0, REGION)));
+            if (v < 9) assertThat(all).as("v=%d position age on data time %d s", v, 10 * v).isEmpty();
+        }
+        assertThat(types(all)).containsExactly(LOST); // 나이 70 s(v=7)부터 부재 — region 스냅샷 3번째(v=9)에
+        assertThat(all.getFirst().alert().evidence()).containsEntry("absent_snapshots", 3).containsEntry("last_seen_at", NOW.plusSeconds(20).toString());
+    }
+
+    /** 모든 피드가 멈추면 데이터 시각도 멈춘다 — 벽시계가 몇 시간 흘러도(SIGMET 재판정만) 알림은 열린 채 그대로. */
+    @Test void allFeedsStopped_dataTimeFrozen_keepsAlertOpen() {
+        AlertStateMachine fsm = new AlertStateMachine(ids::incrementAndGet);
+        stepObs(fsm, 1, true);
+        stepObs(fsm, 2, true);
+        AircraftState last = obs(2, true);
+        for (int k = 0; k < 10; k++)
+            assertThat(fsm.step(hitsFor(last, true), List.of(), Map.of(HEX, last), NOW.plusSeconds(600 + k * 300L), last.seenAt(), cycle(2, 0, REGION))).isEmpty();
+        assertThat(fsm.activeObserved()).hasSize(1);
+    }
+
     @Test void airborneWithoutAltitude_isNotCountedAsOutside() {
         AlertStateMachine fsm = new AlertStateMachine(ids::incrementAndGet);
         stepObs(fsm, 1, true);

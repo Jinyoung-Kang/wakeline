@@ -19,6 +19,9 @@ import java.util.stream.Collectors;
  * 교차 판정(10.2절)과 진입 예측(10.3절). 순수 함수 — 상태는 AlertStateMachine 이 가진다. 구역은 {@link Zone}(SIGMET · 공역 — ADR-035).
  * 판정 조건: 수평(폴리곤 안) ∧ 고도대(base ≤ alt ≤ top) ∧ 유효시간. 지상 항공기는 제외(VA·TC 는 base 0 인 경우가 많음).
  * 관측·예측 모두 '현재' 로 볼 수 있는 위치(AircraftState.fresh: opensky 300 s, 그 외 60 s 이내)만 쓴다.
+ * <p>시각은 둘이다(IM-07): 위치가 '현재' 인가는 <b>데이터 시각</b> ref(엔진이 준다 — 판정 뷰의 마지막 스냅샷 fetched_at, now 를 넘지 않음)로,
+ * 구역 유효시간 · 예측의 dead reckoning · ETA 는 <b>판정 시각</b> now 로 잰다. 장애 뒤 늦게 다시 온 스냅샷의 위치는 벽시계로는 오래됐어도
+ * 그 스냅샷 시각에는 현재다. ref 를 받지 않는 메서드는 ref = now(예전 동작).
  */
 public final class IntersectionEngine {
     public static final int PREDICT_STEPS = 10;
@@ -41,9 +44,14 @@ public final class IntersectionEngine {
 
     /** 관측 교차: hex → hits. 병렬 스트림(인덱스 질의는 스레드 안전). 오래된 위치는 관측으로 쓰지 않는다. */
     public static Map<String, List<Hit>> observe(Collection<AircraftState> states, ZoneIndex index, Instant now) {
+        return observe(states, index, now, now);
+    }
+
+    /** 관측 교차 — 위치 신선도는 데이터 시각 ref 로, 구역 유효시간은 now 로 본다. */
+    public static Map<String, List<Hit>> observe(Collection<AircraftState> states, ZoneIndex index, Instant now, Instant ref) {
         if (index.size() == 0) return Map.of();
         return states.parallelStream()
-                .filter(a -> !a.onGround() && a.altFt() != null && a.fresh(now))
+                .filter(a -> !a.onGround() && a.altFt() != null && a.fresh(ref))
                 .flatMap(a -> index.queryPoint(a.lon(), a.lat()).stream()
                         .filter(it -> it.zone().validAt(now) && it.zone().bandContains(a.altFt()))
                         .map(it -> new Hit(a.hex(), it.zone(), it.polygonIndex(), a.altFt())))
@@ -60,7 +68,10 @@ public final class IntersectionEngine {
         public SigmetRecord sigmet() { return zone instanceof SigmetRecord s ? s : null; }
     }
 
-    /** 이 항공기를 예측할 수 있는가. predict() 의 대상 선정과 WS "selected" 가 같은 규칙을 쓴다. */
+    /**
+     * 이 항공기를 예측할 수 있는가. predict() 의 대상 선정과 WS "selected" 가 같은 규칙을 쓴다.
+     * @param now 위치 신선도를 재는 시각 — predict() 는 데이터 시각 ref 를, WS 는 판정 시각(벽시계)을 넘긴다
+     */
     public static PredictionAvailability availability(AircraftState a, Instant now, boolean turning) {
         if (a == null) return PredictionAvailability.unavailable(null);
         if (!a.fresh(now)) return PredictionAvailability.unavailable(PredictionAvailability.STALE);
@@ -80,10 +91,22 @@ public final class IntersectionEngine {
      */
     public static List<Prediction> predict(Collection<AircraftState> states, ZoneIndex index, Instant now,
                                            Map<String, Set<String>> excluded, Set<String> turning) {
+        return predict(states, index, now, now, excluded, turning);
+    }
+
+    /**
+     * 예측 — 대상(위치 신선도)은 데이터 시각 ref 로 고르고, 전진 · 궤적 · ETA 는 now 로 잰다(계약: eta_at = judged_at + eta_s).
+     * 진입 시각은 ref 부터 10분(PREDICT_HORIZON_S) 안이어야 한다: 데이터가 now 보다 늦은 동안(재전송 · 항공기 피드 전체 장애) 마지막 위치를
+     * now 까지 전진시킨 만큼 외삽이 길어지지 않게 — 외삽 상한은 예전과 같이 '신선도 기준 + 10분'(관측 시각부터)이다. ref = now 면 예전과 같다.
+     */
+    public static List<Prediction> predict(Collection<AircraftState> states, ZoneIndex index, Instant now, Instant ref,
+                                           Map<String, Set<String>> excluded, Set<String> turning) {
         if (index.size() == 0) return List.of();
+        Instant horizonEnd = ref.plusSeconds(PREDICT_HORIZON_S);
         return states.parallelStream()
-                .filter(a -> availability(a, now, turning.contains(a.hex())).available())
+                .filter(a -> availability(a, ref, turning.contains(a.hex())).available())
                 .flatMap(a -> predictOne(a, index, now, excluded.getOrDefault(a.hex(), Set.of())).stream())
+                .filter(p -> !p.etaAt().isAfter(horizonEnd))
                 .toList();
     }
 

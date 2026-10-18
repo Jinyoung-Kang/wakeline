@@ -161,6 +161,186 @@ class EngineServiceTest {
         assertThat(engine.activeAlerts("observed")).extracting(dev.wakeline.weather.core.Alert::sigmetId).containsExactly("K");
     }
 
+    // ---------- 늦게 전달된 스냅샷(IM-07): 수집기 로컬 큐가 장애 뒤 원래 fetched_at 그대로 다시 보낸다 ----------
+
+    /** 판정 시각(now)을 시험이 정하는 시계. */
+    static final class MutableClock extends java.time.Clock {
+        Instant now;
+        MutableClock(Instant now) { this.now = now; }
+        @Override public java.time.ZoneId getZone() { return java.time.ZoneOffset.UTC; }
+        @Override public java.time.Clock withZone(java.time.ZoneId zone) { return this; }
+        @Override public Instant instant() { return now; }
+    }
+
+    static final Instant P0 = Instant.parse("2026-10-18T03:00:00Z");
+
+    /** 36N 에서 동쪽 450 kt 등속(P0 에 경도 lon0) — 보고 위치가 dead reckoning 과 맞는 실제 궤적. */
+    static AircraftState moving(String hex, double lon0, Instant seenAt) {
+        double[] p = DeadReckoning.predict(36, lon0, 90, 450, (seenAt.toEpochMilli() - P0.toEpochMilli()) / 1000.0);
+        return at(hex, p[0], p[1], seenAt, "adsb_lol");
+    }
+
+    /** StreamConsumer.aircraft()(region · global)와 같은 길: fetched_at 단조 가드 → replaceIfNewer → SnapshotUpdated. 받아들이면 true. */
+    static boolean deliver(SnapshotStore store, EngineService e, String scope, Instant fetchedAt, AircraftState... states) {
+        Map<String, AircraftState> m = new HashMap<>();
+        for (AircraftState a : states) m.put(a.hex(), a);
+        if (!fetchedAt.isAfter(store.current(scope).fetchedAt())) return false;
+        Snapshot s = new Snapshot(store.nextVersion(), scope, "adsb_lol", fetchedAt, fetchedAt, "-", Map.copyOf(m));
+        Snapshot prev = store.replaceIfNewer(s);
+        if (prev == null) return false;
+        e.onSnapshot(new AircraftEvents.SnapshotUpdated(prev, s));
+        return true;
+    }
+
+    /**
+     * IM-07 재현: Redis 가 100 s 멈춘 동안 수집기는 관심 지역을 10 s 마다 조회해 로컬 큐에 두고, 회복 뒤 원래 fetched_at 그대로 순서대로 보낸다.
+     * 예전에는 판정이 벽시계(now)로 위치 신선도를 봐서, 다시 온 앞쪽 스냅샷(위치 나이 91 · 81 · 71 s)마다 안에 있던 기체를 부재로 세어
+     * R3 에서 LOST(signal_lost)로 닫고 R6 에서 새 id 로 다시 ENTERED 했다 — 예측도 R1 에서 지워졌다가 R5 에서 새 id 로 다시 났다.
+     * 끊김 없이 관측된 한 번의 통과는 알림 하나다.
+     */
+    @Test void replayedSnapshotsAfterAnOutage_keepOneAlertPerPassage() {
+        MutableClock clock = new MutableClock(P0.minusSeconds(30));
+        SnapshotStore store = new SnapshotStore();
+        EngineService e = new EngineService(store, sigmets, events::add, new SimpleMeterRegistry(), null, clock);
+        var st = sigmets.replace(P0.minusSeconds(60), "awc_isigmet", Map.of("A", sig("A", P0.minusSeconds(3600), P0.plusSeconds(3 * 3600))));
+        e.onSigmets(new WeatherEvents.SigmetsUpdated(st));
+        double xLon = 126.5, yLon = TestData.westOfBox(37.5); // X: 경보 안 · Y: 서쪽 37.5 NM(450 kt 로 P0+5분에 진입)
+        // 장애 전: 실시간 전달(수신 = fetched_at + 0.5 s, 위치 = fetched_at − 1 s)
+        for (int i = -2; i <= 0; i++) {
+            Instant f = P0.plusSeconds(10L * i);
+            clock.now = f.plusMillis(500);
+            assertThat(deliver(store, e, "region", f, moving("a0000x", xLon, f.minusSeconds(1)), moving("a0000y", yLon, f.minusSeconds(1)))).isTrue();
+        }
+        assertThat(alertEvents()).containsExactly(AlertStateMachine.EventType.PREDICTED, AlertStateMachine.EventType.ENTERED);
+        long enteredId = e.activeAlerts("observed").getFirst().id();
+        long predictedId = e.activeAlerts("predicted").getFirst().id();
+        // 100 s 장애 → 회복: 큐의 R1..R10(fetched P0+10 … P0+100 s)이 1 초 안에 순서대로 온다
+        clock.now = P0.plusSeconds(100).plusMillis(70);
+        for (int i = 1; i <= 10; i++) {
+            Instant f = P0.plusSeconds(10L * i);
+            clock.now = clock.now.plusMillis(10);
+            assertThat(deliver(store, e, "region", f, moving("a0000x", xLon, f.minusSeconds(1)), moving("a0000y", yLon, f.minusSeconds(1)))).isTrue();
+        }
+        // 다시 실시간
+        for (int i = 11; i <= 12; i++) {
+            Instant f = P0.plusSeconds(10L * i);
+            clock.now = f.plusMillis(500);
+            assertThat(deliver(store, e, "region", f, moving("a0000x", xLon, f.minusSeconds(1)), moving("a0000y", yLon, f.minusSeconds(1)))).isTrue();
+        }
+        assertThat(alertEvents()).as("one passage = one alert: no LOST + re-ENTERED, no prediction cleared + re-PREDICTED")
+                .containsExactly(AlertStateMachine.EventType.PREDICTED, AlertStateMachine.EventType.ENTERED);
+        assertThat(e.activeAlerts("observed")).singleElement().satisfies(a -> assertThat(a.id()).isEqualTo(enteredId));
+        assertThat(e.activeAlerts("predicted")).singleElement().satisfies(a -> assertThat(a.id()).isEqualTo(predictedId));
+    }
+
+    /**
+     * IM-07: 선회 판정도 같은 데이터 시각 — 다시 온 스냅샷의 선회 기체를 이력에서 빼면(벽시계로 오래됐다고) 선회가 아닌 것으로 보여
+     * 예측이 났다가 벽시계로 신선한 스냅샷에서 다시 지워졌다.
+     */
+    @Test void replayedSnapshots_turningAircraftStaysUnpredicted() {
+        MutableClock clock = new MutableClock(P0.minusSeconds(30));
+        SnapshotStore store = new SnapshotStore();
+        EngineService e = new EngineService(store, sigmets, events::add, new SimpleMeterRegistry(), null, clock);
+        e.onSigmets(new WeatherEvents.SigmetsUpdated(sigmets.replace(P0.minusSeconds(60), "awc_isigmet",
+                Map.of("A", sig("A", P0.minusSeconds(3600), P0.plusSeconds(3 * 3600))))));
+        double lon = TestData.westOfBox(30);
+        double[] tracks = {60, 75, 90}; // 장애 전 세 관측에서 30° 선회(세 번째에 선회 판정) — 그 뒤 동쪽(경보 쪽)으로
+        int before = 0;
+        for (int i = -2; i <= 10; i++) {
+            Instant f = P0.plusSeconds(10L * i);
+            clock.now = i <= 0 ? f.plusMillis(500) : P0.plusSeconds(100).plusMillis(70 + 10L * i); // i ≥ 1: 100 s 장애 뒤 재전송
+            Instant seen = f.minusSeconds(1);
+            double track = i <= 0 ? tracks[i + 2] : 90;
+            deliver(store, e, "region", f, new AircraftState("a0000t", null, null, null, null, 36, lon + 0.002 * i, 17000, 450.0, track, 0.0,
+                    false, null, seen, "adsb_lol", seen, 0, false));
+            if (i == 0) {
+                assertThat(e.activeAlerts("predicted")).as("turning: prediction withheld").isEmpty();
+                before = alertEvents().size();
+            }
+        }
+        assertThat(e.predictionAvailability("a0000t").reason()).isEqualTo(PredictionAvailability.TURNING);
+        assertThat(alertEvents().subList(before, alertEvents().size())).as("a turning aircraft is not predicted while the replay catches up").isEmpty();
+    }
+
+    /** IM-07: 스코프 피드 끊김은 데이터 시각으로 — 모든 스코프가 함께 늦게 오면(재전송) 끊김이 아니고, 다른 스코프보다 뒤처질 때 끊김이다. */
+    @Test void viewScopes_feedStaleIsMeasuredOnDataTime() {
+        SnapshotStore store = new SnapshotStore();
+        store.replace(new Snapshot(store.nextVersion(), "region", "adsb_lol", P0, P0, "-", Map.of()));
+        store.replace(new Snapshot(store.nextVersion(), "global", "opensky", P0.plusSeconds(100), P0, "-", Map.of()));
+        Instant now = P0.plusSeconds(500); // 벽시계로는 둘 다 끊김
+        var view = store.view(now);
+        var sc = new EngineService.ViewScopes(view, now, EngineService.dataTime(view, now));
+        assertThat(sc.feedStale("region")).as("region 100 s behind global").isTrue();
+        assertThat(sc.feedStale("global")).as("global is the data time").isFalse();
+        assertThat(sc.feedStale("focus")).as("never received").isTrue();
+        assertThat(new EngineService.ViewScopes(view, now, now).feedStale("global")).as("on wall clock").isTrue();
+    }
+
+    /**
+     * IM-07: 데이터 시각으로 재도 피드는 살아 있는데 기체 위치만 멈추면(공급자가 같은 옛 위치를 계속 보고) 예전처럼 신호 소실이다 —
+     * 다른 스냅샷이 데이터 시각을 올리므로 위치가 60 s 넘게 뒤처진 뒤 그 스코프의 새 스냅샷 3번에 LOST.
+     */
+    @Test void frozenPositionWhileTheFeedIsLive_stillClosesAsLost() {
+        MutableClock clock = new MutableClock(P0.minusSeconds(30));
+        SnapshotStore store = new SnapshotStore();
+        EngineService e = new EngineService(store, sigmets, events::add, new SimpleMeterRegistry(), null, clock);
+        e.onSigmets(new WeatherEvents.SigmetsUpdated(sigmets.replace(P0.minusSeconds(60), "awc_isigmet",
+                Map.of("A", sig("A", P0.minusSeconds(3600), P0.plusSeconds(3 * 3600))))));
+        for (int i = -2; i <= 12; i++) {
+            Instant f = P0.plusSeconds(10L * i);
+            clock.now = f.plusMillis(500);
+            Instant seen = i <= 0 ? f.minusSeconds(1) : P0.minusSeconds(1); // i ≥ 1: 위치가 P0−1 s 에 멈춤
+            deliver(store, e, "region", f, moving("a0000x", 126.5, seen));
+        }
+        assertThat(alertEvents()).containsExactly(AlertStateMachine.EventType.ENTERED, AlertStateMachine.EventType.LOST);
+        var lost = events.stream().filter(x -> x instanceof EngineEvents.AlertsChanged).flatMap(x -> ((EngineEvents.AlertsChanged) x).events().stream())
+                .filter(x -> x.type() == AlertStateMachine.EventType.LOST).findFirst().orElseThrow().alert();
+        assertThat(lost.evidence()).containsEntry("last_seen_at", P0.minusSeconds(1).toString()).containsEntry("absent_snapshots", 3);
+        assertThat(lost.leftAt()).isEqualTo(P0.plusSeconds(80).plusMillis(500)); // 위치 나이 61 s(i=6) 부터 region 스냅샷 3번째(i=8), 판정 시각
+    }
+
+    /**
+     * IM-07: 항공기 피드가 모두 멈추고(데이터 시각이 멈춤) SIGMET 만 계속 오면 — 열린 관측 알림은 그대로(모든 피드가 멈추면 바꾸지 않는다),
+     * 멈춘 위치를 벽시계까지 전진시켜 새 예측을 만들지 않는다(진입은 데이터 시각부터 10분 안만). 예측 진입 시각이 지난 예측은 예전처럼 지운다.
+     */
+    @Test void aircraftFeedsStopped_sigmetRejudgement_keepsTheAlert_andPredictsNothingFromFrozenPositions() {
+        MutableClock clock = new MutableClock(P0.minusSeconds(30));
+        SnapshotStore store = new SnapshotStore();
+        EngineService e = new EngineService(store, sigmets, events::add, new SimpleMeterRegistry(), null, clock);
+        Map<String, SigmetRecord> set = Map.of("A", sig("A", P0.minusSeconds(3600), P0.plusSeconds(3 * 3600)));
+        e.onSigmets(new WeatherEvents.SigmetsUpdated(sigmets.replace(P0.minusSeconds(60), "awc_isigmet", set)));
+        // X: 안 · Y: 서쪽 37.5 NM(5분 뒤 진입 예측) · Z: 서쪽 120 NM(16분 — 10분 지평 밖이라 예측 없음)
+        for (int i = -2; i <= 0; i++) {
+            Instant f = P0.plusSeconds(10L * i);
+            clock.now = f.plusMillis(500);
+            deliver(store, e, "region", f, moving("a0000x", 126.5, f.minusSeconds(1)), moving("a0000y", TestData.westOfBox(37.5), f.minusSeconds(1)),
+                    moving("a0000z", TestData.westOfBox(120), f.minusSeconds(1)));
+        }
+        assertThat(alertEvents()).containsExactly(AlertStateMachine.EventType.PREDICTED, AlertStateMachine.EventType.ENTERED);
+        long enteredId = e.activeAlerts("observed").getFirst().id();
+        // 15분 동안 항공기 스냅샷 없음 → 새 SIGMET 세트로 재판정(벽시계로 전진하면 Z 는 7.5 NM 앞, Y 는 이미 안)
+        clock.now = P0.plusSeconds(900);
+        e.onSigmets(new WeatherEvents.SigmetsUpdated(sigmets.replace(P0.plusSeconds(900), "awc_isigmet", set)));
+        assertThat(alertEvents()).containsExactly(AlertStateMachine.EventType.PREDICTED, AlertStateMachine.EventType.ENTERED,
+                AlertStateMachine.EventType.PREDICTION_CLEARED);
+        assertThat(e.activeAlerts("observed")).singleElement().satisfies(a -> assertThat(a.id()).isEqualTo(enteredId));
+        assertThat(e.activeAlerts("predicted")).isEmpty();
+    }
+
+    /** 데이터 시각 = 스코프 fetched_at 최댓값(EPOCH = 받은 적 없음은 빼고), now 를 넘지 않는다. 받은 것이 없으면 now. */
+    @Test void dataTime_isTheLatestScopeFetchedAt_cappedAtNow() {
+        SnapshotStore store = new SnapshotStore();
+        assertThat(EngineService.dataTime(store.view(P0), P0)).isEqualTo(P0);
+        store.replace(new Snapshot(store.nextVersion(), "region", "adsb_lol", P0, P0, "-", Map.of()));
+        store.replace(new Snapshot(store.nextVersion(), "global", "opensky", P0.plusSeconds(5), P0, "-", Map.of()));
+        assertThat(EngineService.dataTime(store.view(P0.plusSeconds(100)), P0.plusSeconds(100))).isEqualTo(P0.plusSeconds(5));
+        assertThat(EngineService.dataTime(store.view(P0.plusSeconds(2)), P0.plusSeconds(2))).isEqualTo(P0.plusSeconds(2));
+        Snapshot f = new Snapshot(store.nextVersion(), "focus", "adsb_fi", P0.plusSeconds(30), P0, "-",
+                Map.of("e00009", at("e00009", 36, 127, P0.plusSeconds(29), "adsb_fi")));
+        store.applyFocus(f);
+        assertThat(EngineService.dataTime(store.view(P0.plusSeconds(100)), P0.plusSeconds(100))).isEqualTo(P0.plusSeconds(30));
+    }
+
     /** API-CONC-2: 판정 주기의 예외는 엔진 안에서 가둔다 — 이벤트 발행자(스트림 소비)로 새지 않고, 세고, 다음 주기는 정상. */
     @Test void cycleFailure_isContainedAndCounted() {
         java.util.concurrent.atomic.AtomicBoolean explode = new java.util.concurrent.atomic.AtomicBoolean(true);

@@ -39,6 +39,12 @@ import java.util.stream.Collectors;
  *   <li>확정 전(안쪽 1회) 트랙은 바깥 관측 1회에 버리고, 부재 3번이면 버린다.</li>
  * </ul>
  * 예측은 처음 한 번 PREDICTED, 예상 진입 시각(eta_at)이 30 s 이상 바뀔 때만 PREDICTION_UPDATED, 사라지면 PREDICTION_CLEARED.
+ *
+ * <p>두 시각(IM-07): 기체 위치가 '현재 관측' 인가(위 신선도 기준)와 스코프 피드 끊김(Scopes.feedStale · Cycle 의 *FeedStale)은
+ * <b>데이터 시각</b> ref 로 본다 — 엔진이 판정 뷰의 마지막 스냅샷 fetched_at(now 를 넘지 않음)을 준다. 장애 뒤 수집기 큐가 원래 fetched_at
+ * 그대로 다시 보낸 스냅샷도 그 시각의 관측이므로, 다시 온 메시지마다 부재로 세어 거짓 LOST 를 내지 않는다. 구역 종료(만료 · 철회 — ended)
+ * 와 알림의 사건 시각(entered_at · left_at · judged_at)은 <b>판정 시각</b> now 로 둔다(피드 장애 중에도 만료된 경보의 알림은 닫힌다).
+ * ref 를 받지 않는 step 은 ref = now(예전 동작).
  */
 public final class AlertStateMachine {
     public static final int ENTER_CONFIRM = 2;
@@ -74,7 +80,7 @@ public final class AlertStateMachine {
         String sourceOf(String hex);
         /** 스코프의 최신 메시지 버전(부재 계수 표식 — 하나의 단조 카운터에서 나온다). */
         long version(String scope);
-        /** 스코프 피드가 끊겼는가(새 메시지가 기준 시간 넘게 없음). */
+        /** 스코프 피드가 끊겼는가(새 메시지가 기준 시간 넘게 없음 — 데이터 시각 ref 기준: 다른 스코프가 ref 를 올렸는데 이 스코프만 뒤처짐). */
         boolean feedStale(String scope);
         /** 그 출처가 아직 이 hex 를 조회 대상으로 두는가(focus: 임대에 있음 · hot: 셀이 살아 있음 · region/global: 항상). */
         boolean covering(String source, String hex);
@@ -82,7 +88,7 @@ public final class AlertStateMachine {
 
     /**
      * 한 판정 주기의 스냅샷 맥락. regionVersion/globalVersion = 각 스코프 현재 스냅샷 버전(하나의 단조 카운터에서 나온다),
-     * *FeedStale = 그 스코프에 새 스냅샷이 끊겼는가(region 60 s · global 300 s), regionHexes = 관심 지역 스냅샷에 있는 hex.
+     * *FeedStale = 그 스코프에 새 스냅샷이 끊겼는가(데이터 시각 기준 region 60 s · global 300 s), regionHexes = 관심 지역 스냅샷에 있는 hex.
      * scopes 가 있으면(엔진) 스코프 판단·부재 표식은 그것을 따른다 — 병합 뷰는 신선도 우선이라 region 에 있어도 다른 스코프의 관측일 수 있다(DH-2).
      */
     public record Cycle(long regionVersion, long globalVersion, boolean regionFeedStale, boolean globalFeedStale, Set<String> regionHexes,
@@ -205,6 +211,15 @@ public final class AlertStateMachine {
 
     public List<Event> step(Map<String, List<IntersectionEngine.Hit>> hits, List<IntersectionEngine.Prediction> predictions,
                             Map<String, AircraftState> states, Instant now, Cycle cycle) {
+        return step(hits, predictions, states, now, now, cycle);
+    }
+
+    /**
+     * 한 판정 주기. now = 판정 시각(구역 종료 · 사건 시각), ref = 데이터 시각(위치가 '현재 관측' 인가 — ref ≤ now).
+     * cycle 의 피드 끊김 판단도 같은 ref 로 만든 것이어야 한다.
+     */
+    public List<Event> step(Map<String, List<IntersectionEngine.Hit>> hits, List<IntersectionEngine.Prediction> predictions,
+                            Map<String, AircraftState> states, Instant now, Instant ref, Cycle cycle) {
         List<Event> out = new ArrayList<>();
         Map<Key, IntersectionEngine.Hit> insideNow = new HashMap<>();
         for (List<IntersectionEngine.Hit> hs : hits.values())
@@ -223,7 +238,7 @@ public final class AlertStateMachine {
                 continue;
             }
             AircraftState a = states.get(k.hex());
-            if (a != null && a.fresh(now)) {
+            if (a != null && a.fresh(ref)) {
                 t.scope = cycle.scopeOf(k.hex());
                 t.source = cycle.sourceOf(k.hex());
                 t.absent = 0;
@@ -260,7 +275,7 @@ public final class AlertStateMachine {
                 // 공중인데 고도 미보고: 판정할 수 없는 관측 — 안/밖 어느 쪽으로도 세지 않는다
                 continue;
             }
-            // 관측 없음(스냅샷에서 사라짐 또는 위치가 오래됨): 그 기체 스코프의 새 스냅샷마다 1회
+            // 관측 없음(스냅샷에서 사라짐 또는 위치가 데이터 시각보다 오래됨): 그 기체 스코프의 새 스냅샷마다 1회
             long m = cycle.absenceMarker(t.scope);
             if (m > t.absenceMarker) {
                 t.absent++;
