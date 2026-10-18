@@ -26,8 +26,19 @@ K6_IMAGE := grafana/k6:2.3.0@sha256:9c2dee7f8ed74d317e4027c06a10f169b625638189de
 NET_PREFIX := $(or $(WAKELINE_NET_PREFIX),10.77.0)
 BENCH_API := http://$(NET_PREFIX).30:8000
 BENCH_ORIGIN ?= http://localhost:$(or $(WAKELINE_PORT),8700)
+# IM-28: AWS 배포 호스트(.env 에 RDS_HOST 값이 있다 — .env.aws.example · ADR-039)에서는 스택을 다시 만들거나 멈추거나 그 DB 를 만지는 대상을 막는다.
+# 이 Makefile 의 compose 호출은 compose.yml 하나라, 같은 프로젝트(name: wakeline)를 AWS 덧붙임 없이 다시 만들어 RDS 대신 빈 로컬 db 를 띄운다 —
+# 공개 Origin · realip · 공개 데모 플래그도 빠지고, 그동안 받은 자료는 로컬 db 에 쌓인 채 스트림이 ACK 되어 RDS 에 영구 공백이 남는다.
+# RDS_HOST 는 있는지만 보고 값은 출력하지 않는다. 레시피를 펼칠 때 멈추므로 make -n 도 같다(infra/tests AwsHostGuardTest).
+# init · ps · logs · ops-user · airspace-import(exec — 다시 만들지 않는다) · 시험 대상은 그대로 쓴다. GUARD_ENV_FILE 은 시험용(기본 .env).
+GUARD_ENV_FILE ?= .env
+ON_AWS_HOST := $(shell [ -f '$(GUARD_ENV_FILE)' ] && grep -qE '^[[:space:]]*RDS_HOST=[^[:space:]\#]' '$(GUARD_ENV_FILE)' && echo 1)
+AWS_HOST_GUARD = $(if $(ON_AWS_HOST),$(error 이 호스트는 AWS 배포본이다(.env 에 RDS_HOST) — make $(MAKECMDGOALS) 는 AWS 덧붙임 없이 로컬 구성으로 스택을 다시 만든다. ADR-039 의 명령을 쓴다: docker compose -f infra/compose.yml -f infra/compose.aws.yml --env-file .env …))
 
-.PHONY: help init up down ps logs build airspace-import ops-user test test-api test-collector test-collector-db test-web test-infra infra-docker-test security contract contract-rest ws-samples readme-images e2e demo demo-down bench bench-edge measure-ais db-superuser-local-only backup restore rotate-db-passwords fixtures clean
+.PHONY: aws-host-guard help init up down ps logs build airspace-import ops-user test test-api test-collector test-collector-db test-web test-infra infra-docker-test security contract contract-rest ws-samples readme-images e2e demo demo-down bench bench-edge measure-ais db-superuser-local-only backup restore rotate-db-passwords fixtures clean
+
+aws-host-guard:
+	@:$(AWS_HOST_GUARD)
 
 help: ## 명령 목록
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
@@ -35,14 +46,14 @@ help: ## 명령 목록
 init: ## .env 생성(소유자 전용 600) + 빠진 내부 비밀값만 생성 (외부 키는 직접 입력)
 	@python3 tools/init_env.py
 
-up: init ## 전체 스택 기동 (상시 7 컨테이너 + 일회성 migrate) → http://localhost:8700
+up: aws-host-guard init ## 전체 스택 기동 (상시 7 컨테이너 + 일회성 migrate) → http://localhost:8700
 	$(COMPOSE) up -d --build
 	@echo "Wakeline → http://localhost:8700   (ops: http://localhost:8700/ops)"
 
-down: init ## 중지 (데이터 보존)
+down: aws-host-guard init ## 중지 (데이터 보존)
 	$(COMPOSE) down
 
-clean: init ## 중지 + 볼륨 삭제 (데이터 초기화!)
+clean: aws-host-guard init ## 중지 + 볼륨 삭제 (데이터 초기화!)
 	$(COMPOSE) down -v
 
 ps: init ## 컨테이너 상태
@@ -51,7 +62,7 @@ ps: init ## 컨테이너 상태
 logs: init ## 로그 (예: make logs s=api · make logs s=ais · 여러 개: s="api ais")
 	$(COMPOSE) logs -f --tail=200 $(s)
 
-build: init ## 이미지만 빌드
+build: aws-host-guard init ## 이미지만 빌드
 	$(COMPOSE) build
 
 # 비밀번호는 명령행(argv — ps 로 누구나 볼 수 있다)이나 환경변수로 넘기지 않고 stdin 한 줄로 넘긴다(계약 §7, SEC-13).
@@ -122,7 +133,7 @@ readme-images: ## README 그림 내보내기 — 설명서 캡처(apps/web/publi
 	cd apps/web && node scripts/readme-images.mjs $(if $(dry),--dry-run,)
 
 # 실패하면 스택을 지우기 전에 상태·로그를 남긴다(CI 에서 원인을 볼 수 있게). E2E_KEEP=1 이면 스택을 남긴다.
-e2e: init ## 격리된 fixture 스택(8701)에서 Playwright E2E → 끝나면 스택·볼륨 삭제. 개발 스택(8700)은 건드리지 않는다
+e2e: aws-host-guard init ## 격리된 fixture 스택(8701)에서 Playwright E2E → 끝나면 스택·볼륨 삭제. 개발 스택(8700)은 건드리지 않는다
 	@rc=0; \
 	if ! $(ISO) up -d --build --wait; then \
 	  echo "격리 스택 기동 실패 — 상태·로그:"; $(ISO) ps -a; $(ISO) logs --no-color --tail=150; rc=1; \
@@ -135,17 +146,17 @@ e2e: init ## 격리된 fixture 스택(8701)에서 Playwright E2E → 끝나면 �
 	if [ -z "$$E2E_KEEP" ]; then $(ISO) down -v --remove-orphans >/dev/null 2>&1; fi; \
 	exit $$rc
 
-demo: init ## 외부 호출 없는 fixture 데모 스택 → http://localhost:8701 (make demo-down 으로 삭제)
+demo: aws-host-guard init ## 외부 호출 없는 fixture 데모 스택 → http://localhost:8701 (make demo-down 으로 삭제)
 	$(ISO) up -d --build --wait
 	$(AIRSPACE_FIXTURE_IMPORT)
 	@echo "demo (fixture) → http://localhost:8701"
 
-demo-down: init ## 데모 스택·볼륨 삭제
+demo-down: aws-host-guard init ## 데모 스택·볼륨 삭제
 	$(ISO) down -v --remove-orphans
 
 # 측정 동안만 api 의 IP 제한·연결 상한을 올린다. 복원은 trap 으로 — k6 실패·Ctrl-C·kill·docker 오류 어느 경우든 .env 값으로 되돌린다(SEC-14).
 # WS 는 api 가 명시한 Origin 목록만 받는다 → 개발 스택의 허용 Origin(BENCH_ORIGIN)을 보낸다.
-bench: init ## k6 부하 시험 — api 층 직접 측정(측정 동안만 IP 제한·연결 상한 상향, 끝나면·중단돼도 원복). SHIPS=1 이면 선박 레이어도. 결과: perf/results/
+bench: aws-host-guard init ## k6 부하 시험 — api 층 직접 측정(측정 동안만 IP 제한·연결 상한 상향, 끝나면·중단돼도 원복). SHIPS=1 이면 선박 레이어도. 결과: perf/results/
 	@ts=$$(date -u +%Y%m%dT%H%M%SZ); rc=1; rc2=1; \
 	restore() { echo "restoring rate limits (.env values)…"; $(COMPOSE) up -d --wait api >/dev/null 2>&1 || echo "경고: api 원복 실패 — 'make up' 으로 다시 만드세요" >&2; }; \
 	trap restore EXIT; trap 'exit 130' INT; trap 'exit 143' TERM HUP; \
@@ -165,23 +176,23 @@ fixtures: ## 실응답 스냅샷 갱신 (외부 한도 소모 주의)
 	cd apps/collector && uv run python -m wakeline_collector.tools.snapshot
 
 # SEC-R3: initdb 스크립트(infra/db/init/02-…)는 새 볼륨에서만 돈다 — 이미 있는 개발 볼륨에는 이것으로 한 번 적용한다(멱등, 재시작 없음).
-db-postgis-update: ## db 이미지의 PostGIS 부 버전이 오른 뒤 한 번: ALTER EXTENSION postgis UPDATE (3.6.x 안에서만 · 멱등 · 격리 스택: P=wakeline-e2e)
+db-postgis-update: aws-host-guard ## db 이미지의 PostGIS 부 버전이 오른 뒤 한 번: ALTER EXTENSION postgis UPDATE (3.6.x 안에서만 · 멱등 · 격리 스택: P=wakeline-e2e)
 	@WAKELINE_PROJECT='$(or $(P),wakeline)' bash tools/db-postgis-update.sh
 
-db-superuser-local-only: ## 기존 db 볼륨에 '슈퍼유저 postgres 는 로컬 소켓만' 적용 (pg_hba reject + reload, 멱등 · 격리 스택: P=wakeline-e2e)
+db-superuser-local-only: aws-host-guard ## 기존 db 볼륨에 '슈퍼유저 postgres 는 로컬 소켓만' 적용 (pg_hba reject + reload, 멱등 · 격리 스택: P=wakeline-e2e)
 	@WAKELINE_PROJECT='$(or $(P),wakeline)' bash tools/db-superuser-local-only.sh
 
 # R-13: 영구 보존 자료(SIGMET·알림·통계·감사·운영자·설정)의 사본. db 컨테이너 안에서 로컬 소켓 슈퍼유저로 pg_dump(비밀번호 없음) — 스택을 멈추지 않아도 한 스냅샷.
-backup: ## DB 백업 → backups/<프로젝트>-<UTC>.dump (pg_dump 사용자 지정 형식, 파일 0600·디렉터리 0700, git 제외). 72 h 원해상도 행은 빼고(full=1 이면 포함) · 최신 keep 개(기본 10, 0 = 모두)만 보관 · 격리 스택: P=wakeline-e2e
+backup: aws-host-guard ## DB 백업 → backups/<프로젝트>-<UTC>.dump (pg_dump 사용자 지정 형식, 파일 0600·디렉터리 0700, git 제외). 72 h 원해상도 행은 빼고(full=1 이면 포함) · 최신 keep 개(기본 10, 0 = 모두)만 보관 · 격리 스택: P=wakeline-e2e
 	@WAKELINE_PROJECT='$(or $(P),wakeline)' FULL='$(full)' KEEP='$(or $(keep),10)' bash tools/db-backup.sh
 
 # 빈 새 볼륨에만 복원한다(확인 문구 · 쓰는 컨테이너 정지 · 빈 DB 확인 · 한 트랜잭션). 절차: README '백업·복원'.
-restore: ## 백업 복원: make restore f=backups/<파일>.dump confirm=wakeline — api·collector·ais 정지 + db 만 새 볼륨으로 띄운 상태에서
+restore: aws-host-guard ## 백업 복원: make restore f=backups/<파일>.dump confirm=wakeline — api·collector·ais 정지 + db 만 새 볼륨으로 띄운 상태에서
 	@WAKELINE_PROJECT='$(or $(P),wakeline)' bash tools/db-restore.sh --file '$(f)' --confirm '$(confirm)'
 
 # R-80: 역할 비밀번호는 새 볼륨의 initdb 에서 한 번만 정해진다 — .env 값만 바꾸거나 잃으면 api·collector·migrate 의 DB 인증이 조용히 실패한다.
 # DB 에는 SCRAM 검증값만 stdin 으로 보내고, 새 값으로 로그인을 확인한 뒤에만 .env(0600)를 바꾼다. 적용: 이어서 make up.
-rotate-db-passwords: init ## DB 서비스 계정(migrator·api·collector) 비밀번호 교체(DB·.env 함께) → 이어서 make up · sync=1 이면 .env 의 지금 값을 DB 에 맞춤(어긋남 복구) · 격리 스택은 같은 .env 를 읽으므로 P=wakeline-e2e sync=1 만
+rotate-db-passwords: aws-host-guard init ## DB 서비스 계정(migrator·api·collector) 비밀번호 교체(DB·.env 함께) → 이어서 make up · sync=1 이면 .env 의 지금 값을 DB 에 맞춤(어긋남 복구) · 격리 스택은 같은 .env 를 읽으므로 P=wakeline-e2e sync=1 만
 	@WAKELINE_PROJECT='$(or $(P),wakeline)' python3 tools/db_rotate_passwords.py $(if $(filter 1,$(sync)),--sync,)
 
 # 변수 값 출력(CI · 보안 게이트 · 정책 시험용, 예: make -s print-K6_IMAGE). 허용 목록의 고정 설정만 — make 는 환경변수도 변수로 읽으므로

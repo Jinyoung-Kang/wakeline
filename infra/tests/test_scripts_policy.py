@@ -335,3 +335,47 @@ class CollectorPostgresTest(unittest.TestCase):
             if not line.lstrip().startswith("#"):
                 with self.subTest(line=n):
                     self.assertNotRegex(line, r"-e\s+[A-Za-z_]*PASSWORD[A-Za-z_]*=", "비밀번호 값은 환경으로(-e NAME)")
+
+
+class AwsHostGuardTest(unittest.TestCase):
+    """IM-28: AWS 배포 호스트(.env 에 RDS_HOST 값이 있다 — .env.aws.example · ADR-039)에서는 컨테이너를 다시 만들거나 지우는 make 대상이 멈춘다.
+    그 대상들은 compose.yml 하나(AWS 덧붙임 없이)로 같은 compose 프로젝트(name: wakeline)를 다시 만들어, RDS 대신 빈 로컬 db 를 띄우고
+    공개 Origin · realip · 공개 데모 플래그를 뺀다 — 그동안 받은 자료는 로컬 db 에 쌓이고 스트림은 ACK 되어 RDS 에 영구 공백이 생긴다.
+    그 호스트의 .env 는 make init 으로 만든다(같은 Makefile 을 쓰는 호스트다). 가드는 레시피를 펼칠 때 멈추므로 make -n 으로도 확인된다."""
+
+    GUARDED = ("up", "down", "clean", "build", "demo", "demo-down", "e2e", "bench",
+               "backup", "restore", "rotate-db-passwords", "db-postgis-update", "db-superuser-local-only")
+    OPEN = ("ps", "logs", "init", "help", "test-infra", "test-api", "infra-docker-test")
+    HOST = "wakeline-guard-probe.example.invalid"
+
+    def make_n(self, target: str, env_text: str) -> subprocess.CompletedProcess:
+        import tempfile
+
+        with tempfile.NamedTemporaryFile("w", suffix=".env", delete=False) as f:
+            f.write(env_text)
+        try:
+            return subprocess.run(["make", "-n", target, f"GUARD_ENV_FILE={f.name}"], cwd=ROOT, capture_output=True, text=True, timeout=60)
+        finally:
+            os.unlink(f.name)
+
+    def test_rebuilding_targets_stop_on_an_aws_host_without_printing_the_value(self):
+        for target in self.GUARDED:
+            with self.subTest(target=target):
+                r = self.make_n(target, f"REDIS_PASSWORD=x\nRDS_HOST={self.HOST}\n")
+                self.assertNotEqual(r.returncode, 0, f"make {target} 가 AWS 호스트에서 멈추지 않는다")
+                self.assertIn("ADR-039", r.stderr)
+                self.assertIn("compose.aws.yml", r.stderr)
+                self.assertNotIn(self.HOST, r.stdout + r.stderr, "RDS_HOST 값은 출력하지 않는다")
+
+    def test_read_only_targets_still_work_on_an_aws_host(self):
+        for target in self.OPEN:
+            with self.subTest(target=target):
+                r = self.make_n(target, f"RDS_HOST={self.HOST}\n")
+                self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_local_hosts_are_not_affected(self):
+        for env_text in ("REDIS_PASSWORD=x\n", "RDS_HOST=\n", "# RDS_HOST=x\n"):
+            with self.subTest(env=env_text):
+                r = self.make_n("up", env_text)
+                self.assertEqual(r.returncode, 0, r.stderr)
+                self.assertIn("docker compose -f infra/compose.yml --env-file .env up -d --build", r.stdout)
