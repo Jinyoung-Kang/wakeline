@@ -37,6 +37,8 @@ AWS_HOST_GUARD = $(if $(ON_AWS_HOST),$(error 이 호스트는 AWS 배포본이�
 
 .PHONY: aws-host-guard help init up down ps logs build airspace-import ops-user test test-api test-collector test-collector-db test-web test-infra infra-docker-test security contract contract-rest ws-samples readme-images e2e demo demo-down bench bench-edge measure-ais db-superuser-local-only backup restore rotate-db-passwords fixtures clean
 
+# 인자 없는 make 는 명령 목록 — 가드 규칙이 첫 규칙이라 기본 목표를 밝힌다(독립 검토: 가드가 기본 목표가 됐었다)
+.DEFAULT_GOAL := help
 aws-host-guard:
 	@:$(AWS_HOST_GUARD)
 

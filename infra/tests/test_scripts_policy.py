@@ -354,7 +354,7 @@ class AwsHostGuardTest(unittest.TestCase):
         with tempfile.NamedTemporaryFile("w", suffix=".env", delete=False) as f:
             f.write(env_text)
         try:
-            return subprocess.run(["make", "-n", target, f"GUARD_ENV_FILE={f.name}"], cwd=ROOT, capture_output=True, text=True, timeout=60)
+            return subprocess.run(["make", "-n", *([target] if target else []), f"GUARD_ENV_FILE={f.name}"], cwd=ROOT, capture_output=True, text=True, timeout=60)
         finally:
             os.unlink(f.name)
 
@@ -379,3 +379,48 @@ class AwsHostGuardTest(unittest.TestCase):
                 r = self.make_n("up", env_text)
                 self.assertEqual(r.returncode, 0, r.stderr)
                 self.assertIn("docker compose -f infra/compose.yml --env-file .env up -d --build", r.stdout)
+
+    def test_plain_make_still_prints_the_help(self):
+        """독립 검토: 가드 대상을 Makefile 첫 규칙으로 두자 인자 없는 make 의 기본 목표가 help 에서 가드로 바뀌었다(아무것도 출력하지 않음)."""
+        for env_text in ("REDIS_PASSWORD=x\n", f"RDS_HOST={self.HOST}\n"):
+            with self.subTest(env=env_text.split("=")[0]):
+                r = self.make_n("", env_text)
+                self.assertEqual(r.returncode, 0, r.stderr)
+                self.assertIn("grep -E", r.stdout, "기본 목표는 help(명령 목록)")
+                self.assertNotIn("docker compose", r.stdout)
+
+    def dc(self, args: list[str], env_text: str) -> tuple[subprocess.CompletedProcess, str]:
+        """tools/dc 를 가짜 docker(받은 인자를 파일에 적고 0)로 부른다 — 실제 compose 는 돌지 않는다."""
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as td:
+            log = Path(td) / "docker.log"
+            fake = Path(td) / "docker"
+            fake.write_text(f'#!/bin/bash\necho "docker $*" >> "{log}"\n')
+            fake.chmod(0o755)
+            envf = Path(td) / "guard.env"
+            envf.write_text(env_text)
+            env = {**os.environ, "PATH": f"{td}:{os.environ['PATH']}", "GUARD_ENV_FILE": str(envf)}
+            r = subprocess.run([str(ROOT / "tools" / "dc"), *args], capture_output=True, text=True, env=env, timeout=30)
+            return r, (log.read_text() if log.exists() else "")
+
+    def test_tools_dc_refuses_to_recreate_the_stack_on_an_aws_host(self):
+        """독립 검토: tools/dc 도 compose.yml 하나로 같은 프로젝트를 부른다(Makefile 과 같은 원인) — 만들고 지우는 하위 명령은 AWS 호스트에서 멈춘다."""
+        for sub in (["up", "-d"], ["up", "-d", "--wait", "db"], ["create"], ["run", "--rm", "migrate"], ["down"], ["rm", "-f"], ["build"]):
+            with self.subTest(cmd=" ".join(sub)):
+                r, calls = self.dc(sub, f"RDS_HOST={self.HOST}\n")
+                self.assertNotEqual(r.returncode, 0)
+                self.assertEqual(calls, "", "docker 를 부르지 않는다")
+                self.assertIn("ADR-039", r.stderr)
+                self.assertIn("compose.aws.yml", r.stderr)
+                self.assertNotIn(self.HOST, r.stdout + r.stderr)
+        for sub in (["ps"], ["logs", "api"], ["exec", "-T", "api", "true"], ["stop", "api"], ["restart", "api"]):
+            with self.subTest(cmd=" ".join(sub)):
+                r, calls = self.dc(sub, f"RDS_HOST={self.HOST}\n")
+                self.assertEqual(r.returncode, 0, r.stderr)
+                self.assertIn(f"docker compose -f infra/compose.yml --env-file .env {' '.join(sub)}", calls)
+
+    def test_tools_dc_is_unchanged_on_a_local_host(self):
+        r, calls = self.dc(["up", "-d", "--wait", "db"], "REDIS_PASSWORD=x\nRDS_HOST=\n")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("docker compose -f infra/compose.yml --env-file .env up -d --wait db", calls)

@@ -1,3 +1,14 @@
 #!/bin/bash
 # 개발 스택용 docker compose 단축 명령: tools/dc ps | tools/dc logs api | tools/dc exec -T db psql ...
-cd "$(dirname "$0")/.." && exec docker compose -f infra/compose.yml --env-file .env "$@"
+# AWS 배포 호스트(.env 에 RDS_HOST 값)에서는 스택을 만들거나 지우는 하위 명령을 멈춘다 — Makefile 의 aws-host-guard 와 같은 까닭(IM-28):
+# compose.yml 하나로 같은 프로젝트(name: wakeline)를 AWS 덧붙임 없이 다시 만들면 빈 로컬 db 가 RDS 를 대신한다. 값은 출력하지 않는다.
+# ps · logs · exec · stop · restart 처럼 이미 있는 컨테이너를 그대로 쓰는 명령은 막지 않는다. GUARD_ENV_FILE 은 시험용(기본 .env).
+cd "$(dirname "$0")/.." || exit 2
+if [ -f "${GUARD_ENV_FILE:-.env}" ] && grep -qE '^[[:space:]]*RDS_HOST=[^[:space:]#]' "${GUARD_ENV_FILE:-.env}"; then
+  case "${1:-}" in
+    up|create|run|down|rm|build)
+      echo "tools/dc: 이 호스트는 AWS 배포본이다(.env 에 RDS_HOST) — '$1' 은 AWS 덧붙임 없이 로컬 구성으로 스택을 만든다. ADR-039 의 명령을 쓴다: docker compose -f infra/compose.yml -f infra/compose.aws.yml --env-file .env …" >&2
+      exit 2 ;;
+  esac
+fi
+exec docker compose -f infra/compose.yml --env-file .env "$@"
