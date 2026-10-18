@@ -211,7 +211,7 @@ const NO_MAP_AIRCRAFT = "지도 없음 — 항공기 위치를 받지 않음";
 export function connChip(i: Pick<StatusInput, "conn" | "reconnectAttempt" | "lastRxAt" | "nowMs" | "connIssue" | "mapless">): ConnChip {
   if (i.conn === "off") return {
     text: `WS off · ${NO_LIVE_TEXT}`, tone: "bad", live: false,
-    title: "지도를 띄우지 못해(WebGL2 없음 · 지도 코드를 받지 못함) 실시간 연결(/ws/v1)을 열지 않음 — 항공기 · 알림 · 피드 상태가 오지 않습니다. 지도가 뜨면(지도 자리의 다시 시도) 연결 · 지도 없는 알림 화면은 /m",
+    title: "지도를 띄우지 못해(지도 코드를 받지 못함) 실시간 연결(/ws/v1)을 열지 않음 — 항공기 · 알림 · 피드 상태가 오지 않습니다. 지도가 뜨면(지도 자리의 다시 시도) 연결 · 지도 없는 알림 화면은 /m",
   };
   const live = isRxFresh(i.conn, i.lastRxAt, i.nowMs);
   const silent = i.conn === "open" && !live;

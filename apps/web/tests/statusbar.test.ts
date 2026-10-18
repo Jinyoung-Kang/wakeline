@@ -208,6 +208,8 @@ describe("connection chip", () => {
     expect(c).toMatchObject({ text: "WS off · 실시간 수신 안 함", tone: "bad", live: false });
     expect(c.title).toContain("지도를 띄우지 못해");
     expect(c.title).not.toContain("연결하는 중");
+    // 'off' 는 지도 컴포넌트 코드를 받지 못한 경우(Q4 b2)에만 남는다 — WebGL2 없음은 지도 없는 피드가 연결을 연다
+    expect(c.title).not.toContain("WebGL2");
   });
 });
 
