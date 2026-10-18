@@ -6,11 +6,11 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 IMAGE="${EDGE_IMAGE:-$(awk '/^  edge:/{f=1} f && $1=="image:"{print $2; exit}' "$ROOT/infra/compose.yml")}"
-ID="wakeline-edgetest-$$"; NET="$ID-net"; PUB="$ID-pub"; STUB="$ID-stub"; EDGE="$ID-edge"
+ID="wakeline-edgetest-$$"; NET="$ID-net"; PUB="$ID-pub"; STUB="$ID-stub"; EDGE="$ID-edge"; EDGE_AWS="$ID-edge-aws"
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/wakeline-edgetest.XXXXXX")"
 fails=0; passes=0
 
-cleanup() { docker rm -f "$EDGE" "$STUB" >/dev/null 2>&1 || true; docker network rm "$NET" "$PUB" >/dev/null 2>&1 || true; rm -rf "$TMP"; }
+cleanup() { docker rm -f "$EDGE" "$EDGE_AWS" "$STUB" >/dev/null 2>&1 || true; docker network rm "$NET" "$PUB" >/dev/null 2>&1 || true; rm -rf "$TMP"; }
 trap cleanup EXIT
 check() { # check <설명> <조건 결과(0/1)> <실제 값>
   if [ "$2" = 0 ]; then passes=$((passes+1)); echo "  ok    $1"; else fails=$((fails+1)); echo "  FAIL  $1 → $3"; fi
@@ -142,6 +142,23 @@ st="$(docker exec "$EDGE" sh -c 'for p in $(pgrep nginx); do awk "/^(Uid|CapEff|
 ! grep -vqE '^101 0000000000000000 1 $' <<<"$st"; check "모든 nginx 프로세스 uid=101 CapEff=0 NoNewPrivs=1" $? "$st"
 out="$(docker exec "$EDGE" sh -c 'touch /etc/nginx/x 2>&1 || true')"; grep -q "Read-only" <<<"$out"; check "root FS read-only" $? "$out"
 out="$(docker exec "$EDGE" wget -qO- http://127.0.0.1:8700/healthz 2>&1 || true)"; grep -q '"host":"127.0.0.1:8700"' <<<"$out"; check "compose 헬스체크(wget 127.0.0.1:8700/healthz)" $? "$out"
+
+# IM-30: AWS 판만 붙는 realip 설정(infra/compose.aws.yml 이 /etc/nginx/edge.d/ 에 마운트 — ADR-039)도 배포 전에 문법과 뜻을 확인한다.
+# 로컬 compose 는 edge.d 가 비어 위 시험이 이 파일을 읽지 않는다 — 지시어 오타는 AWS 배포 뒤 edge 재시작 반복(공개 데모 전체 중단)으로만 드러났다.
+echo "[AWS 판 realip(infra/edge/realip.aws.conf) — 앞단 Caddy 가 정한 X-Forwarded-For 를 믿는다]"
+AWS_MOUNT=(-v "$ROOT/infra/edge/realip.aws.conf:/etc/nginx/edge.d/realip.conf:ro")
+out="$(docker run --rm --network "$NET" "${HARDEN[@]}" "${AWS_MOUNT[@]}" "$IMAGE" nginx -t 2>&1 || true)"
+grep -q "test is successful" <<<"$out"; check "nginx -t (realip 포함)" $? "$out"
+docker create --name "$EDGE_AWS" --network "$PUB" -p 127.0.0.1::8700 "${HARDEN[@]}" "${AWS_MOUNT[@]}" "$IMAGE" >/dev/null
+docker network connect "$NET" "$EDGE_AWS"
+docker start "$EDGE_AWS" >/dev/null || true
+# 설정이 깨져 nginx 가 바로 끝나면 게시 포트가 없다 — 시험을 멈추지 말고 아래 확인이 FAIL 로 남게 한다
+APORT="$(docker port "$EDGE_AWS" 8700/tcp 2>/dev/null | head -1 | awk -F: '{print $NF}' || true)"
+for _ in $(seq 1 50); do curl -fsS -o /dev/null -H "Host: localhost:8700" "http://127.0.0.1:$APORT/healthz" 2>/dev/null && break; sleep 0.2; done
+# 게시 포트로 온 연결은 도커 브리지 게이트웨이(사설 대역 — 같은 호스트의 Caddy 와 같은 길)에서 온다 → 그 XFF 가 방문자 IP 가 된다
+body="$(curl -s -H "Host: localhost:8700" -H "X-Forwarded-For: 203.0.113.9" "http://127.0.0.1:${APORT:-1}/api/v1/status" || true)"
+grep -q '"xff":"203.0.113.9"' <<<"$body"; check "사설 대역 앞단의 X-Forwarded-For → 방문자 IP 로 api 에" $? "$body"
+docker rm -f "$EDGE_AWS" >/dev/null 2>&1 || true
 
 echo "[상류가 내려감 — edge 가 만든 502 도 problem+json + Retry-After]"
 docker stop "$STUB" >/dev/null
