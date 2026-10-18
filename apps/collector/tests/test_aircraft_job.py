@@ -1078,3 +1078,32 @@ async def test_an_opensky_token_failure_gives_the_four_credits_back_and_is_a_pro
     assert h["consecutive_failures"] == "1" and "opensky token request failed" in h["last_error"]
     assert h["last_http_status"] == "503"
     assert [(x["status"], x["http_status"]) for x in runs] == [("error", 503)]
+
+
+# ---- 관심 지역 반경 = 공급자 상한(IM-10) --------------------------------------------------------------------------------------------
+# adsb.fi 의 점 반경 조회(/api/v3/lat/../lon/../dist/{nm})는 ≤ 250 NM 이다(ADR-013) — hot 경로는 validate_point 로 막았지만 관심 지역은 운영 설정(전에는 50–500)
+# 그대로 불렀다. 반경 400 이면 URL 이 /dist/400 · /point/…/400 으로 나갔고, api 는 그 반경 안을 '관심 지역이 덮음'으로 보아 핫 리전을 걸지 않았다.
+async def test_a_region_radius_above_the_provider_limit_is_requested_and_published_at_250_nm():
+    """고치기 전: Redis region_radius_nm='400' → 'https://opendata.adsb.fi/api/v3/lat/36.5000/lon/127.8000/dist/400' · 발행 region.radius_nm 400."""
+    from wakeline_collector.runtime_settings import KEY, RuntimeSettings
+
+    r = FakeRedis()
+    await r.hset(KEY, mapping={"region_center": "36.5,127.8", "region_radius_nm": "400", "aircraft_providers": "adsb_fi"})
+    ctx = make_ctx(r, limits={"adsb_lol": 0, "adsb_fi": 0})
+    ctx.rt = RuntimeSettings(r)  # type: ignore[assignment] — 운영 설정 해시를 실제로 읽는다
+    await ctx.rt.refresh()
+    http = HttpClient(RateLimiter(100, 100, {"opendata.adsb.fi": (100.0, 10)}))
+    chain = ProviderChain("region", {"adsb_fi": adsb_fi(http), "adsb_lol": adsb_lol(http)}, ctx.status)
+    job = AircraftJob("region", chain, ctx)
+    with respx.mock:
+        fi = respx.get(url__startswith="https://opendata.adsb.fi/").mock(return_value=httpx.Response(200, json=_adsb_body()))
+        lol = respx.get(url__startswith="https://api.adsb.lol/").mock(return_value=httpx.Response(200, json=_adsb_body()))
+        await job.run_once()
+        await r.hset(KEY, "aircraft_providers", "adsb_lol")
+        await ctx.rt.refresh()
+        await job.run_once()
+    await http.aclose()
+    assert [str(c.request.url) for c in fi.calls] == ["https://opendata.adsb.fi/api/v3/lat/36.5000/lon/127.8000/dist/250"]
+    assert [str(c.request.url) for c in lol.calls] == ["https://api.adsb.lol/v2/point/36.5000/127.8000/250"]
+    published = [_decode(f)["region"] for _id, f in r.streams[STREAM_AIRCRAFT]]
+    assert published == [{"lat": 36.5, "lon": 127.8, "radius_nm": 250}] * 2

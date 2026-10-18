@@ -24,7 +24,9 @@ GLOBAL_POLL_RANGE_S = (60, 3600)
 SIGMET_POLL_RANGE_S = (60, 3600)
 RADAR_POLL_RANGE_S = (30, 3600)
 METAR_POLL_RANGE_S = (300, 7200)
-REGION_RADIUS_RANGE_NM = (50, 500)
+# 관심 지역 반경 상한 250 NM 은 공급자 점 반경 조회의 상한이다(adsb.fi /api/v3/…/dist/{nm} ≤ 250 NM — ADR-013, hot 의 readsb.HOT_RADIUS_MAX_NM 과 같다).
+# 전에는 50–500 이라 반경 400 이 그대로 URL 에 실려 나갔고, api 는 그 반경 안을 '관심 지역이 덮음'으로 보아 핫 리전을 걸지 않았다(IM-10)
+REGION_RADIUS_RANGE_NM = (50, 250)
 
 # api 가 읽는 글자 규칙(Java Double.parseDouble 의 십진 표기 · Integer.parseInt) — 파이썬 float · int 만 받는 'nan' · 'inf' · 'infinity' · 밑줄 '1_0' ·
 # 유니코드 공백은 받지 않는다. Java 의 16진 실수(0x1p3)는 운영 API 가 쓰지 않는 모양이라 받지 않는다(기본값)
@@ -115,7 +117,7 @@ class RuntimeSettings:
 
     @property
     def region(self) -> tuple[float, float, int]:
-        """(lat, lon, 반경 NM) — api RegionSettings.parse 와 같은 해석: 빈 값 · 해석 실패 · 유한하지 않은 중심은 .env 기본값, 반경은 [50, 500] 로 자른다."""
+        """(lat, lon, 반경 NM) — api RegionSettings.parse 와 같은 해석: 빈 값 · 해석 실패 · 유한하지 않은 중심은 .env 기본값, 반경(.env 기본값 포함)은 [50, 250] 로 자른다."""
         center = self._cache.get("region_center") or ""
         lat, lon = parse_center(center) or (settings.region_lat, settings.region_lon)
         radius_text = self._cache.get("region_radius_nm") or ""

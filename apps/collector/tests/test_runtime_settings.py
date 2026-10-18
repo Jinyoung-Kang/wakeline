@@ -20,7 +20,7 @@ async def test_overrides_and_clamps():
             "metar_poll_s": "900",
             "aircraft_providers": "adsb_fi, adsb_lol ,",
             "region_center": "35.0,129.0",
-            "region_radius_nm": "900",
+            "region_radius_nm": "900",  # 운영 API 범위(50–250, 공급자 반경 상한 — IM-10) 밖 → 250
             "global_enabled": "false",
         },
     )
@@ -29,7 +29,7 @@ async def test_overrides_and_clamps():
     assert rt.region_poll_s == 120 and rt.global_poll_s == 60 and rt.sigmet_poll_s == 600
     assert rt.radar_poll_s == 30 and rt.metar_poll_s == 900
     assert rt.provider_order == ["adsb_fi", "adsb_lol"]
-    assert rt.region == (35.0, 129.0, 500) and rt.global_enabled is False
+    assert rt.region == (35.0, 129.0, 250) and rt.global_enabled is False
     await r.hset(KEY, mapping={"region_poll_s": "1"})
     await rt.refresh()
     assert rt.region_poll_s == 5
@@ -97,4 +97,18 @@ async def test_region_reads_like_the_api_region_settings_parse():
         await r.hset(KEY, "region_radius_nm", radius)
         rt = RuntimeSettings(r)  # type: ignore[arg-type]
         await rt.refresh()
-        assert rt.region[2] == max(50, min(500, want_nm)), radius
+        assert rt.region[2] == max(50, min(250, want_nm)), radius
+
+
+async def test_region_radius_is_cut_to_the_provider_limit_from_redis_and_from_the_env_default(monkeypatch):
+    """IM-10: 반경 범위는 50–250 NM — api SettingsService 와 같고 공급자 점 반경 조회의 상한(adsb.fi dist ≤ 250 NM, ADR-013)이다.
+    Redis 값(운영 API 를 거치지 않은 미러 · 직접 고친 값 포함)도, Redis 가 비었을 때의 .env 기본값(REGION_RADIUS_NM)도 이 범위로 자른다."""
+    r = FakeRedis()
+    await r.hset(KEY, "region_radius_nm", "400")
+    rt = RuntimeSettings(r)  # type: ignore[arg-type]
+    await rt.refresh()
+    assert rt.region[2] == 250
+    monkeypatch.setattr(settings, "region_radius_nm", 400)
+    rt = RuntimeSettings(FakeRedis())  # type: ignore[arg-type]
+    await rt.refresh()
+    assert rt.region[2] == 250
