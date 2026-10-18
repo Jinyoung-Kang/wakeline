@@ -19,7 +19,7 @@ vi.mock("@/lib/api", async (orig) => ({
   apiGet: (p: string, o?: { signal?: AbortSignal }) => { rec.asked.push({ path: p.split("?")[0], signal: o?.signal }); return new Promise(() => {}); },
 }));
 vi.mock("@/lib/ws", () => ({
-  WakelineWsClient: class { connect() {} subscribe() {} close() {} pause() {} resume() {} select() {} selectShip() {} setLayers() {} },
+  WakelineWsClient: class { connect() {} subscribe() {} subscribeWithoutMap() {} close() {} pause() {} resume() {} select() {} selectShip() {} setLayers() {} },
 }));
 class FakeWorker { onmessage = null; postMessage() {} terminate() {} }
 

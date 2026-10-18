@@ -4,8 +4,12 @@
  *    다시 시도는 실제로 다시 받는다. 전에는 next/dynamic 의 거절이 화면 전체의 오류 경계(app/error.tsx)까지 올라가 상황판 전체가 오류 화면이 되었고,
  *    그 '다시 시도'는 같은 거절된 lazy 를 다시 그려 망이 돌아와도 돌아오지 않았다(loadMaplibre 는 다시 불리지 않았다).
  * 2) WebGL2 를 만들 수 없음(MapLibre 의 Map 생성자가 GPUInitializationError): 지도 자리에 안내와 지도 없는 알림 화면(/m). 다른 예외는 지금처럼 위로 올라간다.
- * 3) 두 경우 모두 실시간 피드(WS · 워커 — components/map/useLiveFeed)는 지도와 함께 만들어지므로 시작하지 않는다(R9): 남은 상태 바의 연결 칩과 알림 패널은
- *    '처음 연결하는 중' · '수신 대기 중'이 아니라 실시간 수신을 하지 않는다고 말한다(스토어 conn "off"). 다시 시도로 지도가 뜨면 연결부터 원래대로.
+ * 3) 지도와 함께 만드는 실시간 피드(WS · 워커 — components/map/useLiveFeed)는 두 경우 모두 없다.
+ *    - 1) 에서는 연결을 시도하지 않는다(R9): 남은 상태 바의 연결 칩과 알림 패널은 '처음 연결하는 중' · '수신 대기 중'이 아니라 실시간 수신을 하지 않는다고
+ *      말한다(스토어 conn "off"). 다시 시도로 지도가 뜨면 연결부터 원래대로.
+ *    - 2) 에서는 지도 없는 피드(Q4 — components/map/useMaplessFeed)가 워커 없이 연결 하나를 연다: 지도 없는 구독(subscribeWithoutMap)으로 알림 · SIGMET ·
+ *      레이더 · 피드 상태만 받고, 상태 바 · 지도 자리 칩은 항공기 · 선박 위치를 받지 않는다고 적는다. 선택해도 select 를 보내지 않는다(집중 추적 안 함 — Q-B).
+ *      관심 대상 실행기 조각은 지도 'load' 를 기다리지 않고 곧바로 받는다(Q-C).
  *    가짜 WS 클라이언트의 connect() 는 실제 것처럼 conn "connecting" 을 적는다.
  * - next/dynamic 은 실제 빌드가 쓰는 구현(next/dist/shared/lib/app-dynamic — 모듈을 평가할 때 lazy 를 한 번 만든다)으로 바꿔 시험한다.
  *   vitest 의 기본 해석은 pages 쪽 구현이라 이 동작이 보이지 않는다.
@@ -17,7 +21,10 @@ import { find, propsOf } from "./helpers/mount";
 
 vi.mock("next/dynamic", async () => ({ default: (await import("next/dist/shared/lib/app-dynamic.js")).default }));
 
-const ctl = vi.hoisted(() => ({ loadFails: false, mapThrows: null as null | "gpu" | "other", loads: 0, maps: 0, connects: 0 }));
+const ctl = vi.hoisted(() => ({
+  loadFails: false, mapThrows: null as null | "gpu" | "other", loads: 0, maps: 0, connects: 0,
+  workers: 0, subscribes: 0, maplessSubs: 0, selects: 0, closes: 0, watchRunners: 0,
+}));
 vi.mock("@/lib/maplibre", async (orig) => {
   const fakeMod = (await import("./helpers/fake-maplibre")).fakeMaplibreModule;
   const Base = fakeMod.Map;
@@ -47,15 +54,25 @@ const store = vi.hoisted(() => ({ setData: null as null | ((p: { conn: "connecti
 vi.mock("@/lib/ws", () => ({
   WakelineWsClient: class {
     connect() { ctl.connects++; store.setData?.({ conn: "connecting", reconnectAttempt: 0 }); }
-    subscribe() {} close() {} pause() {} resume() {} select() {} selectShip() {} setLayers() {}
+    subscribe() { ctl.subscribes++; }
+    subscribeWithoutMap() { ctl.maplessSubs++; }
+    close() { ctl.closes++; }
+    select() { ctl.selects++; }
+    selectShip() { ctl.selects++; }
+    pause() {} resume() {} setLayers() {}
   },
+}));
+// 관심 대상 실행기(ADR-037 — DashboardParts 의 WatchRunnerPart)가 그려졌는가: 조각을 받은 뒤에만 SidePanel 이 그린다
+vi.mock("@/components/WatchPanel", async (orig) => ({
+  ...(await orig<typeof import("@/components/WatchPanel")>()),
+  WatchRunner: () => { ctl.watchRunners++; return null; },
 }));
 const reports: { message: string; component?: string }[] = [];
 vi.mock("@/lib/errorReport", async (orig) => ({
   ...(await orig<typeof import("@/lib/errorReport")>()),
   reportClientError: (input: { message: string; component?: string }) => { reports.push(input); return "sent"; },
 }));
-class FakeWorker { onmessage = null; postMessage() {} terminate() {} }
+class FakeWorker { onmessage = null; constructor() { ctl.workers++; } postMessage() {} terminate() {} }
 
 const dom = installMiniDom();
 const g = globalThis as Record<string, unknown>;
@@ -68,7 +85,7 @@ afterEach(async () => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   reports.length = 0;
-  Object.assign(ctl, { loadFails: false, mapThrows: null, loads: 0, maps: 0, connects: 0 });
+  Object.assign(ctl, { loadFails: false, mapThrows: null, loads: 0, maps: 0, connects: 0, workers: 0, subscribes: 0, maplessSubs: 0, selects: 0, closes: 0, watchRunners: 0 });
 });
 
 const container = () => dom.container as unknown as MiniElement;
@@ -124,7 +141,7 @@ describe("dashboard '/': a map that cannot be drawn replaces only the map slot",
     expect(has("error-screen")).toBe(false);
     expect(has("statusbar")).toBe(true);
     expect(has("map")).toBe(true);
-    expect(ctl).toMatchObject({ loads: 1, maps: 1, connects: 1 });
+    expect(ctl).toMatchObject({ loads: 1, maps: 1, connects: 1, workers: 1, maplessSubs: 0 });
     expect(connText()).toContain("WS connecting");
     expect(alertsWaitingText()).toContain("알림 목록 수신 대기 중");
   });
@@ -164,7 +181,41 @@ describe("dashboard '/': a map that cannot be drawn replaces only the map slot",
     expect(note?.textContent).toContain("WebGL2 를 쓸 수 없어 지도를 그리지 않음");
     expect(find((e) => e.tagName === "A" && e.getAttribute("href") === "/m", note!)).not.toBeNull();
     expect(ctl.maps).toBe(0);
-    await expectNoLiveFeed();
+  });
+
+  it("WebGL2 cannot be created: the map-less feed opens one WS connection without a worker, says what it does not receive, sends no select and closes when leaving (Q4)", async () => {
+    ctl.mapThrows = "gpu";
+    await mount("@/app/page", "/");
+    const { getData } = await import("@/lib/store");
+    const { useUi } = await import("@/lib/ui-store");
+    // 연결 하나 · 워커 없음 · 지도 없는 구독(지도 화면 구독이 아니다)
+    expect(ctl).toMatchObject({ maps: 0, connects: 1, workers: 0, maplessSubs: 1, subscribes: 0 });
+    expect(getData()).toMatchObject({ conn: "connecting", mapless: true });
+    // 상태 바: 실제 연결 상태 + 지도 없음 — 'off'(실시간 수신 안 함)가 아니다
+    expect(connText()).toBe("WS connecting · 지도 없음");
+    expect(byId("conn")?.getAttribute("title")).toContain("지도 없이 연 연결 — 알림 · SIGMET · 레이더 · 피드 상태만 받고 항공기 · 선박 위치는 받지 않음(서버 수요를 만들지 않는 구독)");
+    expect(byId("aircraft-count")?.textContent).toContain("—");
+    expect(byId("aircraft-count")?.getAttribute("title")).toBe("지도 없음 — 항공기 위치를 받지 않음");
+    // 알림 목록은 이 연결로 온다 — 기다리는 중이라고 적는다
+    expect(alertsWaitingText()).toContain("알림 목록 수신 대기 중");
+    // 관심 대상 실행기를 지도 'load'(없다) · 1분 뒤 다시 받기를 기다리지 않고 곧바로 받아 그린다(Q-C)
+    expect(ctl.watchRunners).toBeGreaterThan(0);
+    // 지도 자리 칩: 칩 하나 — 선박 레이어를 켜도 선박 '수신 대기'가 아니다
+    await React.act(async () => { useUi.getState().setLayers({ ships: true }); });
+    await settle(3);
+    expect(byId("mapless-chip")?.textContent).toBe("지도 없음 — 항공기 · 선박 위치를 받지 않음");
+    expect(has("ships-chip")).toBe(false);
+    expect(has("demand-map-chip")).toBe(false);
+    // 항공기를 골라도 select 를 보내지 않는다(집중 추적 수요를 만들지 않는다 — Q-B)
+    await React.act(async () => { useUi.getState().select("71c123"); });
+    await settle(3);
+    expect(ctl.selects).toBe(0);
+    // 화면을 떠나면 연결을 닫고 지도 없음 표시를 지운다
+    const r = root!;
+    root = null;
+    await React.act(async () => { r.unmount(); });
+    expect(ctl.closes).toBe(1);
+    expect(getData().mapless).toBe(false);
   });
 
   it("any other Map constructor error still goes up to the route error screen (not swallowed)", async () => {

@@ -9,7 +9,6 @@ import { useUi } from "@/lib/ui-store";
 import { mapAttributionHtml, styleHasBasemapCredit } from "@/lib/attribution";
 import { mapAttributionControl } from "@/lib/map-attribution";
 import { onReady, setDashboardMap, useDashboardMap } from "@/lib/map-ready";
-import { setNoLiveFeed } from "@/lib/store";
 import { addTrafficGridLayers, TRAFFIC_LAYERS } from "@/lib/traffic-grid";
 
 const REGION_CENTER: [number, number] = [127.8, 36.5];
@@ -21,8 +20,8 @@ const REGION_CENTER: [number, number] = [127.8, 36.5];
  * - 'load' 에서: onFirstLoad(상황판의 미리 받기 — ADR-026), 기본 · 선박 · 연안 교통량 레이어, 출처 표기(compact ⓘ — FR-20).
  * - 레이어 단추에 따른 기본 레이어 보이기, 검색 등이 요청한 지도 이동(움직임 줄이기 설정이면 바로).
  * - WebGL2 문맥을 만들 수 없으면(Map 생성자의 GPUInitializationError) 던지지 않고 noWebgl — 지도 자리만 안내로 바꾼다(components/map/NoWebgl, IM-21:
- *   전에는 화면 전체의 오류 경계까지 올라가 상태 바 · 알림 패널도 지웠다). 다른 예외는 그대로 위로. 실시간 피드(useLiveFeed)는 지도와 함께 만들어지므로
- *   시작하지 않는다 — 남은 상태 바 · 알림 패널이 '연결 중'으로 보이지 않게 스토어에 적는다(conn "off" — R9).
+ *   전에는 화면 전체의 오류 경계까지 올라가 상태 바 · 알림 패널도 지웠다). 다른 예외는 그대로 위로. 지도와 함께 만드는 실시간 피드(useLiveFeed)는
+ *   시작하지 않고, MapView 가 noWebgl 로 지도 없는 피드(useMaplessFeed — Q4)를 연다. 여기서 conn "off" 를 적지 않는다(곧 '연결 중'으로 바뀌어 깜박인다).
  * 돌려주는 것: 지금 지도(손잡이 — 만들기 전 · 떠난 뒤 · 만들지 못함 null) · noWebgl.
  */
 export function useMapLifecycle(el: RefObject<HTMLDivElement | null>, onFirstLoad?: () => void): { map: maplibregl.Map | null; noWebgl: boolean } {
@@ -42,7 +41,6 @@ export function useMapLifecycle(el: RefObject<HTMLDivElement | null>, onFirstLoa
     } catch (e) {
       if (!(e instanceof ml.GPUInitializationError)) throw e;
       setNoWebgl(true); // eslint-disable-line react-hooks/set-state-in-effect -- 바깥(브라우저의 GPU)이 지도를 거절했다: 한 번, 지도 자리를 안내로 바꾼다
-      setNoLiveFeed(); // 지도가 없으면 WS · 워커도 없다(useLiveFeed) — 연결을 시도하지 않는다고 적는다
       return;
     }
     map.addControl(new ml.NavigationControl({ showCompass: false }), "top-left");

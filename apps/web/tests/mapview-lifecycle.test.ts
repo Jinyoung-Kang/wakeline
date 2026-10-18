@@ -28,6 +28,7 @@ vi.mock("@/lib/ws", () => ({
     constructor() { rec.calls.push("client:new"); }
     connect() { rec.calls.push("connect"); }
     subscribe() { rec.calls.push("subscribe"); }
+    subscribeWithoutMap() { rec.calls.push("subscribeWithoutMap"); }
     close() { rec.calls.push("close"); }
     pause() {}
     resume() {}

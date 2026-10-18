@@ -20,7 +20,7 @@ import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { StatusBarView } from "@/components/StatusBar";
 import { WS_INVALID_NONE } from "@/lib/store";
 import {
-  chipState, connChip, detailRows, fitChips, HEALTH_MARK, pinnedOverflow, openGapWarning, RADAR_STALE_S, SIGMET_STALE_S, statusChips, type StatusInput,
+  chipState, connChip, detailRows, fitChips, HEALTH_MARK, pinnedOverflow, openGapWarning, RADAR_STALE_S, SIGMET_STALE_S, statusChips, statusInput, type StatusInput,
 } from "@/lib/statusbar";
 import { AIS_GAP_SHOW_MS, AIS_LAG_WARN_S, parseAisStatus } from "@/lib/ships";
 import { KR_RADAR_STALE_S } from "@/lib/format";
@@ -208,6 +208,42 @@ describe("connection chip", () => {
     expect(c).toMatchObject({ text: "WS off · 실시간 수신 안 함", tone: "bad", live: false });
     expect(c.title).toContain("지도를 띄우지 못해");
     expect(c.title).not.toContain("연결하는 중");
+  });
+});
+
+describe("map-less connection (Q4 — the dashboard could not draw the map, so a map-less WS feed opened: alerts · SIGMET · radar · feed status only)", () => {
+  const MAPLESS_TITLE = "지도 없이 연 연결 — 알림 · SIGMET · 레이더 · 피드 상태만 받고 항공기 · 선박 위치는 받지 않음(서버 수요를 만들지 않는 구독)";
+  it("the connection chip keeps the real state and adds '지도 없음'; the title says what it receives and what it does not, then the state's own explanation", () => {
+    const first = connChip({ conn: "connecting", reconnectAttempt: 0, lastRxAt: null, nowMs: NOW, mapless: true });
+    expect(first).toMatchObject({ text: "WS connecting · 지도 없음", tone: "warn", live: false });
+    expect(first.title.split("\n")).toEqual([MAPLESS_TITLE, "처음 연결하는 중"]);
+    expect(connChip({ conn: "open", reconnectAttempt: 0, lastRxAt: NOW - 2000, nowMs: NOW, mapless: true })).toMatchObject({ text: "WS open · 지도 없음", tone: "ok", live: true });
+    expect(connChip({ conn: "paused", reconnectAttempt: 0, lastRxAt: NOW, nowMs: NOW, mapless: true }).text).toBe("WS paused · 탭 숨김 · 지도 없음");
+    expect(connChip({ conn: "closed", reconnectAttempt: 2, lastRxAt: null, nowMs: NOW, mapless: true }).text).toBe("WS closed · retry 2 · 지도 없음");
+    // 지도가 있는 연결은 그대로
+    expect(connChip({ conn: "open", reconnectAttempt: 0, lastRxAt: NOW - 2000, nowMs: NOW, mapless: false }).text).toBe("WS open");
+    expect(connChip({ conn: "open", reconnectAttempt: 0, lastRxAt: NOW - 2000, nowMs: NOW }).title).not.toContain("지도 없이");
+  });
+  it("the aircraft chip is '—' and its title says positions are not received; the details table says the same", () => {
+    const i = input({ mapless: true, aircraftCount: null });
+    expect(statusChips(i).find((c) => c.key === "aircraft")).toMatchObject({ value: "—", title: "지도 없음 — 항공기 위치를 받지 않음" });
+    const rows = detailRows(i);
+    expect(rows.find((r) => r.key === "conn")!.state).toBe("open · 지도 없음");
+    expect(rows.find((r) => r.key === "aircraft")).toMatchObject({ value: "—", source: "지도 없음 — 항공기 위치를 받지 않음" });
+    // 지도가 있으면 그대로
+    expect(statusChips(input({ aircraftCount: null })).find((c) => c.key === "aircraft")!.title).toContain("항공기 수 모름");
+  });
+  it("the row shows it, and StatusBar takes the flag from the store (statusInput)", () => {
+    expect(textOf(byTestId(bar(input({ mapless: true, aircraftCount: null })), "conn")!)).toBe("WS open · 지도 없음");
+    const src = input(); // 스토어 값(StatusSource)과 같은 이름의 필드 — 시계 값은 statusInput 이 인자로 받는다
+    expect(statusInput({ ...src, mapless: true }, NOW, NOW).mapless).toBe(true);
+    expect(statusInput(src, NOW, NOW).mapless).toBe(false);
+    const sb = readFileSync(new URL("../components/StatusBar.tsx", import.meta.url), "utf8");
+    expect(sb).toMatch(/const mapless = useServerData\(\(x\) => x\.mapless\);/);
+  });
+  it("source: the map-less feed pauses on a hidden tab and resumes when visible, like the map's feed (the 'paused' chip explanation holds)", () => {
+    const src = readFileSync(new URL("../components/map/useMaplessFeed.ts", import.meta.url), "utf8");
+    expect(src).toMatch(/if \(document\.hidden\) client\.pause\(\);\s*else client\.resume\(\);/);
   });
 });
 

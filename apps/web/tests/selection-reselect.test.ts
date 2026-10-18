@@ -30,7 +30,7 @@ vi.mock("@/lib/api", async (orig) => ({
   },
 }));
 vi.mock("@/lib/ws", () => ({
-  WakelineWsClient: class { connect() {} subscribe() {} close() {} pause() {} resume() {} select(h: string | null) { rec.selects.push(h); } selectShip() {} setLayers() {} },
+  WakelineWsClient: class { connect() {} subscribe() {} subscribeWithoutMap() {} close() {} pause() {} resume() {} select(h: string | null) { rec.selects.push(h); } selectShip() {} setLayers() {} },
 }));
 class FakeWorker { onmessage = null; postMessage() {} terminate() {} }
 

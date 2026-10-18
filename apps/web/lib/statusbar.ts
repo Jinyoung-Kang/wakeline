@@ -64,6 +64,8 @@ export interface ConnChip { text: string; tone: "ok" | "warn" | "bad"; title: st
 
 export interface StatusInput {
   conn: ConnState;
+  /** 지도 없는 피드의 연결(Q4 — lib/store mapless): 항공기 · 선박 위치를 받지 않는다. 없으면 false */
+  mapless?: boolean;
   reconnectAttempt: number;
   /** 연결이 이어지지 않는 까닭(lib/conn-issue — 브라우저가 알아낸 것만). 없거나 모르면 null */
   connIssue?: ConnIssue | null;
@@ -85,11 +87,11 @@ export interface StatusInput {
 
 /** 상태 바가 보는 스토어 값 */
 export type StatusSource = Pick<ServerData, "conn" | "reconnectAttempt" | "lastRxAt" | "feeds" | "aircraftCount" | "status" | "sigmetsProvider" | "sigmetsFetchedAt" | "radar" | "radarKr" | "ais" | "snapshotVersion">
-  & Partial<Pick<ServerData, "connIssue">>;
+  & Partial<Pick<ServerData, "connIssue" | "mapless">>;
 /** 스토어 값 + 시계 → 입력(nowMs = 브라우저 시각, srvNowMs = 서버 기준 시각 — 모르면 0) */
 export function statusInput(d: StatusSource, nowMs: number, srvNowMs: number): StatusInput {
   return {
-    conn: d.conn, reconnectAttempt: d.reconnectAttempt, connIssue: d.connIssue ?? null, lastRxAt: d.lastRxAt, nowMs, srvNowMs, feeds: d.feeds, aircraftCount: d.aircraftCount, status: d.status,
+    conn: d.conn, mapless: d.mapless === true, reconnectAttempt: d.reconnectAttempt, connIssue: d.connIssue ?? null, lastRxAt: d.lastRxAt, nowMs, srvNowMs, feeds: d.feeds, aircraftCount: d.aircraftCount, status: d.status,
     sigmetsProvider: d.sigmetsProvider, sigmetsFetchedAt: d.sigmetsFetchedAt, radar: d.radar, radarKr: d.radarKr, ais: d.ais, snapshotVersion: d.snapshotVersion,
   };
 }
@@ -196,13 +198,17 @@ export function aisGapInfo(ais: AisStatus | null, nowMs: number): AisGapInfo | n
 
 const toneHealth = (t: "ok" | "warn" | "bad" | "muted"): Health => (t === "muted" ? "unknown" : t);
 
+/** 지도 없는 피드(Q4)의 항공기 칩 title · 상세 표 출처 — 항공기 레이어를 끈 구독이라 서버가 항공기 목록을 보내지 않는다(수는 모름 "—") */
+const NO_MAP_AIRCRAFT = "지도 없음 — 항공기 위치를 받지 않음";
+
 /**
- * 연결 칩. "paused" 는 탭이 숨겨져 서버에 일시정지(pause)를 보낸 상태다(components/MapView visibilitychange → lib/ws pause) — 그동안 서버는 이 탭에
+ * 연결 칩. "paused" 는 탭이 숨겨져 서버에 일시정지(pause)를 보낸 상태다(components/map/useLiveFeed · useMaplessFeed 의 visibilitychange → lib/ws pause) — 그동안 서버는 이 탭에
  * 갱신을 보내지 않는다. 그렇게 적는다("WS paused · 탭 숨김").
  * 끊긴 동안 까닭을 알면(connIssue — 앞단 잠금 만료 · 원본에 닿지 못함 QA-1300, 연결 수 상한 QA-1462) 짧은 낱말을 줄에, 할 일을 title 앞에 적는다.
- * "off" 는 지도를 띄우지 못해 실시간 피드를 시작하지 않은 상태다(lib/store ConnState — R9): 연결을 시도하지 않으므로 '연결 중'이 아니라 그 사실을 적는다.
+ * "off" 는 지도 코드를 받지 못해 실시간 피드를 시작하지 않은 상태다(lib/store ConnState — R9): 연결을 시도하지 않으므로 '연결 중'이 아니라 그 사실을 적는다.
+ * 지도 없는 피드의 연결(mapless — Q4, WebGL2 없음)이면 실제 상태 뒤에 '지도 없음'을 붙이고, 무엇을 받고 무엇을 받지 않는지를 title 앞에 적는다.
  */
-export function connChip(i: Pick<StatusInput, "conn" | "reconnectAttempt" | "lastRxAt" | "nowMs" | "connIssue">): ConnChip {
+export function connChip(i: Pick<StatusInput, "conn" | "reconnectAttempt" | "lastRxAt" | "nowMs" | "connIssue" | "mapless">): ConnChip {
   if (i.conn === "off") return {
     text: `WS off · ${NO_LIVE_TEXT}`, tone: "bad", live: false,
     title: "지도를 띄우지 못해(WebGL2 없음 · 지도 코드를 받지 못함) 실시간 연결(/ws/v1)을 열지 않음 — 항공기 · 알림 · 피드 상태가 오지 않습니다. 지도가 뜨면(지도 자리의 다시 시도) 연결 · 지도 없는 알림 화면은 /m",
@@ -211,13 +217,13 @@ export function connChip(i: Pick<StatusInput, "conn" | "reconnectAttempt" | "las
   const silent = i.conn === "open" && !live;
   const retry = i.conn !== "open" && i.reconnectAttempt > 0 ? ` · retry ${i.reconnectAttempt}` : "";
   const issue = i.conn !== "open" && i.conn !== "paused" && i.connIssue ? CONN_ISSUE[i.connIssue] : null;
-  const text = `WS ${i.conn}${silent ? " · 수신 없음" : ""}${i.conn === "paused" ? " · 탭 숨김" : ""}${issue ? ` · ${issue.word}` : ""}${retry}`;
+  const text = `WS ${i.conn}${silent ? " · 수신 없음" : ""}${i.conn === "paused" ? " · 탭 숨김" : ""}${issue ? ` · ${issue.word}` : ""}${retry}${i.mapless ? " · 지도 없음" : ""}`;
   const base = silent ? `연결은 열려 있지만 ${RX_FRESH_MS / 1000} s 넘게 아무것도 받지 못함 — ${RX_DEAD_MS / 1000} s 가 되면 다시 연결`
     : i.conn === "paused" ? "탭이 숨겨져 서버에 일시정지(pause)를 보냈습니다 — 그동안 서버는 이 탭에 갱신을 보내지 않아 화면 값이 멈춰 있습니다. 탭이 다시 보이면 resume 으로 전체 초기 세트(스냅샷 · 알림 · SIGMET · 레이더 · status)를 다시 받습니다"
     : i.conn === "open" ? `실시간 연결(/ws/v1) — 서버 ping 은 30 s 마다, ${RX_FRESH_MS / 1000} s 넘게 아무것도 받지 못하면 '수신 없음'`
     : i.conn === "connecting" ? (i.reconnectAttempt > 0 ? `끊겨서 다시 연결하는 중 — ${i.reconnectAttempt}번째 시도(지수 백오프, 최대 30 s)` : "처음 연결하는 중")
     : i.reconnectAttempt > 0 ? `연결 끊김 — ${i.reconnectAttempt}번째 재연결을 기다리는 중(지수 백오프, 최대 30 s)` : "연결 끊김";
-  const title = issue ? `${issue.why}\n${base}` : base;
+  const title = `${issue ? `${issue.why}\n` : ""}${i.mapless ? "지도 없이 연 연결 — 알림 · SIGMET · 레이더 · 피드 상태만 받고 항공기 · 선박 위치는 받지 않음(서버 수요를 만들지 않는 구독)\n" : ""}${base}`;
   return { text, tone: connTone(i.conn, silent, i.reconnectAttempt), title, live };
 }
 
@@ -235,7 +241,7 @@ export function statusChips(i: StatusInput): Chip[] {
 
   chips.push({
     key: "aircraft", label: "aircraft", value: i.aircraftCount == null ? "—" : String(i.aircraftCount), words: [], health: "unknown", plain: true, pinned: false, testId: "aircraft-count",
-    title: i.aircraftCount == null ? "항공기 수 모름 — 항공기 레이어가 꺼져 있거나 아직 스냅샷을 받지 않음" : "현재 지도 영역(구독 bbox) 안의 항공기 수 — 수신이 끊긴 항공기도 stale(반투명)로 남는다",
+    title: i.mapless ? NO_MAP_AIRCRAFT : i.aircraftCount == null ? "항공기 수 모름 — 항공기 레이어가 꺼져 있거나 아직 스냅샷을 받지 않음" : "현재 지도 영역(구독 bbox) 안의 항공기 수 — 수신이 끊긴 항공기도 stale(반투명)로 남는다",
   });
 
   const region = feedLag(i.feeds.region, i.nowMs, live, REGION_STALE_S);
@@ -385,7 +391,7 @@ export function detailRows(i: StatusInput): DetailRow[] {
     value: i.reconnectAttempt > 0 ? `재시도 ${i.reconnectAttempt}` : "—", source: "/ws/v1",
     rule: `${RX_FRESH_MS / 1000} s 넘게 수신 없음 = 수신 없음 · ${RX_DEAD_MS / 1000} s = 다시 연결 · 일시정지 = 탭 숨김(서버가 보내지 않음)`,
   });
-  rows.push({ key: "aircraft", name: "항공기 수", health: null, state: "—", value: i.aircraftCount == null ? "—" : String(i.aircraftCount), source: "지도 영역(구독 bbox) 안 · STALE 포함", rule: "—" });
+  rows.push({ key: "aircraft", name: "항공기 수", health: null, state: "—", value: i.aircraftCount == null ? "—" : String(i.aircraftCount), source: i.mapless ? NO_MAP_AIRCRAFT : "지도 영역(구독 bbox) 안 · STALE 포함", rule: "—" });
   for (const [k, name, feed, limit] of [["region", "항공기 · 지역 피드", i.feeds.region, REGION_STALE_S], ["world", "항공기 · 전세계 피드", i.feeds.global, GLOBAL_STALE_S]] as const) {
     const chip = chips.get(k)!;
     const none = k === "region" ? regionNoProvider(i) : null;

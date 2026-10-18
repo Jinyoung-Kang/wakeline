@@ -11,8 +11,9 @@ import type { ConnIssue } from "./conn-issue";
 
 /**
  * 실시간 연결(WS — lib/ws) 상태. "off" = 이 화면이 실시간 피드(WS 클라이언트 · 보간 워커 — components/map/useLiveFeed 가 지도와 함께 만든다)를
- * 시작하지 않았다: 상황판이 지도를 띄우지 못함(WebGL2 없음 · 지도 코드를 받지 못함 — IM-21, R9). 연결을 시도하지 않으므로 '연결 중'이라고 보이지 않는다.
- * 다시 시도로 지도가 뜨면 피드의 connect() 가 "connecting" 부터 다시 적는다.
+ * 시작하지 않았다: 상황판이 지도 코드를 받지 못함(IM-21, R9 — app/page.tsx). 연결을 시도하지 않으므로 '연결 중'이라고 보이지 않는다.
+ * 다시 시도로 지도가 뜨면 피드의 connect() 가 "connecting" 부터 다시 적는다. WebGL2 없음(지도 코드는 받음)이면 "off" 가 아니라 지도 없는 피드
+ * (components/map/useMaplessFeed — Q4)가 연결을 연다(아래 mapless).
  */
 export type ConnState = "connecting" | "open" | "closed" | "paused" | "off";
 
@@ -74,6 +75,11 @@ export interface AircraftTrackInfo {
 
 export interface ServerData {
   conn: ConnState;
+  /**
+   * 지금 연결이 지도 없는 피드의 것이다(Q4 — components/map/useMaplessFeed, lib/ws subscribeWithoutMap): 알림 · SIGMET · 레이더 · 피드 상태만 받고
+   * 항공기 · 선박 위치는 받지 않는다 — 상태 바 · 지도 자리 칩이 그렇게 적는다. 기본 false(지도가 있는 피드 · 피드 없음), 그 피드를 닫으면 false.
+   */
+  mapless: boolean;
   reconnectAttempt: number;
   /**
    * 실시간 연결이 이어지지 않는 까닭 중 브라우저가 알아낸 것(lib/conn-issue — 앞단 잠금 만료 · 원본에 닿지 못함). null = 모름 · 없음.
@@ -155,6 +161,7 @@ export const SHIPS_OFF: ShipsView = { mode: "off", version: 0, count: 0, total: 
 
 const initial: ServerData = {
   conn: "connecting",
+  mapless: false,
   reconnectAttempt: 0,
   connIssue: null,
   lastRxAt: null,
@@ -202,7 +209,7 @@ export function setData(patch: Partial<ServerData>) {
 export function getData() {
   return data;
 }
-/** 상황판이 지도를 띄우지 못해 실시간 피드를 시작하지 않음(conn "off" — ConnState) — 지난 연결의 재시도 횟수 · 까닭은 지운다(그 연결의 것이다) */
+/** 상황판이 지도 코드를 받지 못해 실시간 피드를 시작하지 않음(conn "off" — ConnState) — 지난 연결의 재시도 횟수 · 까닭은 지운다(그 연결의 것이다) */
 export function setNoLiveFeed() {
   setData({ conn: "off", reconnectAttempt: 0, connIssue: null });
 }
