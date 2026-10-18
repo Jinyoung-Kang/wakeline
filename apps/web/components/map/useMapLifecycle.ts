@@ -1,6 +1,6 @@
 "use client";
 import type * as maplibregl from "maplibre-gl";
-import { useEffect, useEffectEvent, useRef, type RefObject } from "react";
+import { useEffect, useEffectEvent, type RefObject } from "react";
 import { addBaseLayers, RADAR_SLOT, STYLE_URL } from "@/lib/maplayers";
 import { maplibre } from "@/lib/maplibre";
 import { watchBasemapStyle } from "@/lib/basemap-fallback";
@@ -62,16 +62,19 @@ export function useMapLifecycle(el: RefObject<HTMLDivElement | null>, onFirstLoa
   const map = useDashboardMap();
   const layers = useUi((s) => s.layers);
   const flyTo = useUi((s) => s.flyTo);
-  /** 마운트 전에 처리된 이동 요청은 다시 하지 않는다(다른 화면에서 돌아올 때) */
-  const flyHandled = useRef(useUi.getState().flyTo?.id ?? 0);
 
   // ---- 검색 등에서 요청한 지도 이동(움직임 줄이기 설정이면 바로 이동) ----
+  // 따른 요청 id 는 컴포넌트 ref 가 아니라 ui-store(flyHandled)에 둔다: 다른 화면에서 돌아와 지도를 다시 만들어도 이미 따른 요청은 되풀이하지 않고, 지도가
+  // 마운트되기 전의 요청(지도 조각 · MapLibre 를 받기 전에 상단 검색으로 고름 — app/page.tsx)은 따른다. 실제로 옮길 때(onReady 의 실행) 적는다 — load 전에
+  // 떠난 지도가 따르지 못한 요청은 다음 지도가 따른다.
   useEffect(() => {
-    if (!map || !flyTo || flyTo.id <= flyHandled.current) return;
-    flyHandled.current = flyTo.id;
+    if (!map || !flyTo || flyTo.id <= useUi.getState().flyHandled) return;
     const reduce = typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
     const opts = { center: [flyTo.lon, flyTo.lat] as [number, number], zoom: Math.max(map.getZoom(), flyTo.zoom) };
-    onReady(map, "fly", () => (reduce ? map.jumpTo(opts) : map.flyTo({ ...opts, duration: 1200, essential: true })));
+    onReady(map, "fly", () => {
+      useUi.getState().setFlyHandled(flyTo.id);
+      if (reduce) map.jumpTo(opts); else map.flyTo({ ...opts, duration: 1200, essential: true });
+    });
   }, [map, flyTo]);
 
   // ---- 레이어 토글 ----
