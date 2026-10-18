@@ -527,10 +527,14 @@ export function providersNowMs(resp: unknown): number {
 
 /**
  * 수집기 heartbeat 해시(wakeline:collector — /ops/providers 의 collector) → 작업 heartbeat 시각 칩의 [필드, 값](해시 순서 그대로). 이름이 _at 으로
- * 끝나는 필드 — 채우기 시각 둘(traffic_grid_fill_pass_at · _resume_at)은 채우기 줄(TrafficGridFill)이 뜻과 함께 보인다 — 칩으로 겹쳐 적지 않는다.
+ * 끝나는 필드 가운데 작업이 마지막으로 보고한 시각({job}_at)만 남기고, 같은 해시의 다른 *_at 은 뺀다:
+ * - *_resume_at: '다음에 움직일 때'(채우기 · 타일 차단기가 쉼을 끝내는 때 — 미래 시각, ADR-023 2026-10-01 개정). 보고 시각이 아니다 — 이름으로 빼서
+ *   값이 비었든 앞으로 생길 다른 작업의 것이든 같다(api 의 heartbeat 나이도 같은 규칙, IM-13). 그래서 작업 이름은 _resume 으로 끝나면 안 된다
+ * - traffic_grid_fill_*: 채우기 시각(_pass_at · _resume_at)은 채우기 줄(TrafficGridFill)이 뜻과 함께 보인다 — 칩으로 겹쳐 적지 않는다
+ * 타일이 쉬는 끝(traffic_grid_tiles_resume_at)도 채우기 줄이 보인다. 전에는 traffic_grid_fill_ 만 빼서 그것이 '마지막으로 보고한 시각' 칩으로 그려졌다.
  */
 export function jobHeartbeatEntries(collector: Record<string, unknown> | null | undefined): [string, unknown][] {
-  return Object.entries(collector ?? {}).filter(([k]) => k.endsWith("_at") && !k.startsWith("traffic_grid_fill_"));
+  return Object.entries(collector ?? {}).filter(([k]) => k.endsWith("_at") && !k.endsWith("_resume_at") && !k.startsWith("traffic_grid_fill_"));
 }
 
 /**

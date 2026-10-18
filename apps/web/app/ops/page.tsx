@@ -250,7 +250,7 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
           <div className="mb-2 flex flex-wrap gap-3 text-[11px]">
             {/* 작업별 공급자 — 공급자 없음(수집기 {job}_none_*, 운영 로그 2026-09-30)이면 빨간 배지와 까닭. 전에는 마지막으로 쓴 공급자를 초록으로 보였다 */}
             {activeJobs(prov.active).map((j) => <span key={j.job} className={`badge ${j.none ? "bad" : "ok"}`} title={jobBadgeTitle(j, providersNowMs(prov))} data-testid={`ops-active-${j.job}`}>{jobBadgeText(j, providersNowMs(prov))}</span>)}
-            {/* 채우기 시각 둘(traffic_grid_fill_pass_at · _resume_at)은 아래 채우기 줄에서 뜻과 함께 보인다 — 작업 heartbeat 칩으로 겹쳐 적지 않는다(lib/ops jobHeartbeatEntries) */}
+            {/* 작업이 마지막으로 보고한 시각({job}_at)만 — *_resume_at(다음에 움직일 때)과 채우기 시각은 빼고 아래 채우기 줄이 뜻과 함께 보인다(lib/ops jobHeartbeatEntries) */}
             {jobHeartbeatEntries(prov.collector).map(([k, v]) => <span key={k} className="mono text-fg-3" title={`${k} — 이 작업이 마지막으로 보고한 시각(collector heartbeat)${fmtTimeTitle(at(v)) ? ` · ${fmtTimeTitle(at(v))}` : ""}`}>{k.replace("_at", "")} {fmtKst(at(v))}</span>)}
             {prov.collector?.fixture === "1" ? <span className="badge warn">FIXTURE</span> : null}
           </div>
