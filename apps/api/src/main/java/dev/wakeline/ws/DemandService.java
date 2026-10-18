@@ -48,7 +48,7 @@ import java.util.function.Supplier;
  *   <li>대상: 살아 있고 일시정지하지 않은 구독 세션. 선택 항공기가 있으면 집중 추적(focus) 수요만 — 핫 리전 수요는 내지 않는다.
  *       항공기 레이어를 끈 세션({type:"layers", aircraft:false})은 핫 리전 수요를 내지 않는다.
  *       선택이 없고 줌 ≥ 7 이며 화면 중심이 고정 관심 지역 원 밖이면 핫 리전(hot) 수요(셀 키는 {@link HotCell#forViewport}).
- *       원 안이면 covered_by_region(임대 없음). 같은 hex·셀은 세션끼리 임대 하나를 나눈다.</li>
+ *       원 안이면 covered_by_region(임대 없음 — 원의 반경은 공급자 상한 250 NM 이하, {@link RegionSettings}). 같은 hex·셀은 세션끼리 임대 하나를 나눈다.</li>
  *   <li>한 세션이 같은 hex 를 30분 넘게 연속 선택하면(비용 상한) 수요를 내지 않고 expired_session_cap 을 알린다. 다시 선택하면 새로 시작.</li>
  *   <li>상한: hot 6 셀 · focus 50 hex(세션 수 많은 순 → 먼저 요청된 순). 상한 밖 세션에는 throttled.
  *       hot 은 IP 당 몫이 있다(ADR-013 개정 2026-10-14 · QA-1350): 다른 IP 가 셀을 원하는 동안 한 IP 만 원하는 셀은 그 IP 마다 3 셀(전체의 절반)까지만

@@ -164,7 +164,7 @@ def ops_writes(base, user):
                    h, raw_body=raw_body)
 
     bounds = {"region_poll_s": (5, 120), "global_poll_s": (60, 3600), "sigmet_poll_s": (60, 3600), "radar_poll_s": (30, 3600),
-              "metar_poll_s": (300, 7200), "region_radius_nm": (50, 500)}
+              "metar_poll_s": (300, 7200), "region_radius_nm": (50, 250)}
     for key, (lo, hi) in bounds.items():
         v = items[key]["version"] + 1000
         for val, exp in ((lo, 409), (hi, 409), (lo - 1, 400), (hi + 1, 400), (float(lo), 400), (str(lo), 400), (None, 400), (True, 400),

@@ -45,10 +45,10 @@ class StatusServiceTest {
         assertThat(((Map<?, ?>) s.get("region")).get("provider")).isNull();      // 수집 이력 없음 — "-" 를 값처럼 내보내지 않는다
         assertThat(((Map<?, ?>) s.get("global")).get("aircraft")).isEqualTo(1);  // 900 s 전 기체는 '현재' 가 아니다
 
-        region.set(new RegionSettings.Region(35.5, 139.7, 300)); // 운영자가 /ops 에서 바꿈 → collector 와 같은 값
+        region.set(new RegionSettings.Region(35.5, 139.7, 200)); // 운영자가 /ops 에서 바꿈 → collector 와 같은 값
         Map<?, ?> r = (Map<?, ?>) status.publicStatus().get("region");
         assertThat(r.get("center")).isEqualTo(List.of(35.5, 139.7));
-        assertThat(r.get("radius_nm")).isEqualTo(300);
+        assertThat(r.get("radius_nm")).isEqualTo(200);
     }
 
     /** 레이더를 한 번도 받지 않았으면(fetched_at 자리표시 EPOCH) "오래됨" — SIGMET 과 같은 규칙. 전에는 lag -1 이라 false 였다. */
