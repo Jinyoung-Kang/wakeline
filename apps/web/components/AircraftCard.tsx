@@ -24,7 +24,10 @@ import { DemandBadge } from "./MapChips";
 import { RequestIdCopy, RequestIdOf } from "./logs/ErrorNote";
 import { KstTime } from "./KstTime";
 
-/** 등록 정보(static)·SIGMET 포함 여부 등 REST 상세 갱신 주기. 위치·속도는 WS selected 스트림이 실시간으로 준다. */
+/**
+ * 등록 정보(static)·SIGMET 포함 여부 등 REST 상세 갱신 주기. 위치·속도는 WS selected 스트림이 실시간으로 준다 — 지도 없는 피드(Q4 — 스토어 mapless)는
+ * select 를 보내지 않아 selected 가 오지 않으므로 이 주기의 REST 상세가 위치의 출처다(카드가 그렇게 적는다).
+ */
 const DETAIL_REFRESH_MS = 30_000;
 function AirportLine({ a }: { a: RouteAirport }) {
   return (
@@ -163,6 +166,9 @@ export function AircraftCard({ hex }: { hex: string }) {
   const conn = useServerData((x) => x.conn);
   const lastRxAt = useServerData((x) => x.lastRxAt);
   const feeds = useServerData((x) => x.feeds);
+  // 지도 없는 피드(Q4 — lib/ws subscribeWithoutMap · 스토어 mapless): 그 클라이언트는 select 를 보내지 않는다(집중 추적 안 함 — 사용자 결정 Q-B) — 서버가 이
+  // hex 의 집중 추적 상태를 보고할 일이 없으니 기다리는 척하지 않는다. 위치는 REST 상세(30 s)뿐이고, 지도에 그리는 항적 · 예측 궤적도 없다
+  const mapless = useServerData((x) => x.mapless);
   // 응답의 hex 가 이 카드의 것일 때만(다른 항공기의 응답을 보여주지 않는다)
   const d = res.data && res.data.hex?.toLowerCase() === hex.toLowerCase() ? res.data : null;
   const err = res.error != null ? String((res.error as Error).message) : null;
@@ -183,7 +189,7 @@ export function AircraftCard({ hex }: { hex: string }) {
   const routePendingForS = useElapsedSince(route?.status === "pending" ? `${hex}|${route.callsign ?? ""}` : null, wall);
   // 집중 추적(ADR-013): 서버가 이 hex 에 대해 보고한 상태·주기만. 연결이 실시간이 아니면 상태를 말하지 않는다.
   const live = isRxFresh(conn, lastRxAt, wall);
-  const chip = live ? focusChip(demand, hex, now) : null;
+  const chip = live && !mapless ? focusChip(demand, hex, now) : null;
   const rows: [string, React.ReactNode][] = [
     ["Callsign", <span key="cs" className="mono">{s?.callsign ?? "—"}</span>],
     ["ICAO24", <span key="hex" className="mono">{hex}</span>],
@@ -220,7 +226,8 @@ export function AircraftCard({ hex }: { hex: string }) {
       <div className="flex items-center gap-2 border-b border-line px-2 py-1 text-[11px]" data-testid="demand-row">
         <span className="text-fg-3">갱신</span>
         {chip ? <DemandBadge chip={chip} testId="demand-chip" />
-          : <span className="text-fg-3" data-testid="demand-chip-none">{live ? "집중 추적 상태 수신 전" : "연결이 실시간이 아님 — 집중 추적 상태 모름"}</span>}
+          : <span className="text-fg-3" data-testid="demand-chip-none">{mapless ? `지도 없음 — 선택을 서버에 알리지 않음(집중 추적 안 함) · 위치는 REST 상세 ${DETAIL_REFRESH_MS / 1000} s`
+            : live ? "집중 추적 상태 수신 전" : "연결이 실시간이 아님 — 집중 추적 상태 모름"}</span>}
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto px-2 py-1 text-[12px]">
         {err ? <div className="text-[11px] text-bad" data-testid="aircraft-detail-error">상세(REST) 조회 실패 — 마지막으로 받은 값만 표시 ({err}<RequestIdOf error={res.error} />)</div> : null}
@@ -241,7 +248,8 @@ export function AircraftCard({ hex }: { hex: string }) {
             기록 조회 실패 — 선택한 뒤 받은 관측만 이어 그립니다 ({track.error}{track.requestId ? <RequestIdCopy id={track.requestId} /> : null})
           </div>
         ) : null}
-        <div className="mt-2 text-[10px] text-fg-3">{track?.error ? "" : "항적 선은 DB 기록(최근 2 h)에 실시간 관측을 이어 붙인 것입니다. "}선택한 동안은 서버 수집기가 이 항공기를 따로 조회하므로(집중 추적) 위 칩에 보이는 서버 보고 주기로 점이 촘촘해집니다. 점선 궤적은 서버가 예측 가능하다고 판단할 때만 그리는 10분 dead reckoning 추정입니다.</div>
+        {/* 지도에 그리는 것(항적 선 · 집중 추적 점 · 예측 점선)의 설명 — 지도 없는 피드에서는 그릴 지도도 집중 추적도 없어 보이지 않는다 */}
+        {mapless ? null : <div className="mt-2 text-[10px] text-fg-3">{track?.error ? "" : "항적 선은 DB 기록(최근 2 h)에 실시간 관측을 이어 붙인 것입니다. "}선택한 동안은 서버 수집기가 이 항공기를 따로 조회하므로(집중 추적) 위 칩에 보이는 서버 보고 주기로 점이 촘촘해집니다. 점선 궤적은 서버가 예측 가능하다고 판단할 때만 그리는 10분 dead reckoning 추정입니다.</div>}
       </div>
     </div>
   );

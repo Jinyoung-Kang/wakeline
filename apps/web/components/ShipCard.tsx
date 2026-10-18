@@ -88,6 +88,8 @@ export function ShipCardView({ mmsi, detail: d, error: err, now, retry = null }:
   const live = useServerData((x) => (x.shipSelected && x.shipSelected.mmsi === mmsi ? x.shipSelected : null));
   const track = useServerData((x) => (x.shipTrack && x.shipTrack.mmsi === mmsi ? x.shipTrack : null));
   useServerData((x) => x.ships.version); // 지도 목록 사본이 바뀌면 다시 그린다
+  // 지도 없는 피드(Q4 — 스토어 mapless): 항적은 지도 Hook(components/map/useSelectionTracks)이 받는다 — 지도가 없으면 오지 않으니 '불러오는 중'이라고 하지 않는다
+  const mapless = useServerData((x) => x.mapless);
   const trackHours = useUi((s) => s.shipTrackHours);
   const setTrackHours = useUi((s) => s.setShipTrackHours);
   const lite = shipStates.get(mmsi) ?? null;
@@ -218,7 +220,8 @@ export function ShipCardView({ mmsi, detail: d, error: err, now, retry = null }:
               ))}
             </span>
           </div>
-          {track == null || !track.loaded ? <div className="text-[11px] text-fg-3">항적 불러오는 중…</div>
+          {mapless ? <div className="text-[11px] text-fg-3" data-testid="ship-track-mapless">지도 없음 — 항적을 받지 않음</div>
+            : track == null || !track.loaded ? <div className="text-[11px] text-fg-3">항적 불러오는 중…</div>
             : track.error ? <div className="text-[11px] text-warn" data-testid="ship-track-error">
                 기록 조회 실패 — 선택한 뒤 받은 관측만 이어 그립니다 ({track.error}{track.requestId ? <RequestIdCopy id={track.requestId} /> : null})
               </div>
@@ -286,9 +289,11 @@ const SHIP_LIST_MAX = 50;
 /**
  * 화면 안 선박(계약 v5 §B3): 정렬 가능한 표(선종 색 · 선명 · MMSI · 속력 kn/km/h · 항해 상태 · 경과) — 검색 결과와 같은 표(ShipTable).
  * 선종 필터는 지도와 같게 적용하고 숨긴 수를 적는다.
+ * 지도 없는 피드(Q4 — 스토어 mapless)는 선박 레이어를 끈 구독이라 선박 위치가 오지 않는다 — '수신 대기'가 아니라 받지 않는다고 적는다.
  */
 function ShipList({ shipCats }: { shipCats: readonly ShipCategory[] }) {
   const view = useServerData((x) => x.ships);
+  const mapless = useServerData((x) => x.mapless);
   const ais = useServerData((x) => x.ais);
   const viewport = useServerData((x) => x.viewport);
   const observed = useServerData((x) => x.receptionInView); // 관측 수신 범위(ADR-027) — 켜져 있고 자료가 있을 때만
@@ -303,10 +308,10 @@ function ShipList({ shipCats }: { shipCats: readonly ShipCategory[] }) {
   const list = useMemo(() => (view.mode === "points" ? shipList(shipStates.values(), q, Infinity, filtered ? new Set(shipCats) : null) : null), [view, q, shipCats, filtered]);
   const sortNow = sort.key === "age" ? now : 0;
   const rows = useMemo(() => (list ? sortShipRows(list.items.map(shipRowFromLite), sort, sortNow).slice(0, SHIP_LIST_MAX) : []), [list, sort, sortNow]);
-  if (view.mode !== "points" || !list) {
+  if (mapless || view.mode !== "points" || !list) {
     return (
       <div className="p-3 text-[11px] text-fg-3" data-testid="ship-list-empty">
-        {view.mode === "grid" ? <>
+        {mapless ? "지도 없음 — 선박 위치를 받지 않음" : view.mode === "grid" ? <>
           지금은 격자(선박 수)로 표시 중입니다 — 확대해서 개별 표시가 되면 선박을 고를 수 있습니다. 이름·MMSI 로 찾으려면 상단 검색(/ 키)을 쓰세요.
           <div className="mt-1">{SHIPS_RULE_TEXT}</div>
         </> : aisOff ? "AIS 수집이 꺼져 있습니다(aisstream.io 키 없음 — 운영 설정). 선박 데이터가 오지 않습니다." : "선박 수신 대기 중…"}
