@@ -1,6 +1,6 @@
 "use client";
 import type * as maplibregl from "maplibre-gl";
-import { memo, useEffect, useRef } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { subscriptionBbox } from "@/lib/viewport";
 import { addBaseLayers, radarTileUrl, STYLE_URL } from "@/lib/maplayers";
 import { maplibre } from "@/lib/maplibre";
@@ -10,6 +10,7 @@ import { watchBasemapStyle } from "@/lib/basemap-fallback";
 import { mapAttributionHtml, styleHasBasemapCredit } from "@/lib/attribution";
 import { mapAttributionControl } from "@/lib/map-attribution";
 import { renderTip } from "@/lib/tooltip";
+import { NoWebgl } from "./map/NoWebgl";
 import { fmtReplayBbox, replayAircraftTip, replayQueryBbox, replaySigmetTip, type ReplayAircraft, type ReplayFrame } from "@/lib/replay";
 
 export type { ReplayFrame } from "@/lib/replay";
@@ -25,6 +26,7 @@ export type ReplayPick = { kind: "aircraft"; hex: string } | { kind: "sigmet"; i
  * onBasemapFailed(true) 로 알린다(재생 화면이 "배경지도를 불러오지 못함"을 띄운다). 전에는 'load' 가 오지 않아 지도가 빈 채로 알림도 없었다(QA-301).
  * MapLibre 는 상황판과 같은 public 배포본(R-02 — lib/maplibre): 재생 화면이 이 컴포넌트를 불러올 때 loadMaplibre() 를 함께 기다린다(app/replay/page.tsx).
  * 전에는 maplibre-gl 을 번들해 공용 코드를 두 벌(번들 청크 286 KB + 워커가 받는 공용 청크 149 KB, gzip) 받고 해석했다(PERF §15).
+ * WebGL2 문맥을 만들 수 없으면(Map 생성자의 GPUInitializationError) 던지지 않고 지도 자리에 안내만(components/map/NoWebgl — 상황판과 같다, IM-21). 다른 예외는 위로.
  */
 export const ReplayMap = memo(function ReplayMap({ frame, onBbox, onPick, showRadar, onBasemapFailed, initialBounds = null }: {
   frame: ReplayFrame | null; onBbox: (bbox: string, clamped: boolean) => void; onPick: (p: ReplayPick) => void; showRadar: boolean; onBasemapFailed?: (failed: boolean) => void;
@@ -36,12 +38,20 @@ export const ReplayMap = memo(function ReplayMap({ frame, onBbox, onPick, showRa
   const frameRef = useRef<ReplayFrame | null>(frame);
   const pickRef = useRef(onPick);
   const basemapRef = useRef(onBasemapFailed);
+  const [noWebgl, setNoWebgl] = useState(false);
   useEffect(() => { frameRef.current = frame; pickRef.current = onPick; basemapRef.current = onBasemapFailed; });
   useEffect(() => {
     if (!el.current) return;
     const ml = maplibre(); // 워커 경로는 loadMaplibre() 가 지정했다
-    const map = new ml.Map({ container: el.current, style: STYLE_URL, ...(initialBounds ? { bounds: initialBounds, fitBoundsOptions: { padding: 24 } } : { center: [127.8, 36.5], zoom: 6 }),
-      minZoom: 2, maxZoom: 12, attributionControl: false });
+    let map: maplibregl.Map;
+    try {
+      map = new ml.Map({ container: el.current, style: STYLE_URL, ...(initialBounds ? { bounds: initialBounds, fitBoundsOptions: { padding: 24 } } : { center: [127.8, 36.5], zoom: 6 }),
+        minZoom: 2, maxZoom: 12, attributionControl: false });
+    } catch (e) {
+      if (!(e instanceof ml.GPUInitializationError)) throw e;
+      setNoWebgl(true); // 바깥(브라우저의 GPU)이 지도를 거절했다: 한 번, 지도 자리를 안내로 바꾼다
+      return;
+    }
     map.addControl(new ml.NavigationControl({ showCompass: false }), "top-left");
     mapRef.current = map;
     // 배경지도 시인성(계약 v4 §E — 상황판 지도와 같은 색) · 스타일을 받지 못하면(오류 · 시간 제한) 로컬 대체 스타일로 한 번 바꾸고 알린다(R-01 — 상황판과 같은 규칙)
@@ -141,5 +151,6 @@ export const ReplayMap = memo(function ReplayMap({ frame, onBbox, onPick, showRa
     if (map.getSource("aircraft")) apply(); else map.once("load", apply);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [radarKey, showRadar]);
+  if (noWebgl) return <NoWebgl />;
   return <div ref={el} className="h-full w-full" data-testid="replay-map" data-escape-neutral="" />;
 });

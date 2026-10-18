@@ -105,6 +105,17 @@ export function lazyPart<P extends object>(label: string, load: () => Promise<Co
   return Object.assign(Part, { preload: () => fetchOnce().then(() => undefined), useLoaded, label });
 }
 
+/**
+ * 이미 한 번 받지 못한 화면 코드(상황판 · 재생 화면의 지도 — app/page.tsx · app/replay/page.tsx 의 next/dynamic loader 가 실패): loader 는 거절하지 않고 이것으로
+ * resolve 한다. next/dynamic(app-dynamic)은 모듈을 평가할 때 lazy 를 한 번 만들어 거절을 기억한다 — 거절하면 화면 전체의 오류 경계(app/error.tsx)까지 올라가
+ * 상태 바 · 알림 패널까지 지웠고, 그 '다시 시도'는 같은 거절을 다시 그려 망이 돌아와도 돌아오지 않았다(IM-21). 처음 그릴 때는 받은 오류를 그대로 보이고
+ * (다시 받지 않는다) '다시 시도'부터 retry 로 다시 받는다 — 문구 · 청크 확인 · 보고 · 새로고침 안내 · 그리기 오류를 위로 올림은 조각과 같다.
+ */
+export function failedPart<P extends object>(label: string, reason: unknown, retry: () => Promise<ComponentType<P>>, opts?: LazyPartOptions): LazyPartComponent<P> {
+  let first = true;
+  return lazyPart<P>(label, () => (first ? ((first = false), Promise.reject(reason)) : retry()), opts);
+}
+
 /** 초점이 문서로 떨어졌는가(누른 단추가 사라지면 브라우저는 body 로 옮긴다 — 떼어 낸 요소를 가리키는 환경도 같게 본다) */
 function focusLost(): boolean {
   const a = document.activeElement;
