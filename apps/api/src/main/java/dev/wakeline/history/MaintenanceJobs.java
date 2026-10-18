@@ -30,7 +30,8 @@ import java.util.Map;
  * 1분 요약 30일, 알림은 끝난 것만 30일(열린 알림은 남긴다 · {@code wakeline.alert-retention-days}, 0 이면 지우지 않는다), SIGMET·통계 영구.
  * 선박(ADR-014): 위치 ship_position 72 h, 정적 정보·수신 공백 영구.
  * 관심 지역은 런타임 설정(collector 와 같은 값, {@link RegionSettings})에서 읽는다(COR-12).
- * 따라잡기(REL-18): cron 은 놓친 시각을 다시 돌리지 않는다 — 기동 1분 뒤 · 성공 뒤 3시간마다(실패하면 1분부터 두 배씩, 30분 상한) 원본이 남은
+ * 따라잡기(REL-18): cron 은 놓친 시각을 다시 돌리지 않는다 — 기동 1분 뒤 · 성공 뒤 3시간마다(실패하면 1분부터 두 배씩, 30분 상한 · 지정 보존 복사만
+ * 실패하면 그것만 같은 물러남으로) 원본이 남은
  * 시간(남아 있는 가장 오래된 항적 파티션부터) 중 요약이 없는 시간과 최근 7일 중 완료 표식이 없는 통계 계열이 있는 날을 채운다(둘 다 멱등, R-46 · AWS 리뷰 B-1 · B-2 · QA-1200). 그보다 오래된 날도 원본이 남은 계열(SIGMET · 알림)에 표식이 없으면
  * 채운다({@link #backfillStats} — V16 뒤 KST 날짜로 다시 세기. 원해상도가 지워진 옛 날의 교통량은 V16 이 옛 UTC 시 행에서 옮겨 실었다).
  */
@@ -153,7 +154,9 @@ public class MaintenanceJobs {
         // 주말에 꺼지는 AWS 데모의 금요일 교통량은 월요일 아침 따라잡기가 세는데, RDS 가 늦게 준비되면 그 전에 목요일 UTC 파티션이 지워져 영구히 빠졌다
         // 선박 위치 파티션도 같다(QA-1201 남은 곳 — 독립 리뷰 2026-10-14): 첫 따라잡기가 지정 선박의 점을 보존표로 옮기기 전에 지우면, 긴 정지 직전
         // 시간의 그 점이 원본과 함께 사라진다(따라잡기가 RDS 를 기다리며 물러나 :02 를 넘길 때)
-        if (catchUpOkAt == null && clock.instant().isBefore(startedAt.plus(DROP_HOLD_MAX))) {
+        // 그래서 요약 · 통계뿐 아니라 따라잡기의 지정 보존 복사도 성공해야 푼다(IM-02): 요약 · 통계만 되고 복사가 실패한 채 풀면, 4일 넘는 정지 뒤 정지 직전
+        // 시간(그날 매시 복사가 옮기지 못한 시간)의 지정 대상 점이 다음 :02 에 지워졌다 — 매시 복사는 닫힌 3시간만 보고, 다음 전체 창 복사는 3 h 뒤였다
+        if ((catchUpOkAt == null || retainedOkAt == null) && clock.instant().isBefore(startedAt.plus(DROP_HOLD_MAX))) {
             log.info("retention track_point · ship_position partitions: kept until the first catch-up after start (at most {} h)", DROP_HOLD_MAX.toHours());
             return;
         }
@@ -312,7 +315,7 @@ public class MaintenanceJobs {
         return total;
     }
 
-    /** 기동 뒤 첫 따라잡기가 성공하기 전 항적 파티션 삭제를 미루는 상한(독립 리뷰 M3) */
+    /** 기동 뒤 첫 따라잡기(요약 · 통계와 지정 보존 복사)가 성공하기 전 항적 · 선박 위치 파티션 삭제를 미루는 상한(독립 리뷰 M3 · QA-1201 · IM-02) */
     static final Duration DROP_HOLD_MAX = Duration.ofHours(6);
     /** 성공한 따라잡기 뒤 다음 따라잡기까지(REL-18) */
     static final Duration CATCH_UP_EVERY = Duration.ofHours(3);
@@ -321,25 +324,36 @@ public class MaintenanceJobs {
     static final Duration CATCH_UP_RETRY_MAX = Duration.ofMinutes(30);
     /** 연달아 실패하는 동안 경고를 남기는 간격 — 같은 경고를 재시도마다 남기지 않는다 */
     static final Duration CATCH_UP_WARN_EVERY = Duration.ofMinutes(10);
-    /** 마지막으로 성공한 따라잡기(없으면 기동 뒤 아직 — 첫 틱에 돈다) */
+    /** 마지막으로 성공한 따라잡기(요약 · 통계 — 없으면 기동 뒤 아직, 첫 틱에 돈다) */
     private volatile Instant catchUpOkAt;
     private volatile Instant catchUpWarnedAt;
     private volatile Instant retainedWarnedAt;
     /** 실패 뒤 다음 시도(없으면 곧바로) */
     private volatile Instant catchUpRetryAt;
     private volatile int catchUpFailures;
+    /** 따라잡기의 지정 보존 복사(원본이 남은 모든 시간)가 마지막으로 성공한 때 — 없으면 기동 뒤 아직(파티션 삭제 보류가 풀리지 않는다). 매시 복사(3 h 창)는 채우지 않는다 */
+    private volatile Instant retainedOkAt;
+    /** 그 복사가 실패한 뒤 복사만 다시 할 때(없으면 다시 할 것 없음) · 이어진 실패 수 */
+    private volatile Instant retainedRetryAt;
+    private volatile int retainedFailures;
 
     /**
      * 기동 1분 뒤부터 1분마다 보고, 마지막 성공 뒤 {@link #CATCH_UP_EVERY} 가 지났으면 놓친 1분 요약 · 일 통계를 채운다(REL-18) — 실패하면 1분 뒤 다시,
      * 이어서 실패하면 두 배씩 {@link #CATCH_UP_RETRY_MAX} 까지 늘린다(독립 리뷰 M2 — 결정적으로 실패하는 집계를 1분마다 되풀이하지 않게).
      * 3 h 고정 주기였을 때는 기동 직후의 실패(RDS 준비 전 — AWS 데모는 매일 아침 EC2 · RDS 를 함께 켠다, ADR-039)를 3 h 뒤에야 다시 했다:
      * 그 데모에서는 03:30 KST 정시 집계가 꺼진 시간이라 일 통계가 따라잡기에만 기대고, 금요일 교통량은 월요일 09:00 KST 뒤에는 다시 셀 수 없다(AWS 리뷰 B-2).
+     * 요약 · 통계는 됐는데 지정 보존 복사만 실패했으면 3 h 를 기다리지 않고 같은 물러남(1분부터 두 배씩, 30분 상한)으로 복사만 다시 한다(IM-02 —
+     * 요약 · 통계는 다시 돌리지 않는다). 기다리면 파티션 삭제 보류의 상한({@link #DROP_HOLD_MAX}) 안에 다시 할 기회가 한두 번뿐이다.
      */
     @Scheduled(initialDelay = 60_000, fixedDelay = 60_000)
     public void catchUpTick() {
         Instant now = clock.instant();
         Instant ok = catchUpOkAt;
-        if (ok != null && now.isBefore(ok.plus(CATCH_UP_EVERY))) return;
+        if (ok != null && now.isBefore(ok.plus(CATCH_UP_EVERY))) {
+            Instant retainedRetry = retainedRetryAt;
+            if (retainedRetry != null && !now.isBefore(retainedRetry)) catchUpRetained();
+            return;
+        }
         Instant retry = catchUpRetryAt;
         if (retry != null && now.isBefore(retry)) return;
         if (runCatchUp()) {
@@ -355,7 +369,10 @@ public class MaintenanceJobs {
         }
     }
 
-    /** 따라잡기 한 번(주기와 상관없이 — 시험 · 수동). 성공하면 틱과 같이 기록한다(항적 파티션 삭제 보류가 풀린다) */
+    /**
+     * 따라잡기 한 번(주기와 상관없이 — 시험 · 수동). 틱과 같이 기록한다: 요약 · 통계가 성공하면 catchUpOkAt, 지정 보존 복사가 성공하면 retainedOkAt
+     * ({@link #runCatchUp} 안). 항적 · 선박 위치 파티션 삭제 보류는 둘 다 성공해야 풀린다.
+     */
     public void catchUp() {
         if (runCatchUp()) {
             catchUpOkAt = clock.instant();
@@ -364,7 +381,11 @@ public class MaintenanceJobs {
         }
     }
 
-    /** @return 요약 · 일 통계 따라잡기가 끝까지 됐는가 — 지정 보존 복사의 실패는 따로 가두고 세지 않는다(매시 복사 {@link #copyRetained()} 가 다시 한다) */
+    /**
+     * @return 요약 · 일 통계 따라잡기가 끝까지 됐는가 — 지정 보존 복사의 성패는 따로 가두어 따로 기록한다({@link #catchUpRetained}). 매시 복사
+     * ({@link #copyRetained()})는 닫힌 3시간만 옮기므로 이 복사의 실패를 대신하지 못한다(IM-02): 실패하면 틱이 물러남으로 복사만 다시 하고, 성공할 때까지
+     * 파티션 삭제를 미룬다(상한 {@link #DROP_HOLD_MAX}).
+     */
     boolean runCatchUp() {
         boolean done = true;
         try {
@@ -384,21 +405,38 @@ public class MaintenanceJobs {
             }
         }
         // 지정 대상 보존 복사는 따로 가둔다(ADR-038 결정 3 · QA-601): 위가 실패해도 72 h 파티션 삭제 전에 옮길 기회를 잃지 않는다.
-        // 창 = 원본이 남아 있는 모든 시간(보존 365일 안 — 남은 파티션만 읽힌다, 대상마다 (hex|mmsi, ts) 기본 키 범위). 70 h 고정이던 때는 그보다 긴 정지
-        // (연휴 · 기동 실패) 직전 시간의 지정 대상 점을 원본이 남아 있는데도 옮기지 않아 원본 삭제와 함께 잃었다(QA-1201 — 매시 복사는 닫힌 3시간만 본다)
+        catchUpRetained();
+        return done;
+    }
+
+    /**
+     * 따라잡기의 지정 보존 복사. 창 = 원본이 남아 있는 모든 시간(보존 365일 안 — 남은 파티션만 읽힌다, 대상마다 (hex|mmsi, ts) 기본 키 범위). 70 h
+     * 고정이던 때는 그보다 긴 정지(연휴 · 기동 실패) 직전 시간의 지정 대상 점을 원본이 남아 있는데도 옮기지 않아 원본 삭제와 함께 잃었다(QA-1201 — 매시
+     * 복사는 닫힌 3시간만 본다). 항공기 · 선박 두 문장 중 하나만 실패해도 실패다(던지면 뒤 문장은 돌지 않는다 — 다시 하면 둘 다 다시, 겹치면 무시).
+     * 성공하면 {@code retainedOkAt} 을 채우고(파티션 삭제 보류 — {@link #dropExpiredPartitions}), 실패하면 따라잡기와 같은 물러남으로 다음 시도를 정한다
+     * ({@link #catchUpTick} 이 복사만 다시 한다 — IM-02).
+     */
+    void catchUpRetained() {
         try {
             Instant hour = clock.instant().truncatedTo(ChronoUnit.HOURS);
             int retained = copyRetained(hour.minus(RETAINED_DAYS, ChronoUnit.DAYS), hour); // 기동 · 놓친 시간(겹치면 무시)
             if (retained > 0) log.info("catch-up: retained track {} new minute points", retained);
+            if (retainedFailures > 0) log.info("catch-up of retained track succeeded after {} failed attempt(s)", retainedFailures);
+            retainedOkAt = clock.instant();
+            retainedFailures = 0;
+            retainedRetryAt = null;
+            retainedWarnedAt = null;
         } catch (RuntimeException e) {
             Instant now = clock.instant();
+            int failures = ++retainedFailures;
+            long minutes = Math.min(CATCH_UP_RETRY_FIRST.toMinutes() << Math.min(failures - 1, 10), CATCH_UP_RETRY_MAX.toMinutes());
+            retainedRetryAt = now.plus(Duration.ofMinutes(minutes));
             Instant warned = retainedWarnedAt;
             if (warned == null || !now.isBefore(warned.plus(CATCH_UP_WARN_EVERY))) {
                 retainedWarnedAt = now;
                 log.warn("catch-up of retained track failed (will retry): {}", e.toString());
             }
         }
-        return done;
     }
 
     /**
