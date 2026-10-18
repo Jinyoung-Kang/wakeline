@@ -3,7 +3,7 @@
 # 공식 이미지는 자주 다시 빌드되고 Dependabot(docker · /infra/db)이 다이제스트를 올린다. 기반이 같은 Debian 13(glibc 2.41 — 문자열 정렬
 # en_US.utf8 그대로)이고 같은 메이저(18) · 같은 PostGIS 3.6 이라 기존 볼륨을 그대로 쓴다(데이터 디렉터리 /var/lib/postgresql/18/docker —
 # 공식 18 이미지의 기본값, 이전 이미지도 같다). 새 PostGIS 부 버전의 SQL 쪽은 한 번 `make db-postgis-update`(슈퍼유저 · 로컬 소켓).
-FROM postgres:18-trixie@sha256:5a5a84b19854a9ffaa54082c166ff4ec27473a361e496e5ea167f298f2da9722
+FROM postgres:18-trixie@sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336
 
 # PostGIS 는 3.6.x 로 묶는다: 3.7 은 확장 갱신이 필요한 결정이라 다이제스트 갱신만으로 조용히 넘어가지 않게.
 # apt-get upgrade: 기반 이미지가 나온 뒤 고쳐진 Debian 보안 갱신까지(빌드 때마다 — Trivy 게이트가 결과를 본다).
