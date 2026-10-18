@@ -7,7 +7,7 @@ import { fmtLatencyMs } from "@/lib/format";
 import { liveNote, mirrorDiffers, switchCell, toggleNote, type SwitchNote } from "@/lib/provider-switch";
 import {
   classifyOpsError, editSetting, fmtBudgetLimit, isAuthMiss, jobHeartbeatEntries, parseSetting, pipelineLossCount, providerLastError, providerMissing, providersNowMs, rebaseSetting,
-  RUN_STATUS_TITLE, runStatusClass, runStatusTone, SESSION_EXPIRED_NOTE, settingConflict, qualityPartialDay, settingIfMatch, settingSpec, signOut, switchHistoryError, dlqReadError, withProviderResolutions,
+  RUN_STATUS_TITLE, runStatusClass, runStatusTone, SESSION_EXPIRED_NOTE, settingAfterSave, settingConflict, qualityPartialDay, settingIfMatch, settingSpec, signOut, switchHistoryError, dlqReadError, withProviderResolutions,
   type SettingEdit,
 } from "@/lib/ops";
 import { hiddenCount, hiddenText, parseResolutionState, RESOLUTION_STATE_TEXT, RESOLVE_EFFECT, type ResolvedMode } from "@/lib/resolutions";
@@ -421,7 +421,16 @@ function SettingsForm({ items, msg, setMsg, onSaved, onAuthMiss }: {
       const r = await saveSetting(k, parsed.value, settingIfMatch(ed));
       // changed=false — 지금 값과 같아 version · 감사 행이 그대로다(계약 v5 §G45)
       const same = typeof r === "object" && r !== null && (r as { changed?: unknown }).changed === false;
-      setMsg({ ok: true, text: same ? `${k} 지금 값과 같음 — 바뀐 것 없음` : `${k} 저장됨 — 다음 주기부터 적용` }); drop(k); onSaved();
+      setMsg({ ok: true, text: same ? `${k} 지금 값과 같음 — 바뀐 것 없음` : `${k} 저장됨 — 다음 주기부터 적용` });
+      // 보낸 편집 그대로일 때만 지운다 — 응답을 기다리는 동안 고친 값은 응답의 version 위에 남는다(IM-15, lib/ops settingAfterSave)
+      setEdit((e) => {
+        const next = settingAfterSave(e[k], ed, r);
+        if (next === e[k]) return e;
+        const c = { ...e };
+        if (next === undefined) delete c[k]; else c[k] = next;
+        return c;
+      });
+      onSaved();
     }
     catch (e) {
       if (isAuthMiss(e)) onAuthMiss(e);

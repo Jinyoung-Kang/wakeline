@@ -300,6 +300,25 @@ describe("R-35 settings: the version is taken when editing starts, so a refresh 
     // 운영자가 "덮어쓰기"를 고르면 그때 본 서버 version 으로 옮긴다
     expect(opsLib.rebaseSetting(e2, v4)).toEqual({ value: "310", version: 4 });
   });
+
+  it("after a successful save only the edit that was sent goes away; one typed while the PUT was in flight stays on the version the save made (IM-15)", () => {
+    const sent = { value: "15", version: 3 };
+    const saved = { key: "region_poll_s", value: 15, version: 4, changed: true, mirrored: true };
+    expect(opsLib.settingAfterSave(sent, sent, saved)).toBeUndefined();
+    expect(opsLib.settingAfterSave({ value: "15", version: 3 }, sent, saved)).toBeUndefined(); // 같은 값을 다시 쳤다 — 서버 값이 이미 그것
+    expect(opsLib.settingAfterSave(undefined, sent, saved)).toBeUndefined(); // 기다리는 동안 '새 값 보기'로 편집을 버렸다
+    // 수정 전: 무엇이든 지웠다 — 20 은 '저장됨' 문구 아래 말없이 사라졌다
+    expect(opsLib.settingAfterSave({ value: "20", version: 3 }, sent, saved)).toEqual({ value: "20", version: 4 });
+    // 같은 값이라 바뀐 것 없음(§G45) — 응답 version 은 보낸 version 그대로
+    expect(opsLib.settingAfterSave({ value: "20", version: 3 }, sent, { ...saved, version: 3, changed: false })).toEqual({ value: "20", version: 3 });
+    // version 을 모르는 응답 — 편집이 처음 본 version 을 둔다(새로고침이 다른 version 을 보이면 충돌 줄로 고르게 한다)
+    const kept = { value: "20", version: 3 };
+    expect(opsLib.settingAfterSave(kept, sent, {})).toBe(kept);
+    expect(opsLib.settingAfterSave(kept, sent, { version: "4" })).toBe(kept);
+    // 기다리는 동안 다른 곳의 v5 를 보고 '내 값으로 덮어쓰기'를 골랐다 — 더 오래된 v4 로 되돌리지 않는다
+    const rebased = { value: "20", version: 5 };
+    expect(opsLib.settingAfterSave(rebased, sent, saved)).toBe(rebased);
+  });
 });
 
 describe("R-39 narrow screens (390 px phone, 768 px tablet)", () => {

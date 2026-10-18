@@ -579,12 +579,12 @@ describe("ops writes in flight: one request per click burst (web-review B2)", ()
   const button = (text: string) => find((e) => e.tagName === "BUTTON" && visibleText(e) === text);
   const SETTINGS = { items: [{ key: "region_poll_s", value: 10, version: 3, updated_by: "op", updated_at: "2026-09-28T15:00:00Z" }] };
   const PROVIDERS = { ...(BODY["/api/v1/ops/providers"] as object), providers: [{ name: "adsbdb" }], provider_switch: [{ provider: "adsbdb", disabled: false, version: 1, updated_at: "2026-09-28T00:59:00Z", updated_by: "op", redis_disabled: "0", mirror_differs: false }] };
-  /** 쓰기(PUT · POST)는 붙잡아 두고 부른 순서대로 writes 에 쌓는다 — 응답 전에 두 번 누르는 상황 */
-  function stubHeldWrites(writes: { method: string; url: string; reply: (r: Response) => void }[]) {
+  /** 쓰기(PUT · POST)는 붙잡아 두고 부른 순서대로 writes 에 쌓는다 — 응답 전에 두 번 누르는 상황. settings = 그때그때의 GET /ops/settings 본문 */
+  function stubHeldWrites(writes: { method: string; url: string; reply: (r: Response) => void; init?: RequestInit }[], settings: () => unknown = () => SETTINGS) {
     vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
       const method = init?.method ?? "GET";
-      if (method !== "GET") return new Promise<Response>((r) => writes.push({ method, url, reply: r }));
-      if (url === "/api/v1/ops/settings") return json(200, SETTINGS);
+      if (method !== "GET") return new Promise<Response>((r) => writes.push({ method, url, reply: r, init }));
+      if (url === "/api/v1/ops/settings") return json(200, settings());
       if (url === "/api/v1/ops/providers") return json(200, PROVIDERS);
       return url in BODY ? json(200, BODY[url]) : json(404, { detail: "no such resource" });
     });
@@ -642,6 +642,35 @@ describe("ops writes in flight: one request per click burst (web-review B2)", ()
     expect(byTestId("settings-error")?.textContent).toContain("서버가 값을 거절했습니다");
     expect(button("save")!.getAttribute("aria-busy")).toBeNull();
     expect(button("save")!.getAttribute("disabled")).toBeNull(); // 편집 값이 남아 있다 — 고쳐 다시 저장할 수 있다
+  });
+
+  /**
+   * IM-15: 저장 응답을 기다리는 동안 그 키의 입력은 막히지 않는다 — 운영자가 오타를 고치면(15 → 20) 저장 성공 뒤의 drop 이 그 새 편집까지 말없이 지웠다
+   * ('저장됨' 만 남고 20 은 어디에도 없었다). 보낸 편집 그대로일 때만 지우고, 고친 값은 방금 저장이 만든 version 위의 편집으로 남는다
+   */
+  it("a value typed while the save is in flight survives the save's success, on the version that save made, and can be saved again", async () => {
+    const writes: { method: string; url: string; reply: (r: Response) => void; init?: RequestInit }[] = [];
+    let settings: unknown = SETTINGS;
+    stubHeldWrites(writes, () => settings);
+    await mount();
+    await editRegionPoll("15");
+    await React.act(async () => { void propsOf(button("save")!).onClick(); });
+    expect(writes.map((w) => `${w.method} ${w.url}`)).toEqual(["PUT /api/v1/ops/settings/region_poll_s"]);
+    const input = () => find((e) => e.tagName === "INPUT" && e.getAttribute("aria-label") === "region_poll_s 값")!;
+    const valueOf = (e: MiniElement) => (e as unknown as { value?: unknown }).value ?? e.getAttribute("value");
+    await React.act(async () => { propsOf(input()).onChange({ target: { value: "20" } }); });
+    // 서버는 15 를 v4 로 저장했다 — 뒤따르는 새로고침도 그것을 본다
+    settings = { items: [{ key: "region_poll_s", value: 15, version: 4, updated_by: "op", updated_at: "2026-09-28T23:41:15Z" }] };
+    writes[0].reply(json(200, { key: "region_poll_s", value: 15, version: 4, updated_by: "op", updated_at: "2026-09-28T23:41:15Z", changed: true, mirrored: true }));
+    await settle();
+    expect(byTestId("settings-ok")?.textContent).toBe("region_poll_s 저장됨 — 다음 주기부터 적용");
+    expect(valueOf(input())).toBe("20");
+    expect(byTestId("setting-conflict")).toBeNull(); // v4 는 방금 이 저장이 만든 것 — 다른 곳의 변경이 아니다
+    expect(button("save")!.getAttribute("disabled")).toBeNull();
+    await React.act(async () => { void propsOf(button("save")!).onClick(); });
+    expect(writes.map((w) => `${w.method} ${w.url}`)).toEqual(["PUT /api/v1/ops/settings/region_poll_s", "PUT /api/v1/ops/settings/region_poll_s"]);
+    expect((writes[1].init?.headers as Record<string, string>)["If-Match"]).toBe("4");
+    expect(JSON.parse(String(writes[1].init?.body))).toEqual({ value: 20 });
   });
 
   it("a double click on a provider's disable sends one POST; the switch is busy until the answer", async () => {

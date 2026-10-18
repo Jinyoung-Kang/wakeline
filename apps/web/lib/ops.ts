@@ -344,6 +344,19 @@ export function rebaseSetting(edit: SettingEdit, item: { version: number }): Set
   return { value: edit.value, version: item.version };
 }
 
+/**
+ * 저장(PUT) 성공 뒤의 편집. now = 지금 편집, sent = 보낸 편집, response = PUT 응답(SettingsService.update — 저장된 설정 + changed · mirrored).
+ * 지금 편집이 보낸 값 그대로면 지운다(서버 값이 이미 그것). 응답을 기다리는 동안 입력은 막히지 않아 고친 값이 있으면 남긴다(IM-15 — 전에는 무엇이든
+ * 지워 '저장됨' 아래 말없이 사라졌다). 그 편집은 방금 저장한 값 위의 것이라 응답의 version 으로 옮긴다 — 다음 저장의 If-Match 가 되고, 뒤따르는 새로고침이
+ * 그 version 을 '다른 곳의 변경' 충돌로 보이지 않는다. 응답에 정수 version 이 없거나 편집이 이미 더 새 version(기다리는 동안 '내 값으로 덮어쓰기')이면
+ * 편집의 version 을 그대로 둔다 — 짐작하지 않고, 서버와 다르면 충돌 줄로 고르게 한다
+ */
+export function settingAfterSave(now: SettingEdit | undefined, sent: SettingEdit, response: unknown): SettingEdit | undefined {
+  if (now === undefined || now.value === sent.value) return undefined;
+  const v = typeof response === "object" && response !== null ? (response as { version?: unknown }).version : undefined;
+  return typeof v === "number" && Number.isInteger(v) && v > now.version ? { value: now.value, version: v } : now;
+}
+
 // ---- 로그인·설정 폼(R-56) ----
 
 /** 서버 Login 레코드(@NotBlank username · @NotBlank @Size(min=8) password)와 같은 규칙. 문제가 없으면 null */
