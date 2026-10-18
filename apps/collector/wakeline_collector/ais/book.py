@@ -20,6 +20,10 @@
 되돌려 복구 뒤 최신값 하나만 실렸다 — redis 150 s pause 에서 분당 선박 행이 244–284 → 116 · 137 로 줄고 그 빈 곳을 설명하는 기록도 없었다.
 모으는 수 상한 BACKFILL_MAX(위치 튜플 참조 — 하나 ≈ 350 B, 상한에서 ≈ 35 MB · 운영 2026-10-03 의 분당 표본 ≈ 2,700 으로 ≈ 37분). 넘으면 더 모으지
 않고 (MMSI, 창) 수와 처음 모으지 못한 위치의 시각을 센다 — sink 가 복구 뒤 그 시각부터 공백(ais_gap, 구역 없음)으로 남긴다. 다 보낸 뒤(release) 모으기를 끝낸다.
+보내는 중인 위치도 상한에 든다: sink 는 맨 앞 조각을 보고(peek_backfill) XADD 가 성공한 뒤에야 뗀다(ack_backfill). 예전에는 모두 꺼내 비운 채
+XADD 를 기다려(답하지 않는 Redis 는 socket_timeout 동안) 그사이 받은 위치가 상한 검사를 지나쳤고, 실패하면 꺼낸 것을 되돌려 실패한 발행마다
+상한 위로 쌓였다(그 위치는 모으지 못한 수로도 세지 않았다 — 길어지면 컨테이너 메모리 한도를 넘는다). 실패마다 backlog 전체를 dict 로 바꿨다 되돌리던
+사본도 없다(바꾸는 것은 보낼 조각 하나).
 """
 
 from __future__ import annotations
@@ -27,6 +31,7 @@ from __future__ import annotations
 import time
 from collections import OrderedDict, deque
 from collections.abc import Callable, Iterable
+from itertools import islice
 from typing import Any
 
 from wakeline_collector.ais.parse import STATIC_FIELDS, Position, StaticPart
@@ -266,15 +271,15 @@ class ShipBook:
             return
         self._backlog.append(state)
 
-    def take_backfill(self) -> list[dict[str, Any]]:
-        """모은 위치를 받은 순서대로 모두 꺼낸다(모으기는 계속 — 그 사이 받은 위치는 새로 쌓인다)."""
-        out = [dict(zip(STATE_FIELDS, s, strict=True)) for s in self._backlog]
-        self._backlog.clear()
-        return out
+    def peek_backfill(self, n: int) -> list[dict[str, Any]]:
+        """모은 위치 중 맨 앞(가장 먼저 받은) n 건을 받은 순서대로 본다 — 떼지 않는다(보낸 뒤 ack_backfill). 보내는 동안에도 backlog 에
+        남겨 두어 상한 검사가 실제로 들고 있는 수를 본다(모듈 설명). 모으는 동안 새 위치는 뒤에만 붙으므로 앞 조각은 그대로다."""
+        return [dict(zip(STATE_FIELDS, s, strict=True)) for s in islice(self._backlog, n)]
 
-    def return_backfill(self, unsent: list[dict[str, Any]]) -> None:
-        """보내지 못한 위치를 맨 앞으로 되돌린다(순서 그대로 — 그 뒤에 새로 쌓인 것보다 먼저 보낸다)."""
-        self._backlog.extendleft(tuple(d[f] for f in STATE_FIELDS) for d in reversed(unsent))
+    def ack_backfill(self, n: int) -> None:
+        """보낸(XADD 가 성공한) 맨 앞 n 건을 뗀다. 보내지 못했으면 부르지 않는다 — 남은 것이 그대로 맨 앞이라 다음 발행이 먼저 보낸다."""
+        for _ in range(min(n, len(self._backlog))):
+            self._backlog.popleft()
 
     def release(self) -> tuple[int, float | None]:
         """모으기를 끝낸다(모은 것을 다 보냈고 최신값 발행도 됐다). 반환: (상한 때문에 모으지 못한 수, 처음 그런 위치의 시각)."""

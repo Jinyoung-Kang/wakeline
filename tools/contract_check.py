@@ -761,9 +761,10 @@ def receipt_mark_bounds() -> dict[str, int]:
     api 는 메시지마다 표식 하나를 잡는다(ShipWriter · TrackWriter). 두 Java 클래스의 MAX_MARKS 설명이 같은 계산을 글로 적는다.
     - 선박(wakeline:ships, 'ships'): ais sink 는 ais_flush_s(하한 = 설정 ge)마다 XADD 한 번(바뀐 선박 · 정적 정보가 CHUNK 를 넘을 때만 나눈다 —
       장애 뒤 몰린 한 번은 그동안 못 보낸 flush 들을 대신한다). XADD 실패는 다음 flush 에 다시 싣는다. + 끝 flush 1.
-      + Redis 장애 동안 모은 분당 위치(ADR-033 · 계약 v5 §G46): 복구 뒤 최신값보다 먼저 CHUNK 씩 — 모으는 수 상한 BACKFILL_MAX 이므로 꽉 찬 엔트리
-      ceil(BACKFILL_MAX / CHUNK) 개. 보내다 실패해 되돌린 묶음의 마지막 조각 · 한 발행에서 꺼내는 횟수(BACKFILL_ROUNDS)마다 덜 찬 조각이 하나씩 더
-      생길 수 있어 보수적으로 두 배 + BACKFILL_ROUNDS 를 더한다(장애 동안의 flush 는 보내지 않으므로 실제로는 위 주기 몫이 그만큼 준다).
+      + Redis 장애 동안 모은 분당 위치(ADR-033 · 계약 v5 §G46): 복구 뒤 최신값보다 먼저 CHUNK 씩 — 모으는 수 상한 BACKFILL_MAX(보내는 중인 위치도
+      센다 — 보낸 뒤에 뗀다)이므로 꽉 찬 엔트리 ceil(BACKFILL_MAX / CHUNK) 개. 보내다 실패하면 보낸 조각만 떼고 남은 것을 다음 발행이 다시 나누므로
+      그 마지막 조각 · 한 발행에서 보내는 차례(BACKFILL_ROUNDS)마다 덜 찬 조각이 하나씩 더 생길 수 있어 보수적으로 두 배 + BACKFILL_ROUNDS 를 더한다
+      (장애 동안의 flush 는 보내지 않으므로 실제로는 위 주기 몫이 그만큼 준다).
       ais_gap 메시지는 순서 큐(OrderedWriter)로 가 ShipWriter 표식을 잡지 않는다.
     - 항공기(wakeline:aircraft): 관심 지역 · 전세계 = 주기 하한마다 1(RuntimeSettings 가 거는 하한을 그대로 읽는다),
       focus = 시작 사이 간격이 정기(FOCUS_INTERVAL_S) 또는 빠른 첫 조회(FOCUS_MIN_GAP_S, 빠른 것끼리는 FOCUS_FAST_EVERY_S)이므로

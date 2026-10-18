@@ -72,7 +72,7 @@ STATUS_EVERY_S = 5.0
 STATUS_MIN_GAP_S = 0.5
 TICK_S = 1.0
 ERROR_TEXT_MAX = 300
-BACKFILL_ROUNDS = 3  # 한 발행에서 모은 위치를 꺼내 보내는 횟수 상한(보내는 사이 새로 모인 것까지 — 그 뒤 남은 것은 이번 분의 위치라 최신값이 대신한다)
+BACKFILL_ROUNDS = 3  # 한 발행에서 모은 위치를 보내는 차례 수 상한(보내는 사이 새로 모인 것까지 — 그 뒤 남은 것은 이번 분의 위치라 최신값이 대신한다)
 
 
 def _iso(epoch: float | None) -> str:
@@ -233,17 +233,19 @@ class AisSink:
         return sent
 
     async def _publish_backfill(self, stats: dict[str, Any]) -> tuple[int, bool]:
-        """모은 분당 위치를 받은 순서대로 보낸다(CHUNK 씩, part/parts 는 꺼낸 묶음 안의 순번). 실패하면 못 보낸 것을 맨 앞으로 되돌린다.
-        반환: (보낸 XADD 수, 모두 보냈는지)."""
+        """모은 분당 위치를 받은 순서대로 보낸다 — 차례마다 그 차례를 시작할 때 모여 있던 수만큼 CHUNK 씩(part/parts 는 그 차례 안의 순번).
+        조각마다 맨 앞을 보고(peek) → XADD → 성공하면 뗀다(ack)(공백 큐 _publish_queue 와 같은 모양). 보내는 동안에도 backlog 에 남아 있어
+        상한이 실제로 들고 있는 수를 센다(book 설명). 실패하면 떼지 않은 것이 그대로 맨 앞이다 — 다음 발행이 먼저 보낸다. 취소(종료)돼도 떼지 않는다 —
+        final() 의 flush 가 다시 보낸다. 반환: (보낸 XADD 수, 모두 보냈는지)."""
         n = positions = 0
         for _ in range(BACKFILL_ROUNDS):
-            batch = self.book.take_backfill()
-            if not batch:
+            count = self.book.backlog  # 이번 차례 — 보내는 사이 새로 모인 것은 다음 차례
+            if not count:
                 break
-            parts = -(-len(batch) // CHUNK)
+            parts = -(-count // CHUNK)
             fetched = datetime.fromtimestamp(self._wall(), UTC)
             for i in range(parts):
-                ships = batch[i * CHUNK : (i + 1) * CHUNK]
+                ships = self.book.peek_backfill(min(CHUNK, count - i * CHUNK))
                 payload = {
                     "ships": ships,
                     "static": [],
@@ -265,13 +267,10 @@ class AisSink:
                 try:
                     await self._xadd(env)
                 except (RedisError, OSError) as e:
-                    self.book.return_backfill(batch[i * CHUNK :])
                     self.publish_errors += 1
                     self._warn("ships backfill xadd failed (%s) — %d held positions kept", type(e).__name__, self.book.backlog)
                     return n, False
-                except asyncio.CancelledError:
-                    self.book.return_backfill(batch[i * CHUNK :])
-                    raise
+                self.book.ack_backfill(len(ships))
                 n += 1
                 positions += len(ships)
                 self.published_entries += 1
