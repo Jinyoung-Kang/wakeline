@@ -69,6 +69,8 @@ export function EvidenceCard({ a, standalone = false }: { a: Alert; standalone?:
   } else {
     if (src?.base_source === "assumed_surface") assumptions.push("하한 미발표 → 지상(SFC)부터로 가정");
     if (bandFt && (bandFt.top == null || src?.top_source === "unknown")) assumptions.push("상한 미발표 → 무제한으로 가정");
+    // 'TOP ABV FLnnn'(발표값은 상한의 하한): 판정은 그 값을 상한으로 쓰지 않고 무제한으로 가정한다(api SigmetRecord.judgedTopFt — 근거 top_assumed_unbounded)
+    else if (bandFt && (src?.top_source === "raw_text_lower_bound" || ev.top_assumed_unbounded === true)) assumptions.push("상한은 그 값 이상 → 무제한으로 가정");
   }
   return (
     <div className="border border-line bg-bg px-2 py-1 text-[11px]" data-testid="evidence">
