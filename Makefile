@@ -68,7 +68,7 @@ build: aws-host-guard init ## 이미지만 빌드
 # 비밀번호는 명령행(argv — ps 로 누구나 볼 수 있다)이나 환경변수로 넘기지 않고 stdin 한 줄로 넘긴다(계약 §7, SEC-13).
 # printf 는 bash 내장이라 별도 프로세스의 argv 에도 남지 않는다.
 airspace-import: init ## 공역 자료 가져오기(make airspace-import f=<KMZ·KML 경로> [edition="AIP 25년 5차"]) — 파일은 표준 입력으로만. 국토교통부 저작물: 저장소에 넣지 않는다(ADR-034)
-	@test -n "$(f)" || { echo 'f=<KMZ 또는 KML 경로> 가 필요하다 — 예: make airspace-import f=~/Downloads/공역.kmz edition="AIP 25년 5차"' >&2; exit 2; }
+	@test -n "$(f)" || { echo 'f=<KMZ 또는 KML 경로> 가 필요하다 — 예: make airspace-import f="$$HOME/Downloads/공역.kmz" edition="AIP 25년 5차"(zsh 는 f=~/… 의 ~ 를 펼치지 않는다)' >&2; exit 2; }
 	@test -f "$(f)" || { echo "파일이 없다: $(f)" >&2; exit 2; }
 	$(COMPOSE) exec -T collector python -m wakeline_collector.tools.airspace_import $(if $(edition),--edition "$(edition)") < "$(f)"
 
