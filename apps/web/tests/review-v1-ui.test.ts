@@ -653,11 +653,13 @@ describe("R-56 ops forms: client validation, Korean status messages, distinct su
     } finally { vi.unstubAllGlobals(); g.document = saved; }
   });
   it("settings inputs follow the server rules per key (number range, checkbox, pattern) and are checked before PUT", () => {
-    expect(opsLib.settingSpec("region_radius_nm")).toMatchObject({ kind: "int", min: 50, max: 500 });
+    // 관심 지역 반경 상한 = 공급자 반경 조회 상한 250 NM(IM-10 — 핫 경로 · api · 수집기와 같은 규칙. 전에는 500 까지 받아 /dist/400 처럼 요청했다)
+    expect(opsLib.settingSpec("region_radius_nm")).toMatchObject({ kind: "int", min: 50, max: 250 });
     expect(opsLib.settingSpec("global_enabled")).toMatchObject({ kind: "bool" });
-    expect(opsLib.parseSetting("region_radius_nm", "300")).toEqual({ ok: true, value: 300 });
+    expect(opsLib.parseSetting("region_radius_nm", "250")).toEqual({ ok: true, value: 250 });
     expect(opsLib.parseSetting("region_radius_nm", "abc")).toMatchObject({ ok: false });
-    expect(opsLib.parseSetting("region_radius_nm", "600")).toMatchObject({ ok: false, error: expect.stringContaining("50–500") });
+    expect(opsLib.parseSetting("region_radius_nm", "251")).toMatchObject({ ok: false, error: expect.stringContaining("50–250") });
+    expect(opsLib.parseSetting("region_radius_nm", "600")).toMatchObject({ ok: false, error: expect.stringContaining("50–250") });
     expect(opsLib.parseSetting("global_enabled", "true")).toEqual({ ok: true, value: true });
     expect(opsLib.parseSetting("aircraft_providers", "adsb_lol,opensky")).toEqual({ ok: true, value: "adsb_lol,opensky" });
     expect(opsLib.parseSetting("aircraft_providers", "adsb_lol,foo")).toMatchObject({ ok: false });

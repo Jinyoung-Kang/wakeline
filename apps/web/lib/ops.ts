@@ -381,7 +381,8 @@ const SETTING_SPECS: Record<string, SettingSpec> = {
   sigmet_poll_s: { kind: "int", min: 60, max: 3600, unit: "초" },
   radar_poll_s: { kind: "int", min: 30, max: 3600, unit: "초" },
   metar_poll_s: { kind: "int", min: 300, max: 7200, unit: "초" },
-  region_radius_nm: { kind: "int", min: 50, max: 500, unit: "NM" },
+  // 공급자 반경 조회(adsb.fi dist)의 상한 250 NM — 핫 리전과 같은 상한(ADR-013). 넘는 값을 받으면 그 반경으로 요청하고 api 는 그 안을 '관심 지역이 덮음'으로 본다(IM-10)
+  region_radius_nm: { kind: "int", min: 50, max: 250, unit: "NM" },
   global_enabled: { kind: "bool" },
   aircraft_providers: { kind: "text", pattern: PROVIDERS, hint: "adsb_fi · adsb_lol · opensky 를 쉼표로 — 앞이 먼저(기본 adsb_fi,adsb_lol,opensky · opensky 는 전세계만)" },
   region_center: {
