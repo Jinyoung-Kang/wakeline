@@ -213,6 +213,51 @@ class DemandServiceTest {
         }
     }
 
+    /**
+     * Q4 지도 없는 피드: 상황판이 지도를 띄우지 못하면 웹은 welcome 뒤 layers{aircraft:false, ships:false} → subscribe{bbox:[127,36,128,37], zoom:5}
+     * 를 보낸다(apps/web/lib/ws.ts subscribeWithoutMap · NO_MAP_BBOX · NO_MAP_ZOOM). 이 세션은 알림 · SIGMET · 레이더 · status 만 받고 항공기 · 선박
+     * 목록(snapshot · diff · ships_*)은 받지 않으며, 핫 리전 · 집중 추적 임대를 만들지 않는다 — 웹이 '위치 받지 않음 · 서버 수요 0'으로 기대는 서버 규칙을 묶는다.
+     * 관심 지역은 도쿄로 옮긴다: 기본 관심 지역(한반도 원)은 이 영역을 덮어(covered_by_region) 레이어 · zoom 규칙이 없어도 임대가 없다 — 운영자가 관심 지역을
+     * 옮겨도 임대가 없는지를 본다. 같은 영역을 지도로 보는 세션(대조)은 항공기 · 선박을 받고 핫 리전 임대를 낸다 — '없음'은 영역이 비어서가 아니다.
+     */
+    @Test void maplessFeed_bothLayersOffZoom5_getsAlertsAndStatusOnly_andLeasesNothing() throws Exception {
+        try (Rig r = new Rig(() -> new RegionSettings.Region(35.6, 139.7, 100))) {
+            Instant t = Instant.ofEpochMilli(r.now());
+            r.k.publish("region", t, WsTestKit.ac("abc001", 36.5, 127.5, 30000, t, "adsb_lol")); // 영역 안의 항공기 · 선박
+            ShipFanoutTest.publish(r.k, List.of(ShipFanoutTest.pos("440000001", 36.4, 127.4, ShipFanoutTest.T)), List.of());
+            r.k.alerts.set(List.of(WsHubTest.alert(1, "OBSERVED", "abc001", t, null)));
+
+            FakeWsSession mapless = r.k.connect("mapless", "10.2.0.1");
+            r.k.msg(mapless, "{\"type\":\"hello\",\"proto\":1}");
+            r.k.msg(mapless, "{\"type\":\"layers\",\"aircraft\":false,\"ships\":false}");
+            r.k.msg(mapless, "{\"type\":\"subscribe\",\"bbox\":[127,36,128,37],\"zoom\":5,\"detail\":\"lite\"}");
+            assertThat(WsTestKit.types(mapless)).containsExactly("welcome", "alerts", "sigmets", "radar", "status");
+            assertThat(ofType(mapless, "alerts").getFirst().path("alerts").get(0).path("id").asLong()).isEqualTo(1); // 알림은 레이어 · 영역과 무관
+            r.refresh();
+            assertThat(r.leases.last().hot()).isEmpty();
+            assertThat(r.leases.last().focus()).isEmpty();
+            assertThat(lastDemand(mapless).get("hot").isNull()).isTrue();
+            assertThat(lastDemand(mapless).get("focus").isNull()).isTrue();
+
+            FakeWsSession map = r.k.connect("map", "10.2.0.2"); // 대조: 레이어 켬 · zoom 7(지도 화면)
+            r.k.msg(map, "{\"type\":\"hello\",\"proto\":1}");
+            r.k.msg(map, "{\"type\":\"layers\",\"aircraft\":true,\"ships\":true}");
+            r.k.msg(map, "{\"type\":\"subscribe\",\"bbox\":[127,36,128,37],\"zoom\":7,\"detail\":\"lite\"}");
+            assertThat(WsTestKit.types(map)).contains("snapshot", "ships_snapshot");
+            r.refresh();
+            assertThat(r.leases.last().hot()).extracting(DemandLeases.Lease::member)
+                    .containsExactly(HotCell.forViewport(new Bbox(127, 36, 128, 37)).key());
+            assertThat(lastDemand(mapless).get("hot").isNull()).isTrue();
+
+            // 이후의 위치 변화도 지도 없는 세션에는 가지 않는다
+            mapless.clear();
+            r.k.publish("region", t.plusSeconds(10), WsTestKit.ac("abc001", 36.6, 127.5, 30000, t.plusSeconds(10), "adsb_lol"));
+            ShipFanoutTest.publish(r.k, List.of(ShipFanoutTest.pos("440000001", 36.5, 127.4, ShipFanoutTest.T.plusSeconds(10))), List.of());
+            assertThat(WsTestKit.types(map)).contains("diff", "ships_diff");
+            assertThat(WsTestKit.types(mapless)).doesNotContain("snapshot", "diff", "ships_snapshot", "ships_diff", "ships_grid", "selected");
+        }
+    }
+
     @Test void collectorStatus_mapsToSessionState_staleActiveIsPending() throws Exception {
         try (Rig r = new Rig()) {
             FakeWsSession hot = r.session("hot", TOKYO);
