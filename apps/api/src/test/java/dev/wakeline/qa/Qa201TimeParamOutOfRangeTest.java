@@ -61,7 +61,7 @@ class Qa201TimeParamOutOfRangeTest {
         var ships = new ShipController(store, new ShipRepository(DbTestSupport.apiJdbc(), db), new AisStatus(store), DbTestSupport.PROPS);
         var alerts = new AlertRepository(db, DbTestSupport.JSON, mock(SigmetRepository.class), sigmets, mock(OrderedWriter.class), meters);
         var weather = new WeatherController(sigmets, engine, new RadarStore(), new AirportRepository(db), alerts, DbTestSupport.PROPS,
-                new KrRadarReader(null), DbTestSupport.JSON, meters);
+                new KrRadarReader(null), DbTestSupport.JSON, meters, new dev.wakeline.airspace.core.AirspaceStore());
         mvc = MockMvcBuilders.standaloneSetup(aircraft, ships, weather).setControllerAdvice(new ProblemAdvice()).build();
     }
 

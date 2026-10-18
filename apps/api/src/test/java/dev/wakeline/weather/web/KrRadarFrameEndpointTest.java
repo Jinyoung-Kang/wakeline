@@ -42,7 +42,7 @@ class KrRadarFrameEndpointTest {
         StringRedisTemplate redis = new StringRedisTemplate() {
             @Override public ValueOperations<String, String> opsForValue() { return values; }
         };
-        WeatherController c = new WeatherController(null, null, null, null, null, null, new KrRadarReader(redis), JsonMapper.builder().build(), meters);
+        WeatherController c = new WeatherController(null, null, null, null, null, null, new KrRadarReader(redis), JsonMapper.builder().build(), meters, null);
         return MockMvcBuilders.standaloneSetup(c).setControllerAdvice(new ProblemAdvice()).build();
     }
 
