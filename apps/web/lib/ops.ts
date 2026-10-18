@@ -527,6 +527,34 @@ export function dlqReadError(resp: unknown): string | null {
 }
 
 /**
+ * /ops/providers 의 active(수집기 wakeline:active)를 api 가 읽지 못했다는 표시(error — Redis 장애 · 차단기 열림, StatusService.safeHash · 계약 v5 §G24)
+ * → 경고 줄 글자. 그동안 작업별 공급자도 공급자 없음도 모른다 — 배지를 짓지 않는다(lib/active-provider activeJobs 는 error 를 작업으로 세지 않는다, IM-16).
+ * error 가 없거나 빈 글자면 null(경고 없음). 까닭은 api 가 준 글자 그대로, 글자가 아니면 '이유 모름'(switchHistoryError 와 같은 규칙).
+ */
+export function activeReadError(active: unknown): string | null {
+  const e = obj(active).error;
+  if (e == null || e === "") return null;
+  return `작업별 공급자를 읽지 못함(api: ${typeof e === "string" ? e : "이유 모름"}) — 작업 배지 없음(쓰는 공급자 · 공급자 없음을 모른다). 15 s 마다 다시 읽는다`;
+}
+
+/**
+ * /ops/providers 의 공급자 행 가운데 api 가 Redis 를 읽지 못해 수집기 해시 자리에 실은 표시 행(StatusService.safeHash — {"error":"redis unavailable"} 에
+ * name · 해결 표시만 붙는다, 계약 v5 §G24). 수집기는 공급자 해시에 error 를 쓰지 않는다(status.py — 오류는 last_error). 표시 행은 빈 해시처럼 건너뛰지
+ * 않아 수집한 적 없는 공급자(fixture 포함)까지 api 목록 전부가 행이 되고 칸은 모두 '—' 다(IM-16 — 전에는 그 사실이 화면 어디에도 없었다).
+ * 모두 표시 행이면 'Redis 를 읽지 못함' 한 줄, 일부면(장애가 목록을 읽는 중에 났다) 그 공급자 이름, 없으면 null. 까닭은 api 가 준 글자 그대로, 글자가
+ * 아니면 '이유 모름'(switchHistoryError 와 같은 규칙).
+ */
+export function providersReadError(providers: readonly Record<string, unknown>[]): string | null {
+  const marked = providers.filter((p) => p.error != null && p.error !== "");
+  if (!marked.length) return null;
+  const e = marked[0].error;
+  const why = `(api: ${typeof e === "string" ? e : "이유 모름"})`;
+  return marked.length === providers.length
+    ? `Redis 를 읽지 못함${why} — 아래 공급자 행은 수집기 값이 아니라 api 가 공급자 목록마다 붙인 표시다(수집한 적 없는 공급자 · fixture 도 보이고 칸은 ‘—’). 15 s 마다 다시 읽는다`
+    : `공급자 ${marked.length}/${providers.length} 행을 Redis 에서 읽지 못함${why}: ${marked.map((p) => String(p.name)).join(" · ")} — 그 행의 칸은 수집기 값이 아니다(‘—’). 15 s 마다 다시 읽는다`;
+}
+
+/**
  * /ops/providers 응답을 만든 서버 시각(generated_at — 시간대가 있는 ISO 만) → ms. 없거나 틀리면 0(모름 — providerMissing 이 '확인 멈춤'을 판정하지 않는다).
  * 공급자 해시의 시각(수집기 missing_checked_at)의 나이를 브라우저 시계가 아니라 서버 기준 지금으로 잰다(계약 v5 §G22 — 브라우저 시계가 15분 넘게
  * 틀려도 상황판 칩과 같은 판정, 통합 리뷰 2026-09-30). 응답은 15 s 마다 새로 받는다 — 그 사이 지난 시간은 더하지 않는다(다음 응답이 다시 잰다).

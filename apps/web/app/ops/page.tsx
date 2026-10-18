@@ -6,7 +6,7 @@ import { DISPLAY_TZ, fmtKst, fmtKstClock, fmtTimeTitle, utcDayWindowKst } from "
 import { fmtLatencyMs } from "@/lib/format";
 import { liveNote, mirrorDiffers, switchCell, toggleNote, type SwitchNote } from "@/lib/provider-switch";
 import {
-  classifyOpsError, editSetting, fmtBudgetLimit, isAuthMiss, jobHeartbeatEntries, parseSetting, pipelineLossCount, providerLastError, providerMissing, providersNowMs, rebaseSetting,
+  activeReadError, classifyOpsError, editSetting, fmtBudgetLimit, isAuthMiss, jobHeartbeatEntries, parseSetting, pipelineLossCount, providerLastError, providerMissing, providersNowMs, providersReadError, rebaseSetting,
   RUN_STATUS_TITLE, runStatusClass, runStatusTone, SESSION_EXPIRED_NOTE, settingAfterSave, settingConflict, qualityPartialDay, settingIfMatch, settingSpec, signOut, switchHistoryError, dlqReadError, withProviderResolutions,
   type SettingEdit,
 } from "@/lib/ops";
@@ -250,6 +250,8 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
           <div className="mb-2 flex flex-wrap gap-3 text-[11px]">
             {/* 작업별 공급자 — 공급자 없음(수집기 {job}_none_*, 운영 로그 2026-09-30)이면 빨간 배지와 까닭. 전에는 마지막으로 쓴 공급자를 초록으로 보였다 */}
             {activeJobs(prov.active).map((j) => <span key={j.job} className={`badge ${j.none ? "bad" : "ok"}`} title={jobBadgeTitle(j, providersNowMs(prov))} data-testid={`ops-active-${j.job}`}>{jobBadgeText(j, providersNowMs(prov))}</span>)}
+            {/* api 가 Redis 를 읽지 못한 표시(active.error)는 작업이 아니다 — 경고 글자(IM-16, 전에는 초록 'error: redis unavailable' 배지) */}
+            {(() => { const w = activeReadError(prov.active); return w ? <span className="text-warn" data-testid="ops-active-read-error">{w}</span> : null; })()}
             {/* 작업이 마지막으로 보고한 시각({job}_at)만 — *_resume_at(다음에 움직일 때)과 채우기 시각은 빼고 아래 채우기 줄이 뜻과 함께 보인다(lib/ops jobHeartbeatEntries) */}
             {jobHeartbeatEntries(prov.collector).map(([k, v]) => <span key={k} className="mono text-fg-3" title={`${k} — 이 작업이 마지막으로 보고한 시각(collector heartbeat)${fmtTimeTitle(at(v)) ? ` · ${fmtTimeTitle(at(v))}` : ""}`}>{k.replace("_at", "")} {fmtKst(at(v))}</span>)}
             {prov.collector?.fixture === "1" ? <span className="badge warn">FIXTURE</span> : null}
@@ -271,6 +273,8 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
           ) : null}
           <div role="status" aria-live="polite">{resolveNote ? <div className="mb-2 text-[11px] text-ok" data-testid="resolve-ok">{resolveNote}</div> : null}</div>
           {(() => { const s = parseResolutionState(prov.resolution_state); return s && s !== "ok" ? <div className="mb-2 text-[11px] text-warn" data-testid="ops-resolution-state">{RESOLUTION_STATE_TEXT[s]}</div> : null; })()}
+          {/* 공급자 행이 api 의 Redis 장애 표시뿐이면 표 위에 한 줄(IM-16 — 수집한 적 없는 공급자까지 '—' 로 늘어선 까닭) */}
+          {(() => { const w = providersReadError(prov.providers); return w ? <div className="mb-2 text-[11px] text-warn" role="alert" data-testid="ops-providers-read-error">{w}</div> : null; })()}
           <table><thead><tr><th>provider</th><th>last success (KST)</th><th>latency</th><th>records</th><th>fails</th><th title={BUDGET_USED_TITLE}>budget used / limit</th><th>remaining (hdr)</th><th title={LAST_ERROR_TITLE}>last error</th><th title="켜고 끄기 — 원본은 DB provider_switch, 수집기는 Redis 미러를 따른다">switch · DB → Redis</th></tr></thead>
             <tbody>{prov.providers.map((p) => { const sw = prov.provider_switch?.find((x) => x.provider === String(p.name)); const cell = switchCell(sw); const off = sw?.disabled ?? p.disabled === "1";
               const busy = busySwitch.has(String(p.name)); const miss = providerMissing(p, providersNowMs(prov)); return <Fragment key={String(p.name)}><tr>
