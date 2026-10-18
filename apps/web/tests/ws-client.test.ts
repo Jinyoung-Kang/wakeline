@@ -1,5 +1,6 @@
+import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { WakelineWsClient, type SocketLike } from "@/lib/ws";
+import { NO_MAP_BBOX, NO_MAP_ZOOM, WakelineWsClient, type SocketLike } from "@/lib/ws";
 import { aircraftStates, clockOffsetMs, getData, resetData, serverNowMs } from "@/lib/store";
 
 class FakeSocket implements SocketLike {
@@ -409,5 +410,134 @@ describe("server clock (WS-3 / DH-1)", () => {
     expect(clockOffsetMs()).toBe(2_200);
     t.ws().recv({ type: "status", status: { server_time: new Date(Date.now() + 2_600).toISOString(), region: { provider: "adsb_fi", lag_s: 1 } } });
     expect(t.worker.msgs.filter((m) => m.type === "clock").map((m) => m.offsetMs)).toEqual([2_000, 2_600]);
+  });
+});
+
+describe("map-less subscription (Q4 — the dashboard could not draw the map)", () => {
+  const alert = { id: 1, kind: "OBSERVED", hex: "abc123", sigmet_id: "S1", fir_id: "RKRR", hazard: "TS", entered_at: "2026-09-27T05:00:00Z", evidence: {}, estimated: false };
+  const welcomeOf = () => ({ type: "welcome", server_time: new Date().toISOString() });
+
+  it("called before connect: after welcome the client sends exactly layers{false,false} then subscribe{zoom 5} — select · select_ship never go out", () => {
+    const t = setup();
+    t.client.subscribeWithoutMap();
+    t.client.select("abc123"); // 지도 없는 클라이언트의 선택은 서버에 알리지 않는다(집중 추적 수요 없음)
+    t.client.selectShip("440123456");
+    t.client.connect();
+    t.ws().open();
+    t.ws().recv(welcomeOf());
+    expect(t.ws().sent).toEqual([
+      { type: "hello", proto: 1, client: "web/0.4" },
+      { type: "layers", aircraft: false, ships: false },
+      { type: "subscribe", bbox: [127, 36, 128, 37], zoom: 5, detail: "lite" },
+    ]);
+    expect(NO_MAP_BBOX).toEqual([127, 36, 128, 37]);
+    expect(NO_MAP_ZOOM).toBe(5);
+    // 열린 뒤의 선택 · 선택 해제도 프레임을 늘리지 않는다
+    t.client.select("def456");
+    t.client.selectShip("440654321");
+    t.client.select(null);
+    t.client.selectShip(null);
+    vi.advanceTimersByTime(10_000);
+    expect(t.ws().types()).toEqual(["hello", "layers", "subscribe"]);
+    expect(getData().conn).toBe("open");
+  });
+
+  it("never writes the store viewport; a snapshot leaves the aircraft empty while alerts and status are applied", () => {
+    const t = setup();
+    t.client.subscribeWithoutMap();
+    t.client.connect();
+    t.ws().open();
+    t.ws().recv(welcomeOf());
+    expect(getData().viewport).toBeNull();
+    t.ws().recv(snap(1, [{ hex: "abc123", lat: 36.5, lon: 127.5 }]));
+    expect(aircraftStates.size).toBe(0);
+    expect(getData().aircraftCount).toBeNull(); // 받지 않는 수는 모름(—)
+    expect(t.worker.msgs.filter((m) => m.type === "snapshot")).toEqual([{ type: "snapshot", aircraft: [] }]); // 레이어를 끌 때의 빈 스냅샷뿐
+    t.ws().recv({ type: "alerts", version: 10, alerts: [alert] });
+    expect(getData().alerts.has(1)).toBe(true);
+    expect(getData().alertsVersion).toBe(10);
+    t.ws().recv({ type: "status", status: { server_time: new Date().toISOString(), region: { provider: "adsb_fi", lag_s: 1 } } });
+    expect(getData().status).not.toBeNull();
+    expect(getData().feeds.region?.provider).toBe("adsb_fi");
+    expect(getData().viewport).toBeNull();
+  });
+
+  it("hidden at welcome → resume subscribes without writing the viewport; a reconnect does not write it either", () => {
+    vi.spyOn(Math, "random").mockReturnValue(0.5);
+    try {
+      const t = setup({ hidden: true });
+      t.client.subscribeWithoutMap();
+      t.client.connect();
+      t.ws().open();
+      t.ws().recv(welcomeOf());
+      expect(t.ws().types()).toEqual(["hello", "layers"]); // 숨김 — 구독은 resume 이 보낸다
+      t.hidden.v = false;
+      t.client.resume();
+      expect(t.ws().sent.at(-1)).toEqual({ type: "subscribe", bbox: [127, 36, 128, 37], zoom: 5, detail: "lite" });
+      t.client.pause();
+      t.client.resume();
+      expect(t.ws().types()).toEqual(["hello", "layers", "subscribe", "pause", "resume"]);
+      expect(getData().viewport).toBeNull();
+      t.ws().serverClose(1006);
+      nextConnectDelay(t);
+      t.ws().open();
+      t.ws().recv(welcomeOf());
+      expect(t.ws().sent).toEqual([
+        { type: "hello", proto: 1, client: "web/0.4" },
+        { type: "layers", aircraft: false, ships: false },
+        { type: "subscribe", bbox: [127, 36, 128, 37], zoom: 5, detail: "lite" },
+      ]);
+      expect(getData().viewport).toBeNull();
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("a late close() of the map-less client does not overwrite the map client's conn · demand", () => {
+    // (b1) 넘겨받기: 지도 없는 클라이언트 A 를 닫기 전에 지도 클라이언트 B 가 먼저 연결했다
+    const a = setup();
+    a.client.subscribeWithoutMap();
+    a.client.connect();
+    a.ws().open();
+    a.ws().recv(welcomeOf());
+    const b = setup();
+    b.client.subscribe(BBOX, 7);
+    b.client.select("71c123");
+    b.client.connect();
+    b.ws().open();
+    b.ws().recv(welcomeOf());
+    b.ws().recv({ type: "demand", hot: null, focus: { hex: "71c123", state: "active", interval_s: 5, since: "2026-09-27T05:10:00Z" } });
+    expect(getData().viewport).toEqual({ bbox: BBOX, zoom: 7 }); // 지도 클라이언트는 지금처럼 화면을 쓴다
+    a.client.close();
+    expect(a.ws().closedWith).toBe(1000);
+    expect(getData().conn).toBe("open");
+    expect(getData().demand?.focus).toMatchObject({ hex: "71c123", state: "active" });
+    expect(getData().viewport).toEqual({ bbox: BBOX, zoom: 7 });
+  });
+});
+
+describe("map-less subscription constants are pinned to the server rules (read from the api code)", () => {
+  const repo = new URL("../../../", import.meta.url);
+  const src = (p: string) => readFileSync(new URL(p, repo), "utf8");
+  it("NO_MAP_ZOOM is below the hot-region zoom (no hot demand) and within the world-view zoom; NO_MAP_BBOX passes the bbox area limit", () => {
+    const demand = src("apps/api/src/main/java/dev/wakeline/ws/DemandService.java");
+    const hotMinZoom = Number(/public static final int HOT_MIN_ZOOM = (\d+);/.exec(demand)?.[1]);
+    expect(hotMinZoom).toBeGreaterThan(0);
+    // 이 상수가 핫 리전 수요의 문턱이고, 항공기 레이어를 끈 세션에는 수요가 없다(두 겹)
+    expect(demand).toContain("sub.zoom() < HOT_MIN_ZOOM || !s.layerAircraft");
+    expect(NO_MAP_ZOOM).toBeLessThan(hotMinZoom);
+    expect(NO_MAP_ZOOM).toBeLessThanOrEqual(5);
+    // 면적 상한을 넘는 bbox 는 zoom ≤ 5 만 받는다 — 그 5 도 서버 코드에서 읽는다
+    const handler = src("apps/api/src/main/java/dev/wakeline/ws/WakelineWsHandler.java");
+    const worldZoom = Number(/bbox\.area\(\) > props\.maxBboxAreaSqdeg\(\) && zoom > (\d+)/.exec(handler)?.[1]);
+    expect(worldZoom).toBe(5);
+    expect(NO_MAP_ZOOM).toBeLessThanOrEqual(worldZoom);
+    const yml = src("apps/api/src/main/resources/application.yml");
+    const maxArea = Number(/^ {2}max-bbox-area-sqdeg: (\d+(?:\.\d+)?)$/m.exec(yml)?.[1]);
+    expect(maxArea).toBeGreaterThan(0);
+    const [lomin, lamin, lomax, lamax] = NO_MAP_BBOX;
+    expect(lomin).toBeLessThan(lomax);
+    expect(lamin).toBeLessThan(lamax);
+    expect((lomax - lomin) * (lamax - lamin)).toBeLessThanOrEqual(maxArea);
   });
 });
