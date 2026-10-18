@@ -162,6 +162,11 @@ describe("first screen of '/' carries no interaction-only UI", () => {
       expect(names.filter((n) => !inTo.has(n))).toEqual([]);
     }
   });
+  it("the aircraft card's route text, pending note, distance and labels (lib/route) stay off the first-render graph — the map's WS validation uses lib/route-parse", () => {
+    expect(firstRender).toContain("lib/route-parse.ts");
+    expect(firstRender, "lib/route 는 항공기 카드와 함께만 — 첫 그리기 그래프(지도 조각 포함)의 모듈은 lib/route-parse 에서 import 한다").not.toContain("lib/route.ts");
+    expect(lazyGraph).toContain("lib/route.ts");
+  });
   it("every import() in DashboardParts is a listed interaction-only part with its reason, and every listed part is one", () => {
     expect(dynamicTargets(["components/DashboardParts.tsx"]).sort(), "DashboardParts 의 조각 = LAZY_PARTS(까닭이 적힌 것) — 조각을 더하면 LAZY_PARTS 에 언제 보이는지 적는다")
       .toEqual(Object.keys(LAZY_PARTS).sort());
