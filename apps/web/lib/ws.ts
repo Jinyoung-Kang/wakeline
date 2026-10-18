@@ -14,9 +14,11 @@
  * - 서버 시계(WS-3): welcome·status·작은 diff/snapshot(≤ 32 KiB)의 시각으로 오프셋을 추정해(store) 워커에도 보낸다 — 경과·stale·외삽이 한 기준을 쓴다.
  * - 레이어(계약 v2 §B3): {type:"layers", aircraft, ships} — 서버 기본값(항공기 켬·선박 끔)과 다를 때만 welcome 에서, 바뀔 때마다 보낸다.
  *   선박: ships_snapshot/ships_diff(세션별 연속 sseq — 항공기 seq 와 같은 규칙, 틈이면 resync) · ships_grid(계약 v4 §C 규칙 — 줌 < 4·상한 초과) ·
- *   select_ship → ship_selected(목적지 풀이 destination_info 포함 — 계약 v4 §B). 구독한 화면(bbox·줌)은 스토어 viewport 에도 둔다(선박 칩 문구).
+ *   select_ship → ship_selected(목적지 풀이 destination_info 포함 — 계약 v4 §B). 지도 화면을 따르는 구독(screen — 기본)이면 구독한 화면(bbox·줌)을
+ *   스토어 viewport 에도 둔다(선박 칩 문구 · 화면 밖 판단 · 선박 카드가 '화면'으로 읽는다).
  *   받은 값은 lib/ships.ts 로 검증한다(MMSI·위치가 틀리면 버림, 필드는 모르면 null). 메인 스레드 선박 수 상한 MAX_SHIPS.
  * - 수요(계약 v2 §A3): {type:"demand"} 를 그대로 스토어에 — 연결이 끊기면 지운다(서버 임대는 60 s 안에 만료되므로 "추적 중"이라 말하지 않는다).
+ * - 스토어 연결 상태의 주인(connectTurn): 마지막으로 connect 한 클라이언트. 사용자가 닫을 때(close) 주인일 때만 conn · demand 를 지운다.
  * - 앞단 확인(QA-1300): 브라우저 WebSocket API 는 업그레이드 응답을 보여 주지 않는다(AWS 데모 앞단의 잠금 401 · 오프라인 503 도 close 1006 뿐).
  *   열린 적 없이 끝난 연결이 FRONT_CHECK_AFTER_FAILS 번 이어지면 같은 출처 GET 하나(lib/endpoints/status — 최소 간격 FRONT_CHECK_MIN_GAP_MS)로 가려
  *   스토어 connIssue(lib/conn-issue)에 둔다 — 상태 바 · 알림 패널이 까닭(접근 코드 만료 · 서버에 닿지 못함)을 적는다. 재접속은 그대로 이어 간다
@@ -97,6 +99,14 @@ function defaultUrl() {
 }
 const isObj = (v: unknown): v is Msg => typeof v === "object" && v !== null && !Array.isArray(v);
 
+/**
+ * connect 할 때마다 오르는 번호. 이 번호를 받은 클라이언트(마지막으로 connect 한 것)가 스토어 연결 상태(conn · demand)의 주인이고,
+ * close() 는 주인일 때만 그 상태를 지운다: 넘겨받기 순서가 엇갈려 앞 클라이언트를 닫기 전에 다음 클라이언트가 연결했어도,
+ * 늦게 닫힌 앞 클라이언트가 새 연결의 상태를 덮지 않는다. 클라이언트가 하나일 때(StrictMode 의 두 번 마운트 포함 — 닫은 뒤에
+ * 새 클라이언트가 연결한다)는 소켓을 가진 클라이언트가 늘 주인이다.
+ */
+let connectTurn = 0;
+
 export class WakelineWsClient {
   private ws: SocketLike | null = null;
   private welcomed = false;
@@ -115,6 +125,10 @@ export class WakelineWsClient {
   private readonly budget = new SendBudget();
   private bbox: [number, number, number, number] | null = null;
   private zoom = 7;
+  /** 구독이 지도 화면을 따르는가(기본 true) — 그럴 때만 구독한 bbox · 줌을 스토어 viewport 에 둔다(welcome · resume 의 다시 구독도 같다) */
+  private screen = true;
+  /** 마지막 connect 때 받은 번호(connectTurn) */
+  private turn = 0;
   private selected: string | null = null;
   private selectedShip: string | null = null;
   /** 켜진 레이어(서버 기본: 항공기 켬 · 선박 끔) */
@@ -160,6 +174,7 @@ export class WakelineWsClient {
 
   connect() {
     this.closedByUser = false;
+    this.turn = ++connectTurn;
     if (this.timer) { clearTimeout(this.timer); this.timer = null; }
     this.stopConnTimers();
     setData({ conn: "connecting", reconnectAttempt: this.attempt });
@@ -194,7 +209,8 @@ export class WakelineWsClient {
 
   /**
    * 사용자가 닫음(화면을 떠남). 소켓의 처리기를 떼고 참조를 버린 뒤 닫는다 — 닫기 핸드셰이크가 늦게 끝나도(반쯤 열린 연결)
-   * 그 onclose 가 같은 스토어를 쓰는 다음 클라이언트의 상태를 'closed'·수요 없음으로 덮지 않는다(R-75). 스토어는 여기서 한 번만 쓴다.
+   * 그 onclose 가 같은 스토어를 쓰는 다음 클라이언트의 상태를 'closed'·수요 없음으로 덮지 않는다(R-75). 스토어는 여기서 한 번만,
+   * 이 클라이언트가 스토어 연결 상태의 주인일 때만 쓴다(connectTurn — 다음 클라이언트가 먼저 연결했으면 그 상태를 덮지 않는다).
    */
   close() {
     this.closedByUser = true;
@@ -211,7 +227,7 @@ export class WakelineWsClient {
     ws.onclose = null;
     ws.onerror = null;
     try { ws.close(1000); } catch { /* 이미 닫힘 */ }
-    setData({ conn: "closed", demand: null });
+    if (this.turn === connectTurn) setData({ conn: "closed", demand: null });
   }
 
   /**
@@ -290,7 +306,7 @@ export class WakelineWsClient {
   subscribe(bbox: [number, number, number, number], zoom: number) {
     this.bbox = bbox;
     this.zoom = zoom;
-    setData({ viewport: { bbox, zoom } });
+    if (this.screen) setData({ viewport: { bbox, zoom } });
     if (!this.welcomed) return; // welcome 에서 보낸다
     if (this.paused) { this.subscribedOnConn = false; return; } // resume 때 subscribe 로 보낸다
     this.sendControlled("subscribe", { type: "subscribe", bbox, zoom, detail: "lite" });

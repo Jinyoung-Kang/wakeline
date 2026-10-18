@@ -350,6 +350,32 @@ describe("receive watchdog (WS-2)", () => {
     vi.advanceTimersByTime(60_000);
     expect(a.sockets).toHaveLength(1); // A 는 다시 연결하지 않는다
   });
+
+  it("a late close() from a client that no longer owns the store keeps the newer connection's state", () => {
+    // 넘겨받기 순서가 엇갈린 경우: 클라이언트 A 를 닫기 전에 B 가 먼저 연결했다 — 스토어의 연결 상태는 마지막으로 connect 한 B 의 것이다
+    const a = setup();
+    a.client.connect();
+    a.ws().open();
+    a.ws().recv({ type: "welcome" });
+    const b = setup();
+    b.client.select("71c123");
+    b.client.connect();
+    b.ws().open();
+    b.ws().recv({ type: "welcome" });
+    b.ws().recv({ type: "demand", hot: null, focus: { hex: "71c123", state: "active", interval_s: 5, since: "2026-09-27T05:10:00Z" } });
+    expect(getData().conn).toBe("open");
+    // A 가 이제서야 닫힌다 — 자기 소켓은 닫지만 B 의 상태를 'closed'·수요 없음으로 덮으면 안 된다
+    a.client.close();
+    expect(a.ws().closedWith).toBe(1000);
+    expect(getData().conn).toBe("open");
+    expect(getData().demand?.focus).toMatchObject({ hex: "71c123", state: "active" });
+    vi.advanceTimersByTime(60_000);
+    expect(a.sockets).toHaveLength(1); // A 는 다시 연결하지 않는다
+    // 주인인 B 가 닫으면 지금처럼 지운다
+    b.client.close();
+    expect(getData().conn).toBe("closed");
+    expect(getData().demand).toBeNull();
+  });
 });
 
 describe("server clock (WS-3 / DH-1)", () => {
