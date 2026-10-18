@@ -1,6 +1,7 @@
 package dev.wakeline.weather.core;
 
 import dev.wakeline.aircraft.core.AircraftState;
+import dev.wakeline.platform.support.FetchedAtGuard;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -22,6 +23,7 @@ import java.util.stream.Collectors;
  *
  * <p>히스테리시스는 엔진 실행 횟수가 아니라 <b>서로 다른 관측</b>(그 기체의 seen_at 이 바뀐 것)을 센다.
  * 엔진은 region 스냅샷(~10 s)·global 스냅샷(~120 s)·SIGMET 갱신마다 돌지만, 같은 위치를 다시 판정해도 세지 않는다.
+ * '새 관측인가' 는 {@link FetchedAtGuard} 와 같은 규칙이다 — 벽시계가 뒤로 간 뒤의 새 관측은 seen_at 이 마지막으로 센 관측보다 작아도 센다(IM-08).
  * <ul>
  *   <li>진입(ENTERED): 안쪽 관측 2회 연속. 근거에 실제 두 관측의 seen_at 을 남긴다.</li>
  *   <li>이탈(LEFT, close_reason=left): 판정 가능한 바깥 관측 3회 연속(지상 관측은 공중 위험 공역 밖으로 본다.
@@ -193,7 +195,7 @@ public final class AlertStateMachine {
         boolean confirmed;
         Alert alert;
         Zone zone;
-        /** 마지막으로 센 관측의 seen_at — 이보다 새 seen_at 이어야 다음 관측으로 센다. */
+        /** 마지막으로 센 관측의 seen_at — 이보다 새 seen_at 이어야 다음 관측으로 센다(벽시계가 뒤로 갔으면 지금 근처의 seen_at 도 — FetchedAtGuard). */
         Instant lastSeenAt;
         String scope;
         /** 마지막 관측의 세부 출처(hot 은 셀 포함) — 소실 때 그 추적이 이미 끝났는지 본다. */
@@ -243,7 +245,10 @@ public final class AlertStateMachine {
                 t.source = cycle.sourceOf(k.hex());
                 t.absent = 0;
                 t.absenceMarker = cycle.absenceMarker(t.scope);
-                if (t.lastSeenAt != null && !a.seenAt().isAfter(t.lastSeenAt)) continue; // 같은 관측을 다시 판정 — 세지 않는다
+                // 같은 관측을 다시 판정 — 세지 않는다. 벽시계가 뒤로 간 뒤의 새 관측은 센다: 수집기는 공급자 시각이 수신 시각과 어긋나면 수신 시각으로
+                // seen_at 을 매기므로 그 seen_at 도 약 역행 폭만큼 작다(IM-08 — 역행 판정은 FetchedAtGuard, SnapshotStore.applyFocus 와 같은 원인).
+                // 역행 전 관측의 재판정(미래 seen_at 이 그대로 다시 옴)은 여전히 거른다.
+                if (t.lastSeenAt != null && !FetchedAtGuard.newer(a.seenAt(), t.lastSeenAt, now.toEpochMilli())) continue;
                 IntersectionEngine.Hit h = insideNow.get(k);
                 if (h != null) {
                     t.lastSeenAt = a.seenAt();

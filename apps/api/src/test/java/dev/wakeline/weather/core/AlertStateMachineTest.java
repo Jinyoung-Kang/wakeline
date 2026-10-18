@@ -122,6 +122,28 @@ class AlertStateMachineTest {
         assertThat(left.evidence()).doesNotContainKey("sigmet_expired");
     }
 
+    /**
+     * R1(IM-08): 벽시계가 300 s 뒤로 간 뒤의 새 관측은 seen_at 이 마지막으로 센 관측보다 작아도 센다(FetchedAtGuard 와 같은 규칙 — 마지막 seen_at 이
+     * 판정 시각보다 60 s 넘게 미래이고 이 관측은 지금 근처). 역행 전 관측을 다시 판정하는 것(병합 뷰에 남은 미래 seen_at)은 여전히 세지 않는다.
+     */
+    @Test void clockSteppedBack_newObservationsAreCounted_reJudgedOldOneIsNot() {
+        AlertStateMachine fsm = new AlertStateMachine(ids::incrementAndGet);
+        stepObs(fsm, 1, true);
+        assertThat(types(stepObs(fsm, 2, true))).containsExactly(ENTERED);
+        AircraftState out1 = obs(3, false);
+        assertThat(stepObs(fsm, 3, false)).isEmpty();
+        Instant back = out1.seenAt().minusSeconds(300);
+        for (int k = 0; k < 5; k++)
+            assertThat(fsm.step(Map.of(), List.of(), Map.of(HEX, out1), back.plusSeconds(k), cycle(3, k + 1, REGION))).as("same observation").isEmpty();
+        AircraftState out2 = acSeen(HEX, 40, 127, 17000, back.plusSeconds(10), "adsb_lol");
+        assertThat(fsm.step(Map.of(), List.of(), Map.of(HEX, out2), out2.seenAt(), cycle(4, 5, REGION))).isEmpty();
+        AircraftState out3 = acSeen(HEX, 40, 127, 17000, back.plusSeconds(20), "adsb_lol");
+        var ev = fsm.step(Map.of(), List.of(), Map.of(HEX, out3), out3.seenAt(), cycle(5, 5, REGION));
+        assertThat(types(ev)).containsExactly(LEFT);
+        assertThat(ev.getFirst().alert().evidence().get("left_confirmations_seen_at"))
+                .isEqualTo(List.of(out1.seenAt().toString(), out2.seenAt().toString(), out3.seenAt().toString()));
+    }
+
     /** COR-4: 안에 있던 region 기체가 스냅샷에서 사라지면 region 스냅샷 3번 뒤 LOST(signal_lost). LEFT 가 아니다. */
     @Test void disappearedWhileInside_isLostAfterThreeRegionSnapshots_notLeft() {
         AlertStateMachine fsm = new AlertStateMachine(ids::incrementAndGet);

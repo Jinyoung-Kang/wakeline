@@ -6,7 +6,8 @@ import java.time.Instant;
  * fetched_at 단조 가드(REL-8)의 '새 값인가' 판단 — 이 한 곳에서만 한다(IM-08). 실시간 상태는 '최신만 의미'라 지금 값보다 새 것만 받는다:
  * 항공기 region · global 스냅샷 · hot 셀 · focus hex(SnapshotStore), SIGMET · 기상특보 · 레이더 목록(SigmetStore · WarningStore · RadarStore),
  * 그리고 StreamConsumer 의 사전 검사(region · global · SIGMET). 받지 않은 메시지는 백로그 · 재전달 · 중복이다 — 이력(항적 · SIGMET · 특보)은
- * 스트림 순서대로 따로 남는다.
+ * 스트림 순서대로 따로 남는다. 알림 상태 기계(AlertStateMachine)는 기체 관측의 seen_at 에 같은 규칙을 써서 '새 관측인가' 를 본다
+ * (수집기는 공급자 시각이 수신 시각과 어긋나면 수신 시각으로 seen_at 을 매기므로 역행 뒤에는 seen_at 도 작아진다).
  * <p>
  * 벽시계 역행(IM-08): fetched_at 은 수집기의 벽시계이고 수집기와 api 는 같은 호스트의 같은 시계를 쓴다. 그 시계가 실행 중 X 만큼 뒤로 가면
  * 그 뒤 메시지의 fetched_at 은 마지막으로 받은 값보다 작아, 단조 비교만으로는 시계가 그 값을 다시 지날 때까지(약 X) 새 메시지를 모두 버린다

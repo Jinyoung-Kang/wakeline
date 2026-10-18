@@ -345,6 +345,57 @@ class EngineServiceTest {
         assertThat(EngineService.dataTime(store.view(P0.plusSeconds(100)), P0.plusSeconds(100))).isEqualTo(P0.plusSeconds(30));
     }
 
+    // ---------- 벽시계 역행(IM-08 · R1): 수집기 · api 가 같이 쓰는 호스트 시계가 실행 중 뒤로 간다 ----------
+
+    /** 시험의 역행 폭(FetchedAtGuard.CLOCK_BACK_TOLERANCE_MS 보다 크다). */
+    static final long CLOCK_BACK_S = 300;
+
+    /** 주입 시계로 도는 엔진 — 경보 A(박스 안 36N 127E · 밖 38.5N 127E)를 판정 세트로 둔다. */
+    EngineService clockSteppingEngine(MutableClock clock, SnapshotStore store) {
+        EngineService e = new EngineService(store, sigmets, events::add, new SimpleMeterRegistry(), null, clock);
+        e.onSigmets(new WeatherEvents.SigmetsUpdated(sigmets.replace(P0.minusSeconds(60), "awc_isigmet",
+                Map.of("A", sig("A", P0.minusSeconds(3600), P0.plusSeconds(3 * 3600))))));
+        return e;
+    }
+
+    /** 실시간 전달 한 번(수신 = fetched_at + 0.5 s, 위치 = fetched_at − 1 s): f = P0 + 10i − back. */
+    boolean deliverAt(SnapshotStore store, EngineService e, MutableClock clock, int i, long backS, boolean inside) {
+        Instant f = P0.plusSeconds(10L * i - backS);
+        clock.now = f.plusMillis(500);
+        return deliver(store, e, clock.millis(), "region", f, at("a0000r", inside ? 36 : 38.5, 127, f.minusSeconds(1), "adsb_lol"));
+    }
+
+    /**
+     * R1: 시계가 300 s 뒤로 간 뒤 — 수집기는 공급자 시각이 수신 시각과 어긋나면 수신 시각으로 seen_at 을 매기므로 새 관측의 seen_at 도 약 300 s
+     * 작다. 관심 지역 스냅샷은 fetched_at 가드가 받지만(IM-08), 예전에는 상태 기계가 seen_at 단조 비교로 이미 추적 중인 기체의 새 관측을 '같은 관측'
+     * 으로 보고 약 300 s 동안 세지 않았다 — 경보 밖으로 나간 기체의 알림이 그동안 열려 있었다. 역행 뒤 바깥 관측 3회에 LEFT.
+     */
+    @Test void clockSteppedBack_outsideObservationsStillCloseAsLeft() {
+        MutableClock clock = new MutableClock(P0.minusSeconds(30));
+        SnapshotStore store = new SnapshotStore();
+        EngineService e = clockSteppingEngine(clock, store);
+        for (int i = -1; i <= 0; i++) assertThat(deliverAt(store, e, clock, i, 0, true)).isTrue();
+        assertThat(alertEvents()).containsExactly(AlertStateMachine.EventType.ENTERED);
+        for (int i = 1; i <= 3; i++) assertThat(deliverAt(store, e, clock, i, CLOCK_BACK_S, false)).as("IM-08: snapshot accepted").isTrue();
+        assertThat(alertEvents()).as("three outside observations after the clock stepped back")
+                .containsExactly(AlertStateMachine.EventType.ENTERED, AlertStateMachine.EventType.LEFT);
+        assertThat(e.activeAlerts("observed")).isEmpty();
+    }
+
+    /** R1: 역행 직전에 안쪽 관측 1회(확정 전)였던 기체는 역행 뒤 안쪽 관측 한 번에 ENTERED — 예전에는 약 300 s 동안 확정되지 않았다. */
+    @Test void clockSteppedBack_pendingTrackConfirmsOnTheNextInsideObservation() {
+        MutableClock clock = new MutableClock(P0.minusSeconds(30));
+        SnapshotStore store = new SnapshotStore();
+        EngineService e = clockSteppingEngine(clock, store);
+        assertThat(deliverAt(store, e, clock, 0, 0, true)).isTrue();
+        assertThat(alertEvents()).isEmpty();
+        assertThat(deliverAt(store, e, clock, 1, CLOCK_BACK_S, true)).as("IM-08: snapshot accepted").isTrue();
+        assertThat(alertEvents()).containsExactly(AlertStateMachine.EventType.ENTERED);
+        assertThat(deliverAt(store, e, clock, 2, CLOCK_BACK_S, true)).isTrue();
+        assertThat(alertEvents()).containsExactly(AlertStateMachine.EventType.ENTERED);
+        assertThat(e.activeAlerts("observed")).hasSize(1);
+    }
+
     /** API-CONC-2: 판정 주기의 예외는 엔진 안에서 가둔다 — 이벤트 발행자(스트림 소비)로 새지 않고, 세고, 다음 주기는 정상. */
     @Test void cycleFailure_isContainedAndCounted() {
         java.util.concurrent.atomic.AtomicBoolean explode = new java.util.concurrent.atomic.AtomicBoolean(true);
