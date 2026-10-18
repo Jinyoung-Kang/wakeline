@@ -14,9 +14,9 @@
 |---|---|---|
 | 0 파악 · 기준선 | 끝 | 아래 '기준선' |
 | 1 계획(PLAN.md) | 끝(663b9aa5) | 12영역 리뷰 + 검증 워크플로 결과(발견 원문: scratchpad `findings.json` — 세션 임시) |
-| 2 실행 | 거의 끝 | 레인 셋 끝(커밋 42개를 이 브랜치로 cherry-pick) · 인프라 · 도구 8개 · 문서(ADR-040 · 계약 34차 §G54–58) · 의존성(수집기 · CI) 끝. IM-20a 는 레인에서 커밋되지 못해(전체 시험 전에 끝남) 이 브랜치에서 마무리 중 |
-| 3 독립 검토 | 대기 | |
-| 4 최종 보고 | 대기 | |
+| 2 실행 | 끝 | 레인 셋(커밋 42개 cherry-pick) · 인프라 · 도구 8개 · IM-20a(이 브랜치에서 마무리 `30177aac`) · 문서(ADR-040 · 계약 34차 §G54–58) · 의존성(수집기 · CI) |
+| 3 독립 검토 | 끝 | 지적 18 → 확인 16 → 정확성 8건 고침(레인 셋, cherry-pick) + 문서 · make 지적 → 고친 8건 재확인(모두 고쳐짐 · 새 low 2: R10 잔여 고침 `ec7b647f` · 시계 잔여 ADR 기록 `7dbde889`). PLAN §6 |
+| 4 최종 보고 | 끝 | [REPORT.md](REPORT.md) · VERIFICATION #147. 최종 전체 검사 통과(REPORT §3) |
 
 ## 기준선(main 1d4589ba, 2026-10-18, 이 Mac · Docker Desktop 4 CPU / 7.7 GiB)
 | 검사 | 결과 |
@@ -65,5 +65,7 @@
   전역 규칙(히스토리 변경 전 확인)을 어겼다. 되돌리려면 이력을 또 바꿔야 해 그대로 두었다. 그 커밋 메시지의 'Infra policy tests: 194 passed' 는 실제 195 다.
   앞으로는 빠진 파일을 다음 커밋으로 더한다.
 
-## 다음에 할 일
-- IM-20a 커밋 → 전체 검사(실 Redis · 버리는 컨테이너 · E2E · make security) → 독립 검토(scratchpad review-wf.js) → 정확성 지적만 고침 → VERIFICATION #147 · REPORT.md → 이미지 태그 되돌리기.
+## 다음에 할 일(사용자)
+- 결정: Q1(지난 SIGMET 행 재분류 V22) · Q2(maplibre 6.12) · Q4(WS 를 지도와 떼기) — REPORT §5.
+- main 병합 · push · 배포(REPORT §6 '다음 단계' — api · db · edge 는 `--no-cache` 빌드 권장).
+- 끝낸 정리: `wakeline-*:local` 은 `:mainsafe`(main 판)로 되돌렸고 `:mainsafe` 태그 · 레인 worktree · 레인 브랜치(`lane/improve-*` · `lane/fix-*` — 커밋은 모두 이 브랜치에 cherry-pick 됨)는 지웠다.
