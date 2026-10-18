@@ -253,6 +253,27 @@ def test_the_import_command_writes_and_reports(monkeypatch, capsys):
     assert rc == 2 and "DB 실패" in err and "secret123" not in err
 
 
+def test_an_edition_with_nothing_inserted_is_reported_as_a_data_refusal_not_a_database_failure(monkeypatch, capsys):
+    """'도형이 하나도 안 들어감'(AirspaceImportError — 되돌려졌다)은 자료 문제다: 종료 1 '거절:'(모듈 설명 '1 자료 거절 · 2 DB 실패').
+    예전에는 DB 오류와 함께 잡혀 종료 2 'DB 실패' 로 보고돼 운영자가 DB 장애로 오해했다."""
+    from wakeline_collector import airspace_store, db
+
+    class Pool:
+        async def close(self):
+            pass
+
+    async def open_pool():
+        return Pool()
+
+    async def nothing_inserted(pool, **_):
+        raise airspace_store.AirspaceImportError("no geometry was inserted — the edition is not activated")
+
+    monkeypatch.setattr(db, "open_pool", open_pool)
+    monkeypatch.setattr(airspace_store, "import_edition", nothing_inserted)
+    rc, _, err = _run(monkeypatch, capsys, _kml())
+    assert rc == 1 and err.startswith("거절: no geometry was inserted") and "DB 실패" not in err
+
+
 def test_the_import_command_refuses_bad_input_and_arguments(monkeypatch, capsys):
     assert _run(monkeypatch, capsys, b"<gpx/>")[0] == 1
     assert _run(monkeypatch, capsys, _kml(), tty=True)[0] == 3
