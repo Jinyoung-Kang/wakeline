@@ -207,6 +207,13 @@ describe("contract v5 amendment numbers are unique", () => {
     expect(amendment(52)).toContain("지정 대상 기록 보존 `retain_targets` · 항적 `properties.resolution` · `/m`");
     expect(heading(53)).toMatch(/^## G\. 33차 개정\(2026-10-10 · 출시 QA 2차 결함 수정 /);
     expect(amendment(53)).toContain("관심 대상 조회는 DB 가 없어도 메모리 값으로 답한다");
-    expect(amendment(54)).toBe("");
+    // 개선 작업(2026-10-18 · fix/improve-2026-10 — 코드 리뷰 결함 수정): 34차 · §G54–§G58
+    expect(heading(54)).toMatch(/^## G\. 34차 개정\(2026-10-18 · 개선 작업 /);
+    expect(amendment(54)).toContain("항공기 검색은 실시간 일치를 순위대로 20건 고른다");
+    expect(amendment(55)).toContain("관심 지역 반경은 50–250 NM");
+    expect(amendment(56)).toContain("열린 알림의 근거는 DB 가 없어도 메모리 값으로 답한다");
+    expect(amendment(57)).toContain("원문 'TOP ABV FLnnn' 과 같은 값의 JSON 상한은 상한의 하한이다");
+    expect(amendment(58)).toContain("운영 경로의 입력 · 장애 응답 · 신호");
+    expect(amendment(59)).toBe("");
   });
 });

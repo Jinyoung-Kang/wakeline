@@ -1339,3 +1339,31 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
   - `GET /api/v1/airspace?category=`: 값 앞뒤의 ASCII 공백만 지운다 — NUL · 탭 · 줄바꿈 · 제어 문자는 400 `BAD_CATEGORY`(QA-500 · §G43 과 같은 부류).
   - 항적 `properties.resolution = 1m_retained`(§G52): 보존 점도 실제 시각 `ts` 로 [from, to] 를 거른다 — 원해상도와 같은 규칙(QA-702).
   - 회귀 막기: api `Qa500…` · `Qa600…` · `Qa701…` · `Qa702…` · `Qa710…` · `WatchControllerTest` · `RecentClosedAlertsTest` · `tools/rest_contract_check.py`(WATCH 의 META).
+
+## G. 34차 개정(2026-10-18 · 개선 작업 `fix/improve-2026-10` — 코드 리뷰 결함 수정, 사용자 위임 "권장안대로 끝까지 진행", [계획](../improve/PLAN.md))
+- G54(§2 항공기 검색 · §G33) **항공기 검색은 실시간 일치를 순위대로 20건 고른다**(IM-09)
+  - `GET /api/v1/aircraft/search?q=`: 실시간 병합 뷰의 앞부분 일치 **전부**에서 상위 20건을 고른다 — 순서는 정확 일치(hex · 앞뒤 공백을 뺀 호출부호 · 등록부호가
+    검색어와 같음) → 관측 시각(seen_at) 최신 → hex. 선박 검색(§B1)과 같은 꼴이다. 예전: 해시 순서로 처음 만난 20건에서 끊어, 일치가 20건을 넘으면 정확히 맞는
+    호출부호(예: `UAL1` — `UAL10…` 수십 대)가 빠질 수 있었고 다시 검색해도 같았다. DB 보충(실시간 20건 미만일 때)과 응답 모양은 그대로다.
+- G55(운영 설정 · §G24 관심 지역) **관심 지역 반경은 50–250 NM**(IM-10 · ADR-013 개정)
+  - `PUT /api/v1/ops/settings` 의 `region_radius_nm`: 정수 50–250(예전 50–500 — 251–500 은 이제 400). 공급자 관심 지역 조회의 상한(adsb.fi 공식 문서 '최대 250 NM' ·
+    핫 리전 `HotCell.MAX_RADIUS_NM` 과 같은 값)이다 — 전에는 400 을 받아 그대로 요청했고, 수요 계산은 그 원 안을 `covered_by_region` 으로 보아 핫 리전을 막았다.
+    범위가 넓던 때 저장된 값은 api(`RegionSettings`)와 수집기(`runtime_settings`)가 읽을 때 250 으로 자른다(저장값은 바꾸지 않는다). 웹 운영 화면의 입력 상한도 250.
+- G56(§G51 알림 근거) **열린 알림의 근거는 DB 가 없어도 메모리 값으로 답한다**(IM-20 — §G53 `/watch` 와 같은 관례)
+  - `GET /api/v1/alerts/{id}`: 열린 알림(엔진 메모리에 있음)인데 구역 사본(SIGMET · 공역)을 DB 에서 읽지 못하면(저장소 장애) 503 이 아니라 200 · `source: "engine"` ·
+    `meta.db_unavailable: true`. 사본은 메모리에서 같은 키로 — SIGMET 은 `SigmetStore`(철회 시각 `withdrawn_at` 은 없다), 공역은 켜진 차수(`edition_active: true`).
+    메모리에도 없으면 그 사본 키가 빠진다. 닫힌 알림(DB 가 원본)은 지금처럼 503 + `Retry-After`, 장애가 아닌 DB 예외(문법 · 권한)는 500.
+    웹 근거 화면은 `meta.db_unavailable` 이면 "DB 일시 사용 불가 — 판정 사본을 메모리 값으로" 를, 사본이 없으면 "사본을 읽지 못함" 을 적는다(빼지 않는다).
+- G57(§4 SIGMET 고도대 · 계약 v4 DH-4 · V4) **원문 'TOP ABV FLnnn' 과 같은 값의 JSON 상한은 상한의 하한이다**(IM-01)
+  - 스트림 `sigmet.top_source`: AWC JSON 상한이 원문 "TOP ABV FLnnn" 의 값과 같으면 `raw_text_lower_bound`(예전: `json` — 고정 상한으로 판정돼 그 고도 위 항공기가
+    빠졌다, 실제 표본 131건 중 4건). 값이 다르면 `json` 그대로, "TOPS ABV" 도 `json`(정규식이 받지 않는다). V4 마이그레이션 · MigrationDbTest 의 규칙과 같다 — enum 은 그대로.
+    이미 저장된 지난 행은 바꾸지 않았다(데이터 변경 — 사용자 결정 대기, PLAN §5 Q1). 살아 있는 SIGMET 은 다음 수신 때 upsert 가 고친다.
+    근거 카드의 판정 가정에 "상한은 그 값 이상 → 무제한으로 가정" 이 적힌다.
+- G58(운영 API) **운영 경로의 입력 · 장애 응답 · 신호**(IM-18 · IM-24 · IM-13)
+  - `GET /api/v1/ops/logs` · `/ops/logs/groups` · `/ops/runs` 의 `fp` · `rid` · `service` · `level` · `stream` · `cursor` · `q` · `resolved`: 앞뒤의 **공백 글자만** 지운다 —
+    제어 문자는 남아 형식 검사에서 400(§G43 의 공개 경로와 같은 규칙. 예전: `String.strip()` 이 U+0009–U+000D · U+001C–U+001F 를 지워 받아들였다).
+  - 로그인한 운영자의 요청에서 세션 자격 확인(DB)이 **장애**면 지금처럼 503 + `Retry-After` 이고 WARN 한 줄(request_id · 경로)을 남긴다. 장애가 아닌 DB 예외는 500.
+    자격 불일치 · 사용자 없음으로 세션을 끝낼 때도 WARN 한 줄(user_id · request_id · 사유 — 세션 id 는 남기지 않는다).
+  - `GET /api/v1/ops/pipeline` 의 collector `heartbeat_age_s` 와 공개 `/status` 의 `demand.adsb_fi_rps_1m` 판단: '가장 최근 보고 시각'에서 이름이 `*_resume_at` 인 필드
+    (다음에 움직일 때 — 미래)를 빼고, 지금보다 60 s 넘게 미래인 값은 그 필드만 건너뛴다. 예전: 교통량 채우기가 쉬는 동안(`traffic_grid_fill_resume_at` 이 다음 UTC 정시 ·
+    날) collector 손실 지표가 모두 `null` 이 되고, 멈춘 수집기의 호출률이 '지금' 값으로 실렸다. 응답 모양은 그대로다.
