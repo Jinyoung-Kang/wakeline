@@ -81,7 +81,7 @@ python3 -m unittest discover -s infra/tests                                     
 - **`make e2e` · `make build` · `make infra-docker-test`(db) 는 운영 스택이 쓰는 `wakeline-*:local` 태그를 덮는다.** 돌던 컨테이너는 그대로지만 다음
   `make up` 이 그 이미지를 쓴다 — 브랜치 작업 중에는 main 이미지를 `:mainsafe` 로 태그해 두고 끝나면 `:local` 로 되돌린다. 다른 태그를 검사할 때는
   `SECURITY_OWN_IMAGES="wakeline-api:<tag> …" bash tools/security_gate.sh`.
-- 배포는 `make up`. Redis(AOF)를 다시 만들면 한동안 `LOADING` 이고 api 는 503 + Retry-After 로 답한다. `infra/redis/start.sh` · `redis.conf` 가 바뀌면
+- 배포는 `make up`(로컬 — AWS 호스트는 ADR-039 의 compose 명령, 그 호스트에서는 스택 make 대상이 멈춘다 · IM-28). Redis(AOF)를 다시 만들면 한동안 `LOADING` 이고 api 는 503 + Retry-After 로 답한다. `infra/redis/start.sh` · `redis.conf` 가 바뀌면
   `make up` 이 redis 를 다시 만든다(해시 라벨 `REDIS_CONFIG_SHA` — Makefile 밖에서 compose 를 부르면 라벨이 달라 한 번 다시 만들어진다, VERIFICATION #124 · #125).
   edge 의 마운트한 nginx 설정도 같다(`EDGE_CONFIG_SHA` — 새 설정 파일을 마운트하면 Makefile `EDGE_CONFIG_FILES` 에도 더한다, #126). 실행 이미지(edge 포함 — `infra/edge/Dockerfile` 은 `apk upgrade`)는
   빌드 때 OS 보안 갱신을 받는다(기반 이미지는 다이제스트 고정) — 새 CVE 로 trivy 가 실패하면 캐시 없이 다시 빌드해 본다(`docker build --no-cache`).

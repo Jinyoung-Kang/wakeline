@@ -49,3 +49,9 @@
   화면 글(웹 `lib/demand.ts` 의 핫 리전 `throttled`)은 상태 값이 아니라 문구로 두 까닭을 함께 말한다(웹 후속 2026-10-14) — '핫 리전 지연 — 호출 상한 또는
   다른 방문자와 칸 나눔', title 은 공급자 호출 상한과 다른 방문자와 나눈 칸 상한(IP 당 절반)을 적고 서버가 둘을 가르지 않는다고 밝힌다.
 - **회귀 막기**: api `Qa1350OneIpHoldsHotDemandCapTest` · `DemandServiceTest.chooseHot_perIpShareOnlyWhileAnotherIpWaits`.
+
+## 개정(2026-10-18 — 관심 지역 반경도 공급자 상한 250 NM, IM-10 · 계약 v5 §G55)
+- 관심 지역 반경 설정(`region_radius_nm`)은 50–250 NM 이다(예전 50–500). 관심 지역 조회도 위 adsb.fi `dist`(≤ 250 NM — 공식 문서)를 쓰는데, 반경을 자르지 않아
+  400 이면 `/dist/400` 을 그대로 불렀고, 수요 계산은 그 400 NM 원 안을 `covered_by_region` 으로 보아 핫 리전을 막았다 — 250–400 NM 띠는 관심 지역 피드에도 핫
+  리전에도 없었다. api 검증 · 읽기 자르기(`RegionSettings`) · 수집기(`runtime_settings`) · 웹 입력이 같은 범위를 쓰고, 넓던 때 저장한 값은 읽을 때 250 으로 자른다.
+  adsb.lol `point` 의 상한은 문서를 받지 못해 확인하지 않았다(같은 범위 안이라 영향 없음).
