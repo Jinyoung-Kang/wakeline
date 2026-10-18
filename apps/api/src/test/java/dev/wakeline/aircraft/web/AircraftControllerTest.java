@@ -194,6 +194,34 @@ public class AircraftControllerTest {
         mvc.perform(get("/api/v1/aircraft/search").param("q", "K%")).andExpect(status().isBadRequest()); // LIKE 와일드카드 차단
     }
 
+    /**
+     * IM-09: 실시간 일치가 20건을 넘으면 정확 일치 → seen_at 최신 → hex 순 상위 20건(선박 검색과 같은 규칙). 예전에는 병합 뷰(HashMap)를 도는 순서대로
+     * 처음 만난 20건에서 끊어, 정확히 맞는 호출부호(UAL1)가 UAL1xx 에 밀려 빠졌고 다시 검색해도 같았다. hex a1ff00 은 이 병합 뷰의 버킷 순서에서
+     * 일치 42건 중 마지막에 온다 — 또 UAL1 은 가장 오래 전에 보였고 hex 도 가장 뒤라, 정확 일치 규칙만이 그것을 맨 앞에 둔다.
+     * 나머지는 seen_at 이 둘씩 같고(쌍 안에서는 hex 가 작은 쪽 — 호출부호 번호가 큰 쪽이 먼저) 최근 것부터.
+     */
+    @Test
+    void searchPutsTheExactCallsignFirstAndKeepsTheNewestWhenMoreThanTheLimitMatch() throws Exception {
+        Instant now = Instant.now();
+        Map<String, AircraftState> states = new java.util.HashMap<>();
+        states.put("a1ff00", ac("a1ff00", "UAL1    ", 40, -100, now.minusSeconds(120), "opensky")); // OpenSky 식 뒤 공백
+        for (int k = 0; k <= 40; k++) {
+            String hex = String.format("a1%04x", 40 - k); // UAL100 = a10028 … UAL140 = a10000
+            states.put(hex, ac(hex, "UAL1" + String.format("%02d", k), 40, -100, now.minusSeconds(10 + k / 2), "opensky"));
+        }
+        snapshots.replaceIfNewer(new Snapshot(snapshots.nextVersion(), "global", "opensky", now.plusSeconds(1), now, "-", states), now.toEpochMilli());
+        MvcResult r = mvc.perform(get("/api/v1/aircraft/search").param("q", "UAL1")).andExpect(status().isOk())
+                .andExpect(jsonPath("$.items.length()").value(AircraftController.SEARCH_LIMIT))
+                .andExpect(jsonPath("$.items[*].hex").value(hasItem("a1ff00")))
+                .andExpect(jsonPath("$.items[0].hex").value("a1ff00"))
+                .andExpect(jsonPath("$.items[0].live").value(true))
+                .andReturn();
+        List<String> callsigns = com.jayway.jsonpath.JsonPath.read(r.getResponse().getContentAsString(), "$.items[*].callsign");
+        assertThat(callsigns.stream().map(String::trim).toList()).containsExactly("UAL1",
+                "UAL101", "UAL100", "UAL103", "UAL102", "UAL105", "UAL104", "UAL107", "UAL106", "UAL109", "UAL108",
+                "UAL111", "UAL110", "UAL113", "UAL112", "UAL115", "UAL114", "UAL117", "UAL116", "UAL119");
+    }
+
     @Test
     void snapshotHasEtagPublicCachingAndSources() throws Exception {
         MvcResult r = mvc.perform(get("/api/v1/aircraft").param("bbox", "120,30,135,45")).andExpect(status().isOk())
