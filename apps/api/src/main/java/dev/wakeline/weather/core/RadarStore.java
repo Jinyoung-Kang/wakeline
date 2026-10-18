@@ -1,5 +1,6 @@
 package dev.wakeline.weather.core;
 
+import dev.wakeline.platform.support.FetchedAtGuard;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
@@ -19,11 +20,15 @@ public class RadarStore {
     public Frames frames() { return frames.get(); }
     public void replace(Frames f) { frames.set(f); }
 
-    /** fetched_at 단조 보장: 현재보다 새 목록일 때만 교체한다(백로그 재생이 되돌리지 않게). @return 교체했으면 true */
-    public boolean replaceIfNewer(Frames f) {
+    /**
+     * fetched_at 단조 보장({@link FetchedAtGuard}): 새 목록일 때만 교체한다(백로그 재생이 되돌리지 않게).
+     * @param nowMs api 의 지금(ms)
+     * @return 교체했으면 true
+     */
+    public boolean replaceIfNewer(Frames f, long nowMs) {
         while (true) {
             Frames cur = frames.get();
-            if (!f.fetchedAt().isAfter(cur.fetchedAt())) return false;
+            if (!FetchedAtGuard.newer(f.fetchedAt(), cur.fetchedAt(), nowMs)) return false;
             if (frames.compareAndSet(cur, f)) return true;
         }
     }

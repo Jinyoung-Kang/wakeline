@@ -59,7 +59,7 @@ class WatchControllerTest {
     @BeforeEach
     void setUp() {
         now = Instant.now();
-        snapshots.replaceIfNewer(new Snapshot(snapshots.nextVersion(), "region", "adsb_lol", now, now, "-", Map.of("71be01", ac("71be01", now.minusSeconds(3)))));
+        snapshots.replaceIfNewer(new Snapshot(snapshots.nextVersion(), "region", "adsb_lol", now, now, "-", Map.of("71be01", ac("71be01", now.minusSeconds(3)))), now.toEpochMilli());
         ships.apply(List.of(new ShipState("440123456", 35.0, 129.0, 10.0, 90.0, 90, 0, 0, "pos", now.minusSeconds(40), "aisstream", "1", "A")),
                 List.of(new ShipStatic("440123456", "HANBADA", null, null, 70, null, null, null, null, null, null, null, null, null, null, now, "aisstream")),
                 now, "aisstream", now.toEpochMilli());

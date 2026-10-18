@@ -155,8 +155,8 @@ class StreamConsumerTest {
         assertThat(b.version()).isGreaterThan(a.version());
         assertThat(b.fetchedAt()).isEqualTo(a.fetchedAt());
         assertThat(b.byId()).isSameAs(a.byId());
-        assertThat(sigmets.replaceIfNewer(T, "awc_isigmet", Map.of())).isNull();
-        assertThat(sigmets.replaceIfNewer(T.plusSeconds(1), "awc_isigmet", Map.of()).version()).isGreaterThan(b.version());
+        assertThat(sigmets.replaceIfNewer(T, "awc_isigmet", Map.of(), T.toEpochMilli())).isNull();
+        assertThat(sigmets.replaceIfNewer(T.plusSeconds(1), "awc_isigmet", Map.of(), T.toEpochMilli()).version()).isGreaterThan(b.version());
     }
 
     // ---------- handle(): DLQ 는 검증 실패만, ACK 는 결과가 durable 해진 뒤(API-CONC-2·8) ----------

@@ -71,11 +71,11 @@ public class AircraftControllerTest {
         Instant now = Instant.now();
         snapshots.replaceIfNewer(new Snapshot(snapshots.nextVersion(), "global", "opensky", now, now, "-",
                 Map.of("a1b2c3", ac("a1b2c3", "UAL1  ", 40, -100, now.minusSeconds(20), "opensky"),
-                        "b00001", ac("b00001", "UAL2", 41, -101, now.minusSeconds(900), "opensky"))));
+                        "b00001", ac("b00001", "UAL2", 41, -101, now.minusSeconds(900), "opensky"))), now.toEpochMilli());
         snapshots.replaceIfNewer(new Snapshot(snapshots.nextVersion(), "region", "adsb_lol", now, now, "-",
                 Map.of("71be01", ac("71be01", "KAL081", 37.4, 126.5, now.minusSeconds(3), "adsb_lol"),
                         "71be02", ac("71be02", " syn736 ", 50.0, 10.0, now.minusSeconds(3), "adsb_lol"),
-                        "71be03", ac("71be03", null, 50.1, 10.1, now.minusSeconds(3), "adsb_lol"))));
+                        "71be03", ac("71be03", null, 50.1, 10.1, now.minusSeconds(3), "adsb_lol"))), now.toEpochMilli());
         mvc = mvc(new DbDown());
     }
 
@@ -175,7 +175,7 @@ public class AircraftControllerTest {
                 .andExpect(jsonPath("$.route.fetched_at").doesNotExist());
         Instant now = Instant.now();
         snapshots.replaceIfNewer(new Snapshot(snapshots.nextVersion(), "region", "adsb_lol", now.plusSeconds(1), now, "-",
-                Map.of("71be04", ac("71be04", "ıab12ſ", 50.2, 10.2, now, "adsb_lol"))));
+                Map.of("71be04", ac("71be04", "ıab12ſ", 50.2, 10.2, now, "adsb_lol"))), now.toEpochMilli());
         mvc.perform(get("/api/v1/aircraft/71be04")).andExpect(status().isOk())
                 .andExpect(jsonPath("$.route.status").value("no_callsign"))
                 .andExpect(jsonPath("$.route.callsign").doesNotExist())

@@ -4,6 +4,7 @@ import dev.wakeline.aircraft.core.AircraftEvents;
 import dev.wakeline.aircraft.core.AircraftState;
 import dev.wakeline.aircraft.core.Snapshot;
 import dev.wakeline.aircraft.core.SnapshotStore;
+import dev.wakeline.platform.support.FetchedAtGuard;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 
@@ -87,7 +88,7 @@ class EngineServiceTest {
         for (int i = 0; i < 2; i++) {
             Snapshot f = new Snapshot(snapshots.nextVersion(), "focus", "adsb_fi", now.minusSeconds(10 - 5L * i), now, "-",
                     Map.of("e00002", at("e00002", 36, 127 + i * 0.01, now.minusSeconds(10 - 5L * i), "adsb_fi")));
-            Snapshot prev = snapshots.applyFocus(f);
+            Snapshot prev = snapshots.applyFocus(f, now.toEpochMilli());
             engine.onSnapshot(new AircraftEvents.SnapshotUpdated(prev, f));
         }
         assertThat(alertEvents()).containsExactly(AlertStateMachine.EventType.ENTERED);
@@ -180,13 +181,16 @@ class EngineServiceTest {
         return at(hex, p[0], p[1], seenAt, "adsb_lol");
     }
 
-    /** StreamConsumer.aircraft()(region · global)와 같은 길: fetched_at 단조 가드 → replaceIfNewer → SnapshotUpdated. 받아들이면 true. */
-    static boolean deliver(SnapshotStore store, EngineService e, String scope, Instant fetchedAt, AircraftState... states) {
+    /**
+     * StreamConsumer.aircraft()(region · global)와 같은 길: fetched_at 단조 가드 → replaceIfNewer → SnapshotUpdated. 받아들이면 true.
+     * nowMs 는 api 의 지금(이 시험들에서는 엔진 시계와 같다).
+     */
+    static boolean deliver(SnapshotStore store, EngineService e, long nowMs, String scope, Instant fetchedAt, AircraftState... states) {
         Map<String, AircraftState> m = new HashMap<>();
         for (AircraftState a : states) m.put(a.hex(), a);
-        if (!fetchedAt.isAfter(store.current(scope).fetchedAt())) return false;
+        if (!FetchedAtGuard.newer(fetchedAt, store.current(scope).fetchedAt(), nowMs)) return false;
         Snapshot s = new Snapshot(store.nextVersion(), scope, "adsb_lol", fetchedAt, fetchedAt, "-", Map.copyOf(m));
-        Snapshot prev = store.replaceIfNewer(s);
+        Snapshot prev = store.replaceIfNewer(s, nowMs);
         if (prev == null) return false;
         e.onSnapshot(new AircraftEvents.SnapshotUpdated(prev, s));
         return true;
@@ -209,7 +213,7 @@ class EngineServiceTest {
         for (int i = -2; i <= 0; i++) {
             Instant f = P0.plusSeconds(10L * i);
             clock.now = f.plusMillis(500);
-            assertThat(deliver(store, e, "region", f, moving("a0000x", xLon, f.minusSeconds(1)), moving("a0000y", yLon, f.minusSeconds(1)))).isTrue();
+            assertThat(deliver(store, e, clock.millis(), "region", f, moving("a0000x", xLon, f.minusSeconds(1)), moving("a0000y", yLon, f.minusSeconds(1)))).isTrue();
         }
         assertThat(alertEvents()).containsExactly(AlertStateMachine.EventType.PREDICTED, AlertStateMachine.EventType.ENTERED);
         long enteredId = e.activeAlerts("observed").getFirst().id();
@@ -219,13 +223,13 @@ class EngineServiceTest {
         for (int i = 1; i <= 10; i++) {
             Instant f = P0.plusSeconds(10L * i);
             clock.now = clock.now.plusMillis(10);
-            assertThat(deliver(store, e, "region", f, moving("a0000x", xLon, f.minusSeconds(1)), moving("a0000y", yLon, f.minusSeconds(1)))).isTrue();
+            assertThat(deliver(store, e, clock.millis(), "region", f, moving("a0000x", xLon, f.minusSeconds(1)), moving("a0000y", yLon, f.minusSeconds(1)))).isTrue();
         }
         // 다시 실시간
         for (int i = 11; i <= 12; i++) {
             Instant f = P0.plusSeconds(10L * i);
             clock.now = f.plusMillis(500);
-            assertThat(deliver(store, e, "region", f, moving("a0000x", xLon, f.minusSeconds(1)), moving("a0000y", yLon, f.minusSeconds(1)))).isTrue();
+            assertThat(deliver(store, e, clock.millis(), "region", f, moving("a0000x", xLon, f.minusSeconds(1)), moving("a0000y", yLon, f.minusSeconds(1)))).isTrue();
         }
         assertThat(alertEvents()).as("one passage = one alert: no LOST + re-ENTERED, no prediction cleared + re-PREDICTED")
                 .containsExactly(AlertStateMachine.EventType.PREDICTED, AlertStateMachine.EventType.ENTERED);
@@ -251,7 +255,7 @@ class EngineServiceTest {
             clock.now = i <= 0 ? f.plusMillis(500) : P0.plusSeconds(100).plusMillis(70 + 10L * i); // i ≥ 1: 100 s 장애 뒤 재전송
             Instant seen = f.minusSeconds(1);
             double track = i <= 0 ? tracks[i + 2] : 90;
-            deliver(store, e, "region", f, new AircraftState("a0000t", null, null, null, null, 36, lon + 0.002 * i, 17000, 450.0, track, 0.0,
+            deliver(store, e, clock.millis(), "region", f, new AircraftState("a0000t", null, null, null, null, 36, lon + 0.002 * i, 17000, 450.0, track, 0.0,
                     false, null, seen, "adsb_lol", seen, 0, false));
             if (i == 0) {
                 assertThat(e.activeAlerts("predicted")).as("turning: prediction withheld").isEmpty();
@@ -290,7 +294,7 @@ class EngineServiceTest {
             Instant f = P0.plusSeconds(10L * i);
             clock.now = f.plusMillis(500);
             Instant seen = i <= 0 ? f.minusSeconds(1) : P0.minusSeconds(1); // i ≥ 1: 위치가 P0−1 s 에 멈춤
-            deliver(store, e, "region", f, moving("a0000x", 126.5, seen));
+            deliver(store, e, clock.millis(), "region", f, moving("a0000x", 126.5, seen));
         }
         assertThat(alertEvents()).containsExactly(AlertStateMachine.EventType.ENTERED, AlertStateMachine.EventType.LOST);
         var lost = events.stream().filter(x -> x instanceof EngineEvents.AlertsChanged).flatMap(x -> ((EngineEvents.AlertsChanged) x).events().stream())
@@ -313,7 +317,7 @@ class EngineServiceTest {
         for (int i = -2; i <= 0; i++) {
             Instant f = P0.plusSeconds(10L * i);
             clock.now = f.plusMillis(500);
-            deliver(store, e, "region", f, moving("a0000x", 126.5, f.minusSeconds(1)), moving("a0000y", TestData.westOfBox(37.5), f.minusSeconds(1)),
+            deliver(store, e, clock.millis(), "region", f, moving("a0000x", 126.5, f.minusSeconds(1)), moving("a0000y", TestData.westOfBox(37.5), f.minusSeconds(1)),
                     moving("a0000z", TestData.westOfBox(120), f.minusSeconds(1)));
         }
         assertThat(alertEvents()).containsExactly(AlertStateMachine.EventType.PREDICTED, AlertStateMachine.EventType.ENTERED);
@@ -337,7 +341,7 @@ class EngineServiceTest {
         assertThat(EngineService.dataTime(store.view(P0.plusSeconds(2)), P0.plusSeconds(2))).isEqualTo(P0.plusSeconds(2));
         Snapshot f = new Snapshot(store.nextVersion(), "focus", "adsb_fi", P0.plusSeconds(30), P0, "-",
                 Map.of("e00009", at("e00009", 36, 127, P0.plusSeconds(29), "adsb_fi")));
-        store.applyFocus(f);
+        store.applyFocus(f, P0.plusSeconds(100).toEpochMilli());
         assertThat(EngineService.dataTime(store.view(P0.plusSeconds(100)), P0.plusSeconds(100))).isEqualTo(P0.plusSeconds(30));
     }
 

@@ -5,6 +5,7 @@ import dev.wakeline.aircraft.core.AircraftState;
 import dev.wakeline.aircraft.core.Snapshot;
 import dev.wakeline.aircraft.core.SnapshotStore;
 import dev.wakeline.demand.HotCell;
+import dev.wakeline.platform.support.FetchedAtGuard;
 import dev.wakeline.platform.support.Receipt;
 import dev.wakeline.platform.support.StreamPrerequisite;
 import dev.wakeline.ships.core.AisGap;
@@ -58,6 +59,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.function.LongSupplier;
 import java.util.zip.GZIPInputStream;
 
 /**
@@ -141,6 +143,8 @@ public class StreamConsumer implements SmartLifecycle {
     private final SigmetStore sigmets;
     /** 기상특보 현황(ADR-036) — 없으면(옛 시험 생성자) 새로 만든다 */
     private WarningStore warningStore = new WarningStore();
+    /** fetched_at 단조 가드(FetchedAtGuard)에 넘기는 api 의 지금(ms) — 시험이 바꾼다({@link #setClock}). */
+    private LongSupplier clockMs = System::currentTimeMillis;
     private final RadarStore radar;
     private final ShipStore shipStore;
     /** 선박 부트스트랩용(기본 연결 — 스트림 전용 연결은 소비 스레드의 BLOCK 이 쓴다). null 이면 부트스트랩하지 않는다. */
@@ -242,6 +246,9 @@ public class StreamConsumer implements SmartLifecycle {
     /** 기상특보 저장소(스프링 빈 — 생성자 인자를 늘리지 않는다: 옛 시험 생성자 그대로). */
     @Autowired(required = false)
     void setWarningStore(WarningStore w) { if (w != null) this.warningStore = w; }
+
+    /** 시험용: 가드 판단의 '지금'을 정한다. */
+    void setClock(LongSupplier clockMs) { this.clockMs = clockMs; }
 
     /** ACK 대기열 항목. */
     record Ack(String stream, String id) {}
@@ -813,7 +820,8 @@ public class StreamConsumer implements SmartLifecycle {
     private void warnings(Parsed p, Receipt receipt, boolean persistHistory) {
         String provider = p.fields().get("provider");
         if (persistHistory) events.publishEvent(new WeatherEvents.WarningsReceived(p.fetchedAt(), provider, p.warnings().warnings(), p.warnings().dropped(), receipt));
-        if (warningStore.replaceIfNewer(p.fetchedAt(), provider, p.warnings().warnings(), p.warnings().dropped()) == null) staleSkipped.increment();
+        if (warningStore.replaceIfNewer(p.fetchedAt(), provider, p.warnings().warnings(), p.warnings().dropped(), clockMs.getAsLong()) == null)
+            staleSkipped.increment();
     }
 
     /** ships: 실시간 상태(MMSI 별 단조)에 반영하고, 메시지의 모든 보고를 저장·WS 로 넘긴다(저장기가 60 s 창으로 줄인다). */
@@ -835,14 +843,15 @@ public class StreamConsumer implements SmartLifecycle {
         String scope = f.get("scope");
         if (SnapshotStore.HOT.equals(scope)) { hot(f, states, cell, fetchedAt, receipt); return; }
         if (SnapshotStore.FOCUS.equals(scope)) { focus(f, states, fetchedAt, receipt); return; }
-        // fetched_at 단조 가드(REL-8): 같은 스코프의 현재 스냅샷보다 새 것이 아니면 백로그 — 실시간 상태·엔진·WS 는 그대로 두고
-        // 항적 기록만 이어서 한다(at-least-once). 버전 번호도 쓰지 않는다.
-        if (!fetchedAt.isAfter(snapshots.current(scope).fetchedAt())) {
+        // fetched_at 단조 가드(REL-8, 판단은 FetchedAtGuard — 저장소와 같은 함수): 같은 스코프의 현재 스냅샷보다 새 것이 아니면 백로그 —
+        // 실시간 상태·엔진·WS 는 그대로 두고 항적 기록만 이어서 한다(at-least-once). 버전 번호도 쓰지 않는다.
+        long nowMs = clockMs.getAsLong();
+        if (!FetchedAtGuard.newer(fetchedAt, snapshots.current(scope).fetchedAt(), nowMs)) {
             backlog(scope, fetchedAt, states, receipt);
             return;
         }
         Snapshot snap = new Snapshot(snapshots.nextVersion(), scope, f.get("provider"), fetchedAt, Instant.now(), f.get("raw_ref"), Map.copyOf(states));
-        Snapshot prev = snapshots.replaceIfNewer(snap);
+        Snapshot prev = snapshots.replaceIfNewer(snap, nowMs);
         if (prev == null) {
             backlog(scope, fetchedAt, states, receipt);
             return;
@@ -853,7 +862,7 @@ public class StreamConsumer implements SmartLifecycle {
     /** hot: 셀별 fetched_at 단조. 받아들이면 SnapshotUpdated(이전 = 그 셀의 이전 메시지), 아니면 백로그(항적만). */
     private void hot(Map<String, String> f, Map<String, AircraftState> states, String cell, Instant fetchedAt, Receipt receipt) {
         Snapshot snap = new Snapshot(snapshots.nextVersion(), SnapshotStore.HOT, f.get("provider"), fetchedAt, Instant.now(), f.get("raw_ref"), Map.copyOf(states));
-        Snapshot prev = snapshots.replaceHotIfNewer(cell, snap);
+        Snapshot prev = snapshots.replaceHotIfNewer(cell, snap, clockMs.getAsLong());
         if (prev == null) {
             backlog(SnapshotStore.HOT, fetchedAt, states, receipt);
             return;
@@ -868,7 +877,7 @@ public class StreamConsumer implements SmartLifecycle {
     private void focus(Map<String, String> f, Map<String, AircraftState> states, Instant fetchedAt, Receipt receipt) {
         if (states.isEmpty()) return; // 요청한 hex 가 모두 missing — 반영할 관측이 없다(상태는 수집기가 wakeline:demand:status 에 not_found 로)
         Snapshot snap = new Snapshot(snapshots.nextVersion(), SnapshotStore.FOCUS, f.get("provider"), fetchedAt, Instant.now(), f.get("raw_ref"), Map.copyOf(states));
-        Snapshot prev = snapshots.applyFocus(snap);
+        Snapshot prev = snapshots.applyFocus(snap, clockMs.getAsLong());
         if (prev == null) {
             backlog(SnapshotStore.FOCUS, fetchedAt, states, receipt);
             return;
@@ -885,14 +894,15 @@ public class StreamConsumer implements SmartLifecycle {
     private void sigmet(Map<String, String> f, Map<String, SigmetRecord> set, Instant fetchedAt, Receipt receipt, boolean persistHistory) {
         // 이력: 새 세트든 백로그든 스트림 순서대로(실시간 반영보다 먼저 — 이 세트의 SIGMET 행이 이 세트로 만든 알림보다 먼저 저장된다)
         if (persistHistory) events.publishEvent(new WeatherEvents.SigmetSetReceived(fetchedAt, f.get("provider"), set, receipt));
-        if (!fetchedAt.isAfter(sigmets.state().fetchedAt())) { staleSkipped.increment(); return; } // 백로그: 더 새 목록이 이미 있다
-        SigmetStore.State st = sigmets.replaceIfNewer(fetchedAt, f.get("provider"), set);
+        long nowMs = clockMs.getAsLong();
+        if (!FetchedAtGuard.newer(fetchedAt, sigmets.state().fetchedAt(), nowMs)) { staleSkipped.increment(); return; } // 백로그: 더 새 목록이 이미 있다
+        SigmetStore.State st = sigmets.replaceIfNewer(fetchedAt, f.get("provider"), set, nowMs);
         if (st == null) { staleSkipped.increment(); return; }
         events.publishEvent(new WeatherEvents.SigmetsUpdated(st));
     }
 
     private void radar(RadarStore.Frames fr) {
-        if (!radar.replaceIfNewer(fr)) { staleSkipped.increment(); return; } // 백로그: 더 새 목록이 이미 있다
+        if (!radar.replaceIfNewer(fr, clockMs.getAsLong())) { staleSkipped.increment(); return; } // 백로그: 더 새 목록이 이미 있다
         events.publishEvent(new WeatherEvents.RadarUpdated(fr));
     }
 

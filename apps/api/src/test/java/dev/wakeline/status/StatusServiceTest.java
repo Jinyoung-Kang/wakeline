@@ -35,7 +35,7 @@ class StatusServiceTest {
         SnapshotStore snapshots = new SnapshotStore();
         Instant now = Instant.now();
         snapshots.replaceIfNewer(new Snapshot(snapshots.nextVersion(), "global", "opensky", now, now, "-",
-                Map.of("a00001", ac("a00001", now.minusSeconds(30)), "a00002", ac("a00002", now.minusSeconds(900)))));
+                Map.of("a00001", ac("a00001", now.minusSeconds(30)), "a00002", ac("a00002", now.minusSeconds(900)))), now.toEpochMilli());
         var region = new AtomicReference<>(new RegionSettings.Region(36.5, 127.8, 250));
         var status = new StatusService(snapshots, new SigmetStore(), new RadarStore(),
                 new EngineService(snapshots, new SigmetStore(), e -> { }, new SimpleMeterRegistry()), new StringRedisTemplate(), region::get);

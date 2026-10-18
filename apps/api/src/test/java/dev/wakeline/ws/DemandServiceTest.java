@@ -539,7 +539,7 @@ class DemandServiceTest {
             Instant t = Instant.ofEpochMilli(r.now());
             AircraftState a = new AircraftState("abc123", null, null, null, null, 35.5, 139.6, 30000, 400.0, 90.0, 0.0, false, null,
                     t, "adsb_fi", t, 0, false);
-            r.k.snapshots.applyFocus(new Snapshot(r.k.snapshots.nextVersion(), "focus", "adsb_fi", t, t, "-", Map.of("abc123", a)));
+            r.k.snapshots.applyFocus(new Snapshot(r.k.snapshots.nextVersion(), "focus", "adsb_fi", t, t, "-", Map.of("abc123", a)), r.now());
             FakeWsSession f = r.session("s", TOKYO);
             assertThat(ofType(f, "snapshot").getLast().path("aircraft").toString()).contains("abc123");
             r.refresh(); // 아무도 abc123 을 선택하지 않았다 → focus 관측을 뺀다 → 팬아웃(diff remove)

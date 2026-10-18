@@ -96,7 +96,7 @@ final class WsTestKit implements AutoCloseable {
         Map<String, AircraftState> m = new LinkedHashMap<>();
         for (AircraftState a : states) m.put(a.hex(), a);
         Snapshot s = new Snapshot(snapshots.nextVersion(), "hot", "adsb_fi", fetchedAt, fetchedAt, "-", Map.copyOf(m));
-        Snapshot prev = snapshots.replaceHotIfNewer(cell, s);
+        Snapshot prev = snapshots.replaceHotIfNewer(cell, s, fetchedAt.toEpochMilli());
         if (prev != null) hub.onSnapshot(new AircraftEvents.SnapshotUpdated(prev, s));
         return prev == null ? null : s;
     }
@@ -106,7 +106,7 @@ final class WsTestKit implements AutoCloseable {
         Map<String, AircraftState> m = new LinkedHashMap<>();
         for (AircraftState a : states) m.put(a.hex(), a);
         Snapshot s = new Snapshot(snapshots.nextVersion(), "focus", "adsb_fi", fetchedAt, fetchedAt, "-", Map.copyOf(m));
-        Snapshot prev = snapshots.applyFocus(s);
+        Snapshot prev = snapshots.applyFocus(s, fetchedAt.toEpochMilli());
         if (prev != null) hub.onSnapshot(new AircraftEvents.SnapshotUpdated(prev, s));
         return prev == null ? null : s;
     }

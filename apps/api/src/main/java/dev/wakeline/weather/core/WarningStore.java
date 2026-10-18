@@ -1,5 +1,6 @@
 package dev.wakeline.weather.core;
 
+import dev.wakeline.platform.support.FetchedAtGuard;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
@@ -22,9 +23,13 @@ public class WarningStore {
 
     public State state() { return state.get(); }
 
-    /** @return 새 상태, 더 새 목록이 이미 있으면 null */
-    public synchronized State replaceIfNewer(Instant fetchedAt, String provider, List<WarningRecord> warnings, int dropped) {
-        if (!fetchedAt.isAfter(state.get().fetchedAt())) return null;
+    /**
+     * 새 목록일 때만 바꾼다({@link FetchedAtGuard}).
+     * @param nowMs api 의 지금(ms)
+     * @return 새 상태, 더 새 목록이 이미 있으면 null
+     */
+    public synchronized State replaceIfNewer(Instant fetchedAt, String provider, List<WarningRecord> warnings, int dropped, long nowMs) {
+        if (!FetchedAtGuard.newer(fetchedAt, state.get().fetchedAt(), nowMs)) return null;
         State s = new State(version.incrementAndGet(), fetchedAt, provider, List.copyOf(warnings), dropped);
         state.set(s);
         return s;
