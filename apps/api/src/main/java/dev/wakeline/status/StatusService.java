@@ -214,18 +214,18 @@ public class StatusService {
             return null;
         }
         if (!Double.isFinite(v) || v < 0 || v > 1000) return null;
-        Instant newest = null;
-        for (var e : hb.entrySet()) {
-            if (!String.valueOf(e.getKey()).endsWith("_at")) continue;
-            try {
-                Instant t = Instant.parse(String.valueOf(e.getValue()));
-                if (newest == null || t.isAfter(newest)) newest = t;
-            } catch (java.time.format.DateTimeParseException ignored) {
-                // 시각이 아닌 값은 건너뛴다
-            }
-        }
+        Instant newest = CollectorHeartbeat.latestReport(hb, StatusService::heartbeatTime);
         if (newest == null || now.toEpochMilli() - newest.toEpochMilli() > HEARTBEAT_MAX_AGE_S * 1000) return null;
         return Math.round(v * 1000) / 1000.0;
+    }
+
+    /** heartbeat 의 시각 값(Instant.parse — 앞뒤 공백 없이). 시각이 아닌 값은 null(그 필드는 건너뛴다). */
+    private static Instant heartbeatTime(Object v) {
+        try {
+            return Instant.parse(String.valueOf(v));
+        } catch (java.time.format.DateTimeParseException e) {
+            return null;
+        }
     }
 
     /**

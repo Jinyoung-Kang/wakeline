@@ -3,6 +3,7 @@ package dev.wakeline.ops;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import dev.wakeline.ingest.StreamConsumer;
 import dev.wakeline.ingest.StreamMetrics;
+import dev.wakeline.status.CollectorHeartbeat;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.beans.factory.ObjectProvider;
@@ -126,12 +127,7 @@ public class OpsPipelineController {
     CollectorSignals collector(Instant now) {
         Map<Object, Object> h = signals.collector();
         Double age = null;
-        Instant newest = null;
-        for (var e : h.entrySet()) {
-            if (!String.valueOf(e.getKey()).endsWith("_at")) continue;
-            Instant t = time(e.getValue());
-            if (t != null && (newest == null || t.isAfter(newest))) newest = t;
-        }
+        Instant newest = CollectorHeartbeat.latestReport(h, OpsPipelineController::time);
         if (newest != null) {
             double s = (now.toEpochMilli() - newest.toEpochMilli()) / 1000.0;
             if (s >= -MAX_FUTURE_S) age = Math.round(Math.max(0, s) * 10) / 10.0;
