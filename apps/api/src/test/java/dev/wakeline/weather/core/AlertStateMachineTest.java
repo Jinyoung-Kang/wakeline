@@ -268,6 +268,33 @@ class AlertStateMachineTest {
         assertThat(fsm.activeObserved()).hasSize(1);
     }
 
+    /**
+     * R2(IM-07): 새로 여는 것은 판정 시각(now)으로도 신선한 위치로만. 데이터 시각이 멈춘 동안(모든 피드 정지) 새 구역이 멈춘 위치를 덮어도
+     * (fresh(ref) 이지만 fresh(now) 아님) 새 트랙의 첫 안쪽 관측으로 세지 않고 새 예측도 열지 않는다. 예측 대상의 상태가 없어도(신선한 위치를
+     * 확인할 수 없음) 열지 않는다. 재개 뒤 새 관측 2회에 ENTERED — 근거의 두 관측은 모두 재개 뒤.
+     */
+    @Test void frozenDataTime_newTrackAndNewPrediction_waitForAPositionFreshOnTheWallClock() {
+        AlertStateMachine fsm = new AlertStateMachine(ids::incrementAndGet);
+        AircraftState frozen = obs(1, true); // seen_at = NOW+10 s — 데이터 시각도 그때에 멈춘다
+        AircraftState y = acSeen("abc002", 36, 125, 17000, frozen.seenAt(), "adsb_lol");
+        for (int k = 1; k <= 3; k++) {
+            Instant now = frozen.seenAt().plusSeconds(600L * k); // 벽시계로 10 · 20 · 30분 — 구역 재판정만(스냅샷 버전 그대로)
+            assertThat(fsm.step(hitsFor(frozen, true), List.of(pred(s, 240, now)), Map.of(HEX, frozen, "abc002", y), now, frozen.seenAt(),
+                    cycle(1, 0, REGION))).as("k=%d", k).isEmpty();
+        }
+        Instant late = frozen.seenAt().plusSeconds(1200);
+        assertThat(fsm.step(Map.of(), List.of(pred(s, 240, late)), Map.of(), late, late, cycle(1, 0, REGION))).as("no state for the target").isEmpty();
+        // 재개: 새 관측(벽시계로도 신선)
+        AircraftState a1 = obs(200, true), y1 = acSeen("abc002", 36, 125, 17000, a1.seenAt(), "adsb_lol");
+        assertThat(types(fsm.step(hitsFor(a1, true), List.of(pred(s, 240, a1.seenAt())), Map.of(HEX, a1, "abc002", y1), a1.seenAt(),
+                cycle(2, 0, REGION)))).as("first confirmation only — the frozen position was not counted").containsExactly(PREDICTED);
+        AircraftState a2 = obs(201, true), y2 = acSeen("abc002", 36, 125.1, 17000, a2.seenAt(), "adsb_lol");
+        var ev = fsm.step(hitsFor(a2, true), List.of(pred(s, 230, a2.seenAt())), Map.of(HEX, a2, "abc002", y2), a2.seenAt(), cycle(3, 0, REGION));
+        assertThat(types(ev)).containsExactly(ENTERED);
+        assertThat(ev.getFirst().alert().evidence().get("confirmations_seen_at")).isEqualTo(List.of(a1.seenAt().toString(), a2.seenAt().toString()));
+        assertThat(fsm.activePredicted()).hasSize(1);
+    }
+
     @Test void airborneWithoutAltitude_isNotCountedAsOutside() {
         AlertStateMachine fsm = new AlertStateMachine(ids::incrementAndGet);
         stepObs(fsm, 1, true);

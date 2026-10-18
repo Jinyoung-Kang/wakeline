@@ -46,7 +46,9 @@ import java.util.stream.Collectors;
  * <b>데이터 시각</b> ref 로 본다 — 엔진이 판정 뷰의 마지막 스냅샷 fetched_at(now 를 넘지 않음)을 준다. 장애 뒤 수집기 큐가 원래 fetched_at
  * 그대로 다시 보낸 스냅샷도 그 시각의 관측이므로, 다시 온 메시지마다 부재로 세어 거짓 LOST 를 내지 않는다. 구역 종료(만료 · 철회 — ended)
  * 와 알림의 사건 시각(entered_at · left_at · judged_at)은 <b>판정 시각</b> now 로 둔다(피드 장애 중에도 만료된 경보의 알림은 닫힌다).
- * ref 를 받지 않는 step 은 ref = now(예전 동작).
+ * 새로 여는 것 — 아직 아무 관측도 세지 않은 트랙의 첫 셈과 새 예측(PREDICTED) — 은 now 로도 신선한 위치로만 한다(R2): 모든 기체 피드가 멈춰
+ * ref 가 멈춘 동안 새 구역(SIGMET 수신 · 공역 판 교체)이 멈춘 위치를 덮어도, 그 위치로 진입 확정의 첫 관측을 세거나 예측을 열지 않는다.
+ * 이미 있는 것(셈이 시작된 트랙 · 열린 예측)의 유지와 부재는 ref 그대로다. ref 를 받지 않는 step 은 ref = now(예전 동작).
  */
 public final class AlertStateMachine {
     public static final int ENTER_CONFIRM = 2;
@@ -217,7 +219,7 @@ public final class AlertStateMachine {
     }
 
     /**
-     * 한 판정 주기. now = 판정 시각(구역 종료 · 사건 시각), ref = 데이터 시각(위치가 '현재 관측' 인가 — ref ≤ now).
+     * 한 판정 주기. now = 판정 시각(구역 종료 · 사건 시각 · 새로 여는 것의 신선도), ref = 데이터 시각(위치가 '현재 관측' 인가 — ref ≤ now).
      * cycle 의 피드 끊김 판단도 같은 ref 로 만든 것이어야 한다.
      */
     public List<Event> step(Map<String, List<IntersectionEngine.Hit>> hits, List<IntersectionEngine.Prediction> predictions,
@@ -249,6 +251,9 @@ public final class AlertStateMachine {
                 // seen_at 을 매기므로 그 seen_at 도 약 역행 폭만큼 작다(IM-08 — 역행 판정은 FetchedAtGuard, SnapshotStore.applyFocus 와 같은 원인).
                 // 역행 전 관측의 재판정(미래 seen_at 이 그대로 다시 옴)은 여전히 거른다.
                 if (t.lastSeenAt != null && !FetchedAtGuard.newer(a.seenAt(), t.lastSeenAt, now.toEpochMilli())) continue;
+                // 아직 아무 관측도 세지 않은 트랙의 첫 셈은 판정 시각으로도 신선한 위치로만(R2): 모든 기체 피드가 멈춰 ref 가 멈춘 동안 새 구역이
+                // 멈춘 위치를 덮어도 그 위치를 진입 확정의 첫 관측으로 쓰지 않는다. 기체는 있으므로 부재로도 세지 않는다(위에서 absent = 0).
+                if (t.lastSeenAt == null && !a.fresh(now)) continue;
                 IntersectionEngine.Hit h = insideNow.get(k);
                 if (h != null) {
                     t.lastSeenAt = a.seenAt();
@@ -308,6 +313,8 @@ public final class AlertStateMachine {
             Alert prev = prevP == null ? null : prevP.alert();
             AircraftState a = states.get(p.hex());
             if (prev == null) {
+                // 새 예측도 판정 시각으로 신선한 위치로만 연다(R2 — 멈춘 위치로 열지 않는다). 이미 있는 예측의 유지 · 갱신은 데이터 시각 그대로.
+                if (a == null || !a.fresh(now)) continue;
                 Alert al = predictedAlert(ids.getAsLong(), p, a, now, now);
                 predicted.put(k, new Pred(al, p.zone()));
                 out.add(new Event(EventType.PREDICTED, al));

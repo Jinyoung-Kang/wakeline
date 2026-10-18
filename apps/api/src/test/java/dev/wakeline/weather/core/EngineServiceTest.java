@@ -331,6 +331,54 @@ class EngineServiceTest {
         assertThat(e.activeAlerts("predicted")).isEmpty();
     }
 
+    /**
+     * R2(IM-07): 항공기 피드가 모두 멈춘 동안(데이터 시각이 멈춤) 새 SIGMET 이 멈춘 위치를 덮어도, 그 위치는 새 알림의 첫 관측으로 세지 않는다 —
+     * 새로 여는 것은 판정 시각(now)으로도 신선한 위치로만. 예전에는 10분 된 위치와 재개 뒤 관측 1건으로 ENTERED 가 확정됐다
+     * (confirmations_seen_at 에 15분 떨어진 두 관측). 피드가 돌아온 뒤 새 관측 2회에 ENTERED.
+     */
+    @Test void aircraftFeedsStopped_newSigmetOverAFrozenPosition_entersOnlyOnObservationsAfterTheResume() {
+        MutableClock clock = new MutableClock(P0.minusSeconds(30));
+        SnapshotStore store = new SnapshotStore();
+        EngineService e = new EngineService(store, sigmets, events::add, new SimpleMeterRegistry(), null, clock);
+        clock.now = P0.plusMillis(500); // 판정 구역 없음 — 관심 지역 스냅샷 한 번(B 의 폴리곤 안 위치), 그 뒤 기체 피드 정지
+        assertThat(deliver(store, e, clock.millis(), "region", P0, at("a0000b", 36, 127, P0.minusSeconds(1), "adsb_lol"))).isTrue();
+        clock.now = P0.plusSeconds(600); // 10분 뒤 새 SIGMET B 가 멈춘 위치를 덮는다
+        e.onSigmets(new WeatherEvents.SigmetsUpdated(sigmets.replace(P0.plusSeconds(600), "awc_isigmet",
+                Map.of("B", sig("B", P0.minusSeconds(3600), P0.plusSeconds(3 * 3600))))));
+        assertThat(alertEvents()).isEmpty();
+        Instant f1 = P0.plusSeconds(900), f2 = P0.plusSeconds(910); // 15분에 피드 재개 — B 안쪽 관측이 이어진다
+        clock.now = f1.plusMillis(500);
+        assertThat(deliver(store, e, clock.millis(), "region", f1, at("a0000b", 36, 127.01, f1.minusSeconds(1), "adsb_lol"))).isTrue();
+        assertThat(alertEvents()).as("the position frozen during the outage is not the first confirmation").isEmpty();
+        clock.now = f2.plusMillis(500);
+        assertThat(deliver(store, e, clock.millis(), "region", f2, at("a0000b", 36, 127.02, f2.minusSeconds(1), "adsb_lol"))).isTrue();
+        assertThat(alertEvents()).containsExactly(AlertStateMachine.EventType.ENTERED);
+        assertThat(e.activeAlerts("observed")).singleElement().satisfies(a -> assertThat(a.evidence().get("confirmations_seen_at"))
+                .as("both confirmations after the resume").isEqualTo(List.of(f1.minusSeconds(1).toString(), f2.minusSeconds(1).toString())));
+    }
+
+    /**
+     * R2(IM-07): 같은 꼴의 예측 — 항공기 피드가 멈춘 동안 새 SIGMET 이 와도 멈춘 위치로 새 예측(PREDICTED)을 열지 않는다. 장애가 5분이면 멈춘 위치를
+     * 전진시킨 진입(데이터 시각 + 8분)이 예측 지평(데이터 시각 + 10분) 안이라 지평 가드로는 막히지 않는다. 피드가 돌아온 첫 관측에서 연다.
+     */
+    @Test void aircraftFeedsStopped_newSigmet_opensNoPredictionFromTheFrozenPosition() {
+        MutableClock clock = new MutableClock(P0.minusSeconds(30));
+        SnapshotStore store = new SnapshotStore();
+        EngineService e = new EngineService(store, sigmets, events::add, new SimpleMeterRegistry(), null, clock);
+        double yLon = TestData.westOfBox(60); // B 의 서쪽 60 NM, 동쪽 450 kt — P0+8분에 진입
+        clock.now = P0.plusMillis(500);
+        assertThat(deliver(store, e, clock.millis(), "region", P0, moving("a0000y", yLon, P0.minusSeconds(1)))).isTrue();
+        clock.now = P0.plusSeconds(300); // 5분 뒤 새 SIGMET B
+        e.onSigmets(new WeatherEvents.SigmetsUpdated(sigmets.replace(P0.plusSeconds(300), "awc_isigmet",
+                Map.of("B", sig("B", P0.minusSeconds(3600), P0.plusSeconds(3 * 3600))))));
+        assertThat(alertEvents()).as("no prediction from the position frozen during the outage").isEmpty();
+        Instant f1 = P0.plusSeconds(310);
+        clock.now = f1.plusMillis(500);
+        assertThat(deliver(store, e, clock.millis(), "region", f1, moving("a0000y", yLon, f1.minusSeconds(1)))).isTrue();
+        assertThat(alertEvents()).containsExactly(AlertStateMachine.EventType.PREDICTED);
+        assertThat(e.activeAlerts("predicted")).singleElement().satisfies(a -> assertThat(a.evidence()).containsEntry("seen_at", f1.minusSeconds(1).toString()));
+    }
+
     /** 데이터 시각 = 스코프 fetched_at 최댓값(EPOCH = 받은 적 없음은 빼고), now 를 넘지 않는다. 받은 것이 없으면 now. */
     @Test void dataTime_isTheLatestScopeFetchedAt_cappedAtNow() {
         SnapshotStore store = new SnapshotStore();
