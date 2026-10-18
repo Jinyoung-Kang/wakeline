@@ -46,6 +46,7 @@ function drawShipTrack(map: maplibregl.Map, track: ShipTrack) {
 export function useSelectionTracks(map: maplibregl.Map | null, feed: FeedRef): void {
   const layers = useUi((s) => s.layers);
   const selectedHex = useUi((s) => s.selectedHex);
+  const selectNonce = useUi((s) => s.selectNonce);
   const selectedShip = useUi((s) => s.selectedShip);
   const selectShip = useUi((s) => s.selectShip);
   const shipTrackHours = useUi((s) => s.shipTrackHours);
@@ -121,9 +122,12 @@ export function useSelectionTracks(map: maplibregl.Map | null, feed: FeedRef): v
     publishShipTrack(ref);
   }, [map, ais]);
 
-  // ---- 선택 항공기: WS select + 항적(REST 한 번, 이후 selected 로 연장) ----
+  // ---- 선택 항공기: WS select — 같은 항공기를 다시 골라도(selectNonce — selectedHex 는 그대로) 다시 보낸다: 서버가 선택 시각을 새로 잡아
+  //      집중 추적 30분 상한 뒤 "다시 선택하면 이어짐"(lib/demand)대로 된다. 지도가 바뀌면 새 피드에. 처음 고를 때는 두 값이 함께 바뀌어 한 번 ----
+  useEffect(() => { feed.current?.client.select(selectedHex); }, [map, feed, selectedHex, selectNonce]);
+
+  // ---- 선택 항공기 항적: REST 한 번, 이후 selected 로 연장 — 다른 항공기 · 지도일 때만(같은 항공기를 다시 골라도 지우거나 다시 받지 않는다) ----
   useEffect(() => {
-    feed.current?.client.select(selectedHex);
     feed.current?.worker.postMessage({ type: "invalidate" }); // 선택 강조를 바로 다시 그린다
     track.current = { hex: selectedHex, pts: [], pending: [], loaded: false };
     if (!map) return;

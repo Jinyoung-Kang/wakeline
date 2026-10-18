@@ -41,6 +41,11 @@ interface UiState {
   krFrameIndex: number | null;
   setKrFrame: (i: number | null) => void;
   selectedHex: string | null;
+  /**
+   * 항공기를 고를 때마다 오르는 값(같은 hex 를 다시 골라도 — 해제 null 에는 그대로). selectedHex 가 같아도 '다시 골랐다'를 알린다:
+   * components/map/useSelectionTracks 가 WS select 를 다시 보내 서버가 선택 시각을 새로 잡는다(집중 추적 30분 상한 뒤 "다시 선택하면 이어짐").
+   */
+  selectNonce: number;
   select: (hex: string | null) => void;
   selectedSigmet: string | null;
   selectSigmet: (id: string | null) => void;
@@ -82,7 +87,8 @@ export const useUi = create<UiState>((set) => ({
   krFrameIndex: null,
   setKrFrame: (i) => set({ krFrameIndex: i }),
   selectedHex: null,
-  select: (hex) => set({ selectedHex: hex, panel: hex ? "aircraft" : "alerts" }),
+  selectNonce: 0,
+  select: (hex) => set((s) => ({ selectedHex: hex, selectNonce: hex ? s.selectNonce + 1 : s.selectNonce, panel: hex ? "aircraft" : "alerts" })),
   selectedSigmet: null,
   // 카드를 닫으면 같은 탭의 목록으로 돌아간다(R-40 — SIGMET·공항 탭에 목록이 있다)
   selectSigmet: (id) => set((s) => ({ selectedSigmet: id, panel: id ? "sigmet" : s.panel })),
