@@ -7,6 +7,8 @@
   --base-url URL  실행 중인 스택(예: http://localhost:8700)에서 직접 받는다. 데이터에 따라 달라지는 검사(상세·SIGMET 상세)는
                   앞 응답에서 id 를 골라 쓰고, 고를 것이 없으면 skip 으로 표시한다(실패 아님, --strict 면 실패).
   --dir DIR       api 통합 테스트(RestSamplesIT)가 남긴 응답 기록(apps/api/build/rest-samples/*.json)을 검사한다 — CI 용.
+                  결정적 입력이라 skip 이 없다: 기록이 빠진 검사 · 검사가 없는 기록은 실패다(IM-29). 이번 실행의 기록 목록(index.json)만 읽고,
+                  그 목록에 없는 옛 파일(RestSamplesIT 는 지우지 않는다)은 건너뛴다.
 
 apps/collector 의 uv 환경에서 실행한다(jsonschema):
   cd apps/collector && uv run python ../../tools/rest_contract_check.py --base-url http://localhost:8700
@@ -1837,14 +1839,22 @@ def live_paths(base: str) -> dict[str, str | None]:
     return paths
 
 
-def load_dir(d: Path) -> dict[str, Response]:
+def load_dir(d: Path) -> tuple[dict[str, Response], int]:
+    """기록을 읽는다. index.json(이번 실행이 기록한 이름 → 경로)이 있으면 그 이름만 — 옛 실행이 남긴 파일로 빠진 표본을 메우지 않는다.
+    돌려주는 둘째 값은 목록에 없어 건너뛴 파일 수."""
+    index_file = d / "index.json"
+    recorded = set(json.loads(index_file.read_text())) if index_file.is_file() else None
     out: dict[str, Response] = {}
+    ignored = 0
     for f in sorted(d.glob("*.json")):
         if f.name == "index.json":
             continue
         s = json.loads(f.read_text())
+        if recorded is not None and s["name"] not in recorded:
+            ignored += 1
+            continue
         out[s["name"]] = Response(s["path"], s["status"], s.get("content_type") or "", s.get("cache_control") or "", s["body"])
-    return out
+    return out, ignored
 
 
 # ---------------------------------------------------------------- 검사
@@ -2502,7 +2512,10 @@ def main(argv: list[str] | None = None) -> int:
             if not a.dir.is_dir():
                 print(f"no such directory: {a.dir} (run the api tests first: cd apps/api && ./gradlew test)")
                 return 2
-            responses.update(load_dir(a.dir))
+            loaded, ignored = load_dir(a.dir)
+            responses.update(loaded)
+            if ignored:
+                print(f"note: {ignored} file(s) not in index.json ignored (left by an older RestSamplesIT run)")
         else:
             for name, path in live_paths(a.base_url).items():
                 responses[name] = fetch(a.base_url, path) if path else None
@@ -2515,8 +2528,12 @@ def main(argv: list[str] | None = None) -> int:
     for c in checks:
         r = responses.get(c.name)
         if r is None:
-            print(f"skip {c.name}: no data to derive the request from")
-            skipped += 1
+            if a.dir:  # 기록은 결정적이다 — 빠진 표본은 그 응답의 계약 검사가 빠졌다는 뜻(IM-29)
+                print(f"FAIL {c.name:16} no recorded sample (RestSamplesIT did not record it this run)")
+                failures += 1
+            else:
+                print(f"skip {c.name}: no data to derive the request from")
+                skipped += 1
             continue
         errs = check(c, r)
         print(f"{'FAIL' if errs else 'ok  '} {c.name:16} {r.path}")
@@ -2524,6 +2541,10 @@ def main(argv: list[str] | None = None) -> int:
             print("      ", msg)
         failures += bool(errs)
     passed = len(checks) - failures - skipped
+    if a.dir:  # 반대 방향: 기록됐지만 어떤 검사도 읽지 않는 표본(이름을 바꾸고 CHECKS 를 빠뜨린 경우)
+        for name in sorted(set(responses) - {c.name for c in checks}):
+            print(f"FAIL {name:16} recorded but no check reads it (add it to CHECKS)")
+            failures += 1
     print(
         f"rest contract check: {passed} passed, {failures} failed, {skipped} skipped —",
         "FAILED" if failures or (a.strict and skipped) else "PASSED",
