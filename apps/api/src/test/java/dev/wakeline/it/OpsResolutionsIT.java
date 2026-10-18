@@ -292,6 +292,8 @@ class OpsResolutionsIT extends IntegrationTest {
             assertThat(rows(none)).doesNotContainKey(PROVIDER + "/error").containsKey(PROVIDER + "/ok");
             assertThat(none.path("hidden_resolved_errors").asLong()).isEqualTo(4);
             assertProblem(b.get("/api/v1/ops/runs?resolved=everything"), 400, "BAD_RESOLVED", "/api/v1/ops/runs");
+            // §G43 · QA-1103: 제어 문자는 공백이 아니다 — 지우지 않고 400(IM-18 — 예전에는 strip() 이 지워 show 로 받았다)
+            assertProblem(b.get("/api/v1/ops/runs?resolved=show%1F"), 400, "BAD_RESOLVED", "/api/v1/ops/runs");
         } finally {
             for (long id : made) revoke(b, id);
             admin().sql("DELETE FROM ingest_run WHERE job = :j").param("j", JOB).update();

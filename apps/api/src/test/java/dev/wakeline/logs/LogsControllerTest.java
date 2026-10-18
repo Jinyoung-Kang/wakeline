@@ -58,6 +58,48 @@ class LogsControllerTest {
                 .andExpect(jsonPath("$.code").value("BAD_SERVICE"));
     }
 
+    /**
+     * 계약 v5 §G43 · QA-1103: 앞뒤 공백은 공백 글자만 지운다 — 제어 문자(탭 · U+000B · U+001C–U+001F 등)는 값에 남아 형식 검사가 400 으로 거른다.
+     * 예전(IM-18)에는 Java strip() · isBlank()(Character.isWhitespace)가 그것도 지워 공개 경로에서는 400 인 값이 정상 값으로 지났고
+     * ({@code fp=…%1F} → 그 fp 로 필터), 제어 문자만 있는 cursor · q 는 '없음'이었다(첫 쪽 · 필터 없음). service · level 은 값이 하나면
+     * Spring 의 글자 → 목록 변환(@RequestParam List)이 쉼표로 나누며 trim() 해 NUL 까지 지웠다. 공백(U+0020 · U+3000)은 전처럼 지운다.
+     */
+    @Test
+    void controlCharactersAroundAParameterAre400_onlySpacesAreStripped() throws Exception {
+        add(3);
+        for (String[] p : new String[][]{
+                {"fp", "aaaaaaaaaaaaaaaa\u001F", "BAD_FP"}, {"fp", "\u001Caaaaaaaaaaaaaaaa", "BAD_FP"}, {"rid", "abcdef12\u001F", "BAD_RID"},
+                {"service", "api\u001F", "BAD_SERVICE"}, {"service", "api,\u001Dcollector", "BAD_SERVICE"}, {"service", "api\u0000", "BAD_SERVICE"},
+                {"level", "ERROR\u001C", "BAD_LEVEL"}, {"level", "WARN\t", "BAD_LEVEL"}, {"level", "\u0000warn", "BAD_LEVEL"},
+                {"cursor", "\u001F", "BAD_CURSOR"}, {"cursor", "\u000B", "BAD_CURSOR"},
+                {"resolved", "show\u001F", "BAD_RESOLVED"}, {"resolved", "\u001E", "BAD_RESOLVED"}}) {
+            mvc.perform(get("/api/v1/ops/logs").param(p[0], p[1])).andExpect(status().isBadRequest())
+                    .andExpect(content().contentTypeCompatibleWith("application/problem+json"))
+                    .andExpect(jsonPath("$.code").value(p[2]));
+        }
+        for (String[] p : new String[][]{{"service", "api\u001F", "BAD_SERVICE"}, {"level", "warn\n", "BAD_LEVEL"}, {"resolved", "hide\r", "BAD_RESOLVED"}})
+            mvc.perform(get("/api/v1/ops/logs/groups").param(p[0], p[1])).andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.code").value(p[2]));
+        String id = stream.entries.firstKey()[0] + "-0";
+        mvc.perform(get("/api/v1/ops/logs/" + id).param("stream", "server\u000B")).andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("BAD_STREAM"));
+        // 제어 문자만 있는 q 는 빈 값이 아니다 — 그 글자로 찾는다(맞는 항목 없음)
+        mvc.perform(get("/api/v1/ops/logs").param("q", "\u001F")).andExpect(status().isOk()).andExpect(jsonPath("$.items.length()").value(0));
+
+        // 공백 글자는 지운다(대조군)
+        mvc.perform(get("/api/v1/ops/logs").param("fp", " aaaaaaaaaaaaaaaa\u3000").param("service", " api ").param("level", "warn\u3000")
+                        .param("resolved", " show").param("cursor", " \u3000").param("q", " m2 "))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.items.length()").value(1)).andExpect(jsonPath("$.items[0].message").value("m2"));
+        mvc.perform(get("/api/v1/ops/logs").param("q", "\u3000 ")).andExpect(status().isOk()).andExpect(jsonPath("$.items.length()").value(3));
+        // 되풀이 · 쉼표는 전처럼 — 칸마다 공백 글자만 지운다, 되풀이한 칸의 제어 문자도 400
+        mvc.perform(get("/api/v1/ops/logs").param("service", " api ", "\u3000collector").param("level", "warn , error")).andExpect(status().isOk())
+                .andExpect(jsonPath("$.items.length()").value(3));
+        mvc.perform(get("/api/v1/ops/logs/groups").param("service", "api", "collector\u001F")).andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("BAD_SERVICE"));
+        mvc.perform(get("/api/v1/ops/logs/" + id).param("stream", " server ")).andExpect(status().isOk())
+                .andExpect(jsonPath("$.stream").value("server"));
+    }
+
     @Test
     void serviceAndLevelAcceptSeveralValues_commaOrRepeated() throws Exception {
         add(3);

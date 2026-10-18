@@ -290,6 +290,13 @@ class LogsIT extends IntegrationTest {
         assertThat(one.path("context").path("job").asString()).isEqualTo("region");
         assertProblem(b.get("/api/v1/ops/logs/1-0"), 404, "NOT_FOUND", "/api/v1/ops/logs/1-0");
         assertProblem(b.get("/api/v1/ops/logs?service=nope"), 400, "BAD_SERVICE", "/api/v1/ops/logs");
+        // §G43 · QA-1103: 제어 문자는 공백이 아니다 — 실제 스택(Boot 의 변환 서비스)에서도 지우지 않고 400(IM-18 — 예전에는 200 으로 필터가 걸렸다)
+        assertProblem(b.get("/api/v1/ops/logs?service=collector%00"), 400, "BAD_SERVICE", "/api/v1/ops/logs");
+        assertProblem(b.get("/api/v1/ops/logs/groups?level=ERROR%1F"), 400, "BAD_LEVEL", "/api/v1/ops/logs/groups");
+        assertProblem(b.get("/api/v1/ops/logs?fp=" + fp + "%1F"), 400, "BAD_FP", "/api/v1/ops/logs");
+        assertProblem(b.get("/api/v1/ops/logs?cursor=%1F"), 400, "BAD_CURSOR", "/api/v1/ops/logs");
+        assertProblem(b.get("/api/v1/ops/logs/" + older + "?stream=server%0B"), 400, "BAD_STREAM", "/api/v1/ops/logs/" + older);
+        assertThat(b.get("/api/v1/ops/logs?service=%20collector%20&fp=%20" + fp).json().path("items")).as("spaces are still stripped").hasSize(2);
     }
 
     @Test
