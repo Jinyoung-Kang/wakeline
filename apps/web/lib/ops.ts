@@ -3,6 +3,7 @@ import { ApiError } from "./api";
 import { pathSegment } from "./endpoints/path";
 import { fmtDuration } from "./format";
 import { krMissing, type KrMissingInfo } from "./kr-radar";
+import { MIRROR_PERIOD_S } from "./provider-switch";
 import { compareInstants, parseResolvedRef, uptoOf, type Resolution, type ResolvedRef } from "./resolutions";
 import { fmtKstMinute, fmtTimeTitle, kstDayOf } from "./time";
 
@@ -355,6 +356,26 @@ export function settingAfterSave(now: SettingEdit | undefined, sent: SettingEdit
   if (now === undefined || now.value === sent.value) return undefined;
   const v = typeof response === "object" && response !== null ? (response as { version?: unknown }).version : undefined;
   return typeof v === "number" && Number.isInteger(v) && v > now.version ? { value: now.value, version: v } : now;
+}
+
+/**
+ * 저장(PUT) 성공의 결과 문구(IM-17). 수집기는 Redis 미러(wakeline:settings)만 읽는다 — api 는 커밋 뒤 미러하고 실패하면 mirrored=false 를 싣는다
+ * (SettingsService.update — 주기 미러가 {@link MIRROR_PERIOD_S} s 마다 다시 맞춘다, StartupMirror). 그때 '다음 주기부터 적용' 은 사실이 아니라
+ * 경고(warn — role=alert)로 보인다: 공급자 켜고 끄기(lib/provider-switch toggleNote)와 같은 문구. 바뀐 것 없음(changed=false)이어도 api 는 다시
+ * 미러하는데, 그 실패는 수집기가 이 값을 따르는지 모른다는 뜻이다(이전 값이라고 짐작하지 않는다). 설정 목록(GET /ops/settings)은 미러 상태를 싣지 않아
+ * 주기 미러가 맞췄는지 화면이 알 수 없다 — 경고는 실패처럼 다음 저장이나 '알림 닫기' 까지 둔다. mirrored 가 없으면(필드 없는 응답) 전처럼 성공이다.
+ */
+export function settingSaveNote(key: string, response: unknown): { warn: boolean; text: string } {
+  const r = typeof response === "object" && response !== null ? (response as { changed?: unknown; mirrored?: unknown; version?: unknown }) : {};
+  const same = r.changed === false;
+  if (r.mirrored !== false) return { warn: false, text: same ? `${key} 지금 값과 같음 — 바뀐 것 없음` : `${key} 저장됨 — 다음 주기부터 적용` };
+  const v = typeof r.version === "number" && Number.isInteger(r.version) ? `v${r.version}` : "v—";
+  const retry = `api 가 ${MIRROR_PERIOD_S} s 주기로 다시 미러한다`;
+  return {
+    warn: true,
+    text: same ? `${key} 지금 값과 같음 — 바뀐 것 없음(${v}) · Redis 미러 실패 — 수집기가 이 값을 따르는지 모른다. ${retry}`
+      : `${key} DB 저장됨(${v}) · Redis 미러 실패 — 수집기는 아직 이전 값을 따른다. ${retry}`,
+  };
 }
 
 // ---- 로그인·설정 폼(R-56) ----

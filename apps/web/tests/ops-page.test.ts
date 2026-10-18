@@ -798,6 +798,120 @@ describe("ops write failures stay until the next write or a dismiss (web-review 
 });
 
 /**
+ * IM-17: 설정 저장은 DB 에 커밋한 뒤 Redis(wakeline:settings)로 미러하고, 실패하면 응답에 mirrored=false 를 싣는다(SettingsService.update) — 수집기는
+ * Redis 만 읽는다. 화면은 mirrored 를 읽지 않아 늘 '저장됨 — 다음 주기부터 적용'(초록)을 보였다. 공급자 켜고 끄기(R-94)와 같은 경고(role=alert)로 보이고,
+ * 설정 목록에는 미러 상태가 없어 실패 알림처럼 다음 저장이나 '알림 닫기' 전까지 남긴다.
+ */
+describe("IM-17 ops: a settings save the api could not mirror to Redis warns that the collector still follows the old value", () => {
+  beforeAll(() => { (dom.document as unknown as { cookie: string }).cookie = "WAKELINE_CSRF=t"; });
+  const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+  const find = (pred: (e: MiniElement) => boolean, from: MiniElement = dom.container): MiniElement | null => {
+    if (pred(from)) return from;
+    for (const c of from.childNodes) { const f = c instanceof MiniElement ? find(pred, c) : null; if (f) return f; }
+    return null;
+  };
+  const propsOf = (e: MiniElement): Record<string, (...a: unknown[]) => unknown> => {
+    const k = Object.keys(e).find((x) => x.startsWith("__reactProps$"));
+    return (e as unknown as Record<string, Record<string, (...a: unknown[]) => unknown>>)[k!];
+  };
+  const button = (text: string, from?: MiniElement) => find((e) => e.tagName === "BUTTON" && visibleText(e) === text, from);
+  const click = async (e: MiniElement | null) => { expect(e).not.toBeNull(); await React.act(async () => { await propsOf(e!).onClick(); }); await settle(); };
+  const SETTINGS = { items: [{ key: "region_poll_s", value: 10, version: 3, updated_by: "op", updated_at: "2026-09-28T15:00:00Z" }] };
+  const saved = (extra: Record<string, unknown>) => ({ key: "region_poll_s", value: 15, version: 4, updated_by: "op", updated_at: "2026-09-28T23:41:15Z", changed: true, ...extra });
+  /** PUT 응답 본문 — 시험마다 바꾼다 */
+  let putBody: unknown = saved({ mirrored: true });
+  function stub() {
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "PUT") return json(200, putBody);
+      if (url === "/api/v1/ops/settings") return json(200, SETTINGS);
+      return url in BODY ? json(200, BODY[url]) : json(404, { detail: "no such resource" });
+    });
+  }
+  const mount = async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"], now: Date.parse("2026-09-28T23:41:14Z") });
+    vi.stubGlobal("self", globalThis);
+    stub();
+    root = createRoot(dom.container as never);
+    await React.act(async () => { root!.render(React.createElement(OpsPage)); });
+    await settle();
+    await settle();
+    await click(byTestId("ops-tab-settings"));
+  };
+  const saveRegionPoll = async (v: string) => {
+    await React.act(async () => { propsOf(find((e) => e.tagName === "INPUT" && e.getAttribute("aria-label") === "region_poll_s 값")!).onChange({ target: { value: v } }); });
+    await click(button("save"));
+  };
+  const UNMIRRORED = "region_poll_s DB 저장됨(v4) · Redis 미러 실패 — 수집기는 아직 이전 값을 따른다. api 가 60 s 주기로 다시 미러한다";
+
+  it("mirrored=false → a warning (role=alert) naming the saved version, not the green 'applied from the next cycle'", async () => {
+    putBody = saved({ mirrored: false });
+    await mount();
+    await saveRegionPoll("15");
+    const w = byTestId("settings-unmirrored");
+    expect(w?.getAttribute("role")).toBe("alert");
+    expect(w?.textContent ?? "").toContain(UNMIRRORED);
+    expect(byTestId("settings-ok")).toBeNull(); // 수정 전: "region_poll_s 저장됨 — 다음 주기부터 적용"
+    expect(byTestId("settings-error")).toBeNull(); // 저장은 됐다 — 실패가 아니다
+    expect(alertText()).toContain("Redis 미러 실패");
+  });
+
+  it("the warning stays through the 15 s reload and another tab, and goes away with '알림 닫기'", async () => {
+    putBody = saved({ mirrored: false });
+    await mount();
+    await saveRegionPoll("15");
+    await React.act(async () => { vi.advanceTimersByTime(15_000); });
+    await settle();
+    expect(byTestId("settings-unmirrored")?.textContent ?? "").toContain(UNMIRRORED); // 설정 목록에는 미러 상태가 없다 — 새로고침이 지우지 않는다
+    await click(byTestId("ops-tab-providers"));
+    await click(byTestId("ops-tab-settings"));
+    expect(byTestId("settings-unmirrored")?.textContent ?? "").toContain(UNMIRRORED);
+    await click(button("알림 닫기", byTestId("settings-unmirrored")!));
+    expect(byTestId("settings-unmirrored")).toBeNull();
+  });
+
+  it("the next save replaces the warning: a mirrored save shows the success line", async () => {
+    putBody = saved({ mirrored: false });
+    await mount();
+    await saveRegionPoll("15");
+    expect(byTestId("settings-unmirrored")).not.toBeNull();
+    putBody = saved({ value: 20, mirrored: true });
+    await saveRegionPoll("20");
+    expect(byTestId("settings-unmirrored")).toBeNull();
+    expect(byTestId("settings-ok")?.textContent).toBe("region_poll_s 저장됨 — 다음 주기부터 적용");
+  });
+
+  it("mirrored=true → the success line as now (role=status, no alert)", async () => {
+    putBody = saved({ mirrored: true });
+    await mount();
+    await saveRegionPoll("15");
+    expect(byTestId("settings-ok")?.textContent).toBe("region_poll_s 저장됨 — 다음 주기부터 적용");
+    expect(byTestId("settings-unmirrored")).toBeNull();
+    expect(alertText()).toBe("");
+  });
+
+  it("an unchanged value whose re-mirror failed still warns — without claiming the collector follows an older value", async () => {
+    putBody = saved({ value: 10, version: 3, changed: false, mirrored: false });
+    await mount();
+    await saveRegionPoll("10");
+    expect(byTestId("settings-ok")).toBeNull();
+    expect(byTestId("settings-unmirrored")?.textContent ?? "")
+      .toContain("region_poll_s 지금 값과 같음 — 바뀐 것 없음(v3) · Redis 미러 실패 — 수집기가 이 값을 따르는지 모른다. api 가 60 s 주기로 다시 미러한다");
+  });
+
+  it("the note reads only what the response says: no integer version → v—, no mirrored field (older api) → the success line", async () => {
+    const { settingSaveNote } = await import("@/lib/ops");
+    expect(settingSaveNote("region_poll_s", { changed: true, mirrored: false })).toEqual({
+      warn: true, text: "region_poll_s DB 저장됨(v—) · Redis 미러 실패 — 수집기는 아직 이전 값을 따른다. api 가 60 s 주기로 다시 미러한다",
+    });
+    expect(settingSaveNote("region_poll_s", { version: "4", mirrored: false }).text).toContain("DB 저장됨(v—)");
+    expect(settingSaveNote("region_poll_s", {})).toEqual({ warn: false, text: "region_poll_s 저장됨 — 다음 주기부터 적용" });
+    expect(settingSaveNote("region_poll_s", null)).toEqual({ warn: false, text: "region_poll_s 저장됨 — 다음 주기부터 적용" });
+    expect(settingSaveNote("region_poll_s", { changed: false, mirrored: true })).toEqual({ warn: false, text: "region_poll_s 지금 값과 같음 — 바뀐 것 없음" });
+  });
+});
+
+/**
  * 리뷰 cto-2026-10 A4(api): 수집기 자동 전환(wakeline:events)을 Redis 장애로 읽지 못하면 /ops/providers 가 빈 switches 와 함께 "error":"redis unavailable" 를
  * 싣는다 — 전에는 빈 목록뿐이라 '전환 없음' 과 같아 보였다. 화면은 그 사실을 경고 줄로 밝힌다(빈 표를 '전환 없음' 으로 두지 않는다).
  */

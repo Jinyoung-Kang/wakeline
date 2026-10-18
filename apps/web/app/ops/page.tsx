@@ -7,7 +7,7 @@ import { fmtLatencyMs } from "@/lib/format";
 import { liveNote, mirrorDiffers, switchCell, toggleNote, type SwitchNote } from "@/lib/provider-switch";
 import {
   activeReadError, classifyOpsError, editSetting, fmtBudgetLimit, isAuthMiss, jobHeartbeatEntries, parseSetting, pipelineLossCount, providerLastError, providerMissing, providersNowMs, providersReadError, rebaseSetting,
-  RUN_STATUS_TITLE, runStatusClass, runStatusTone, SESSION_EXPIRED_NOTE, settingAfterSave, settingConflict, qualityPartialDay, settingIfMatch, settingSpec, signOut, switchHistoryError, dlqReadError, withProviderResolutions,
+  RUN_STATUS_TITLE, runStatusClass, runStatusTone, SESSION_EXPIRED_NOTE, settingAfterSave, settingConflict, settingSaveNote, qualityPartialDay, settingIfMatch, settingSpec, signOut, switchHistoryError, dlqReadError, withProviderResolutions,
   type SettingEdit,
 } from "@/lib/ops";
 import { hiddenCount, hiddenText, parseResolutionState, RESOLUTION_STATE_TEXT, RESOLVE_EFFECT, type ResolvedMode } from "@/lib/resolutions";
@@ -388,8 +388,11 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
   );
 }
 
-/** 설정 저장의 결과 문구: 성공(ok, role=status)과 실패(bad, role=alert)를 색·역할로 구분한다(R-56). 서버 실패는 요청 id(복사 — 계약 v5 §C8)를 붙인다 */
-type SettingsMsg = { ok: boolean; text: string; error?: unknown };
+/**
+ * 설정 저장의 결과 문구: 성공(ok, role=status) · 저장됐지만 Redis 미러 실패(warn, role=alert — IM-17, lib/ops settingSaveNote) · 실패(bad, role=alert)를
+ * 색·역할로 구분한다(R-56). 서버 실패는 요청 id(복사 — 계약 v5 §C8)를 붙인다
+ */
+type SettingsMsg = { tone: "ok" | "warn" | "bad"; text: string; error?: unknown };
 
 /** msg · setMsg = 결과 문구 — 대시보드가 갖는다(탭을 오가도 실패가 남게 — PLAN §5 결정 4) */
 function SettingsForm({ items, msg, setMsg, onSaved, onAuthMiss }: {
@@ -417,15 +420,15 @@ function SettingsForm({ items, msg, setMsg, onSaved, onAuthMiss }: {
     rescue(() => [inputs.current.get(k)]);
     // 서버 검증 규칙(SettingsService.validate)을 보내기 전에 — 규칙을 모르는 키는 서버가 검사
     const parsed = parseSetting(k, ed.value);
-    if (!parsed.ok) { setFieldErr((f) => ({ ...f, [k]: parsed.error })); setMsg({ ok: false, text: `${k}: 저장하지 않음 — ${parsed.error}` }); return; }
+    if (!parsed.ok) { setFieldErr((f) => ({ ...f, [k]: parsed.error })); setMsg({ tone: "bad", text: `${k}: 저장하지 않음 — ${parsed.error}` }); return; }
     setFieldErr((f) => { const c = { ...f }; delete c[k]; return c; });
     saving.current.add(k);
     setBusy(new Set(saving.current));
     try {
       const r = await saveSetting(k, parsed.value, settingIfMatch(ed));
-      // changed=false — 지금 값과 같아 version · 감사 행이 그대로다(계약 v5 §G45)
-      const same = typeof r === "object" && r !== null && (r as { changed?: unknown }).changed === false;
-      setMsg({ ok: true, text: same ? `${k} 지금 값과 같음 — 바뀐 것 없음` : `${k} 저장됨 — 다음 주기부터 적용` });
+      // changed=false — 지금 값과 같아 version · 감사 행이 그대로다(계약 v5 §G45). mirrored=false — DB 에만 저장, 수집기가 읽는 Redis 는 아직(IM-17)
+      const note = settingSaveNote(k, r);
+      setMsg({ tone: note.warn ? "warn" : "ok", text: note.text });
       // 보낸 편집 그대로일 때만 지운다 — 응답을 기다리는 동안 고친 값은 응답의 version 위에 남는다(IM-15, lib/ops settingAfterSave)
       setEdit((e) => {
         const next = settingAfterSave(e[k], ed, r);
@@ -442,7 +445,7 @@ function SettingsForm({ items, msg, setMsg, onSaved, onAuthMiss }: {
       const text = conflict ? "편집하는 동안 다른 곳에서 바뀌었습니다 — 새 값을 확인한 뒤 다시 저장하세요"
         : e instanceof ApiError && e.status === 400 ? `서버가 값을 거절했습니다(${e.message})`
         : e instanceof ApiError ? `저장 실패(HTTP ${e.status})` : "서버에 연결할 수 없습니다(네트워크)";
-      setMsg({ ok: false, text: `${k}: ${text}`, error: e });
+      setMsg({ tone: "bad", text: `${k}: ${text}`, error: e });
       if (conflict) onSaved(); // 새 값·version 을 바로 받아 충돌 표시
     } finally {
       saving.current.delete(k);
@@ -453,8 +456,12 @@ function SettingsForm({ items, msg, setMsg, onSaved, onAuthMiss }: {
     <div>
       <div className="mb-2 text-[11px] text-fg-3">변경은 If-Match(version) 낙관적 잠금 + CSRF 헤더로 보호되며 감사 로그에 남습니다. collector 는 다음 주기에 반영합니다. 편집하는 동안 서버 값이 바뀌면 행에 표시하고, 덮어쓰기는 직접 골라야 합니다.</div>
       <div className="mb-2 text-[11px] text-fg-3"><span className="mono">ais_bboxes</span>: 선박 수신 영역 <span className="mono">lat1,lon1,lat2,lon2</span>(여러 상자는 <span className="mono">;</span>) · 비우면 .env <span className="mono">AIS_BBOXES</span> · 전세계 <span className="mono">-90,-180,90,180</span> · ais 가 30 s 안에 같은 연결로 다시 구독합니다.</div>
-      <div role="status" aria-live="polite">{msg?.ok ? <div className="mb-2 text-[11px] text-ok" data-testid="settings-ok">{msg.text}</div> : null}</div>
-      {msg && !msg.ok ? <div className="mb-2 text-[11px] text-bad" role="alert" data-testid="settings-error">{msg.text}<RequestIdOf error={msg.error} />
+      <div role="status" aria-live="polite">{msg?.tone === "ok" ? <div className="mb-2 text-[11px] text-ok" data-testid="settings-ok">{msg.text}</div> : null}</div>
+      {/* 미러 실패 경고도 실패처럼 다음 저장이나 '알림 닫기' 까지 — 설정 목록에는 미러 상태가 없어 주기 미러가 맞췄는지 이 화면은 모른다(IM-17) */}
+      {msg?.tone === "warn" ? <div className="mb-2 text-[11px] text-warn" role="alert" data-testid="settings-unmirrored"
+        title="설정 목록(GET /ops/settings)은 Redis 미러 상태를 싣지 않는다 — 이 경고는 주기 미러가 맞춘 뒤에도 다음 저장이나 '알림 닫기' 까지 남는다">{msg.text}
+        <button className={SMALL_BTN} onClick={() => setMsg(null)}>알림 닫기</button></div> : null}
+      {msg?.tone === "bad" ? <div className="mb-2 text-[11px] text-bad" role="alert" data-testid="settings-error">{msg.text}<RequestIdOf error={msg.error} />
         {/* 실패는 다음 저장이나 이 단추 전까지 남는다(PLAN §5 결정 4) — 15 s 새로고침도, 다른 탭에 다녀오는 것도 지우지 않는다(문구는 대시보드에) */}
         <button className={SMALL_BTN} onClick={() => setMsg(null)}>알림 닫기</button></div> : null}
       <table><thead><tr><th>key</th><th>value</th><th>version</th><th>updated (KST)</th><th></th></tr></thead>
