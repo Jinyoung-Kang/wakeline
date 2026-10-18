@@ -466,6 +466,26 @@ class StreamConsumerTest {
         }
     }
 
+    /**
+     * R3(IM-08): 역행 직후 api 가 다시 시작하면 부트스트랩이 지금 값을 계단 전 값(T — api 의 지금 T - 300 s 보다 300 s 미래)으로 둔다. 그 뒤 PEL 재처리 ·
+     * 백로그로 오는 계단 전 엔트리는 모두 백로그다 — 지금보다 허용치 넘게 과거인 것(T - 600 s)도. 예전에는 그것을 역행 뒤의 값으로 받아 SIGMET 실시간
+     * 상태가 옛 세트로 되감겼다가 뒤따르는 계단 전 엔트리(T - 100 s · T)로 다시 앞으로 갔다. 그다음 새 시계의 값(T - 295 s)은 받는다.
+     */
+    @Test void clockSteppedBack_pendingEntriesFromBeforeTheStepAreBacklog_thenTheNewTimelineIsTaken() throws Exception {
+        ClockRig r = new ClockRig();
+        Instant now = T.minusSeconds(300);
+        r.deliver("sigmet", T, now); // 부트스트랩: 스트림의 마지막 엔트리
+        for (Instant pending : List.of(T.minusSeconds(600), T.minusSeconds(100), T)) {
+            r.deliver("sigmet", pending, now);
+            assertThat(r.current("sigmet")).as("after " + pending).isEqualTo(T);
+        }
+        assertThat(r.clockBack("sigmet")).isZero();
+        assertThat(r.staleSkipped()).isEqualTo(3.0);
+        r.deliver("sigmet", T.minusSeconds(295), now);
+        assertThat(r.current("sigmet")).isEqualTo(T.minusSeconds(295));
+        assertThat(r.clockBack("sigmet")).isEqualTo(1.0);
+    }
+
     /** 역행 WARN 은 스코프마다 한 번(그 스코프의 다음 역행은 한동안 지표로만) — 지표는 모두 센다. */
     @Test void clockSteppedBack_warnsOncePerScope_andCountsEveryTime() throws Exception {
         ListAppender<ILoggingEvent> logs = new ListAppender<>();
