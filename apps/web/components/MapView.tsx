@@ -8,6 +8,8 @@ import { useMapPointer } from "./map/useMapPointer";
 import { useShipLayers } from "./map/useShipLayers";
 import { useSelectionTracks } from "./map/useSelectionTracks";
 import { NoWebgl } from "./map/NoWebgl";
+// 상황판이 MapLibre 만 받지 못했을 때 페이지가 이 청크에서 지도 없는 피드를 받는다(Q4 b1 — app/page.tsx, 이미 받은 모듈이라 새 청크가 아니다)
+export { MaplessFeed } from "./map/useMaplessFeed";
 // 지도 전용 CSS(MapLibre 기본 + 덮어쓰기) — 이 컴포넌트 조각과 함께 받는다(PERF §15 — 전역 CSS 에서 뺐다)
 import "./map/map.css";
 

@@ -11,9 +11,9 @@ import type { ConnIssue } from "./conn-issue";
 
 /**
  * 실시간 연결(WS — lib/ws) 상태. "off" = 이 화면이 실시간 피드(WS 클라이언트 · 보간 워커 — components/map/useLiveFeed 가 지도와 함께 만든다)를
- * 시작하지 않았다: 상황판이 지도 코드를 받지 못함(IM-21, R9 — app/page.tsx). 연결을 시도하지 않으므로 '연결 중'이라고 보이지 않는다.
- * 다시 시도로 지도가 뜨면 피드의 connect() 가 "connecting" 부터 다시 적는다. WebGL2 없음(지도 코드는 받음)이면 "off" 가 아니라 지도 없는 피드
- * (components/map/useMaplessFeed — Q4)가 연결을 연다(아래 mapless).
+ * 시작하지 않았다: 상황판이 지도 컴포넌트 코드를 받지 못함(IM-21, R9 · Q4 b2 — app/page.tsx). 연결을 시도하지 않으므로 '연결 중'이라고 보이지 않는다.
+ * 다시 시도로 지도가 뜨면 피드의 connect() 가 "connecting" 부터 다시 적는다. 지도 컴포넌트 코드는 받았는데 WebGL2 가 없거나 MapLibre 만 받지 못했으면
+ * "off" 가 아니라 지도 없는 피드(components/map/useMaplessFeed — Q4)가 연결을 연다(아래 mapless).
  */
 export type ConnState = "connecting" | "open" | "closed" | "paused" | "off";
 
@@ -209,7 +209,7 @@ export function setData(patch: Partial<ServerData>) {
 export function getData() {
   return data;
 }
-/** 상황판이 지도 코드를 받지 못해 실시간 피드를 시작하지 않음(conn "off" — ConnState) — 지난 연결의 재시도 횟수 · 까닭은 지운다(그 연결의 것이다) */
+/** 상황판이 지도 컴포넌트 코드를 받지 못해 실시간 피드를 시작하지 않음(conn "off" — ConnState) — 지난 연결의 재시도 횟수 · 까닭은 지운다(그 연결의 것이다) */
 export function setNoLiveFeed() {
   setData({ conn: "off", reconnectAttempt: 0, connIssue: null });
 }

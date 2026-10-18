@@ -14,11 +14,21 @@ import { afterFirstPaint } from "@/lib/after-paint";
 // 받기는 첫 그리기 뒤에 시작한다(lib/after-paint — ADR-026 개정 2026-10-02): 서버가 그린 화면이 먼저 보이고, 지도 라이브러리의 내려받기 · 해석 ·
 // WebGL 준비가 첫 그리기를 붙잡지 않는다(소프트웨어 GL 에서 2–5 s — PERF §15). 그 사이 자리는 아래 격자 배경.
 // 받지 못하면 거절하지 않고 지도 자리에 까닭 · '다시 시도'(같은 두 가지를 다시 받는다 — components/LazyPart failedPart, IM-21). 거절하면 화면 전체의 오류 경계까지
-// 올라가 상태 바 · 알림 패널을 지웠고, 거절을 기억한 lazy 라 다시 시도로 돌아오지 않았다. 받지 못한 동안 실시간 피드(지도와 함께 시작한다 — components/map/useLiveFeed)는
-// 없으므로 스토어에 그렇게 적는다(conn "off" — 상태 바 · 알림 패널이 '연결 중'으로 보이지 않게, R9). 다시 시도로 지도가 뜨면 피드가 연결부터 다시 적는다
+// 올라가 상태 바 · 알림 패널을 지웠고, 거절을 기억한 lazy 라 다시 시도로 돌아오지 않았다. 받지 못한 동안 지도와 함께 시작하는 실시간 피드(components/map/useLiveFeed)는 없다.
+// - MapLibre 만 받지 못함(Q4 b1 — 지도 컴포넌트 청크는 받음): 같은 모듈을 다시 import() 해(이미 받은 모듈 — 새 청크 · 새 preload 대상이 아니다) 그 청크의
+//   지도 없는 피드(MaplessFeed — components/map/useMaplessFeed: 알림 · SIGMET · 레이더 · 피드 상태만, 서버 수요 없음)를 실패 자리 옆에 둔다.
+//   다시 시도로 지도 조각을 받으면(useLoaded) 내린다 — 그 닫기가 지도를 그린 뒤 지도 피드의 연결보다 먼저다(tests/map-load-failure 가 순서를 고정한다).
+// - 지도 컴포넌트 청크도 받지 못함(Q4 b2 — 피드 코드가 그 청크에 있다): 스토어에 피드가 없다고 적는다(conn "off" — 상태 바 · 알림 패널이 '연결 중'으로
+//   보이지 않게, R9). 다시 시도로 지도가 뜨면 피드가 연결부터 다시 적는다. 위 import() 가 받지 못한 청크를 한 번 더 받아 보므로(Turbopack 런타임은 받지 못한
+//   청크를 기억하지 않는다) 이때 실패 자리는 그 시도가 끝난 뒤에 보인다
 const MapView = dynamic(() => afterFirstPaint().then(() => Promise.all([import("@/components/MapView"), loadMaplibre()])).then(([m]) => m.MapView).catch((e: unknown) => {
-  setNoLiveFeed();
-  return failedPart("지도", e, () => Promise.all([import("@/components/MapView"), loadMaplibre()]).then(([m]) => m.MapView), { frameClassName: "grid-bg flex h-full w-full flex-col justify-center p-3 text-[11px]" });
+  const Failed = failedPart("지도", e, () => Promise.all([import("@/components/MapView"), loadMaplibre()]).then(([m]) => m.MapView), { frameClassName: "grid-bg flex h-full w-full flex-col justify-center p-3 text-[11px]" });
+  return import("@/components/MapView").then(({ MaplessFeed }) => function MapFailed(p: { onFirstLoad?: () => void }) {
+    return <>{Failed.useLoaded() ? null : <MaplessFeed />}<Failed {...p} /></>;
+  }, () => {
+    setNoLiveFeed();
+    return Failed;
+  });
 }), {
   ssr: false, loading: () => <div className="grid-bg h-full w-full" />,
 });

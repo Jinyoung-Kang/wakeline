@@ -5,12 +5,15 @@
  *    그 '다시 시도'는 같은 거절된 lazy 를 다시 그려 망이 돌아와도 돌아오지 않았다(loadMaplibre 는 다시 불리지 않았다).
  * 2) WebGL2 를 만들 수 없음(MapLibre 의 Map 생성자가 GPUInitializationError): 지도 자리에 안내와 지도 없는 알림 화면(/m). 다른 예외는 지금처럼 위로 올라간다.
  * 3) 지도와 함께 만드는 실시간 피드(WS · 워커 — components/map/useLiveFeed)는 두 경우 모두 없다.
- *    - 1) 에서는 연결을 시도하지 않는다(R9): 남은 상태 바의 연결 칩과 알림 패널은 '처음 연결하는 중' · '수신 대기 중'이 아니라 실시간 수신을 하지 않는다고
- *      말한다(스토어 conn "off"). 다시 시도로 지도가 뜨면 연결부터 원래대로.
+ *    - 1) 중 MapLibre 만 받지 못함(Q4 b1 — 지도 컴포넌트 청크는 받음): 페이지가 그 청크의 지도 없는 피드(MaplessFeed)를 실패 자리 옆에 둔다 — 2) 와 같은
+ *      연결 하나. 다시 시도로 지도가 뜨면 내린다 — 넘겨받기 순서는 [지도 없음 연결, 지도 없음 닫기, 지도 연결](동시에 열린 클라이언트 ≤ 1 · 새 연결 상태를 덮지 않음).
+ *    - 1) 중 지도 컴포넌트 청크를 받지 못함(Q4 b2 — 피드 코드가 그 청크에 있다): 연결을 시도하지 않는다(R9): 남은 상태 바의 연결 칩과 알림 패널은
+ *      '처음 연결하는 중' · '수신 대기 중'이 아니라 실시간 수신을 하지 않는다고 말한다(스토어 conn "off"). 다시 시도로 지도가 뜨면 연결부터 원래대로.
  *    - 2) 에서는 지도 없는 피드(Q4 — components/map/useMaplessFeed)가 워커 없이 연결 하나를 연다: 지도 없는 구독(subscribeWithoutMap)으로 알림 · SIGMET ·
  *      레이더 · 피드 상태만 받고, 상태 바 · 지도 자리 칩은 항공기 · 선박 위치를 받지 않는다고 적는다. 선택해도 select 를 보내지 않는다(집중 추적 안 함 — Q-B).
  *      관심 대상 실행기 조각은 지도 'load' 를 기다리지 않고 곧바로 받는다(Q-C).
- *    가짜 WS 클라이언트의 connect() 는 실제 것처럼 conn "connecting" 을 적는다.
+ *    가짜 WS 클라이언트의 connect() 는 실제 것처럼 conn "connecting" 을 적고, close() 는 실제 것처럼 마지막으로 연결한 클라이언트일 때만 conn "closed" 를 적는다
+ *    (lib/ws connectTurn). 연결 · 닫기를 지도 없는 구독인지와 함께 순서대로 적는다(events).
  * - next/dynamic 은 실제 빌드가 쓰는 구현(next/dist/shared/lib/app-dynamic — 모듈을 평가할 때 lazy 를 한 번 만든다)으로 바꿔 시험한다.
  *   vitest 의 기본 해석은 pages 쪽 구현이라 이 동작이 보이지 않는다.
  * - 경계는 Next 의 실제 ErrorBoundaryHandler 에 실제 app/error.tsx 를 붙인다(라우트의 오류 경계와 같은 자리).
@@ -24,6 +27,7 @@ vi.mock("next/dynamic", async () => ({ default: (await import("next/dist/shared/
 const ctl = vi.hoisted(() => ({
   loadFails: false, mapThrows: null as null | "gpu" | "other", loads: 0, maps: 0, connects: 0,
   workers: 0, subscribes: 0, maplessSubs: 0, selects: 0, closes: 0, watchRunners: 0,
+  events: [] as string[], open: 0, maxOpen: 0, turn: 0,
 }));
 vi.mock("@/lib/maplibre", async (orig) => {
   const fakeMod = (await import("./helpers/fake-maplibre")).fakeMaplibreModule;
@@ -50,13 +54,27 @@ vi.mock("@/lib/maplibre", async (orig) => {
 vi.mock("@/lib/api", async (orig) => ({ ...(await orig<Record<string, unknown>>()), apiGet: () => new Promise(() => {}) }));
 // connect() 는 실제 클라이언트(lib/ws)처럼 연결 상태를 적는다 — 피드가 시작됐는지를 상태 바 글자로 본다. 스토어는 마운트마다 새 모듈이라(vi.resetModules —
 // mock 의 factory 결과는 남는다) 그 마운트의 setData 를 mount() 가 store 에 넣는다
-const store = vi.hoisted(() => ({ setData: null as null | ((p: { conn: "connecting"; reconnectAttempt: number }) => void) }));
+const store = vi.hoisted(() => ({ setData: null as null | ((p: Partial<import("@/lib/store").ServerData>) => void) }));
 vi.mock("@/lib/ws", () => ({
   WakelineWsClient: class {
-    connect() { ctl.connects++; store.setData?.({ conn: "connecting", reconnectAttempt: 0 }); }
+    private noMap = false;
+    private on = false;
+    private turn = 0;
+    private log(what: string) { ctl.events.push(`${this.noMap ? "mapless" : "map"} ${what}`); }
+    connect() {
+      ctl.connects++;
+      if (!this.on) { this.on = true; ctl.open++; ctl.maxOpen = Math.max(ctl.maxOpen, ctl.open); }
+      this.turn = ++ctl.turn;
+      this.log("connect");
+      store.setData?.({ conn: "connecting", reconnectAttempt: 0 });
+    }
     subscribe() { ctl.subscribes++; }
-    subscribeWithoutMap() { ctl.maplessSubs++; }
-    close() { ctl.closes++; }
+    subscribeWithoutMap() { ctl.maplessSubs++; this.noMap = true; }
+    close() {
+      ctl.closes++;
+      if (this.on) { this.on = false; ctl.open--; this.log("close"); }
+      if (this.turn === ctl.turn) store.setData?.({ conn: "closed", demand: null });
+    }
     select() { ctl.selects++; }
     selectShip() { ctl.selects++; }
     pause() {} resume() {} setLayers() {}
@@ -85,7 +103,8 @@ afterEach(async () => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   reports.length = 0;
-  Object.assign(ctl, { loadFails: false, mapThrows: null, loads: 0, maps: 0, connects: 0, workers: 0, subscribes: 0, maplessSubs: 0, selects: 0, closes: 0, watchRunners: 0 });
+  Object.assign(ctl, { loadFails: false, mapThrows: null, loads: 0, maps: 0, connects: 0, workers: 0, subscribes: 0, maplessSubs: 0, selects: 0, closes: 0, watchRunners: 0, events: [], open: 0, maxOpen: 0, turn: 0 });
+  vi.doUnmock("@/components/MapView");
 });
 
 const container = () => dom.container as unknown as MiniElement;
@@ -146,7 +165,7 @@ describe("dashboard '/': a map that cannot be drawn replaces only the map slot",
     expect(alertsWaitingText()).toContain("알림 목록 수신 대기 중");
   });
 
-  it("MapLibre fails to load once: the status bar, alerts panel and radar row stay; the map slot shows the reason and a retry that loads again", async () => {
+  it("MapLibre fails to load once (the map chunk came — Q4 b1): the status bar, alerts panel and radar row stay; the map slot shows the reason and a retry that loads again; a map-less feed opens beside it and hands over to the map's feed", async () => {
     ctl.loadFails = true;
     await mount("@/app/page", "/");
     expect(has("error-screen"), "the whole dashboard was replaced by the route error screen").toBe(false);
@@ -158,15 +177,51 @@ describe("dashboard '/': a map that cannot be drawn replaces only the map slot",
     expect(err?.textContent).toContain("maplibre-gl.mjs");
     expect(ctl).toMatchObject({ loads: 1, maps: 0 }); // 처음 실패를 보일 때는 다시 받지 않는다
     expect(reports.map((r) => r.component)).toEqual(["lazy:지도"]); // 시스템 로그에 한 번(조각과 같은 보고)
-    await expectNoLiveFeed();
+    const { getData } = await import("@/lib/store");
+    // 받은 지도 청크의 지도 없는 피드: 연결 하나 · 워커 없음 · 지도 없는 구독 — 'off'(실시간 수신 안 함)가 아니다
+    expect(ctl).toMatchObject({ connects: 1, workers: 0, maplessSubs: 1, subscribes: 0 });
+    expect(ctl.events).toEqual(["mapless connect"]);
+    expect(getData()).toMatchObject({ conn: "connecting", mapless: true });
+    expect(connText()).toBe("WS connecting · 지도 없음");
+    expect(alertsWaitingText()).toContain("알림 목록 수신 대기 중");
+    expect(byId("mapless-chip")?.textContent).toBe("지도 없음 — 항공기 · 선박 위치를 받지 않음");
+    expect(ctl.watchRunners).toBeGreaterThan(0); // 관심 대상 실행기를 곧바로 받는다(Q-C)
 
     ctl.loadFails = false; // 망이 돌아왔다
     await click("lazy-retry");
-    expect(ctl).toMatchObject({ loads: 2, maps: 1, connects: 1 });
+    expect(ctl).toMatchObject({ loads: 2, maps: 1, connects: 2, workers: 1, maplessSubs: 1, subscribes: 1 });
     expect(has("lazy-error")).toBe(false);
     expect(has("map")).toBe(true);
     expect(has("statusbar")).toBe(true);
-    // 지도가 뜨면 피드가 시작되어 원래대로(연결 중 · 수신 대기)
+    // 넘겨받기: 지도 없는 피드를 닫은 뒤에 지도 피드가 연결한다 — 한 탭에 연결은 한 번에 하나(IP 당 상한), 늦은 닫기가 새 연결 상태를 덮지 않는다
+    expect(ctl.events).toEqual(["mapless connect", "mapless close", "map connect"]);
+    expect(ctl.maxOpen).toBeLessThanOrEqual(1);
+    expect(getData()).toMatchObject({ conn: "connecting", mapless: false });
+    // 지도가 뜨면 피드가 원래대로(연결 중 · 수신 대기) — 지도 없음 표시는 내린다
+    expect(connText()).toContain("WS connecting");
+    expect(connText()).not.toContain("지도 없음");
+    expect(connText()).not.toContain("실시간 수신 안 함");
+    expect(has("mapless-chip")).toBe(false);
+    expect(alertsWaitingText()).toContain("알림 목록 수신 대기 중");
+  });
+
+  it("the map chunk itself fails to load (Q4 b2): the map slot shows the reason; no feed starts (the feed code is in that chunk) and the status bar says so; retry draws the map and its feed connects", async () => {
+    vi.doMock("@/components/MapView", () => { throw new TypeError("Failed to fetch dynamically imported module: http://localhost:8700/_next/static/chunks/mapview.js"); });
+    await mount("@/app/page", "/");
+    expect(has("error-screen"), "the whole dashboard was replaced by the route error screen").toBe(false);
+    for (const id of ["statusbar", "side-panel-content", "radar-timeline"]) expect(has(id), id).toBe(true);
+    expect(byId("lazy-error")?.getAttribute("data-part")).toBe("지도");
+    expect(ctl).toMatchObject({ maps: 0, maplessSubs: 0 });
+    expect(ctl.events).toEqual([]);
+    expect(has("mapless-chip")).toBe(false);
+    await expectNoLiveFeed();
+
+    vi.doUnmock("@/components/MapView"); // 망이 돌아왔다
+    await click("lazy-retry");
+    expect(ctl).toMatchObject({ maps: 1, connects: 1, maplessSubs: 0 });
+    expect(ctl.events).toEqual(["map connect"]);
+    expect(has("lazy-error")).toBe(false);
+    expect(has("map")).toBe(true);
     expect(connText()).toContain("WS connecting");
     expect(connText()).not.toContain("실시간 수신 안 함");
     expect(alertsWaitingText()).toContain("알림 목록 수신 대기 중");

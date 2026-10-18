@@ -205,8 +205,8 @@ const NO_MAP_AIRCRAFT = "지도 없음 — 항공기 위치를 받지 않음";
  * 연결 칩. "paused" 는 탭이 숨겨져 서버에 일시정지(pause)를 보낸 상태다(components/map/useLiveFeed · useMaplessFeed 의 visibilitychange → lib/ws pause) — 그동안 서버는 이 탭에
  * 갱신을 보내지 않는다. 그렇게 적는다("WS paused · 탭 숨김").
  * 끊긴 동안 까닭을 알면(connIssue — 앞단 잠금 만료 · 원본에 닿지 못함 QA-1300, 연결 수 상한 QA-1462) 짧은 낱말을 줄에, 할 일을 title 앞에 적는다.
- * "off" 는 지도 코드를 받지 못해 실시간 피드를 시작하지 않은 상태다(lib/store ConnState — R9): 연결을 시도하지 않으므로 '연결 중'이 아니라 그 사실을 적는다.
- * 지도 없는 피드의 연결(mapless — Q4, WebGL2 없음)이면 실제 상태 뒤에 '지도 없음'을 붙이고, 무엇을 받고 무엇을 받지 않는지를 title 앞에 적는다.
+ * "off" 는 지도 컴포넌트 코드를 받지 못해 실시간 피드를 시작하지 않은 상태다(lib/store ConnState — R9 · Q4 b2): 연결을 시도하지 않으므로 '연결 중'이 아니라 그 사실을 적는다.
+ * 지도 없는 피드의 연결(mapless — Q4, WebGL2 없음 · MapLibre 만 받지 못함)이면 실제 상태 뒤에 '지도 없음'을 붙이고, 무엇을 받고 무엇을 받지 않는지를 title 앞에 적는다.
  */
 export function connChip(i: Pick<StatusInput, "conn" | "reconnectAttempt" | "lastRxAt" | "nowMs" | "connIssue" | "mapless">): ConnChip {
   if (i.conn === "off") return {

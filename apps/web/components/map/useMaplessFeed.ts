@@ -38,7 +38,7 @@ export function useMaplessFeed(on: boolean): void {
   }, [on]);
 }
 
-/** 지도 없는 피드만 여는 빈 컴포넌트 — 지도 컴포넌트를 그리지 못한 자리(계획 §4.3: MapLibre 만 받지 못했을 때 app/page.tsx 가 쓴다 — 조건부 단계)용 */
+/** 지도 없는 피드만 여는 빈 컴포넌트 — 지도 컴포넌트를 그리지 못한 자리용(MapLibre 만 받지 못했을 때 app/page.tsx 가 지도 청크에서 받아 실패 자리 옆에 둔다 — Q4 b1) */
 export function MaplessFeed(): null {
   useMaplessFeed(true);
   return null;
