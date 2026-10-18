@@ -53,6 +53,39 @@ class GitIgnoreScopeTest(unittest.TestCase):
                 r = subprocess.run(["git", "check-ignore", "--no-index", "-q", probe], cwd=ROOT)
                 self.assertEqual(r.returncode, 1, f"{probe} 가 .gitignore 에 걸린다")
 
+    def test_every_env_file_variant_is_ignored_but_the_examples(self):
+        """IM-06: 비밀값 파일 규칙이 .dockerignore(.env · .env.* · **/.env.*)와 같다. `cp .env .env.bak`(비밀번호 교체 전 사본) · `.env.aws`(AWS 값)도
+        `git add -A` 로 커밋되지 않는다 — 이 저장소는 이력을 다시 쓰지 않으므로 커밋되면 모든 비밀값을 바꿔야 한다. 이름만 적은 두 example 은 추적한다."""
+        for probe in (".env", ".env.bak", ".env.aws", ".env.local", "infra/.env", "apps/web/.env.production", "apps/web/.env.local"):
+            with self.subTest(path=probe):
+                r = subprocess.run(["git", "check-ignore", "--no-index", "-q", probe], cwd=ROOT)
+                self.assertEqual(r.returncode, 0, f"{probe} 가 .gitignore 에 걸리지 않는다")
+        for probe in (".env.example", ".env.aws.example"):
+            with self.subTest(path=probe):
+                r = subprocess.run(["git", "check-ignore", "--no-index", "-q", probe], cwd=ROOT)
+                self.assertEqual(r.returncode, 1, f"{probe} 가 .gitignore 에 걸린다")
+
+    def test_scan_copy_refuses_any_env_file_variant(self):
+        """IM-06: 스캔 복사(scan_lib.sh repo_copy)의 마지막 가드도 같은 규칙 — 강제로 추적된 .env.bak 이 섞여도 복사를 멈춘다(example 은 통과)."""
+        import shutil
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td) / "repo"
+            repo.mkdir()
+            git = ["git", "-c", "user.email=t@example.invalid", "-c", "user.name=t"]
+            subprocess.run([*git, "init", "-q"], cwd=repo, check=True)
+            (repo / ".env.example").write_text("A=\n")
+            subprocess.run([*git, "add", ".env.example"], cwd=repo, check=True)
+            copy = f'source "{ROOT / "tools" / "scan_lib.sh"}"; repo_copy "$1"'
+            ok = subprocess.run(["bash", "-c", copy, "_", str(Path(td) / "out-ok")], cwd=repo, capture_output=True, text=True)
+            self.assertEqual(ok.returncode, 0, ok.stderr)
+            (repo / ".env.bak").write_text("DB_API_PASSWORD=x\n")
+            subprocess.run([*git, "add", "-f", ".env.bak"], cwd=repo, check=True)
+            bad = subprocess.run(["bash", "-c", copy, "_", str(Path(td) / "out-bad")], cwd=repo, capture_output=True, text=True)
+            self.assertNotEqual(bad.returncode, 0, "강제로 추적된 .env.bak 이 스캔 복사본에 들어갔다")
+            shutil.rmtree(Path(td) / "out-bad", ignore_errors=True)
+
     def test_backup_tool_writes_owner_only_and_uses_local_socket(self):
         t = (ROOT / "tools" / "db-backup.sh").read_text()
         self.assertIn("umask 077", t)

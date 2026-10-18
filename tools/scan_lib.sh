@@ -55,7 +55,8 @@ repo_copy() {
   mkdir -p "$dest"
   git ls-files -z --cached --others --exclude-standard | while IFS= read -r -d '' f; do [ -e "$f" ] && printf '%s\0' "$f"; done |
     tar --null -T - -cf - | tar -xf - -C "$dest" || return 1
-  if [ -n "$(find "$dest" -name '.env' -o -name '*.env.local' | head -1)" ]; then echo "scan: 복사본에 .env 가 있습니다 — 중단" >&2; return 1; fi
+  # .gitignore 와 같은 규칙(IM-06): .env · .env.*(.env.bak · .env.aws …) · *.env.local — 이름만 적은 *.example 은 통과
+  if [ -n "$(find "$dest" \( -name '.env' -o -name '.env.*' -o -name '*.env.local' \) ! -name '*.example' | head -1)" ]; then echo "scan: 복사본에 .env 가 있습니다 — 중단" >&2; return 1; fi
 }
 
 # repo_clone <대상 디렉터리>: 이력 스캔용 새 clone(작업 트리의 무시된 파일은 없다)
