@@ -131,6 +131,17 @@ const expectNoLiveFeed = async () => {
   expect((await import("@/lib/store")).getData().conn).toBe("off");
 };
 const settle = async (n = 15) => { for (let i = 0; i < n; i++) await React.act(async () => { await new Promise((r) => setTimeout(r, 20)); }); };
+/** 지도 자리가 정해졌다 — 지도 · 실패 자리 · WebGL2 안내 · 라우트 오류 화면 중 하나가 있고, 받는 중(next/dynamic 의 격자 자리 · 다시 시도의 lazy-loading)이 아니다 */
+const mapSlotSettled = () => ["map", "replay-map", "lazy-error", "map-no-webgl", "error-screen"].some(has) && !has("lazy-loading");
+/**
+ * 지도 자리가 정해질 때까지(상한 3 s) 기다린 뒤 효과를 마저 돌린다(settle). 지도 청크를 처음 받는 것(vitest 에서는 그 모듈 그래프의 첫 변환 · 평가)은
+ * CPU 가 몰리면 수백 ms 걸린다 — 고정 300 ms 만 기다리면 지도가 아직 없는데 단언해 control 시험이 실패한 적이 있다(VERIFICATION #148 (5)).
+ * 상한을 넘기면 그대로 돌아가 원래 단언이 실패한다.
+ */
+const settleMapSlot = async () => {
+  for (const until = Date.now() + 3_000; !mapSlotSettled() && Date.now() < until;) await settle(1);
+  await settle();
+};
 
 /** 페이지를 새 모듈로(지도 dynamic 은 모듈을 평가할 때 만들어진다) Next 의 라우트 오류 경계 안에 마운트한다 */
 async function mount(pagePath: "@/app/page" | "@/app/replay/page", pathname: string) {
@@ -151,13 +162,13 @@ async function mount(pagePath: "@/app/page" | "@/app/replay/page", pathname: str
   await React.act(async () => {
     root!.render(React.createElement(ErrorBoundaryHandler as never, { pathname, errorComponent: RouteError } as never, React.createElement(Page)));
   });
-  await settle();
+  await settleMapSlot();
 }
 const click = async (id: string) => {
   const b = byId(id);
   expect(b, id).not.toBeNull();
   await React.act(async () => { propsOf(b!).onClick(); });
-  await settle();
+  await settleMapSlot();
 };
 
 describe("dashboard '/': a map that cannot be drawn replaces only the map slot", () => {
@@ -169,6 +180,16 @@ describe("dashboard '/': a map that cannot be drawn replaces only the map slot",
     expect(ctl).toMatchObject({ loads: 1, maps: 1, connects: 1, workers: 1, maplessSubs: 0 });
     expect(connText()).toContain("WS connecting");
     expect(alertsWaitingText()).toContain("알림 목록 수신 대기 중");
+  });
+
+  it("control, slow map chunk: the map chunk arrives late (e.g. its first evaluation on a busy machine) — the page waits for it and draws the map, not an error", async () => {
+    vi.doMock("@/components/MapView", async (importOriginal) => { await new Promise((r) => setTimeout(r, 600)); return importOriginal(); });
+    await mount("@/app/page", "/");
+    expect(has("error-screen")).toBe(false);
+    expect(has("lazy-error")).toBe(false);
+    expect(has("map")).toBe(true);
+    expect(ctl).toMatchObject({ loads: 1, maps: 1, connects: 1, workers: 1, maplessSubs: 0 });
+    expect(reports).toEqual([]);
   });
 
   it("MapLibre fails to load once (the map chunk came — Q4 b1): the status bar, alerts panel and radar row stay; the map slot shows the reason and a retry that loads again; a map-less feed opens beside it and hands over to the map's feed", async () => {
