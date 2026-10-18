@@ -10,8 +10,10 @@ import pytest
 from fakes import FakeRedis
 from test_ais_helpers import decode, dumps, fixture_docs, validator
 
+from wakeline_collector import masking
 from wakeline_collector.ais import sink as sink_mod
 from wakeline_collector.ais.book import ShipBook
+from wakeline_collector.ais.client import make_redactor
 from wakeline_collector.ais.feed import FeedState, GapTracker
 from wakeline_collector.ais.parse import go_time, iso_ms, parse_message
 from wakeline_collector.ais.queue import RawQueue
@@ -290,6 +292,29 @@ async def test_status_hash_fields():
     r.down = True
     assert await sink.write_status() is False and sink.status_errors == 1
     assert await sink.read_previous_status() == {}
+
+
+async def test_provider_error_with_a_key_across_the_300_char_cut_leaves_no_key_piece_in_the_status_hash():
+    """IM-05: 공급자 오류 글({"error": …})을 300자에서 자른 뒤 가리면, 경계에 걸친 키는 앞부분이 상태 해시 provider_error 에 남는다
+    (값으로 가리기는 키 전체가 있어야 맞는다). 가린 뒤 자른다(QA-1140 의 mask_head). 배선은 ais.main._run 과 같다."""
+    key = "IM05fakeAisstreamKey0123456789abcdefWXYZ"  # 40글자 — 가짜(이 시험만)
+    saved = set(masking._SECRETS)
+    masking.register_secrets(key)  # ais.main._configure_logging 이 하는 것과 같다(R-83)
+    try:
+        redact = make_redactor(key)
+        r, q, book = FakeRedis(), RawQueue(1000), ShipBook("aisstream")
+        shards = ShardSet("aisstream")
+        shard = shards.add(None)
+        w = Worker(q, book, on_provider_error=lambda tag, text: shards.on_provider_error(tag, redact(text)))
+        sink = AisSink(r, book=book, shards=shards, worker=w, queue=q, provider="aisstream", raw_ref="-", redact=redact)  # type: ignore[arg-type]
+        w.handle(json.dumps({"error": "x" * 280 + " key " + key}), tag=shard.id)  # 키는 285–325번째 글자 — 300 에 걸친다
+        assert await sink.write_status() is True
+        got = r.kv[STATUS_KEY]["provider_error"]
+        assert not [key[:n] for n in range(6, len(key)) if key[:n] in got], got[-40:]
+        assert got == "x" * 280 + " key ***"
+    finally:
+        masking._SECRETS.clear()
+        masking._SECRETS.update(saved)
 
 
 async def test_previous_status_unread_at_start_is_read_before_the_first_status_write():

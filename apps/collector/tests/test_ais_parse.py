@@ -8,6 +8,7 @@ from collections import Counter
 import pytest
 from test_ais_helpers import T0, T0_EPOCH, dumps, fixture_docs, position, static5, static24
 
+from wakeline_collector import masking
 from wakeline_collector.ais.parse import (
     POSITION_CLASS,
     STATIC_FIELDS,
@@ -254,6 +255,21 @@ def test_rejects(raw, reject):
 def test_provider_error_message():
     p = parse_message(b'{"error": "Api Key Is Not Valid"}')
     assert p.reject == "provider_error" and p.error_text == "Api Key Is Not Valid"
+
+
+def test_provider_error_text_is_masked_before_the_300_char_cut():
+    """IM-05: 오류 글을 자른 뒤 가리면 300 경계에 걸친 등록 키의 앞부분이 남는다 — 가린 뒤 자른다(QA-1140 의 mask_head)."""
+    key = "IM05fakeAisstreamKey0123456789abcdefWXYZ"  # 40글자 — 가짜(이 시험만)
+    saved = set(masking._SECRETS)
+    masking.register_secrets(key)
+    try:
+        p = parse_message(json.dumps({"error": "x" * 280 + " key " + key}))
+        assert p.reject == "provider_error" and p.error_text == "x" * 280 + " key ***"
+        p = parse_message(json.dumps({"error": "x" * 300 + key}))  # 경계 뒤의 키는 잘려 나간다(길이 상한 300 은 같다)
+        assert p.error_text == "x" * 300
+    finally:
+        masking._SECRETS.clear()
+        masking._SECRETS.update(saved)
 
 
 def test_static5_mapping_and_cleanup():

@@ -21,6 +21,8 @@ from typing import Any
 
 import orjson
 
+from wakeline_collector.masking import mask_head
+
 # 구독하는 메시지 형식(aisstream FilterMessageTypes 이름). 위치: A 1·2·3, B 18·19 / 정적: 5 · 24 · 19
 POSITION_CLASS = {
     "PositionReport": "A",
@@ -103,7 +105,8 @@ class Parsed:
     static: StaticPart | None = None
     # 위치를 만들지 못한 이유(집계용): json · shape · type · invalid_flag · mmsi · time · no_position · position_range · part · provider_error
     reject: str | None = None
-    error_text: str | None = field(default=None)  # provider_error 일 때 공급자가 보낸 오류 문구(호출자가 가린 뒤 기록)
+    # provider_error 일 때 공급자가 보낸 오류 문구(가린 뒤 앞 300 글자 — 호출자가 다시 가려 기록)
+    error_text: str | None = field(default=None)
 
 
 # ── 시각 ─────────────────────────────────────────────────────────────
@@ -280,7 +283,8 @@ def parse_message(raw: bytes | str) -> Parsed:
         return Parsed(reject="shape")
     if _is_error_doc(doc):
         err = doc.get("error")
-        return Parsed(reject="provider_error", error_text=str(err)[:300] if err is not None else "")
+        # 가린 뒤 자른다(QA-1140) — 자른 뒤 가리면 300 경계에 걸친 키의 앞부분이 상태 해시 provider_error 에 남는다(IM-05)
+        return Parsed(reject="provider_error", error_text=mask_head(str(err), 300) if err is not None else "")
     mtype = doc.get("MessageType")
     meta, msg = doc.get("MetaData"), doc.get("Message")
     if not isinstance(mtype, str) or not isinstance(meta, dict) or not isinstance(msg, dict):
