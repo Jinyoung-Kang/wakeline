@@ -117,7 +117,11 @@ public class StreamConsumer implements SmartLifecycle {
     public static final String S_RADAR = "wakeline:radar";
     public static final String S_SHIPS = "wakeline:ships";
     public static final String S_DLQ = "wakeline:dlq";
-    private static final List<String> STREAMS = List.of(S_AIRCRAFT, S_SIGMET, S_RADAR, S_SHIPS, S_WXWARN);
+    /**
+     * 그룹 {@value #GROUP} 으로 소비하는 스트림 — 한 벌뿐이다. 소비 지표({@link StreamMetrics})와 인스턴스 가드({@link SingleInstanceGuard})도
+     * 이 목록을 쓴다(IM-27: 따로 둔 목록에 wakeline:wxwarn 이 빠져 특보 스트림만 지표 · 가드가 없었다). 새 스트림은 여기에만 더한다.
+     */
+    public static final List<String> STREAMS = List.of(S_AIRCRAFT, S_SIGMET, S_RADAR, S_SHIPS, S_WXWARN);
     /** wakeline:ships 에서만 받는 kind(ADR-014 신뢰 경계). */
     static final Set<String> SHIP_KINDS = Set.of("ships", "ais_gap");
     /** 선박 부트스트랩: 최근 이 창의 엔트리를 순서대로 읽는다(실시간 목록 30분 + 여유). 상한 엔트리 수·페이지 크기. */

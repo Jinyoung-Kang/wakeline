@@ -35,7 +35,8 @@ import java.util.UUID;
  *       소비자는 임대를 쥐고 있을 때만 읽는다({@link #readyForStream()}) — 확인하지 못한 채 기동했으면 갱신이 임대를 잡을 때까지 읽지 않는다.</li>
  *   <li>실행 중: 갱신 때 다른 인스턴스가 쥐고 있으면 ERROR(1분에 한 번) + {@code wakeline_api_instance_conflict} = 1, 이 프로세스의 소비자는
  *       임대를 다시 잡을 때까지 읽지 않는다(두 프로세스가 같은 소비자 이름으로 한 PEL 을 나눠 읽지 않게).</li>
- *   <li>그룹 {@value StreamConsumer#GROUP} 에 다른 이름의 소비자가 최근 활동했으면 WARN(30 s 주기) — 이름을 바꾼 두 번째 소비자.</li>
+ *   <li>소비하는 스트림({@link StreamConsumer#STREAMS}) 의 그룹 {@value StreamConsumer#GROUP} 에 다른 이름의 소비자가 최근 활동했으면 WARN(30 s 주기)
+ *       — 이름을 바꾼 두 번째 소비자.</li>
  *   <li>정상 종료: 자기 임대만 지운다 — 바로 다시 띄워도 기다리지 않는다.</li>
  * </ul>
  */
@@ -53,7 +54,6 @@ public final class SingleInstanceGuard implements StreamPrerequisite {
     static final RedisScript<Long> RELEASE = RedisScript.of("""
             if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) end
             return 0""", Long.class);
-    static final List<String> STREAMS = List.of(StreamConsumer.S_AIRCRAFT, StreamConsumer.S_SIGMET, StreamConsumer.S_RADAR, StreamConsumer.S_SHIPS);
     /** 이보다 최근에 활동한 다른 이름의 소비자를 '활성'으로 본다. */
     static final long FOREIGN_CONSUMER_IDLE_MS = 60_000;
     static final long LOG_INTERVAL_MS = 60_000;
@@ -160,7 +160,7 @@ public final class SingleInstanceGuard implements StreamPrerequisite {
     /** 그룹 api 에서 최근 활동한, 이 프로세스가 쓰지 않는 이름의 소비자(스트림/이름). */
     List<String> foreignConsumers() {
         List<String> out = new ArrayList<>();
-        for (String s : STREAMS) {
+        for (String s : StreamConsumer.STREAMS) {
             StreamInfo.XInfoConsumers cs;
             try {
                 cs = redis.opsForStream().consumers(s, StreamConsumer.GROUP);

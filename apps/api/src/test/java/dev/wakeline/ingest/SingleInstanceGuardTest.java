@@ -153,4 +153,17 @@ class SingleInstanceGuardTest {
         g.checkForeignConsumers(); // WARN 한 줄
         assertThat(SingleInstanceGuard.defaultInstanceId()).contains(":" + ProcessHandle.current().pid() + ":");
     }
+
+    /** 가드는 소비자가 읽는 스트림 전부의 그룹을 본다(IM-27 — 따로 둔 목록에 기상특보 스트림 wakeline:wxwarn 이 빠져 있었다). */
+    @Test
+    void everyConsumedStreamGroupIsWatchedForOtherConsumers() {
+        SingleInstanceGuard g = guard(redis, "me");
+        for (String s : StreamConsumer.STREAMS) {
+            redis.opsForStream().add(s, Map.of("k", "v"));
+            redis.opsForStream().createGroup(s, ReadOffset.from("0"), StreamConsumer.GROUP);
+            redis.opsForStream().read(Consumer.from(StreamConsumer.GROUP, "api-2"), StreamOffset.create(s, ReadOffset.lastConsumed()));
+        }
+        assertThat(g.foreignConsumers()).containsExactlyInAnyOrderElementsOf(StreamConsumer.STREAMS.stream().map(s -> s + "/api-2").toList())
+                .contains(StreamConsumer.S_WXWARN + "/api-2");
+    }
 }
