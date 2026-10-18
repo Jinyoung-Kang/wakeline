@@ -68,6 +68,14 @@ const DB_AIRSPACE = {
   source: "db", airspace: { id: 5, category: "prohibited", type_ko: "비행금지구역", ident: "RK P73", name: "P73", lower_basis: "SFC", lower_raw: "GND", upper_ft: 18000, upper_basis: "FL", upper_raw: "FL 180", edition: "AIP 25년 5차", edition_active: false },
   retention_days: 30, meta: {},
 };
+// DB 장애 때의 열린 알림(IM-20): api 가 503 대신 200 · meta.db_unavailable · 메모리 사본(메모리에도 없으면 null)으로 답한다
+const ENGINE_AIRSPACE_NO_DB = {
+  alert: { id: 79, kind: "OBSERVED", hex: "71be03", entered_at: "2026-10-09T09:00:00Z", evidence: { position: [37.6, 126.9] }, estimated: false, zone_type: "airspace", level: "alert",
+    airspace: { id: 5, category: "prohibited", type_ko: "비행금지구역", ident: "RK P73", name: "P73", label: "RK P73", edition: "AIP 25년 5차",
+      lower: { ft: null, basis: "SFC", raw: "GND" }, upper: { ft: 18000, basis: "FL", raw: "FL 180" } } },
+  source: "engine", sigmet: null, airspace: null, retention_days: 30, meta: { db_unavailable: true },
+};
+const sheetText = (body: unknown) => text(renderToStaticMarkup(createElement(AlertSheet, { d: parseAlertDetail(body)! })));
 
 describe("alert detail (F5 · §G51)", () => {
   it("parses engine and db answers; fills a db airspace alert's limits from the copy; a wrong body is null", () => {
@@ -100,6 +108,37 @@ describe("alert detail (F5 · §G51)", () => {
     expect(e).toContain("열림(지금 판정 중)");
     expect(e).toContain("RKRR SIGMET 1 VALID 090800/091200 RKSI-");
     expect(utcLeaks(e.replace("RKRR SIGMET 1 VALID 090800/091200 RKSI-", ""))).toEqual([]); // 원문(발표 형식)은 그대로 — 그 밖에는 KST 만
+  });
+  it("an open alert answered without the DB (meta.db_unavailable — IM-20): the parser keeps the flag and the sheet says the copies are memory values", () => {
+    expect(parseAlertDetail(ENGINE)!.dbUnavailable).toBe(false);
+    expect(parseAlertDetail({ ...ENGINE, meta: { db_unavailable: "true" } })!.dbUnavailable).toBe(false);
+    expect(parseAlertDetail({ ...ENGINE, meta: undefined })!.dbUnavailable).toBe(false);
+    const d = parseAlertDetail({ ...ENGINE, meta: { db_unavailable: true } })!;
+    expect(d.dbUnavailable).toBe(true);
+    const t = sheetText({ ...ENGINE, meta: { db_unavailable: true } });
+    expect(t).toContain("DB 일시 사용 불가 — 판정 사본을 메모리 값으로 보입니다(저장 사본 아님)");
+    expect(t).toContain("RKRR SIGMET 1 VALID 090800/091200 RKSI-"); // 메모리 사본은 그대로 그린다
+    expect(sheetText(ENGINE)).not.toContain("DB 일시 사용 불가");
+    expect(utcLeaks(t.replace("RKRR SIGMET 1 VALID 090800/091200 RKSI-", ""))).toEqual([]);
+  });
+  it("a zone copy the answer does not carry is said ('사본을 읽지 못함'), not silently dropped; an alert without that zone gets no such line", () => {
+    // SIGMET 알림 · DB 없음 · 메모리에도 사본 없음
+    const s = sheetText({ ...ENGINE, sigmet: null, meta: { db_unavailable: true } });
+    expect(s).toContain("DB 일시 사용 불가 — 판정 사본을 메모리 값으로 보입니다(저장 사본 아님)");
+    expect(s).toContain("SIGMET 사본 · RKRR · TS 사본을 읽지 못함");
+    expect(s).not.toContain("공역 사본");
+    // 공역 알림 · DB 없음 · 메모리에도 사본 없음
+    const a = sheetText(ENGINE_AIRSPACE_NO_DB);
+    expect(a).toContain("공역 사본 · 비행금지구역 · RK P73 사본을 읽지 못함");
+    expect(a).not.toContain("SIGMET 사본");
+    expect(utcLeaks(a)).toEqual([]);
+    // DB 는 있는데 사본 행이 아직 없다(저장 순서 큐가 밀려 열린 알림이 먼저 보임) — 같은 안내, DB 줄은 없다
+    const q = sheetText({ ...ENGINE, sigmet: null });
+    expect(q).toContain("SIGMET 사본 · RKRR · TS 사본을 읽지 못함");
+    expect(q).not.toContain("DB 일시 사용 불가");
+    // 받은 사본은 그대로 · 가리키지 않는 구역은 아무 줄도 없다
+    expect(sheetText(DB_AIRSPACE)).not.toContain("사본을 읽지 못함");
+    expect(sheetText(ENGINE)).not.toContain("사본을 읽지 못함");
   });
   it("the evidence card links to its permalink and replay, and states the judgement-time reliability", () => {
     const h = renderToStaticMarkup(createElement(EvidenceCard, { a: parseAlertDetail(ENGINE)!.alert }));
