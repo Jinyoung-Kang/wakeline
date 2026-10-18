@@ -23,7 +23,11 @@ import java.util.Map;
  * alert_event 저장(영구). 모든 쓰기는 {@link OrderedWriter} 한 줄로 받은 순서대로(COR-15·REL-21).
  * <ul>
  *   <li>기동 시 맨 먼저: 이전 실행이 열어 둔 행을 닫는다(left_at = now(), close_reason = 'restart', 계약 §3, REL-4·COR-10).
- *       이 프로세스가 만든 id(≥ 기동 시각 ms × 1000)는 건드리지 않는다 — DB 가 늦게 살아나 나중에 실행돼도 안전하다.</li>
+ *       이 실행의 행과는 id 가 아니라 순서로 가른다(IM-40): 정리는 생성자가 순서 큐에 넣는 첫 작업이고, 이 실행의 알림 INSERT 는 모두
+ *       그 뒤({@link #onAlerts})에 들어온다. 큐는 한 작업을 끝내기 전(쓰기 · 영구 오류로 버림 · 종료로 버림)에 다음 작업을 시작하지 않고 버린 작업을
+ *       다시 넣지 않으며, 정리 문장은 자동 커밋 한 문장이다 — DB 가 늦게 살아나 정리가 몇 번 다시 시도돼도 이 실행의 어떤 INSERT 보다 먼저 끝난다.
+ *       예전의 id 하한(기동 시각 ms × 1000 보다 작은 id 만)은 이 순서가 이미 지키는 것을 벽시계로 한 번 더 막았고, 재시작을 사이에 두고 시계가
+ *       뒤로 가면 이전 실행의 열린 행을 다음 재시작까지 열린 채 남겼다.</li>
  *   <li>ENTERED/PREDICTED: SIGMET 행 존재만 보장(FK) 후 INSERT. PREDICTION_UPDATED: eta·진입 고도·근거 갱신.
  *       LEFT/LOST/SIGMET_ENDED/PREDICTION_CLEARED: left_at·close_reason·닫힘 근거 기록.</li>
  *   <li>id 로 찾는 UPDATE 는 자연키(hex, sigmet_id, kind)도 함께 맞춘다 — id 가 다른 행을 가리키면(이전 형식 id 충돌) 건드리지 않는다.</li>
@@ -41,8 +45,6 @@ public class AlertRepository {
     private final SigmetStore sigmetStore;
     private final OrderedWriter writer;
     private final MeterRegistry meters;
-    /** 이 프로세스가 만드는 알림 id 의 하한(AlertIds: epochMillis × 1000 + n). 이보다 작은 열린 행은 이전 실행의 것이다. */
-    private final long idFloor;
 
     public AlertRepository(JdbcClient db, ObjectMapper json, SigmetRepository sigmets, SigmetStore sigmetStore, OrderedWriter writer, MeterRegistry meters) {
         this.db = db;
@@ -51,8 +53,8 @@ public class AlertRepository {
         this.sigmetStore = sigmetStore;
         this.writer = writer;
         this.meters = meters;
-        this.idFloor = System.currentTimeMillis() * 1000;
-        // 순서 큐의 첫 작업 — 이 프로세스의 어떤 알림 INSERT 보다 먼저 실행된다
+        // 순서 큐의 첫 작업 — 이 프로세스의 어떤 알림 INSERT 보다 먼저 실행된다. 정리가 이 실행의 행을 닫지 않는 근거가 이 순서뿐이므로
+        // 생성자 밖(기동 이벤트 등)으로 옮기지 않는다(IM-40 — WeatherPersistDbTest 가 재시도 · 버림 경로로 고정한다)
         writer.submit(OrderedWriter.task("alert_reconcile", this::closeOpenFromPreviousRun));
     }
 
@@ -63,15 +65,16 @@ public class AlertRepository {
         for (AlertStateMachine.Event ev : e.events()) writer.submit(OrderedWriter.task("alert", () -> persist(ev)));
     }
 
-    /** 이전 실행이 열어 둔 알림을 닫는다. 재시작으로 추적이 끊긴 것이지 실제 이탈이 아니므로 close_reason = 'restart'(체류 통계에서 뺀다). */
+    /**
+     * 이전 실행이 열어 둔 알림을 닫는다. 재시작으로 추적이 끊긴 것이지 실제 이탈이 아니므로 close_reason = 'restart'(체류 통계에서 뺀다).
+     * 순서 큐의 첫 작업이라 열린 행은 모두 이전 실행의 것이다 — id 로 가르지 않는다(머리말, IM-40).
+     */
     int closeOpenFromPreviousRun() {
-        int n = db.sql("UPDATE alert_event SET left_at = now(), close_reason = :reason WHERE left_at IS NULL AND id < :floor")
-                .param("reason", Alert.CLOSE_RESTART).param("floor", idFloor).update();
+        int n = db.sql("UPDATE alert_event SET left_at = now(), close_reason = :reason WHERE left_at IS NULL")
+                .param("reason", Alert.CLOSE_RESTART).update();
         log.info("startup: closed {} alerts left open by the previous run (close_reason=restart)", n);
         return n;
     }
-
-    long idFloor() { return idFloor; }
 
     void persist(AlertStateMachine.Event ev) {
         if (ev.alert().zoneType() != null && !Zone.SIGMET.equals(ev.alert().zoneType())) {

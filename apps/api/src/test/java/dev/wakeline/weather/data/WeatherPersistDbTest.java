@@ -19,13 +19,21 @@ import org.junit.jupiter.api.condition.EnabledIf;
 import org.locationtech.jts.geom.Coordinate;
 import org.locationtech.jts.geom.MultiPolygon;
 import org.locationtech.jts.geom.Polygon;
+import org.springframework.dao.PermissionDeniedDataAccessException;
+import org.springframework.jdbc.CannotGetJdbcConnectionException;
 import org.springframework.jdbc.core.simple.JdbcClient;
 
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Proxy;
+import java.sql.SQLException;
+import java.sql.SQLTransientConnectionException;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Supplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -102,6 +110,17 @@ class WeatherPersistDbTest {
 
     AlertRepository alerts() { return new AlertRepository(api, DbTestSupport.JSON, sigmets, store, writer, meters); }
 
+    /** 이 실행의 알림 id 와 같은 꼴(AlertIds: epoch ms × 1000 + n). */
+    static long nowId() { return System.currentTimeMillis() * 1000; }
+
+    /** {@code failures} 가 남아 있는 동안 문장 준비(sql)마다 {@code error} 를 던지는 JdbcClient — 순서 큐의 재시도 · 버림 경로를 실제 DB 로 돌린다. */
+    static JdbcClient failingWhile(JdbcClient real, AtomicInteger failures, Supplier<RuntimeException> error) {
+        return (JdbcClient) Proxy.newProxyInstance(JdbcClient.class.getClassLoader(), new Class<?>[]{JdbcClient.class}, (proxy, m, args) -> {
+            if ("sql".equals(m.getName()) && failures.getAndUpdate(n -> Math.max(0, n - 1)) > 0) throw error.get();
+            try { return m.invoke(real, args); } catch (InvocationTargetException e) { throw e.getCause(); }
+        });
+    }
+
     void events(AlertRepository repo, Event... evs) { repo.onAlerts(new EngineEvents.AlertsChanged(List.of(evs))); }
 
     Map<String, Object> alertRow(long id) {
@@ -133,14 +152,84 @@ class WeatherPersistDbTest {
         insertAlert(legacyId + 1, "aaaaa3", s.id(), "OBSERVED", T0.minusSeconds(1800), T0.minusSeconds(1200)); // 이미 닫힘
 
         AlertRepository repo = alerts(); // 생성자가 정리 작업을 순서 큐 맨 앞에 넣는다
-        long mine = repo.idFloor() + 7;
-        insertAlert(mine, "aaaaa4", s.id(), "OBSERVED", T0, null); // 이 프로세스의 행(정리보다 먼저 들어왔다고 가정)
+        long mine = nowId();
+        events(repo, new Event(EventType.ENTERED, observed(mine, "aaaaa4", s.id(), T0))); // 이 실행의 알림 — 운영처럼 정리 뒤에 큐로 들어온다
         writer.drainNow();
 
         assertThat(alertRow(legacyId)).containsEntry("close_reason", "restart").extractingByKey("left_at").isNotNull();
         assertThat(alertRow(previousRun)).containsEntry("close_reason", "restart").extractingByKey("left_at").isNotNull();
         assertThat(alertRow(legacyId + 1).get("close_reason")).isNull();   // 사유 기록 전 닫힌 행은 그대로(추정해 채우지 않음)
         assertThat(alertRow(mine).get("left_at")).isNull();                // 이 실행의 알림은 건드리지 않는다
+    }
+
+    /**
+     * 재시작을 사이에 두고 벽시계가 뒤로 간 경우(IM-40):이전 실행의 시계가 2분 앞서 있었으면 그 실행이 연 알림의 id(epoch ms × 1000)는 새 실행의
+     * 기동 시각보다 크다. 그래도 이전 실행의 열린 행이므로 restart 로 닫는다 — 열린 채 남으면 같은 (hex, 경보, 종류)의 열린 행이 둘이 되고, 이력은 그
+     * 알림을 다음 재시작까지 '진행 중'으로 보인다.
+     */
+    @Test
+    void startupClosesRowsOfAPreviousRunWhoseClockWasAhead() {
+        SigmetRecord s = sig("RKRR:F03", "awc_isigmet", "RAW3", T0.minusSeconds(3600), T0.plusSeconds(3600));
+        sigmets.upsert(s);
+        long aheadRun = (System.currentTimeMillis() + 120_000) * 1000; // 이전 실행의 시계가 2분 앞섰다
+        insertAlert(aheadRun, "aaaab1", s.id(), "OBSERVED", T0.minusSeconds(120), null);
+
+        alerts();
+        writer.drainNow();
+
+        assertThat(alertRow(aheadRun)).containsEntry("close_reason", "restart").extractingByKey("left_at").isNotNull();
+    }
+
+    /**
+     * IM-40 불변식: 정리가 이 실행의 행을 닫지 않는 근거는 순서뿐이다 — 재시작을 사이에 두고 시계가 뒤로 가면 id 로는 가를 수 없다(이전 실행의 id 가 더 크다).
+     * DB 가 늦게 살아나 정리가 일시 장애로 다시 시도되는 동안 들어온 이 실행의 알림도, 정리가 끝난 뒤에야 쓰인다(실제 워커 · 재시도).
+     */
+    @Test
+    void theStartupCloseIsRetriedBeforeThisRunsInserts_soItNeverClosesThem() throws Exception {
+        AtomicInteger outage = new AtomicInteger(3);
+        long[] ids = startWithFailingStartupClose(outage, () -> new CannotGetJdbcConnectionException("db down", new SQLTransientConnectionException("x")));
+        assertThat(outage.get()).as("정리가 세 번 실패했다").isZero();
+        assertThat(persisted("alert_reconcile", "ok")).isEqualTo(1.0);
+        assertThat(alertRow(ids[0])).containsEntry("close_reason", "restart").extractingByKey("left_at").isNotNull(); // 이전 실행(시계가 앞섰다)
+        assertThat(alertRow(ids[1])).isNotNull().containsEntry("left_at", null);                                      // 이 실행 — 정리 뒤에 쓰였다
+    }
+
+    /** 정리가 영구 오류로 버려지면 다시 돌지 않는다 — 뒤에 쓰인 이 실행의 행을 나중에 닫는 길이 없다(이전 실행의 행은 다음 재시작까지 열린 채, failed 로 센다). */
+    @Test
+    void aDroppedStartupCloseNeverRunsAfterThisRunsInserts() throws Exception {
+        AtomicInteger errors = new AtomicInteger(OrderedWriter.PERMANENT_ATTEMPTS);
+        long[] ids = startWithFailingStartupClose(errors,
+                () -> new PermissionDeniedDataAccessException("denied", new SQLException("permission denied", "42501")));
+        assertThat(errors.get()).isZero();
+        assertThat(persisted("alert_reconcile", "failed")).isEqualTo(1.0);
+        assertThat(persisted("alert", "ok")).isEqualTo(1.0);
+        assertThat(alertRow(ids[0])).containsEntry("left_at", null).containsEntry("close_reason", null);
+        assertThat(alertRow(ids[1])).isNotNull().containsEntry("left_at", null);
+    }
+
+    double persisted(String kind, String result) { return meters.counter("wakeline_persist_tasks_total", "kind", kind, "result", result).count(); }
+
+    /**
+     * 이전 실행(시계가 2분 앞섰다)의 열린 행 하나를 두고, 정리 문장이 {@code failures} 번 실패하는 api 로 기동해 이 실행의 ENTERED 하나를 실제 워커로 쓴다.
+     * @return {이전 실행 id, 이 실행 id}
+     */
+    long[] startWithFailingStartupClose(AtomicInteger failures, Supplier<RuntimeException> error) throws InterruptedException {
+        SigmetRecord s = sig("RKRR:F04", "awc_isigmet", "RAW4", T0.minusSeconds(3600), T0.plusSeconds(3600));
+        sigmets.upsert(s);
+        long previousRun = (System.currentTimeMillis() + 120_000) * 1000;
+        insertAlert(previousRun, "aaaac1", s.id(), "OBSERVED", T0.minusSeconds(120), null);
+        AlertRepository repo = new AlertRepository(failingWhile(api, failures, error), DbTestSupport.JSON, sigmets, store, writer, meters);
+        long mine = nowId(); // previousRun 보다 작다
+        events(repo, new Event(EventType.ENTERED, observed(mine, "aaaac2", s.id(), T0)));
+        writer.start();
+        try {
+            long deadline = System.currentTimeMillis() + 5_000;
+            while (writer.oldestPendingAtMs() != -1 && System.currentTimeMillis() < deadline) Thread.sleep(5);
+            assertThat(writer.oldestPendingAtMs()).as("큐를 다 썼다").isEqualTo(-1);
+        } finally {
+            writer.stop();
+        }
+        return new long[]{previousRun, mine};
     }
 
     /**
@@ -156,7 +245,7 @@ class WeatherPersistDbTest {
         SigmetRecord s = sig("RKRR:F09", "awc_isigmet", "RAW9", T0.minusSeconds(3600), T0.plusSeconds(3600));
         store.replace(T0, "awc", Map.of(s.id(), s));
         AlertRepository repo = alerts();
-        long id = repo.idFloor() + 1;
+        long id = nowId() + 1;
         Alert.Head head = new Alert.Head(null, null, null, null, "airspace", "alert",
                 Map.of("id", aid, "category", "prohibited", "type_ko", "비행금지구역", "name", "시험 금지구역 A", "label", "RK P99", "edition", "합성 시험"));
         Map<String, Object> ev = new LinkedHashMap<>(Map.of("method", "observed_point_in_polygon", "edition", "합성 시험"));
@@ -210,7 +299,7 @@ class WeatherPersistDbTest {
         SigmetRecord s = sig("RKRR:F02", "awc_isigmet", "RAW2", T0.minusSeconds(3600), T0.plusSeconds(3600));
         store.replace(T0, "awc", Map.of(s.id(), s)); // DB 에는 아직 없음 — ensure 가 FK 대상 행을 쓴다
         AlertRepository repo = alerts();
-        long id = repo.idFloor() + 1;
+        long id = nowId() + 1;
         Alert a = observed(id, "abc123", s.id(), T0.minusSeconds(60));
         Alert lost = a.closed(T0, Alert.CLOSE_SIGNAL_LOST, Map.of("absent_snapshots", 3, "scope", "region"));
         events(repo, new Event(EventType.ENTERED, a));
@@ -375,7 +464,7 @@ class WeatherPersistDbTest {
         SigmetRecord s = sig("RKRR:F09", "awc_isigmet", "RAW9", T0.minusSeconds(3600), T0.plusSeconds(3600));
         store.replace(T0, "awc", Map.of(s.id(), s));
         AlertRepository repo = alerts();
-        long id = repo.idFloor() + 1;
+        long id = nowId() + 1;
         Alert a = observed(id, "abc901", s.id(), T0.minusSeconds(60));
         Alert ended = a.closed(T0.minusSeconds(5), Alert.CLOSE_SIGMET_ENDED, Map.of("end_cause", "withdrawn"));
         events(repo, new Event(EventType.ENTERED, a), new Event(EventType.SIGMET_ENDED, ended));
