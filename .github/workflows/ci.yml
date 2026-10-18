@@ -59,7 +59,7 @@ jobs:
         with: { persist-credentials: false }
       - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
         with: { distribution: temurin, java-version: "25" }
-      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
       # DB 통합 테스트(Testcontainers)는 운영과 같은 db 이미지를 쓴다 — R-63 뒤 infra/db 에서 직접 빌드(레지스트리에 없다)
       - name: build db image (infra/db)
         run: docker build -t wakeline-db:local ../../infra/db
