@@ -96,6 +96,21 @@ class StatusServiceTest {
         assertThat(StatusService.adsbFiRps(Map.of("adsb_fi_rps_1m", "0", "region_at", "garbage", "kma_at", now.toString()), now)).isEqualTo(0.0);
     }
 
+    /**
+     * IM-13: 수집기가 같은 해시에 쓰는 '다음에 움직일 때'(*_resume_at — 다음 UTC 정시 · 날 등 미래 시각)를 보고 시각으로 세면 멈춘 수집기의 마지막
+     * 호출률이 120 s 검사를 늘 통과했다. *_resume_at 은 보고 시각이 아니고, 미래로 60 s 넘게 앞선 값은 그 필드만 건너뛴다.
+     */
+    @Test
+    void adsbFiRps_aFutureResumeTimeDoesNotKeepAStoppedCollectorFresh() {
+        Instant now = Instant.parse("2026-09-28T03:00:00Z");
+        assertThat(StatusService.adsbFiRps(Map.of("adsb_fi_rps_1m", "0.8", "region_at", now.minusSeconds(600).toString(),
+                "traffic_grid_fill_resume_at", now.plusSeconds(6 * 3600).toString()), now)).isNull();
+        assertThat(StatusService.adsbFiRps(Map.of("adsb_fi_rps_1m", "0.8", "region_at", now.minusSeconds(600).toString(),
+                "focus_at", now.plusSeconds(3600).toString()), now)).isNull();                                           // 시계가 틀린 보고 시각
+        assertThat(StatusService.adsbFiRps(Map.of("adsb_fi_rps_1m", "0.8", "region_at", now.minusSeconds(8).toString(),
+                "traffic_grid_tiles_resume_at", now.plusSeconds(1800).toString()), now)).isEqualTo(0.8);                  // 살아 있는 수집기
+    }
+
     @Test
     void sigmetFeatureCarriesBandSourcesAndLegacyStaysUnknown() {
         Polygon p = GeoJson.GF.createPolygon(new Coordinate[]{new Coordinate(0, 0), new Coordinate(1, 0), new Coordinate(1, 1), new Coordinate(0, 0)});
