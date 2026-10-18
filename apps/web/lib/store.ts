@@ -57,6 +57,16 @@ export interface ShipTrackInfo {
   hours?: number;
 }
 
+/**
+ * 선택 항공기 DB 항적(REST, 최근 2 h) 조회 결과(지도는 MapView 가 그리고, 카드는 실패를 적는다 — 선박 ShipTrackInfo 와 같은 모양).
+ * api 는 기록이 없는 항공기에도 200 + 빈 points 로 답한다 — error 는 실제 실패(503 · 500 · 망 실패)뿐이다. 끊긴 요청은 쓰지 않는다
+ */
+export interface AircraftTrackInfo {
+  hex: string; loaded: boolean; error: string | null;
+  /** 항적 조회 실패의 요청 id(계약 v5 §G5 — 서버가 준 것만, 없으면 null) */
+  requestId: string | null;
+}
+
 export interface ServerData {
   conn: ConnState;
   reconnectAttempt: number;
@@ -91,6 +101,7 @@ export interface ServerData {
   lastEvent: { type: AlertEventType; alert: Alert; at: number } | null;
   /** WS "selected" — 선택 항공기의 최신 full 상태와 예측 가능 여부 */
   selected: SelectedInfo | null;
+  aircraftTrack: AircraftTrackInfo | null;
   /** WS "demand" — 이 세션의 핫 리전·집중 추적 상태(서버 보고값 그대로). 연결이 끊기면 null */
   demand: DemandInfo | null;
   ships: ShipsView;
@@ -158,6 +169,7 @@ const initial: ServerData = {
   status: null,
   lastEvent: null,
   selected: null,
+  aircraftTrack: null,
   demand: null,
   ships: SHIPS_OFF,
   shipSelected: null,

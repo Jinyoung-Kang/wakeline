@@ -21,7 +21,7 @@ import {
 } from "@/lib/route";
 import { EvidenceCard } from "./EvidenceCard";
 import { DemandBadge } from "./MapChips";
-import { RequestIdOf } from "./logs/ErrorNote";
+import { RequestIdCopy, RequestIdOf } from "./logs/ErrorNote";
 import { KstTime } from "./KstTime";
 
 /** 등록 정보(static)·SIGMET 포함 여부 등 REST 상세 갱신 주기. 위치·속도는 WS selected 스트림이 실시간으로 준다. */
@@ -154,6 +154,8 @@ export function AircraftCard({ hex }: { hex: string }) {
   const root = useRef<HTMLDivElement>(null);
   useEscapeClose(true, () => select(null), { panel: root }); // Esc 로 닫기(lib/escape-stack)
   const selected = useServerData((x) => (x.selected && x.selected.hex === hex ? x.selected : null));
+  // 선택 항적의 DB 기록(최근 2 h) 조회 결과 — 이 항공기의 것만(components/map/useSelectionTracks). 실패하면 지도에는 선택한 뒤 받은 관측만 있다
+  const track = useServerData((x) => (x.aircraftTrack && x.aircraftTrack.hex === hex ? x.aircraftTrack : null));
   const alertsMap = useServerData((x) => x.alerts);
   const now = useServerNow(1000);
   const wall = useNow(1000);
@@ -234,7 +236,12 @@ export function AircraftCard({ hex }: { hex: string }) {
             {activeAlerts.map((a) => <EvidenceCard key={a.id} a={a} />)}
           </div>
         ) : <div className="mt-2 text-[11px] text-fg-3">활성 알림 없음</div>}
-        <div className="mt-2 text-[10px] text-fg-3">항적 선은 DB 기록(최근 2 h)에 실시간 관측을 이어 붙인 것입니다. 선택한 동안은 서버 수집기가 이 항공기를 따로 조회하므로(집중 추적) 위 칩에 보이는 서버 보고 주기로 점이 촘촘해집니다. 점선 궤적은 서버가 예측 가능하다고 판단할 때만 그리는 10분 dead reckoning 추정입니다.</div>
+        {track?.error ? (
+          <div className="mt-2 text-[11px] text-warn" data-testid="aircraft-track-error">
+            기록 조회 실패 — 선택한 뒤 받은 관측만 이어 그립니다 ({track.error}{track.requestId ? <RequestIdCopy id={track.requestId} /> : null})
+          </div>
+        ) : null}
+        <div className="mt-2 text-[10px] text-fg-3">{track?.error ? "" : "항적 선은 DB 기록(최근 2 h)에 실시간 관측을 이어 붙인 것입니다. "}선택한 동안은 서버 수집기가 이 항공기를 따로 조회하므로(집중 추적) 위 칩에 보이는 서버 보고 주기로 점이 촘촘해집니다. 점선 궤적은 서버가 예측 가능하다고 판단할 때만 그리는 10분 dead reckoning 추정입니다.</div>
       </div>
     </div>
   );

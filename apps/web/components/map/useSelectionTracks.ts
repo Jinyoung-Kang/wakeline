@@ -130,20 +130,23 @@ export function useSelectionTracks(map: maplibregl.Map | null, feed: FeedRef): v
   useEffect(() => {
     feed.current?.worker.postMessage({ type: "invalidate" }); // 선택 강조를 바로 다시 그린다
     track.current = { hex: selectedHex, pts: [], pending: [], loaded: false };
+    setData({ aircraftTrack: selectedHex ? { hex: selectedHex, loaded: false, error: null, requestId: null } : null });
     if (!map) return;
     onReady(map, "tracks", () => { geo(map, "tracks")?.setData(EMPTY_FC); feed.current?.refreshPrediction(); });
     if (!selectedHex) return;
-    // 다른 항공기를 고르거나 지도가 바뀌거나 떠나면 요청을 끊는다(끊은 요청의 답은 쓰지 않는다)
+    // 다른 항공기를 고르거나 지도가 바뀌거나 떠나면 요청을 끊는다(끊은 요청의 답 · 오류는 쓰지 않는다)
     const ctl = new AbortController();
-    const finish = (rest: TrackPt[]) => {
+    const finish = (rest: TrackPt[], error: string | null, requestId: string | null = null) => {
       if (ctl.signal.aborted || track.current.hex !== selectedHex) return;
       const pts = mergeTrack(rest, track.current.pending);
       track.current = { hex: selectedHex, pts, pending: [], loaded: true };
+      setData({ aircraftTrack: { hex: selectedHex, loaded: true, error, requestId } });
       onReady(map, "tracks", () => geo(map, "tracks")?.setData(trackFeatureCollection(pts)));
     };
+    // 기록이 없으면(전세계 항공기 등) api 는 200 + 빈 points — 거절은 DB 장애 · 망 실패뿐이다. 실시간 관측만으로 잇고, 실패와 요청 id 는 카드의 문구에(계약 v5 §G5)
     aircraftTrack(selectedHex, { signal: ctl.signal })
-      .then((pts) => finish(pts))
-      .catch(() => finish([])); // DB 기록이 없거나(전세계 항공기) DB 장애 → 실시간 관측만으로 잇는다
+      .then((pts) => finish(pts, null))
+      .catch((e: unknown) => { const t = trackError(e); finish([], t.error, t.requestId); });
     return () => ctl.abort();
   }, [map, feed, selectedHex]);
 
