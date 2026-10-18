@@ -324,6 +324,31 @@ async def test_a_new_minute_received_after_its_part_was_sent_is_held_when_a_late
     assert not book.holding and book.backlog == 0
 
 
+async def test_an_unsent_position_overwritten_while_the_failed_xadd_waits_is_held_as_it_was_sent():
+    """보내지 못한 발행에 실렸던 위치 그 값을 모은다. 예전에는 hold 가 보내지 못한 선박의 지금 상태(ship.state)만 표본으로 넣었다 — 실패한 XADD 를
+    기다리는 동안(답하지 않는 Redis — socket_timeout) 같은 선박이 다음 분을 보고하면 실패한 발행의 앞 분 위치가 backlog 에도 '바뀜' 에도 남지 않아
+    그 분의 행이 공백 기록 없이 빠졌다(A: :58 → 행 :01 하나). 같은 분이면 행 수는 같아도 값이 장애가 없을 때와 달랐다(B: :40 대신 :42)."""
+    r = HangingRedis()
+    _r, book, sink, clock = _setup(r)
+    _receive(book, clock, ("440000002", T0 + 40), ("440000001", T0 + 58))  # 창 0 — 둘 다 이번 발행에 든다
+    r.hanging = True
+
+    async def receive_while_waiting() -> None:
+        await asyncio.wait_for(r.waiting.wait(), 1)
+        _receive(book, clock, ("440000002", T0 + 42), ("440000001", T0 + 61))  # B 는 같은 창 0, A 는 창 1
+
+    sent, _ = await asyncio.gather(sink.flush(), receive_while_waiting())
+    assert sent == 0 and book.holding
+    r.hanging = False
+    clock.t = T0 + 90
+    await sink.flush()
+    rows = _rows_like_the_api(_entries(r))
+    # 장애가 없었다면: 이번 발행이 :58 · :40 을, 다음 발행이 :01 · :42 를 싣는다 → A 는 창마다 한 행, B 는 창 0 의 :40
+    assert rows["440000001"] == [iso_ms(T0 + 58), iso_ms(T0 + 61)], "실패한 발행에 실렸던 창 0 의 위치가 빠졌다"
+    assert rows["440000002"] == [iso_ms(T0 + 40)], "같은 창이면 보내지 못한 그 값이 행이다"
+    assert not book.holding and book.backlog == 0
+
+
 async def test_a_held_send_cancelled_mid_xadd_keeps_the_positions_for_the_final_flush():
     """종료 때 발행 루프가 모은 위치를 보내는 XADD 에서 취소돼도 그 위치를 떼지 않는다 — final() 의 flush 가 다시 보낸다."""
     r = HangingRedis()

@@ -170,7 +170,8 @@ class AisSink:
 
     async def flush(self) -> int:
         """바뀐 선박을 발행한다. 반환: 보낸 XADD 수.
-        발행이 실패하면 그때부터 분당 첫 위치를 모으고(book.hold), 복구되면 모은 것을 먼저 · 최신값을 그다음에 보낸 뒤 모으기를 끝낸다(모듈 설명)."""
+        발행이 실패하면 그때부터 분당 첫 위치를 모으고(book.hold — 보내지 못한 조각의 위치 그 값부터), 복구되면 모은 것을 먼저 · 최신값을 그다음에
+        보낸 뒤 모으기를 끝낸다(모듈 설명)."""
         stats = self._window()
         self.book.evict()
         sent = 0
@@ -210,7 +211,8 @@ class AisSink:
             except (RedisError, OSError) as e:
                 kept = self._keep_unsent(states, statics, i)
                 started = not self.book.holding
-                self.book.hold(s["mmsi"] for s in states[i * CHUNK :])
+                # 보내지 못한 위치 그 값을 넘긴다 — MMSI 만 넘기면 기다리는 사이 덮인 지금 상태를 모은다(book 설명)
+                self.book.hold(states[i * CHUNK :])
                 self.publish_errors += 1
                 if started:  # 장애마다 한 번은 반드시 남긴다 — 60 s 에 한 번인 경고(_warn)는 상태 쓰기 실패 경고가 먼저 가져갈 수 있다(격리 스택에서 본 것)
                     log.warning(
