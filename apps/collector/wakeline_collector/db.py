@@ -507,13 +507,17 @@ class Db:
         raw_ref: str | None = None,
         error_text: str | None = None,
         quality: list[tuple[str, str | None, dict[str, Any]]] | None = None,
+        finished_at: datetime | None = None,
     ) -> None:
         """ingest_run 1행(+ 품질 사례·규칙별 건수)을 한 트랜잭션으로 기록한다.
+        finished_at: 실행이 끝난 때(없으면 지금). 공급자 오류로 끝난 실행은 status.failure 에 준 시각(last_error_at)을 그대로 넘긴다 — api 의 RUNS
+        요약이 해결한 공급자 오류의 last_error_at 까지 끝난 error 실행을 가리므로(ADR-024 · 계약 v5 §G14 '같은 순간'), 따로 재면 그 실행이 µs–ms 늦어
+        가려지지 않는다(IM-12).
         규칙별 건수는 실행이 시작된 KST 날짜에 싣는다(계약 v5 §G20 — 화면 · 통계와 같은 날 · COL-6: 큐에서 자정을 넘겨 기록돼도 실행한 날로).
         멱등(R-91): 실행마다 run_key(uuid4)를 한 번 만들고 재시도는 같은 키를 쓴다. INSERT … ON CONFLICT (run_key) DO NOTHING 이
         행을 돌려주지 않으면 앞선 시도가 이미 커밋된 것이다 — 품질 사례·규칙별 건수도 그 트랜잭션에 함께 커밋됐으므로 다시 넣지 않는다
         (다시 넣으면 사례가 겹치고 건수가 두 배가 된다). 그 run id 는 run_key 로 되찾아 로그에 남긴다."""
-        finished_at = datetime.now(UTC)
+        finished_at = datetime.now(UTC) if finished_at is None else finished_at
         day = kst_date(started_at)
         rows, per_rule = quality_rows(quality or [])
         err = mask(error_text)

@@ -13,7 +13,7 @@ import httpx
 import orjson
 import pytest
 import respx
-from fakes import FakeRedis, make_ctx
+from fakes import FakeRedis, RoundTripRedis, ingest_runs, make_ctx
 
 from wakeline_collector import fallback
 from wakeline_collector.config import Settings
@@ -1107,3 +1107,19 @@ async def test_a_region_radius_above_the_provider_limit_is_requested_and_publish
     assert [str(c.request.url) for c in lol.calls] == ["https://api.adsb.lol/v2/point/36.5000/127.8000/250"]
     published = [_decode(f)["region"] for _id, f in r.streams[STREAM_AIRCRAFT]]
     assert published == [{"lat": 36.5, "lon": 127.8, "radius_nm": 250}] * 2
+
+
+# ---- 공급자 오류를 해결하면 그 오류를 낸 실행도 요약에서 빠진다(IM-12) ---------------------------------------------------------------
+# api 의 RUNS 요약은 status='error' 이고 finished_at <= upto(해결한 공급자 행의 last_error_at) 인 실행을 가린다 — 근거는 'finished_at 이 last_error_at 과
+# 같은 순간'(ADR-024 · 계약 v5 §G14)이다. 전에는 status.failure 가 last_error_at 을 먼저 쓰고 record_run 이 finished_at 을 따로 재어 늘 µs–ms 늦었다
+# — 운영자가 해결한 바로 그 실행이 요약의 'error n=1' 행으로 남았다.
+async def test_a_provider_error_run_finishes_at_the_instant_recorded_as_last_error_at():
+    """고치기 전: finished_at 이 last_error_at 보다 Redis 왕복(HINCRBY + HSET)만큼 늦었다."""
+    r = RoundTripRedis()
+    ctx = make_ctx(r)
+    job = AircraftJob("region", ProviderChain("region", {"adsb_fi": FakeReadsb("adsb_fi", fail=True)}, ctx.status), ctx)
+    await job.run_once()
+    (run,) = await ingest_runs(ctx.db)
+    h = await r.hgetall("wakeline:provider:adsb_fi")
+    assert run["status"] == "error" and run["error_text"] == h["last_error"]
+    assert run["finished_at"] == datetime.fromisoformat(h["last_error_at"])

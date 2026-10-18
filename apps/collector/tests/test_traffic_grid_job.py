@@ -11,11 +11,12 @@ from typing import Any
 
 import orjson
 import pytest
-from fakes import FakeRedis, RecordingDb, make_ctx
+from fakes import FakeRedis, RecordingDb, ingest_runs, make_ctx
 
 from wakeline_collector import masking
 from wakeline_collector import traffic_grid_plan as plan
 from wakeline_collector.budget import DEFAULT_STRICT, day_key
+from wakeline_collector.db import Db
 from wakeline_collector.http import FetchResponse, ProviderHttpError, SendCancelled
 from wakeline_collector.jobs import traffic_grid as tg
 from wakeline_collector.jobs.traffic_grid import NEGATIVE_KEY, SNAPSHOT_KEY, TrafficGridJob
@@ -476,6 +477,31 @@ async def test_failures_back_off_and_are_recorded_without_the_key():
     blob = json.dumps({k: v for k, v in r.kv.items()}, default=str) + json.dumps(db.runs, default=str)
     assert SECRET not in blob and "serviceKey=***" in st["last_error"]
     assert SNAPSHOT_KEY not in r.kv
+
+
+class _InsertingTGDb(TGDb):
+    """실행 기록을 목록(runs)에도 두고, 실제 Db.record_run 으로도 대기열에 넣는다 — INSERT 에 실제로 넘길 값(finished_at 등)을 보려고."""
+
+    def record_run(self, job, provider, started_at, **kw):  # type: ignore[override]
+        super().record_run(job, provider, started_at, **kw)
+        Db.record_run(self, job, provider, started_at, **kw)
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [ProviderHttpError(500, "gateway error"), komsa_body("2026-09-29 18:30:00")],  # 호출 실패 · 수집기 시계보다 23분 앞선 regDt
+    ids=["fetch_failed", "reg_dt_ahead"],
+)
+async def test_a_komsa_error_run_finishes_at_the_instant_recorded_as_last_error_at(answer):
+    """IM-12: api 의 RUNS 요약은 해결한 공급자 오류의 last_error_at 까지 끝난(finished_at <= upto) error 실행을 가린다 — 두 시각은 같은 순간이어야
+    한다(ADR-024 · 계약 v5 §G14). 고치기 전: last_error_at 은 작업의 시계, finished_at 은 record_run 이 따로 잰 벽시계였다."""
+    job, _k, _w, r, clock, _db = setup(answer)
+    job.ctx.db = db = _InsertingTGDb([])
+    await job.run_once()
+    (run,) = await ingest_runs(db)
+    st = r.kv["wakeline:provider:komsa_traffic"]
+    assert run["status"] == "error" and run["error_text"] == st["last_error"]
+    assert run["finished_at"] == datetime.fromisoformat(st["last_error_at"]) == clock.t
 
 
 async def test_provider_result_code_error_is_a_failure():

@@ -309,10 +309,11 @@ class KmaRadarJob:
         http_status = e.status if isinstance(e, ProviderHttpError) else None
         note = "활용신청 필요(API허브에서 레이더합성자료 신청 후 승인 대기)" if http_status == 403 else f"{type(e).__name__}"
         detail = f.detail()  # 가린 한 줄(R-83: 응답 본문 앞부분이 실릴 수 있다) · 단계 · 걸린 시간 · 첫 시도
-        await self.ctx.status.failure(
-            self.p.name, at=datetime.now(UTC), error=note if http_status == 403 else detail, http_status=http_status
+        at = datetime.now(UTC)  # 한 번 잰 실패 시각: last_error_at = 이 실행의 finished_at(IM-12)
+        await self.ctx.status.failure(self.p.name, at=at, error=note if http_status == 403 else detail, http_status=http_status)
+        self.ctx.db.record_run(
+            self.job_name, self.p.name, started, status="error", http_status=http_status, error_text=detail, finished_at=at
         )
-        self.ctx.db.record_run(self.job_name, self.p.name, started, status="error", http_status=http_status, error_text=detail)
         await self.ctx.status.hset_meta(
             KEY_META, {"status": str(http_status or ""), "note": note[:200], "checked_at": iso(datetime.now(UTC))}
         )

@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import re
 import time
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -212,6 +215,17 @@ class FakeRedis:
         return FakePipeline(self)
 
 
+class RoundTripRedis(FakeRedis):
+    """HINCRBY 마다 실제 Redis 처럼 왕복 시간이 걸린다 — 공급자 실패 기록(status.failure: HINCRBY + HSET) 앞뒤에서 따로 잰 두 시각이
+    우연히 같은 µs 에 들지 않게 한다(IM-12 — 실제 Redis 에서는 그 왕복만큼 벌어졌다)."""
+
+    ROUND_TRIP_S = 0.001
+
+    async def hincrby(self, key: str, field: str, n: int) -> int:
+        await asyncio.sleep(self.ROUND_TRIP_S)
+        return await super().hincrby(key, field, n)
+
+
 class FakePipeline:
     """명령을 모았다가 execute 에서 순서대로 실행한다(redis-py 파이프라인과 같은 모양)."""
 
@@ -273,6 +287,37 @@ class RecordingDb(Db):
     def _submit(self, name, fn) -> None:  # type: ignore[override]
         self.names.append(name)
         super()._submit(name, fn)
+
+
+async def ingest_runs(db: Db) -> list[dict[str, Any]]:
+    """대기열에 쌓인 ingest_run 쓰기(RecordingDb — writer 를 돌리지 않는다)를 가짜 연결로 돌려, INSERT 에 실제로 넘기는 값을 열 이름 → 값으로
+    돌려준다(record_run 이 재는 finished_at 등 — 작업이 넘긴 인자가 아니라 실제로 쓰일 값). 열 이름은 record_run 의 INSERT 문에서 읽는다.
+    대기열은 그대로 둔다."""
+    rows: list[dict[str, Any]] = []
+
+    class Conn:
+        @asynccontextmanager
+        async def transaction(self):
+            yield
+
+        async def fetchval(self, sql: str, *args: Any) -> int:
+            m = re.search(r"INSERT INTO ingest_run\s*\(([^)]*)\)", sql)
+            assert m is not None, sql
+            rows.append(dict(zip([c.strip() for c in m.group(1).split(",")], args, strict=True)))
+            return len(rows)
+
+        async def executemany(self, sql: str, args: Any) -> None:
+            return None
+
+    class Pool:
+        @asynccontextmanager
+        async def acquire(self):
+            yield Conn()
+
+    for op in list(db._q):
+        if op.name.startswith("ingest_run("):
+            await op.fn(Pool())
+    return rows
 
 
 def make_ctx(redis: FakeRedis | None = None, *, limits: dict[str, int] | None = None, fixture: bool = False) -> JobContext:

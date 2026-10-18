@@ -725,6 +725,24 @@ async def test_kma_http_error_is_never_retried(kma_env, no_wait, caplog):
     assert len(warns) == 1 and warns[0].startswith("kma radar: listing 20260927 — 활용신청 필요")
 
 
+async def test_kma_error_run_finishes_at_the_instant_recorded_as_last_error_at(kma_env, no_wait):
+    """IM-12: api 의 RUNS 요약은 해결한 공급자 오류의 last_error_at 까지 끝난(finished_at <= upto) error 실행을 가린다 — 두 시각은 같은 순간이어야
+    한다(ADR-024 · 계약 v5 §G14). 고치기 전: _fail 이 last_error_at 을 쓴 뒤 record_run 이 finished_at 을 따로 재어 Redis 왕복만큼 늦었다."""
+    from fakes import RoundTripRedis, ingest_runs, make_ctx
+
+    from wakeline_collector.http import ProviderHttpError
+
+    mod = kma_env[0]
+    r = RoundTripRedis()
+    ctx = make_ctx(r, limits={"kma_radar": 1000})
+    prov = FlakyKma(_tms("202609272000"), list_errors=[ProviderHttpError(403, '{"result":"unauthorized"}')])
+    await mod.KmaRadarJob(prov, ctx).run_once()
+    (run,) = await ingest_runs(ctx.db)
+    st = await r.hgetall("wakeline:provider:kma_radar")
+    assert run["status"] == "error" and run["http_status"] == 403 and st["last_error"].startswith("활용신청 필요")
+    assert run["finished_at"] == datetime.fromisoformat(st["last_error_at"])
+
+
 async def test_kma_each_failing_call_is_retried_once(kma_env, no_wait, caplog):
     """'한 번 다시 부른다'는 실패한 호출마다다 — 목록에서 다시 불렀어도 뒤의 바이너리가 일시 오류면 그것도 한 번 다시 부른다
     (이전: 한 주기에 한 번뿐이라 이 경우 주기를 잃었다)."""

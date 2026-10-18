@@ -11,7 +11,7 @@ from pathlib import Path
 
 import orjson
 import pytest
-from fakes import FakeRaw, FakeRedis, make_ctx
+from fakes import FakeRaw, FakeRedis, RoundTripRedis, ingest_runs, make_ctx
 
 from wakeline_collector.models import ProviderResult
 
@@ -199,6 +199,25 @@ async def test_r42_radar_provider_failure_publishes_nothing_and_records_error():
     st = await r.hgetall("wakeline:provider:rainviewer")
     assert st["last_http_status"] == "503" and st["consecutive_failures"] == "1"
     assert "radar_at" not in await r.hgetall("wakeline:collector")  # 실패한 주기는 heartbeat 를 쓰지 않는다
+
+
+async def test_a_weather_provider_error_run_finishes_at_the_instant_recorded_as_last_error_at():
+    """IM-12: api 의 RUNS 요약은 해결한 공급자 오류의 last_error_at 까지 끝난(finished_at <= upto) error 실행을 가린다 — 두 시각은 같은 순간이어야
+    한다(ADR-024 · 계약 v5 §G14). 고치기 전: _guard 가 last_error_at 을 쓴 뒤 record_run 이 finished_at 을 따로 재어 Redis 왕복만큼 늦었다."""
+    from wakeline_collector.http import ProviderHttpError
+    from wakeline_collector.jobs.weather import RadarJob
+
+    class Down(FakeRainViewer):
+        async def frames(self):
+            raise ProviderHttpError(503, "maintenance")
+
+    r = RoundTripRedis()
+    ctx = make_ctx(r, limits={"rainviewer": 1000})
+    await RadarJob(Down(), ctx).run_once()
+    (run,) = await ingest_runs(ctx.db)
+    st = await r.hgetall("wakeline:provider:rainviewer")
+    assert run["status"] == "error" and run["error_text"] == st["last_error"]
+    assert run["finished_at"] == datetime.fromisoformat(st["last_error_at"])
 
 
 async def test_radar_with_an_unexpected_tile_host_publishes_nothing_and_records_an_explicit_error():

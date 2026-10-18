@@ -190,11 +190,20 @@ class _DayFetch:
 
 
 class _Stop(Exception):  # noqa: N818 — 단위를 멈춘 까닭(작업 흐름 — 예외로 나가지 않는다)
-    """단위를 끝내지 못한 까닭. scope: pa(그 항만청만 물러남) · low(채우기 · 다시 받기만 쉼) · all(모두 쉼). until = 쉬는 끝."""
+    """단위를 끝내지 못한 까닭. scope: pa(그 항만청만 물러남) · low(채우기 · 다시 받기만 쉼) · all(모두 쉼). until = 쉬는 끝.
+    at = 공급자 상태에 적은 실패 시각(last_error_at — 공급자 실패일 때만). 실행 기록의 finished_at 으로 그대로 쓴다(같은 순간 — IM-12)."""
 
-    def __init__(self, status: str, why: str, *, scope: Literal["pa", "low", "all", "off"], until: datetime | None = None):
+    def __init__(
+        self,
+        status: str,
+        why: str,
+        *,
+        scope: Literal["pa", "low", "all", "off"],
+        until: datetime | None = None,
+        at: datetime | None = None,
+    ):
         super().__init__(why)
-        self.status, self.why, self.scope, self.until = status, why, scope, until
+        self.status, self.why, self.scope, self.until, self.at = status, why, scope, until, at
 
 
 class PortCallIndexJob:
@@ -502,20 +511,24 @@ class PortCallIndexJob:
             await self._set_state(STATE_OPERATOR_OFF, now)
             return IDLE_S
         if s.scope == "pa":
-            return self._fail_pa(u, started, s.status, s.why, None)
+            return self._fail_pa(u, started, s.status, s.why, None, finished_at=s.at)
         until = s.until or now + timedelta(seconds=IDLE_S)
         if s.scope == "low":
             self._hold_low = until
         else:
             self._hold_all = until
             self._passes.pop(u.pa, None)
-        self.ctx.db.record_run(JOB, p.name, started, status=s.status, error_text=f"{s.why} — resumes at {_iso(until)}")
+        self.ctx.db.record_run(
+            JOB, p.name, started, status=s.status, error_text=f"{s.why} — resumes at {_iso(until)}", finished_at=s.at
+        )
         log.info(
             "port-call index: %s — %s paused until %s", s.why, "backfill/revisit" if s.scope == "low" else "index", _iso(until)
         )
         return 0.0 if s.scope == "low" else max(1.0, min(IDLE_S, (until - now).total_seconds()))
 
-    def _fail_pa(self, u: Unit, started: datetime, status: str, why: str, got: _DayFetch | None) -> float:
+    def _fail_pa(
+        self, u: Unit, started: datetime, status: str, why: str, got: _DayFetch | None, *, finished_at: datetime | None = None
+    ) -> float:
         now = self._now()
         _until, n = self._backoff.get(u.pa, (now, 0))
         wait = FAIL_BACKOFF_S[min(n, len(FAIL_BACKOFF_S) - 1)]
@@ -532,6 +545,7 @@ class PortCallIndexJob:
             status=status,
             records_in=len(got.rows) if got else 0,
             error_text=f"{why} — retry in {wait} s",
+            finished_at=finished_at,
         )
         log.warning("port-call index %s(%s) %s %s: %s — retry in %d s", u.pa, PA_NAMES[u.pa], u.kind, u.day, why, wait)
         return 0.0
@@ -663,8 +677,8 @@ class PortCallIndexJob:
             why = describe_error(e)
             if isinstance(e, HostNotAllowed):
                 raise _Stop("error", why, scope="all", until=self._now() + timedelta(seconds=FAIL_BACKOFF_S[-1])) from None
-            await self._provider_failure(p, u, why, None)
-            raise _Stop("error", why, scope="pa") from None
+            at = await self._provider_failure(p, u, why, None)
+            raise _Stop("error", why, scope="pa", at=at) from None
         except ProviderHttpError as e:
             self.counts["requests"] += 1
             why, http_status = describe_error(e), e.status
@@ -688,11 +702,14 @@ class PortCallIndexJob:
                     p.name, at=got.fetched_at, latency_ms=got.latency_ms, records=got.page.items, used=u_used, limit=lim
                 )
             return got
-        await self._provider_failure(p, u, why, http_status)
-        raise _Stop("error", f"prtAgCd {u.pa} {u.day} page {page_no}: {why}", scope="pa")
+        at = await self._provider_failure(p, u, why, http_status)
+        raise _Stop("error", f"prtAgCd {u.pa} {u.day} page {page_no}: {why}", scope="pa", at=at)
 
-    async def _provider_failure(self, p: PortCallIndexSource, u: Unit, why: str, http_status: int | None) -> None:
-        await self.ctx.status.failure(p.name, at=self._now(), error=f"prtAgCd {u.pa} {u.day}: {why}", http_status=http_status)
+    async def _provider_failure(self, p: PortCallIndexSource, u: Unit, why: str, http_status: int | None) -> datetime:
+        """공급자 상태에 실패를 적는다. 돌려주는 값: 적은 시각(last_error_at) — 그 단위의 실행 기록이 finished_at 으로 같이 쓴다(IM-12)."""
+        at = self._now()
+        await self.ctx.status.failure(p.name, at=at, error=f"prtAgCd {u.pa} {u.day}: {why}", http_status=http_status)
+        return at
 
     def _record(self, u: Unit, started: datetime, status: str, got: _DayFetch | None, *, error: str) -> None:
         self.counts["units_failed"] += 1

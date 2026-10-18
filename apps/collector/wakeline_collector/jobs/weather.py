@@ -129,8 +129,9 @@ async def _guard(ctx: JobContext, job: str, provider: str, cost: int, coro_facto
             return started, None
         http_status = f.error.status if isinstance(f.error, ProviderHttpError) else None
         why = f.detail()
-        await ctx.status.failure(provider, at=datetime.now(UTC), error=why, http_status=http_status)
-        ctx.db.record_run(job, provider, started, status="error", http_status=http_status, error_text=why)
+        at = datetime.now(UTC)  # 한 번 잰 실패 시각: last_error_at = 이 실행의 finished_at(IM-12)
+        await ctx.status.failure(provider, at=at, error=why, http_status=http_status)
+        ctx.db.record_run(job, provider, started, status="error", http_status=http_status, error_text=why, finished_at=at)
         log.warning("%s/%s failed: %s", job, provider, f.log_text())
         return started, None
 
