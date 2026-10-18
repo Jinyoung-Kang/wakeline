@@ -207,3 +207,16 @@ async def test_status_put_and_prune_including_leftovers():
     await st.delete(["hot:1.0:2.0:50"])
     assert st.errors == 3  # Redis 오류는 삼킨다
     assert status_value("throttled", None, None, "provider disabled by operator", "adsb_fi")["interval_s"] is None
+
+
+async def test_im19_status_put_and_delete_say_whether_they_wrote():
+    """IM-19: 오류는 삼키되 썼는지(지웠는지)는 돌려준다 — 부르는 쪽이 성공한 쓰기만 '썼음'으로 기억하게(실패하면 다음 틱에 다시)."""
+    r = FakeRedis()
+    st = DemandStatus(r)  # type: ignore[arg-type]
+    assert await st.put({}) is True and await st.delete([]) is True  # 쓸 것이 없다
+    assert await st.put({"focus:abcdef": {"state": "active"}}) is True
+    assert await st.delete(["focus:abcdef"]) is True and STATUS_KEY in r.kv and not r.kv[STATUS_KEY]
+    r.down = True
+    assert await st.put({"focus:abcdef": {"state": "disabled"}}) is False
+    assert await st.delete(["focus:abcdef"]) is False
+    assert st.errors == 2
