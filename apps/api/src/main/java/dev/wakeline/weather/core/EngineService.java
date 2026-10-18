@@ -15,6 +15,7 @@ import org.springframework.core.annotation.Order;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
+import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayDeque;
@@ -86,6 +87,8 @@ public class EngineService {
     private ExtraIndex extraIndex;
     private String lastMode = ZoneSource.MODE_OFF;
     private final MeterRegistry meters;
+    /** 판정 시각(now)의 출처 — 운영은 시스템 시계, 시험은 움직이는 시계를 넣는다. */
+    private final Clock clock;
     public static final String END_JUDGING_OFF = "judging_off";
 
     public EngineService(SnapshotStore snapshots, SigmetStore sigmets, ApplicationEventPublisher events, MeterRegistry meters) {
@@ -99,6 +102,13 @@ public class EngineService {
     }
 
     public EngineService(SnapshotStore snapshots, SigmetStore sigmets, ApplicationEventPublisher events, MeterRegistry meters, ZoneSource extra) {
+        this(snapshots, sigmets, events, meters, extra, Clock.systemUTC());
+    }
+
+    /** 시계를 정하는 생성자(시험 — 장애 뒤 늦게 전달되는 스냅샷 재현). 다른 생성자는 시스템 시계를 쓴다. */
+    EngineService(SnapshotStore snapshots, SigmetStore sigmets, ApplicationEventPublisher events, MeterRegistry meters, ZoneSource extra,
+                  Clock clock) {
+        this.clock = clock;
         this.extra = extra;
         this.meters = meters;
         this.snapshots = snapshots;
@@ -113,7 +123,7 @@ public class EngineService {
 
     @EventListener
     public void onSigmets(WeatherEvents.SigmetsUpdated e) {
-        Instant now = Instant.now();
+        Instant now = clock.instant();
         synchronized (lock) {
             index.set(build(e.state(), now));
             activeSigmetIds = activeIds(e.state().byId().values(), now);
@@ -140,7 +150,7 @@ public class EngineService {
     @EventListener
     @Order(Ordered.HIGHEST_PRECEDENCE)
     public void onSnapshot(AircraftEvents.SnapshotUpdated e) {
-        run(Instant.now());
+        run(clock.instant());
     }
 
     /**
@@ -149,7 +159,7 @@ public class EngineService {
      */
     @Scheduled(fixedDelay = 30_000, initialDelay = 30_000)
     public void rebuildForExpiry() {
-        Instant now = Instant.now();
+        Instant now = clock.instant();
         SigmetStore.State published;
         Set<String> expired;
         synchronized (lock) {
@@ -303,7 +313,7 @@ public class EngineService {
      * 선회 여부는 마지막 엔진 주기 기준. a 가 null 이면 (false, null).
      */
     public PredictionAvailability predictionAvailability(AircraftState a) {
-        return IntersectionEngine.availability(a, Instant.now(), a != null && lastTurning.contains(a.hex()));
+        return IntersectionEngine.availability(a, clock.instant(), a != null && lastTurning.contains(a.hex()));
     }
 
     /** hex 로 현재 병합 뷰에서 찾아 predictionAvailability(AircraftState). */
