@@ -579,12 +579,15 @@ describe("ops writes in flight: one request per click burst (web-review B2)", ()
   const button = (text: string) => find((e) => e.tagName === "BUTTON" && visibleText(e) === text);
   const SETTINGS = { items: [{ key: "region_poll_s", value: 10, version: 3, updated_by: "op", updated_at: "2026-09-28T15:00:00Z" }] };
   const PROVIDERS = { ...(BODY["/api/v1/ops/providers"] as object), providers: [{ name: "adsbdb" }], provider_switch: [{ provider: "adsbdb", disabled: false, version: 1, updated_at: "2026-09-28T00:59:00Z", updated_by: "op", redis_disabled: "0", mirror_differs: false }] };
-  /** 쓰기(PUT · POST)는 붙잡아 두고 부른 순서대로 writes 에 쌓는다 — 응답 전에 두 번 누르는 상황. settings = 그때그때의 GET /ops/settings 본문 */
+  /**
+   * 쓰기(PUT · POST)는 붙잡아 두고 부른 순서대로 writes 에 쌓는다 — 응답 전에 두 번 누르는 상황. settings = 그때그때의 GET /ops/settings 본문
+   * (Promise 면 그 응답 — GET 을 붙잡아 둘 때)
+   */
   function stubHeldWrites(writes: { method: string; url: string; reply: (r: Response) => void; init?: RequestInit }[], settings: () => unknown = () => SETTINGS) {
     vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
       const method = init?.method ?? "GET";
       if (method !== "GET") return new Promise<Response>((r) => writes.push({ method, url, reply: r, init }));
-      if (url === "/api/v1/ops/settings") return json(200, settings());
+      if (url === "/api/v1/ops/settings") { const s = settings(); return s instanceof Promise ? s : json(200, s); }
       if (url === "/api/v1/ops/providers") return json(200, PROVIDERS);
       return url in BODY ? json(200, BODY[url]) : json(404, { detail: "no such resource" });
     });
@@ -648,27 +651,60 @@ describe("ops writes in flight: one request per click burst (web-review B2)", ()
    * IM-15: 저장 응답을 기다리는 동안 그 키의 입력은 막히지 않는다 — 운영자가 오타를 고치면(15 → 20) 저장 성공 뒤의 drop 이 그 새 편집까지 말없이 지웠다
    * ('저장됨' 만 남고 20 은 어디에도 없었다). 보낸 편집 그대로일 때만 지우고, 고친 값은 방금 저장이 만든 version 위의 편집으로 남는다
    */
-  it("a value typed while the save is in flight survives the save's success, on the version that save made, and can be saved again", async () => {
-    const writes: { method: string; url: string; reply: (r: Response) => void; init?: RequestInit }[] = [];
-    let settings: unknown = SETTINGS;
-    stubHeldWrites(writes, () => settings);
+  const V4_ROW = { key: "region_poll_s", value: 15, version: 4, updated_by: "op", updated_at: "2026-09-28T23:41:15Z" };
+  const regionPollInput = () => find((e) => e.tagName === "INPUT" && e.getAttribute("aria-label") === "region_poll_s 값")!;
+  const valueOf = (e: MiniElement) => (e as unknown as { value?: unknown }).value ?? e.getAttribute("value");
+  /**
+   * IM-15 의 앞부분: 15 를 저장하고 PUT 을 기다리는 동안 20 으로 고친 뒤, 서버가 15 를 v4 로 저장했다고 답한다. 저장 뒤 새로고침(GET /ops/settings)은
+   * 붙잡아 두고 그 응답 함수를 돌려준다 — 목록은 아직 v3 인 구간(R10)
+   */
+  const retypeWhileSaving = async (writes: { method: string; url: string; reply: (r: Response) => void; init?: RequestInit }[]) => {
+    let held: ((r: Response) => void)[] | null = null; // null = GET 에 곧바로 답한다(처음 불러오기)
+    stubHeldWrites(writes, () => (held ? new Promise<Response>((r) => held!.push(r)) : SETTINGS));
     await mount();
     await editRegionPoll("15");
     await React.act(async () => { void propsOf(button("save")!).onClick(); });
     expect(writes.map((w) => `${w.method} ${w.url}`)).toEqual(["PUT /api/v1/ops/settings/region_poll_s"]);
-    const input = () => find((e) => e.tagName === "INPUT" && e.getAttribute("aria-label") === "region_poll_s 값")!;
-    const valueOf = (e: MiniElement) => (e as unknown as { value?: unknown }).value ?? e.getAttribute("value");
-    await React.act(async () => { propsOf(input()).onChange({ target: { value: "20" } }); });
-    // 서버는 15 를 v4 로 저장했다 — 뒤따르는 새로고침도 그것을 본다
-    settings = { items: [{ key: "region_poll_s", value: 15, version: 4, updated_by: "op", updated_at: "2026-09-28T23:41:15Z" }] };
-    writes[0].reply(json(200, { key: "region_poll_s", value: 15, version: 4, updated_by: "op", updated_at: "2026-09-28T23:41:15Z", changed: true, mirrored: true }));
+    await React.act(async () => { propsOf(regionPollInput()).onChange({ target: { value: "20" } }); });
+    const gets: ((r: Response) => void)[] = [];
+    held = gets;
+    writes[0].reply(json(200, { ...V4_ROW, changed: true, mirrored: true }));
     await settle();
+    expect(gets).toHaveLength(1); // 저장 뒤 새로고침이 떠 있다 — 목록은 아직 v3
+    return gets;
+  };
+
+  it("a value typed while the save is in flight survives the save's success, on the version that save made, and can be saved again", async () => {
+    const writes: { method: string; url: string; reply: (r: Response) => void; init?: RequestInit }[] = [];
+    const gets = await retypeWhileSaving(writes);
     expect(byTestId("settings-ok")?.textContent).toBe("region_poll_s 저장됨 — 다음 주기부터 적용");
-    expect(valueOf(input())).toBe("20");
+    expect(valueOf(regionPollInput())).toBe("20");
+    // R10 — 수정 전: 새로고침이 오기 전 목록(v3)과 옮긴 편집(v4)이 달라 '편집하는 동안 서버 값이 바뀜(v4 → v3: 10)' 거짓 충돌(role=alert)에 save 가 막혔다
+    expect(byTestId("setting-conflict")).toBeNull();
+    expect(button("save")!.getAttribute("disabled")).toBeNull();
+    // 새로고침도 서버가 저장한 v4 를 본다
+    gets[0](json(200, { items: [V4_ROW] }));
+    await settle();
+    expect(valueOf(regionPollInput())).toBe("20");
     expect(byTestId("setting-conflict")).toBeNull(); // v4 는 방금 이 저장이 만든 것 — 다른 곳의 변경이 아니다
     expect(button("save")!.getAttribute("disabled")).toBeNull();
     await React.act(async () => { void propsOf(button("save")!).onClick(); });
     expect(writes.map((w) => `${w.method} ${w.url}`)).toEqual(["PUT /api/v1/ops/settings/region_poll_s", "PUT /api/v1/ops/settings/region_poll_s"]);
+    expect((writes[1].init?.headers as Record<string, string>)["If-Match"]).toBe("4");
+    expect(JSON.parse(String(writes[1].init?.body))).toEqual({ value: 20 });
+  });
+
+  it("when the refresh after the save fails the list stays old, but that is no conflict: the kept edit saves on the version the save made (R10)", async () => {
+    const writes: { method: string; url: string; reply: (r: Response) => void; init?: RequestInit }[] = [];
+    const gets = await retypeWhileSaving(writes);
+    gets[0](json(503, { detail: "settings store unavailable" }, "application/problem+json"));
+    await settle();
+    expect(valueOf(regionPollInput())).toBe("20");
+    // 수정 전: 다음 15 s 주기가 성공할 때까지 거짓 충돌이 남았고, '내 값으로 덮어쓰기' 가 편집을 v3 으로 되돌려 다음 저장이 409 였다
+    expect(byTestId("setting-conflict")).toBeNull();
+    expect(button("save")!.getAttribute("disabled")).toBeNull();
+    await React.act(async () => { void propsOf(button("save")!).onClick(); });
+    expect(writes).toHaveLength(2);
     expect((writes[1].init?.headers as Record<string, string>)["If-Match"]).toBe("4");
     expect(JSON.parse(String(writes[1].init?.body))).toEqual({ value: 20 });
   });

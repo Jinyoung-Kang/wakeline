@@ -309,6 +309,8 @@ describe("R-35 settings: the version is taken when editing starts, so a refresh 
     expect(opsLib.settingAfterSave(undefined, sent, saved)).toBeUndefined(); // 기다리는 동안 '새 값 보기'로 편집을 버렸다
     // 수정 전: 무엇이든 지웠다 — 20 은 '저장됨' 문구 아래 말없이 사라졌다
     expect(opsLib.settingAfterSave({ value: "20", version: 3 }, sent, saved)).toEqual({ value: "20", version: 4 });
+    // 저장 뒤 새로고침이 오기 전 목록은 아직 v3 — 편집이 목록보다 새 version 이면 충돌이 아니다(R10 — 수정 전: v4 → v3 거짓 충돌)
+    expect(opsLib.settingConflict({ value: "20", version: 4 }, { version: 3 })).toBe(false);
     // 같은 값이라 바뀐 것 없음(§G45) — 응답 version 은 보낸 version 그대로
     expect(opsLib.settingAfterSave({ value: "20", version: 3 }, sent, { ...saved, version: 3, changed: false })).toEqual({ value: "20", version: 3 });
     // version 을 모르는 응답 — 편집이 처음 본 version 을 둔다(새로고침이 다른 version 을 보이면 충돌 줄로 고르게 한다)

@@ -335,9 +335,13 @@ export function settingIfMatch(edit: SettingEdit): string {
   return String(edit.version);
 }
 
-/** 편집하는 동안 서버 값이 바뀌었는가(다른 운영자·다른 탭) */
+/**
+ * 편집하는 동안 서버 값이 바뀌었는가(다른 운영자·다른 탭) — 목록의 version 이 편집이 본 version 보다 클 때만. 다른 곳의 변경은 목록 version 을 올리기만
+ * 하므로, 편집이 목록보다 새 version 인 것은 자기 저장 직후뿐이다: {@link settingAfterSave} 가 남은 편집을 응답 version 으로 옮겼는데 뒤따르는 새로고침
+ * (GET /ops/settings)이 아직 오지 않았거나 실패했다. 그것은 충돌이 아니라 '목록이 아직 옛것'이다(R10 — 전에는 v4 → v3 거짓 충돌 줄에 save 가 막혔다)
+ */
 export function settingConflict(edit: SettingEdit | undefined, item: { version: number }): boolean {
-  return edit != null && edit.version !== item.version;
+  return edit != null && edit.version < item.version;
 }
 
 /** 운영자가 "내 값으로 덮어쓰기"를 고른 경우: 지금 본 서버 version 으로 옮긴다 */
@@ -350,7 +354,7 @@ export function rebaseSetting(edit: SettingEdit, item: { version: number }): Set
  * 지금 편집이 보낸 값 그대로면 지운다(서버 값이 이미 그것). 응답을 기다리는 동안 입력은 막히지 않아 고친 값이 있으면 남긴다(IM-15 — 전에는 무엇이든
  * 지워 '저장됨' 아래 말없이 사라졌다). 그 편집은 방금 저장한 값 위의 것이라 응답의 version 으로 옮긴다 — 다음 저장의 If-Match 가 되고, 뒤따르는 새로고침이
  * 그 version 을 '다른 곳의 변경' 충돌로 보이지 않는다. 응답에 정수 version 이 없거나 편집이 이미 더 새 version(기다리는 동안 '내 값으로 덮어쓰기')이면
- * 편집의 version 을 그대로 둔다 — 짐작하지 않고, 서버와 다르면 충돌 줄로 고르게 한다
+ * 편집의 version 을 그대로 둔다 — 짐작하지 않고, 서버가 더 새 version 이면 충돌 줄로 고르게 한다(목록이 옮긴 version 보다 옛것인 동안은 충돌이 아니다 — {@link settingConflict})
  */
 export function settingAfterSave(now: SettingEdit | undefined, sent: SettingEdit, response: unknown): SettingEdit | undefined {
   if (now === undefined || now.value === sent.value) return undefined;
