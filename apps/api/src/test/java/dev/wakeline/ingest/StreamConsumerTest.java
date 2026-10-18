@@ -6,9 +6,15 @@ import dev.wakeline.aircraft.core.SnapshotStore;
 import dev.wakeline.platform.support.Receipt;
 import dev.wakeline.weather.core.RadarStore;
 import dev.wakeline.weather.core.SigmetStore;
+import dev.wakeline.weather.core.WarningStore;
 import dev.wakeline.weather.core.WeatherEvents;
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 import org.springframework.data.redis.connection.stream.MapRecord;
 import org.springframework.data.redis.connection.stream.RecordId;
 import tools.jackson.databind.json.JsonMapper;
@@ -19,6 +25,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -373,6 +380,115 @@ class StreamConsumerTest {
         assertThat(snapshots.focus()).isEmpty();
         assertThat(ev.getLast()).isInstanceOf(AircraftEvents.AircraftBacklog.class);
         assertThat(((AircraftEvents.AircraftBacklog) ev.getLast()).scope()).isEqualTo("focus");
+    }
+
+    // ---------- IM-08: 벽시계가 뒤로 간 뒤의 fetched_at 단조 가드 ----------
+
+    static final String CELL = "35.5:139.5:150";
+    static final String RADAR = "{\"host\":\"https://tilecache.rainviewer.com\",\"generated\":1,\"past\":[{\"time\":1,\"path\":\"/v2/radar/1\"}]}";
+    /** 단조 가드가 있는 실시간 상태 일곱(항공기 넷 · SIGMET · 특보 · 레이더). */
+    static final List<String> GUARDED = List.of("region", "global", "hot", "focus", "sigmet", "wx_warnings", "radar");
+
+    static MapRecord<String, String, String> message(String target, Instant t) throws Exception {
+        return switch (target) {
+            case "region", "global" -> envelope(StreamConsumer.S_AIRCRAFT, "aircraft", target, t, aircraftPayload("a10001", t));
+            case "hot" -> envelope(StreamConsumer.S_AIRCRAFT, "aircraft", "hot", t, hotPayload(CELL, "b10001", t));
+            case "focus" -> envelope(StreamConsumer.S_AIRCRAFT, "aircraft", "focus", t, focusPayload(List.of("c10001"), null, t, "c10001"));
+            case "sigmet" -> envelope(StreamConsumer.S_SIGMET, "sigmet", "-", t, sigmetPayload("S:1:1", t));
+            case "wx_warnings" -> envelope(StreamConsumer.S_WXWARN, "wx_warnings", "-", t, "{\"complete\":true,\"dropped\":0,\"warnings\":[]}");
+            case "radar" -> envelope(StreamConsumer.S_RADAR, "radar", "-", t, RADAR);
+            default -> throw new IllegalArgumentException(target);
+        };
+    }
+
+    /** api 의 지금을 시험이 정하는 소비자와 저장소 한 벌. */
+    static final class ClockRig {
+        final SnapshotStore snapshots = new SnapshotStore();
+        final SigmetStore sigmets = new SigmetStore();
+        final RadarStore radar = new RadarStore();
+        final WarningStore warnings = new WarningStore();
+        final SimpleMeterRegistry meters = new SimpleMeterRegistry();
+        final AtomicLong nowMs = new AtomicLong();
+        final StreamConsumer consumer = new StreamConsumer(null, new SchemaValidator(), snapshots, sigmets, radar, e -> { },
+                JsonMapper.builder().build(), meters);
+
+        ClockRig() {
+            consumer.setWarningStore(warnings);
+            consumer.setClock(nowMs::get);
+        }
+
+        /** fetched_at 이 fetchedAt 인 메시지를 api 의 지금 apiNow 에 처리한다. */
+        void deliver(String target, Instant fetchedAt, Instant apiNow) throws Exception {
+            nowMs.set(apiNow.toEpochMilli());
+            consumer.process(message(target, fetchedAt), true);
+        }
+
+        /** 그 대상의 지금 값 fetched_at. */
+        Instant current(String target) {
+            return switch (target) {
+                case "region" -> snapshots.region().fetchedAt();
+                case "global" -> snapshots.global().fetchedAt();
+                case "hot" -> snapshots.hot().get(CELL).fetchedAt();
+                case "focus" -> snapshots.focus().get("c10001").fetchedAt();
+                case "sigmet" -> sigmets.state().fetchedAt();
+                case "wx_warnings" -> warnings.state().fetchedAt();
+                case "radar" -> radar.frames().fetchedAt();
+                default -> throw new IllegalArgumentException(target);
+            };
+        }
+
+        double clockBack(String target) { return meters.counter("wakeline_stream_clock_back_total", "scope", target).count(); }
+
+        double staleSkipped() { return meters.counter("wakeline_stream_messages_total", "result", "stale_skipped").count(); }
+    }
+
+    /**
+     * IM-08: 실행 중 벽시계가 300 s 뒤로 가면(api 의 지금 = T - 300 s) 그 뒤 메시지(T - 295 s)는 지금 값(T)보다 fetched_at 이 작아도 새 값이다.
+     * 예전에는 시계가 T 를 다시 지날 때까지 모두 백로그로 버려 지도 · 알림 판정 · SIGMET · 특보 · 레이더가 말없이 멈췄다. 사전 검사와 저장소가
+     * 같은 판단을 써야 한다(하나만 고치면 여전히 버린다). 시계가 그대로인 재전송(지금 = T + 10 s)은 여전히 백로그다.
+     * 받아들인 것은 stale_skipped 와 따로 센다.
+     */
+    @Test void clockSteppedBack_theNextMessageIsTaken_redeliveryIsStillBacklog_inEveryGuardedState() throws Exception {
+        for (String target : GUARDED) {
+            ClockRig back = new ClockRig();
+            back.deliver(target, T, T.plusMillis(500));
+            back.deliver(target, T.minusSeconds(295), T.minusSeconds(300));
+            assertThat(back.current(target)).as(target + " · now = T - 300 s").isEqualTo(T.minusSeconds(295));
+            assertThat(back.clockBack(target)).as(target + " · clock_back").isEqualTo(1.0);
+            assertThat(back.staleSkipped()).as(target + " · stale_skipped").isZero();
+
+            ClockRig same = new ClockRig();
+            same.deliver(target, T, T.plusMillis(500));
+            same.deliver(target, T.minusSeconds(295), T.plusSeconds(10));
+            assertThat(same.current(target)).as(target + " · now = T + 10 s").isEqualTo(T);
+            assertThat(same.clockBack(target)).as(target + " · clock_back").isZero();
+            assertThat(same.staleSkipped()).as(target + " · stale_skipped").isEqualTo(1.0);
+        }
+    }
+
+    /** 역행 WARN 은 스코프마다 한 번(그 스코프의 다음 역행은 한동안 지표로만) — 지표는 모두 센다. */
+    @Test void clockSteppedBack_warnsOncePerScope_andCountsEveryTime() throws Exception {
+        ListAppender<ILoggingEvent> logs = new ListAppender<>();
+        logs.start();
+        Logger logger = (Logger) LoggerFactory.getLogger(StreamConsumer.class);
+        logger.addAppender(logs);
+        try {
+            ClockRig r = new ClockRig();
+            r.deliver("region", T, T.plusMillis(500));
+            r.deliver("region", T.minusSeconds(295), T.minusSeconds(300)); // 300 s 뒤로
+            r.deliver("region", T.minusSeconds(285), T.minusSeconds(284)); // 그다음은 그냥 새 값
+            r.deliver("region", T.minusSeconds(895), T.minusSeconds(900)); // 다시 600 s 뒤로
+            r.deliver("global", T, T.plusMillis(500));
+            r.deliver("global", T.minusSeconds(295), T.minusSeconds(300));
+            assertThat(r.clockBack("region")).isEqualTo(2.0);
+            assertThat(r.clockBack("global")).isEqualTo(1.0);
+            List<String> warns = logs.list.stream().filter(e -> e.getLevel() == Level.WARN).map(ILoggingEvent::getFormattedMessage).toList();
+            assertThat(warns).hasSize(2);
+            assertThat(warns.get(0)).startsWith("region:").contains("ahead of the api clock");
+            assertThat(warns.get(1)).startsWith("global:");
+        } finally {
+            logger.detachAppender(logs);
+        }
     }
 
     /** 선행 구성 요소 자리(저장기 · 가드): 준비 여부를 시험이 바꾼다. */

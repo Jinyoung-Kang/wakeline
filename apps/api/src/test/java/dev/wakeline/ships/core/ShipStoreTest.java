@@ -51,6 +51,22 @@ class ShipStoreTest {
         assertThat(v1.get("440000001").state().lat()).as("old view is immutable").isEqualTo(35);
     }
 
+    /**
+     * IM-08: 봉투 fetched_at(meta.fetched_at · stale 의 기준)도 단조 가드를 따른다 — 벽시계가 300 s 뒤로 간 뒤의 봉투는 작아도 새 값이고,
+     * 시계가 그대로인 재전달(지금 = T + 10 s)은 되돌리지 않는다.
+     */
+    @Test void fetchedAtMarker_followsAWallClockThatWentBack_redeliveryDoesNotMoveIt() {
+        ShipStore back = new ShipStore();
+        back.apply(List.of(pos("440000009", 35, 129, T)), List.of(), T, "aisstream", NOW);
+        back.apply(List.of(), List.of(), T.minusSeconds(295), "aisstream", T.minusSeconds(300).toEpochMilli());
+        assertThat(back.view().fetchedAt()).as("now = T - 300 s").isEqualTo(T.minusSeconds(295));
+
+        ShipStore same = new ShipStore();
+        same.apply(List.of(pos("440000009", 35, 129, T)), List.of(), T, "aisstream", NOW);
+        same.apply(List.of(), List.of(), T.minusSeconds(295), "aisstream", T.plusSeconds(10).toEpochMilli());
+        assertThat(same.view().fetchedAt()).as("now = T + 10 s").isEqualTo(T);
+    }
+
     @Test void statics_attachBeforeOrAfterPosition_olderIgnored() {
         ShipStore s = new ShipStore();
         // 정적 정보가 먼저(위치 없음 — 실시간 목록에는 없다)

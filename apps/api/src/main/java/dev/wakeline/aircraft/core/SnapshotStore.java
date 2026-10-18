@@ -288,6 +288,8 @@ public class SnapshotStore {
     /**
      * focus 메시지 반영. hex 마다: focus 임대에 있고(임대를 아직 모르면 통과), 그 hex 의 현재 관측보다 fetched_at 이 새롭고 seen_at 이
      * 오래되지 않았을 때만 바꾼다(묶음 요청이 여러 메시지로 나뉘어 와도 hex 별로 판단). 받은 것이 하나도 없으면 null.
+     * 벽시계가 뒤로 가서 받아들인 관측(FetchedAtGuard.Verdict.CLOCK_STEPPED_BACK)은 seen_at 을 견주지 않는다 — 이전 관측의 seen_at 도 옛 시계라
+     * (수집기는 공급자 시각이 수신 시각과 어긋나면 수신 시각으로 잰다) 새 관측이 늘 더 오래돼 보인다(IM-08).
      * @param nowMs api 의 지금(ms)
      * @return 받아들인 hex 들의 이전 관측(없었으면 빠짐)을 담은 스냅샷(scope focus) — 팬아웃 범위 계산용, 없으면 null
      */
@@ -301,7 +303,10 @@ public class SnapshotStore {
             for (AircraftState a : s.states().values()) {
                 if (leased != null && !leased.contains(a.hex())) continue;
                 FocusObs cur = c.focus().get(a.hex());
-                if (cur != null && (!FetchedAtGuard.newer(s.fetchedAt(), cur.fetchedAt(), nowMs) || a.seenAt().isBefore(cur.state().seenAt()))) continue;
+                if (cur != null) {
+                    FetchedAtGuard.Verdict v = FetchedAtGuard.judge(s.fetchedAt(), cur.fetchedAt(), nowMs);
+                    if (!v.accepted() || (v == FetchedAtGuard.Verdict.NEWER && a.seenAt().isBefore(cur.state().seenAt()))) continue;
+                }
                 if (focus == null) focus = new HashMap<>(c.focus());
                 focus.put(a.hex(), new FocusObs(a, s.fetchedAt()));
                 if (cur != null) before.put(a.hex(), cur.state());

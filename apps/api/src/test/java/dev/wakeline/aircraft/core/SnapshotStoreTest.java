@@ -217,6 +217,63 @@ class SnapshotStoreTest {
         assertThat(v.covering("unknown", "0000f1", NOW.toEpochMilli())).isFalse();
     }
 
+    // ---- IM-08: 벽시계 역행 — 지금 값이 api 의 지금보다 60 s 넘게 미래이면 새 값을 받는다(재전송 거부는 그대로) ----
+
+    static final long BACK_MS = NOW.minusSeconds(300).toEpochMilli();   // 시계가 300 s 뒤로 간 뒤의 지금
+    static final long AFTER_MS = NOW.plusSeconds(10).toEpochMilli();    // 시계는 그대로, 재전송
+
+    @Test void clockSteppedBack_regionAndGlobalTakeTheNewValue_redeliveryIsStillRejected() {
+        for (String scope : java.util.List.of("region", "global")) {
+            SnapshotStore a = new SnapshotStore();
+            a.replaceIfNewer(snap(a, scope, NOW), NOW_MS);
+            Snapshot back = snap(a, scope, NOW.minusSeconds(295));
+            assertThat(a.replaceIfNewer(back, BACK_MS)).as(scope + " · now = T - 300 s").isNotNull();
+            assertThat(a.current(scope)).isSameAs(back);
+            assertThat(a.replaceIfNewer(snap(a, scope, NOW.minusSeconds(290)), BACK_MS)).as(scope + " · next one is simply newer").isNotNull();
+
+            SnapshotStore b = new SnapshotStore();
+            Snapshot cur = snap(b, scope, NOW);
+            b.replaceIfNewer(cur, NOW_MS);
+            assertThat(b.replaceIfNewer(snap(b, scope, NOW.minusSeconds(295)), AFTER_MS)).as(scope + " · now = T + 10 s").isNull();
+            assertThat(b.current(scope)).isSameAs(cur);
+        }
+    }
+
+    @Test void clockSteppedBack_hotCellTakesTheNewValue_andTheScopeMarkerFollows() {
+        String cell = "35.5:139.5:150";
+        SnapshotStore a = new SnapshotStore();
+        a.replaceHotIfNewer(cell, scoped(a, "hot", NOW, at("0000a1", 35.5, 139.5, NOW.minusSeconds(1), "adsb_fi")), NOW_MS);
+        Snapshot back = scoped(a, "hot", NOW.minusSeconds(295), at("0000a1", 35.6, 139.5, NOW.minusSeconds(296), "adsb_fi"));
+        assertThat(a.replaceHotIfNewer(cell, back, BACK_MS)).as("now = T - 300 s").isNotNull();
+        assertThat(a.hot().get(cell)).isSameAs(back);
+        assertThat(a.view(NOW.minusSeconds(294)).scopeFetchedAt("hot")).as("feed marker on the new clock").isEqualTo(NOW.minusSeconds(295));
+
+        SnapshotStore b = new SnapshotStore();
+        Snapshot cur = scoped(b, "hot", NOW, at("0000a1", 35.5, 139.5, NOW.minusSeconds(1), "adsb_fi"));
+        b.replaceHotIfNewer(cell, cur, NOW_MS);
+        assertThat(b.replaceHotIfNewer(cell, scoped(b, "hot", NOW.minusSeconds(295)), AFTER_MS)).as("now = T + 10 s").isNull();
+        assertThat(b.hot().get(cell)).isSameAs(cur);
+    }
+
+    /** focus 는 hex 마다 seen_at 도 견준다 — 시계가 뒤로 가면 새 관측의 seen_at 도 새 시계라(수신 시각 기준) 이전 관측보다 작다. */
+    @Test void clockSteppedBack_focusHexTakesTheNewObservation_redeliveryIsStillRejected() {
+        SnapshotStore a = new SnapshotStore();
+        a.applyFocus(scoped(a, "focus", NOW, at("0000c9", 50, 10, NOW.minusSeconds(1), "adsb_fi")), NOW_MS);
+        AircraftState f = at("0000c9", 50.1, 10, NOW.minusSeconds(296), "adsb_fi");
+        assertThat(a.applyFocus(scoped(a, "focus", NOW.minusSeconds(295), f), BACK_MS)).as("now = T - 300 s").isNotNull();
+        assertThat(a.focus().get("0000c9").state()).isSameAs(f);
+        assertThat(a.view(NOW.minusSeconds(294)).scopeFetchedAt("focus")).isEqualTo(NOW.minusSeconds(295));
+
+        SnapshotStore b = new SnapshotStore();
+        AircraftState cur = at("0000c9", 50, 10, NOW.minusSeconds(1), "adsb_fi");
+        b.applyFocus(scoped(b, "focus", NOW, cur), NOW_MS);
+        assertThat(b.applyFocus(scoped(b, "focus", NOW.minusSeconds(295), at("0000c9", 50.1, 10, NOW.minusSeconds(296), "adsb_fi")), AFTER_MS))
+                .as("now = T + 10 s").isNull();
+        assertThat(b.focus().get("0000c9").state()).isSameAs(cur);
+        // 시계가 그대로면 fetched_at 이 새로워도 seen_at 이 오래된 관측은 여전히 받지 않는다
+        assertThat(b.applyFocus(scoped(b, "focus", NOW.plusSeconds(5), at("0000c9", 50.1, 10, NOW.minusSeconds(10), "adsb_fi")), AFTER_MS)).isNull();
+    }
+
     @Test void wrongScopeForWriter_isRejected() {
         SnapshotStore store = new SnapshotStore();
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> store.replace(scoped(store, "hot", NOW))).isInstanceOf(IllegalArgumentException.class);
