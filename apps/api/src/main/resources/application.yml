@@ -49,7 +49,7 @@ spring:
 server:
   port: 8000
   shutdown: graceful
-  forward-headers-strategy: none        # XFF 는 TrustedProxyFilter 가 edge 에 한해 해석한다
+  forward-headers-strategy: none        # XFF 는 platform.web.ClientIp 가 wakeline.trusted-proxy(edge)에서 온 요청에 한해 첫 값을 쓴다(X-Request-Id 도 같은 조건 — RequestIdFilter)
   tomcat.max-http-form-post-size: 64KB
   max-http-request-header-size: 16KB
 
