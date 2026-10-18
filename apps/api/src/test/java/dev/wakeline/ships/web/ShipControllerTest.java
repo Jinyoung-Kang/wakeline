@@ -856,8 +856,8 @@ class ShipControllerTest {
         mvc.perform(get("/api/v1/ships/search").queryParam("q", "HANJIN")).andExpect(status().isOk()).andExpect(jsonPath("$.meta.db_unavailable").value(true));
         List<String> lines = AircraftControllerTest.warnLines(out);
         assertThat(lines).hasSize(3);
-        assertThat(lines.get(0)).contains("statement cancelled (SQLSTATE 57014) request_id=- path=/api/v1/ships/440000098 elapsed_ms=- → 503: ");
-        assertThat(lines.get(1)).contains("path=/api/v1/ships/440000002 elapsed_ms=- → 200 without stored data (meta.db_unavailable): ");
+        assertThat(lines.get(0)).contains("statement cancelled (SQLSTATE 57014) request_id=- path=/api/v1/ships/{mmsi} uri=\"/api/v1/ships/440000098\" elapsed_ms=- → 503: ");
+        assertThat(lines.get(1)).contains("path=/api/v1/ships/{mmsi} uri=\"/api/v1/ships/440000002\" elapsed_ms=- → 200 without stored data (meta.db_unavailable): ");
         assertThat(lines.get(2)).contains("path=/api/v1/ships/search query=\"q=HANJIN\" elapsed_ms=- → 200 without stored data (meta.db_unavailable): ");
         // 검색 문장은 됐고 lookup 에서 끊긴 경우도 한 줄
         repo.down = false;

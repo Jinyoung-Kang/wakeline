@@ -104,13 +104,13 @@ public class AircraftControllerTest {
                 .andExpect(jsonPath("$.code").value("UNAVAILABLE")).andExpect(jsonPath("$.detail").value("aircraft history store unavailable"));
         List<String> lines = warnLines(out);
         assertThat(lines).hasSize(1);
-        assertThat(lines.get(0)).contains("statement cancelled (SQLSTATE 57014) request_id=- path=/api/v1/aircraft/ffffff elapsed_ms=- → 503: ")
+        assertThat(lines.get(0)).contains("statement cancelled (SQLSTATE 57014) request_id=- path=/api/v1/aircraft/{hex} uri=\"/api/v1/aircraft/ffffff\" elapsed_ms=- → 503: ")
                 .contains("canceling statement due to user request");
         m.perform(get("/api/v1/aircraft/71be01")).andExpect(status().isOk()).andExpect(jsonPath("$.meta.db_unavailable").value(true));
         m.perform(get("/api/v1/aircraft/search").queryParam("q", "KAL")).andExpect(status().isOk()).andExpect(jsonPath("$.meta.db_unavailable").value(true));
         lines = warnLines(out);
         assertThat(lines).hasSize(3);
-        assertThat(lines.get(1)).contains("statement cancelled (SQLSTATE 57014) request_id=- path=/api/v1/aircraft/71be01 elapsed_ms=- → 200 without stored data (meta.db_unavailable): ");
+        assertThat(lines.get(1)).contains("statement cancelled (SQLSTATE 57014) request_id=- path=/api/v1/aircraft/{hex} uri=\"/api/v1/aircraft/71be01\" elapsed_ms=- → 200 without stored data (meta.db_unavailable): ");
         assertThat(lines.get(2)).contains("path=/api/v1/aircraft/search query=\"q=KAL\" elapsed_ms=- → 200 without stored data (meta.db_unavailable): ");
         assertThat(out.getAll()).doesNotContain("unhandled error");
     }

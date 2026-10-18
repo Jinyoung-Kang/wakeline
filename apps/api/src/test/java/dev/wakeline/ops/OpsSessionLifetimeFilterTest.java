@@ -1,8 +1,16 @@
 package dev.wakeline.ops;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
+import dev.wakeline.logs.LogEvents;
+import dev.wakeline.platform.support.LogMasker;
+import dev.wakeline.platform.web.ProblemAdvice;
 import dev.wakeline.platform.web.RequestIdFilter;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.slf4j.LoggerFactory;
 import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.jdbc.BadSqlGrammarException;
@@ -205,7 +213,7 @@ class OpsSessionLifetimeFilterTest {
         assertThat(chain.getRequest()).as("not passed on unverified").isNull();
         assertThat(s.isInvalid()).as("unknown is not a logout").isFalse();
         assertThat(lines(output, "rid-im24-outage")).singleElement().satisfies(l -> assertThat(l)
-                .contains("WARN", "could not get a DB connection", "path=/api/v1/ops/providers", "→ 503",
+                .contains("WARN", "could not get a DB connection", "path=\"/api/v1/ops/providers\"", "→ 503",
                         "CannotGetJdbcConnectionException ← SQLTransientConnectionException: HikariPool-1")
                 .doesNotContain("sess-outage-0001", "tag-outage"));
         assertThat(output.getAll()).as("an outage is not a bug — no stack").doesNotContain("\tat ");
@@ -260,7 +268,7 @@ class OpsSessionLifetimeFilterTest {
             assertThat(s.isInvalid()).as(c.reason()).isTrue();
             assertThat(chain.getRequest()).as("continues anonymously (404)").isNotNull();
             assertThat(lines(output, c.rid())).as(c.reason()).singleElement().satisfies(l -> assertThat(l)
-                    .contains("WARN", "ops session ended", c.reason(), "user_id=" + c.uid(), "path=/api/v1/ops/providers")
+                    .contains("WARN", "ops session ended", c.reason(), "user_id=" + c.uid(), "path=\"/api/v1/ops/providers\"")
                     .doesNotContain(c.sessionId(), "tag-now-7f3a", "tag-old-91c2", "tag-gone-55d0"));
         }
         // 같은 표식(그대로 지나감) · 절대 수명 만료(정상 경로)는 남기지 않는다
@@ -273,6 +281,55 @@ class OpsSessionLifetimeFilterTest {
         assertThat(old.isInvalid()).isTrue();
         assertThat(lines(output, "rid-im24-same")).isEmpty();
         assertThat(lines(output, "rid-im24-expired")).isEmpty();
+    }
+
+    /**
+     * IM-25(리뷰 #9): 이 필터의 WARN 줄(세션 저장소 장애 · 자격 확인 장애 · 자격으로 끝낸 세션)은 경로 원문을 따옴표 안에 싣는다(path="…") — 보안 필터
+     * 체인은 컨트롤러 매핑 전이라 경로 패턴이 없다. 로그 지문(LogEvents.template 이 따옴표 안을 '…' 로 바꾼다)이 운영 경로의 값(공급자 이름 · 동작 ·
+     * 설정 키)마다 갈리지 않는다 — 예전에는 원문 경로가 따옴표 밖이라 한 장애가 경로마다 다른 묶음이 됐다. 지문은 싱크가 구하는 그대로.
+     */
+    @Test
+    void theFiltersWarnLinesQuoteThePathSoOneCauseIsOneLogGroup() throws Exception {
+        String[] paths = {"/api/v1/ops/providers/opensky/pause", "/api/v1/ops/settings/region_radius_nm"};
+        String[] rids = {"0123456789abcdef0123456789abcdef", "fedcba9876543210fedcba9876543210"}; // 운영의 요청 id 모양(32자 16진)
+        ListAppender<ILoggingEvent> logs = new ListAppender<>();
+        logs.start();
+        Logger[] loggers = {(Logger) LoggerFactory.getLogger(OpsSessionLifetimeFilter.class), (Logger) LoggerFactory.getLogger(ProblemAdvice.class)};
+        for (Logger l : loggers) l.addAppender(logs);
+        try {
+            OpsSessionLifetimeFilter lookupDown = new OpsSessionLifetimeFilter(Duration.ofHours(8), Clock.fixed(NOW, ZoneOffset.UTC), uid -> { throw poolTimeout(); });
+            OpsSessionLifetimeFilter changed = new OpsSessionLifetimeFilter(Duration.ofHours(8), Clock.fixed(NOW, ZoneOffset.UTC), uid -> Optional.of("tag-now"));
+            for (int i = 0; i < paths.length; i++) {
+                String path = paths[i];
+                MockHttpServletRequest storeDown = new MockHttpServletRequest("POST", path) {
+                    @Override public jakarta.servlet.http.HttpSession getSession(boolean create) { throw new org.springframework.dao.QueryTimeoutException("Redis command timed out"); }
+                };
+                storeDown.setRequestURI(path);
+                storeDown.setAttribute(RequestIdFilter.ATTR, rids[i]);
+                FILTER.doFilter(storeDown, new MockHttpServletResponse(), new MockFilterChain());
+                lookupDown.doFilter(request(path, loggedIn("sess-im25-a" + i, 7, "tag"), rids[i]), new MockHttpServletResponse(), new MockFilterChain());
+                changed.doFilter(request(path, loggedIn("sess-im25-b" + i, 7, "tag-old"), rids[i]), new MockHttpServletResponse(), new MockFilterChain());
+            }
+            List<ILoggingEvent> warns = logs.list.stream().filter(e -> e.getLevel() == Level.WARN).toList();
+            assertThat(warns).hasSize(6);
+            for (int kind = 0; kind < 3; kind++) {
+                ILoggingEvent first = warns.get(kind), second = warns.get(kind + 3);
+                assertThat(sinkFingerprint(first)).as("%s / %s", first.getFormattedMessage(), second.getFormattedMessage()).isEqualTo(sinkFingerprint(second));
+                assertThat(first.getFormattedMessage()).contains("path=\"/api/v1/ops/providers/opensky/pause\"");
+                assertThat(second.getFormattedMessage()).contains("path=\"/api/v1/ops/settings/region_radius_nm\"");
+            }
+            assertThat(warns.get(0).getFormattedMessage()).startsWith("session store unavailable request_id=" + rids[0] + " path=\"");
+            assertThat(warns.get(1).getFormattedMessage()).startsWith("could not get a DB connection request_id=" + rids[0] + " path=\"").doesNotContain("uri=");
+            assertThat(warns.get(2).getFormattedMessage()).startsWith("ops session ended: credential changed since login user_id=7 request_id=" + rids[0] + " path=\"");
+        } finally {
+            for (Logger l : loggers) l.detachAppender(logs);
+        }
+    }
+
+    /** 서버 로그 싱크(LogSink.accept)가 구하는 지문 그대로: 서비스 api · 로거 이름 · 예외 종류(없으면 null) · 가린 메시지. */
+    static String sinkFingerprint(ILoggingEvent e) {
+        return LogEvents.fingerprint("api", e.getLoggerName(), e.getThrowableProxy() == null ? null : e.getThrowableProxy().getClassName(),
+                LogMasker.maskAll(e.getFormattedMessage()));
     }
 
     /** QA-102: 세션 저장소(Redis)를 읽지 못하면 운영 요청은 503 + Retry-After 10 — 넘기지 않는다(예전: 예외가 필터 밖으로 나가 500). */

@@ -1,7 +1,13 @@
 package dev.wakeline.platform.web;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
+import jakarta.servlet.http.HttpServletRequest;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.slf4j.LoggerFactory;
 import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.http.converter.HttpMessageNotWritableException;
@@ -16,6 +22,7 @@ import org.springframework.jdbc.UncategorizedSQLException;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
@@ -105,6 +112,21 @@ class ProblemAdviceTest {
         }
         @PostMapping(value = "/json", consumes = MediaType.APPLICATION_JSON_VALUE) String json(@RequestBody Map<String, Object> body) { return "ok"; }
         @GetMapping(value = "/only-json", produces = MediaType.APPLICATION_JSON_VALUE) Map<String, Object> onlyJson() { return Map.of("a", 1); }
+        // 경로 변수가 있는 경로(IM-25): 항공기 카드는 저장소 장애에 503, 공항 기상은 DB 없이 200(meta.db_unavailable) — 둘 다 같은 WARN 한 줄을 남긴다
+        @GetMapping("/api/v1/aircraft/{hex}") String aircraft(@PathVariable String hex) {
+            throw new QueryTimeoutException("PreparedStatementCallback; SQL [SELECT hex FROM aircraft WHERE hex = ?]; ERROR: canceling statement due to user request",
+                    new SQLException("ERROR: canceling statement due to user request", "57014"));
+        }
+        @GetMapping("/api/v1/airports/{icao}/wx") String airportWx(@PathVariable String icao, HttpServletRequest req) {
+            ProblemAdvice.answeredWithoutStore(new CannotGetJdbcConnectionException("Failed to obtain JDBC Connection",
+                    new SQLTransientConnectionException("pool timeout")), req);
+            return "live only";
+        }
+        @GetMapping("/boom/{id}") String boomFor(@PathVariable String id) { throw new IllegalStateException("bug"); }
+        // Spring MVC 가 상태를 정한 5xx(ErrorResponse) — WARN 한 줄
+        @GetMapping("/upstream/{id}") String upstream(@PathVariable String id) {
+            throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.BAD_GATEWAY);
+        }
     }
 
     final MockMvc mvc = MockMvcBuilders.standaloneSetup(new Probe()).setControllerAdvice(new ProblemAdvice()).build();
@@ -223,6 +245,77 @@ class ProblemAdviceTest {
         org.assertj.core.api.Assertions.assertThat(dev.wakeline.logs.LogEvents.template(message(lines.get(0))))
                 .isEqualTo(dev.wakeline.logs.LogEvents.template(message(lines.get(1))));
         org.assertj.core.api.Assertions.assertThat(lines.get(2)).contains("…(+").doesNotContain("x".repeat(600));
+    }
+
+    /**
+     * IM-25(리뷰 #9): WARN · ERROR 줄의 path 는 매칭된 경로 패턴(/api/v1/aircraft/{hex})이고 원문은 따옴표 안(uri="…")이다 — 로그 지문(LogEvents.fingerprint
+     * → template)은 따옴표 안 · 16진 8자 이상 · 숫자열만 지운다. 원문 경로를 싣던 때는 /api/v1/aircraft/71be01 이 '/api/v#/aircraft/#be#', 7c6b2d 가
+     * '#c#b#d' 로 남아 한 장애가 항공기 hex · 공항 ICAO 마다 다른 묶음(/ops/logs/groups)이 되고, 억제(지문마다 10 s)도 묶음마다 따로 돌았다.
+     * 지문은 싱크가 구하는 그대로(서비스 · 로거 · 예외 종류 · 가린 메시지).
+     */
+    @Test
+    void oneOutageIsOneLogGroupWhicheverIdThePathCarries() throws Exception {
+        ListAppender<ILoggingEvent> logs = new ListAppender<>();
+        logs.start();
+        Logger logger = (Logger) LoggerFactory.getLogger(ProblemAdvice.class);
+        logger.addAppender(logs);
+        try {
+            mvc.perform(get("/api/v1/aircraft/71be01")).andExpect(status().isServiceUnavailable()).andExpect(header().string("Retry-After", "10"));
+            mvc.perform(get("/api/v1/aircraft/7c6b2d")).andExpect(status().isServiceUnavailable());
+            mvc.perform(get("/api/v1/aircraft/abcdef")).andExpect(status().isServiceUnavailable());
+            mvc.perform(get("/cancelled")).andExpect(status().isServiceUnavailable()); // 같은 원인 · 다른 기능
+            mvc.perform(get("/api/v1/airports/RKSI/wx")).andExpect(status().isOk());
+            mvc.perform(get("/api/v1/airports/RKSS/wx")).andExpect(status().isOk());
+            mvc.perform(get("/boom/abcdef")).andExpect(status().isInternalServerError());
+            mvc.perform(get("/boom/fedcba")).andExpect(status().isInternalServerError());
+            mvc.perform(get("/upstream/71be01")).andExpect(status().isBadGateway());
+            mvc.perform(get("/upstream/7c6b2d")).andExpect(status().isBadGateway());
+            List<ILoggingEvent> warns = logs.list.stream().filter(e -> e.getLevel() == Level.WARN).toList();
+            List<ILoggingEvent> errors = logs.list.stream().filter(e -> e.getLevel() == Level.ERROR).toList();
+            org.assertj.core.api.Assertions.assertThat(warns).hasSize(8);
+            org.assertj.core.api.Assertions.assertThat(errors).hasSize(2);
+            // 같은 장애 · 같은 결함은 id 가 무엇이든 지문 하나
+            org.assertj.core.api.Assertions.assertThat(warns.subList(0, 3).stream().map(ProblemAdviceTest::sinkFingerprint).distinct()).as("%s", logs.list.stream().map(ILoggingEvent::getFormattedMessage).toList()).hasSize(1);
+            org.assertj.core.api.Assertions.assertThat(warns.subList(4, 6).stream().map(ProblemAdviceTest::sinkFingerprint).distinct()).as("%s", logs.list.stream().map(ILoggingEvent::getFormattedMessage).toList()).hasSize(1);
+            org.assertj.core.api.Assertions.assertThat(errors.stream().map(ProblemAdviceTest::sinkFingerprint).distinct()).as("%s", logs.list.stream().map(ILoggingEvent::getFormattedMessage).toList()).hasSize(1);
+            org.assertj.core.api.Assertions.assertThat(warns.subList(6, 8).stream().map(ProblemAdviceTest::sinkFingerprint).distinct()).as("%s", logs.list.stream().map(ILoggingEvent::getFormattedMessage).toList()).hasSize(1);
+            // 무엇을 물었는지는 그대로 읽힌다 — 원문 경로는 따옴표 안
+            org.assertj.core.api.Assertions.assertThat(warns.get(0).getFormattedMessage())
+                    .contains("statement cancelled (SQLSTATE 57014) request_id=- path=/api/v1/aircraft/{hex} uri=\"/api/v1/aircraft/71be01\" elapsed_ms=- → 503: ");
+            org.assertj.core.api.Assertions.assertThat(warns.get(3).getFormattedMessage()).contains("path=/cancelled elapsed_ms=- → 503: ").doesNotContain("uri=");
+            org.assertj.core.api.Assertions.assertThat(warns.get(4).getFormattedMessage())
+                    .contains("could not get a DB connection request_id=- path=/api/v1/airports/{icao}/wx uri=\"/api/v1/airports/RKSI/wx\" elapsed_ms=- → 200 without stored data");
+            org.assertj.core.api.Assertions.assertThat(errors.get(0).getFormattedMessage())
+                    .isEqualTo("unhandled error request_id=- path=/boom/{id} uri=\"/boom/abcdef\"");
+            org.assertj.core.api.Assertions.assertThat(warns.get(6).getFormattedMessage())
+                    .isEqualTo("502 GET path=/upstream/{id} uri=\"/upstream/71be01\" request_id=-: ResponseStatusException");
+            // 같은 원인이어도 다른 경로(다른 기능)는 다른 묶음 그대로
+            org.assertj.core.api.Assertions.assertThat(sinkFingerprint(warns.get(0))).isNotEqualTo(sinkFingerprint(warns.get(3)));
+        } finally {
+            logger.detachAppender(logs);
+        }
+    }
+
+    /**
+     * IM-25: 로그 경로의 원문은 쿼리 문자열과 같게 가림 규칙(LogMasker)을 거치고, 원문의 따옴표는 %22 로 — 따옴표 구간이 끊기면 그 뒤가 지문 재료로 남는다.
+     * 패턴이 없거나 빈 글자면(매핑 전 · 경로 없는 매핑) 원문만 따옴표 안에.
+     */
+    @Test
+    void theLoggedPathQuotesTheMaskedRawUriWhole() {
+        org.springframework.mock.web.MockHttpServletRequest r = new org.springframework.mock.web.MockHttpServletRequest("GET", "/x/a\"b'c/token=abc123secret");
+        org.assertj.core.api.Assertions.assertThat(ProblemAdvice.loggedPath(r)).isEqualTo("path=\"/x/a%22b'c/token=***\"");
+        r.setAttribute(org.springframework.web.servlet.HandlerMapping.BEST_MATCHING_PATTERN_ATTRIBUTE, "");
+        org.assertj.core.api.Assertions.assertThat(ProblemAdvice.loggedPath(r)).isEqualTo("path=\"/x/a%22b'c/token=***\"");
+        r.setAttribute(org.springframework.web.servlet.HandlerMapping.BEST_MATCHING_PATTERN_ATTRIBUTE, "/x/{id}/{rest}");
+        String withPattern = ProblemAdvice.loggedPath(r);
+        org.assertj.core.api.Assertions.assertThat(withPattern).isEqualTo("path=/x/{id}/{rest} uri=\"/x/a%22b'c/token=***\"");
+        org.assertj.core.api.Assertions.assertThat(dev.wakeline.logs.LogEvents.template("a " + withPattern + " b")).isEqualTo("a path=/x/{id}/{rest} uri='…' b");
+    }
+
+    /** 서버 로그 싱크(LogSink.accept)가 구하는 지문 그대로: 서비스 api · 로거 이름 · 예외 종류(없으면 null) · 가린 메시지. */
+    static String sinkFingerprint(ILoggingEvent e) {
+        return dev.wakeline.logs.LogEvents.fingerprint("api", e.getLoggerName(), e.getThrowableProxy() == null ? null : e.getThrowableProxy().getClassName(),
+                dev.wakeline.platform.support.LogMasker.maskAll(e.getFormattedMessage()));
     }
 
     static List<String> warnLines(CapturedOutput out) {

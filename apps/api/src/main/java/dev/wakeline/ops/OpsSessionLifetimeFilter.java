@@ -42,6 +42,8 @@ import java.util.function.IntFunction;
  * 먼저 지나므로 DB 장애 중에는 503 이다 — 실패-닫힘(ADR-017 §6 S3, ADR-024). 이 필터는 컨트롤러 밖이라 ProblemAdvice 가 닿지 않으므로 그 규칙을 여기서
  * 부른다(IM-24): 저장소 장애({@link ProblemAdvice#isUnavailable})면 저장소 장애 503 과 같은 WARN 한 줄(원인 · request_id · path · 짧은 예외 요약,
  * 스택 없음), 그 밖의 예외(권한 · 문법 등의 결함)는 503 으로 숨기지 않고 다시 던진다 — 컨테이너가 500 + ERROR(스택)로 남긴다.
+ * 이 필터의 WARN 줄은 경로 원문을 따옴표 안에 싣는다({@link ProblemAdvice#loggedPath} — 보안 필터 체인은 컨트롤러 매핑 전이라 경로 패턴이 없다):
+ * 로그 지문이 운영 경로의 값(공급자 이름 · 설정 키)마다 갈리지 않게(IM-25).
  * 로그아웃(DELETE /api/v1/ops/session)은 자격 비교를 하지 않는다(리뷰 cto-2026-10 S3): 권한을 줄이는 요청이라 확인할 것이 없고, DB 장애 중에도 세션을
  * 끝낼 수 있어야 한다(예전에는 503 으로 막혀 세션이 최대 8 h 남았다). 절대 수명 검사는 로그아웃에도 그대로다.
  * <p>
@@ -86,7 +88,7 @@ public class OpsSessionLifetimeFilter extends OncePerRequestFilter {
         try {
             s = req.getSession(false);
         } catch (DataAccessException e) { // 세션 저장소를 읽지 못함(연결 없음 · 명령 시간 초과 · LOADING) — 저장소 장애라 스택 없이 한 줄
-            log.warn("session store unavailable request_id={} path={} → 503: {}: {}", RequestIdFilter.current(req), req.getRequestURI(),
+            log.warn("session store unavailable request_id={} {} → 503: {}: {}", RequestIdFilter.current(req), ProblemAdvice.loggedPath(req),
                     e.getClass().getSimpleName(), e.getMostSpecificCause().getMessage());
             unavailable(req, res, "ops session store temporarily unavailable; retry later", Problem.UNAVAILABLE_RETRY_AFTER_S);
             return;
@@ -105,7 +107,7 @@ public class OpsSessionLifetimeFilter extends OncePerRequestFilter {
             String ended = staleCredential(now, s.getAttribute(CREDENTIAL));
             if (ended != null) {
                 // 비밀번호 교체 뒤 옛 쿠키가 쓰였는지 알 수 있게(IM-24) — 세션 id · 표식(비밀번호 해시에서 나온 값)은 싣지 않는다
-                log.warn("ops session ended: {} user_id={} request_id={} path={}", ended, uid, RequestIdFilter.current(req), req.getRequestURI());
+                log.warn("ops session ended: {} user_id={} request_id={} {}", ended, uid, RequestIdFilter.current(req), ProblemAdvice.loggedPath(req));
                 s.invalidate();
             }
         }
