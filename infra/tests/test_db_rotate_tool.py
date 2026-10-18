@@ -82,6 +82,31 @@ class SharedEnvFileTest(unittest.TestCase):
         for secret in rotate.re.findall(r"=(.*)", self.env.read_text()):
             self.assertNotIn(secret, out.getvalue(), "새 값은 출력하지 않는다")
 
+    def test_dev_rotation_names_only_this_repositorys_stacks(self):
+        """IM-32: db_data 는 흔한 볼륨 이름이다 — 이 Mac 의 다른 저장소(aptlake · Local_macro …)의 compose 프로젝트에도 있다.
+        그 프로젝트를 '옛 비밀번호'로 알리거나 그 프로젝트에 대한 명령을 권하지 않는다(다른 프로젝트는 건드리지 않는다)."""
+        out = io.StringIO()
+
+        def fake_run(cmd, **kw):
+            if cmd[:2] == ["docker", "ps"] and "label=com.docker.compose.project=wakeline" in cmd:
+                return mock.Mock(returncode=0, stdout="cid\n", stderr="")
+            if cmd[:3] == ["docker", "volume", "ls"]:
+                return mock.Mock(returncode=0, stdout="aptlake\nwakeline\nlocal_macro_dashboard_v3\nwakeline-e2e\n", stderr="")
+            if cmd[:2] == ["docker", "inspect"]:
+                return mock.Mock(returncode=0, stdout="10.77.0.60 ", stderr="")
+            if "pg_authid" in (kw.get("input") or ""):
+                return mock.Mock(returncode=0, stdout="wakeline_migrator x\nwakeline_api y\nwakeline_collector z\n", stderr="")
+            if "SELECT 1" in cmd:
+                return mock.Mock(returncode=0, stdout="1\n", stderr="")
+            return mock.Mock(returncode=0, stdout="", stderr="")
+
+        with mock.patch.dict(os.environ, {"WAKELINE_PROJECT": "wakeline"}), mock.patch.object(rotate.subprocess, "run", side_effect=fake_run), \
+                mock.patch("sys.stdout", out):
+            self.assertEqual(rotate.main(["--env-file", str(self.env)]), 0)
+        self.assertIn("P=wakeline-e2e sync=1", out.getvalue())
+        self.assertNotIn("aptlake", out.getvalue())
+        self.assertNotIn("local_macro", out.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()

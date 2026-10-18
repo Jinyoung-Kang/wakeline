@@ -68,15 +68,18 @@ def set_env_value(text: str, key: str, value: str) -> str:
 
 
 DEV_PROJECT = "wakeline"
+# 같은 .env 를 읽는 이 저장소의 compose 프로젝트: 개발 스택(compose.yml 의 name)과 격리 스택(Makefile ISO 의 -p)
+OUR_PROJECTS = (DEV_PROJECT, "wakeline-e2e")
 
 
 def other_projects_with_db(project: str) -> list[str]:
-    """같은 .env 를 읽는(= 이 저장소의 compose) 다른 프로젝트 중 DB 볼륨이 남아 있는 것 — 그 DB 에는 옛 비밀번호가 있다."""
+    """같은 .env 를 읽는(= 이 저장소의 compose) 다른 프로젝트 중 DB 볼륨이 남아 있는 것 — 그 DB 에는 옛 비밀번호가 있다.
+    db_data 는 흔한 볼륨 이름이라 다른 저장소의 프로젝트에도 있다 — 이 저장소의 프로젝트만 센다(IM-32 · 다른 프로젝트는 건드리지 않는다)."""
     r = subprocess.run(["docker", "volume", "ls", "--filter", "label=com.docker.compose.volume=db_data", "--format", '{{.Label "com.docker.compose.project"}}'],
                        capture_output=True, text=True)
     if r.returncode != 0:
         return []
-    return sorted({p.strip() for p in r.stdout.split() if p.strip() and p.strip() != project})
+    return sorted({p.strip() for p in r.stdout.split() if p.strip() in OUR_PROJECTS and p.strip() != project})
 
 
 def container_id(project: str) -> str:
@@ -163,7 +166,8 @@ def main(argv: list[str] | None = None) -> int:
     print("next: make up   (api·collector·migrate 가 새 값으로 다시 만들어진다)")
     if not a.sync and not a.container:
         for other in other_projects_with_db(project):
-            print(f"note: '{other}' 의 DB 볼륨은 옛 비밀번호입니다 — 그 스택을 쓰려면: make rotate-db-passwords P={other} sync=1 (또는 make demo-down 으로 삭제)")
+            drop = " (또는 make demo-down 으로 삭제)" if other == "wakeline-e2e" else ""
+            print(f"note: '{other}' 의 DB 볼륨은 옛 비밀번호입니다 — 그 스택을 쓰려면: make rotate-db-passwords P={other} sync=1{drop}")
     return 0
 
 
