@@ -1360,8 +1360,9 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
     이미 저장된 지난 행은 바꾸지 않았다(데이터 변경 — 사용자 결정 대기, PLAN §5 Q1). 살아 있는 SIGMET 은 다음 수신 때 upsert 가 고친다.
     근거 카드의 판정 가정에 "상한은 그 값 이상 → 무제한으로 가정" 이 적힌다.
 - G58(운영 API) **운영 경로의 입력 · 장애 응답 · 신호**(IM-18 · IM-24 · IM-13)
-  - `GET /api/v1/ops/logs` · `/ops/logs/groups` · `/ops/runs` 의 `fp` · `rid` · `service` · `level` · `stream` · `cursor` · `q` · `resolved`: 앞뒤의 **공백 글자만** 지운다 —
+  - `GET /api/v1/ops/logs` · `/ops/logs/groups` · `/ops/runs` 의 `fp` · `rid` · `service` · `level` · `stream` · `cursor` · `resolved`: 앞뒤의 **공백 글자만** 지운다 —
     제어 문자는 남아 형식 검사에서 400(§G43 의 공개 경로와 같은 규칙. 예전: `String.strip()` 이 U+0009–U+000D · U+001C–U+001F 를 지워 받아들였다).
+    `q`(내용 검색)도 공백 글자만 지우지만 형식 검사가 없어(길이만 `BAD_QUERY`) 제어 문자를 남긴 채 그 글자로 찾는다 — 예전에는 제어 문자만인 `q` 가 '필터 없음'이었다.
   - 로그인한 운영자의 요청에서 세션 자격 확인(DB)이 **장애**면 지금처럼 503 + `Retry-After` 이고 WARN 한 줄(request_id · 경로)을 남긴다. 장애가 아닌 DB 예외는 500.
     자격 불일치 · 사용자 없음으로 세션을 끝낼 때도 WARN 한 줄(user_id · request_id · 사유 — 세션 id 는 남기지 않는다).
   - `GET /api/v1/ops/pipeline` 의 collector `heartbeat_age_s` 와 공개 `/status` 의 `demand.adsb_fi_rps_1m` 판단: '가장 최근 보고 시각'에서 이름이 `*_resume_at` 인 필드

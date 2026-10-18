@@ -8,4 +8,4 @@
 - 백프레셔(REL-2 · R-73 — 위 첫 단락의 `ConcurrentWebSocketSessionDecorator`(5 s · 256 KB · DROP) · 버퍼 절반 폐기 · 2회 연속 1008 규칙은 코드에 없다, IM-36 확인):
   세션 우편함(`SerialOutbox`)이 한 번에 하나씩 보내고, 작업은 종류별 단일 비행(실행 1 + 대기 1 — 버리지 않고 합치며 실행할 때 최신 상태로 계산)이다.
   전송은 Tomcat 블로킹 전송 상한 5 s(`WsSession.SEND_TIME_LIMIT_MS` → `BLOCKING_SEND_TIMEOUT`)이고, 전송이 실패하면 곧바로 닫는다 —
-  IOException 은 4500(`SESSION_NOT_RELIABLE`), 그 밖의 런타임 예외는 1008 'slow consumer'. 우편함 작업이 예외로 끝나면 다음 팬아웃이 전체 초기 세트를 보낸다.
+  IOException · IllegalStateException(닫힌 세션 등)은 4500(`SESSION_NOT_RELIABLE`), 그 밖의 런타임 예외는 1008 'slow consumer'. 우편함 작업이 예외로 끝나면 다음 팬아웃이 전체 초기 세트를 보낸다.
