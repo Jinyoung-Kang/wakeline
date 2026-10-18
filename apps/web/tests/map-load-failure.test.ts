@@ -4,6 +4,9 @@
  *    다시 시도는 실제로 다시 받는다. 전에는 next/dynamic 의 거절이 화면 전체의 오류 경계(app/error.tsx)까지 올라가 상황판 전체가 오류 화면이 되었고,
  *    그 '다시 시도'는 같은 거절된 lazy 를 다시 그려 망이 돌아와도 돌아오지 않았다(loadMaplibre 는 다시 불리지 않았다).
  * 2) WebGL2 를 만들 수 없음(MapLibre 의 Map 생성자가 GPUInitializationError): 지도 자리에 안내와 지도 없는 알림 화면(/m). 다른 예외는 지금처럼 위로 올라간다.
+ * 3) 두 경우 모두 실시간 피드(WS · 워커 — components/map/useLiveFeed)는 지도와 함께 만들어지므로 시작하지 않는다(R9): 남은 상태 바의 연결 칩과 알림 패널은
+ *    '처음 연결하는 중' · '수신 대기 중'이 아니라 실시간 수신을 하지 않는다고 말한다(스토어 conn "off"). 다시 시도로 지도가 뜨면 연결부터 원래대로.
+ *    가짜 WS 클라이언트의 connect() 는 실제 것처럼 conn "connecting" 을 적는다.
  * - next/dynamic 은 실제 빌드가 쓰는 구현(next/dist/shared/lib/app-dynamic — 모듈을 평가할 때 lazy 를 한 번 만든다)으로 바꿔 시험한다.
  *   vitest 의 기본 해석은 pages 쪽 구현이라 이 동작이 보이지 않는다.
  * - 경계는 Next 의 실제 ErrorBoundaryHandler 에 실제 app/error.tsx 를 붙인다(라우트의 오류 경계와 같은 자리).
@@ -14,7 +17,7 @@ import { find, propsOf } from "./helpers/mount";
 
 vi.mock("next/dynamic", async () => ({ default: (await import("next/dist/shared/lib/app-dynamic.js")).default }));
 
-const ctl = vi.hoisted(() => ({ loadFails: false, mapThrows: null as null | "gpu" | "other", loads: 0, maps: 0 }));
+const ctl = vi.hoisted(() => ({ loadFails: false, mapThrows: null as null | "gpu" | "other", loads: 0, maps: 0, connects: 0 }));
 vi.mock("@/lib/maplibre", async (orig) => {
   const fakeMod = (await import("./helpers/fake-maplibre")).fakeMaplibreModule;
   const Base = fakeMod.Map;
@@ -38,8 +41,14 @@ vi.mock("@/lib/maplibre", async (orig) => {
   };
 });
 vi.mock("@/lib/api", async (orig) => ({ ...(await orig<Record<string, unknown>>()), apiGet: () => new Promise(() => {}) }));
+// connect() 는 실제 클라이언트(lib/ws)처럼 연결 상태를 적는다 — 피드가 시작됐는지를 상태 바 글자로 본다. 스토어는 마운트마다 새 모듈이라(vi.resetModules —
+// mock 의 factory 결과는 남는다) 그 마운트의 setData 를 mount() 가 store 에 넣는다
+const store = vi.hoisted(() => ({ setData: null as null | ((p: { conn: "connecting"; reconnectAttempt: number }) => void) }));
 vi.mock("@/lib/ws", () => ({
-  WakelineWsClient: class { connect() {} subscribe() {} close() {} pause() {} resume() {} select() {} selectShip() {} setLayers() {} },
+  WakelineWsClient: class {
+    connect() { ctl.connects++; store.setData?.({ conn: "connecting", reconnectAttempt: 0 }); }
+    subscribe() {} close() {} pause() {} resume() {} select() {} selectShip() {} setLayers() {}
+  },
 }));
 const reports: { message: string; component?: string }[] = [];
 vi.mock("@/lib/errorReport", async (orig) => ({
@@ -59,17 +68,32 @@ afterEach(async () => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   reports.length = 0;
-  Object.assign(ctl, { loadFails: false, mapThrows: null, loads: 0, maps: 0 });
+  Object.assign(ctl, { loadFails: false, mapThrows: null, loads: 0, maps: 0, connects: 0 });
 });
 
 const container = () => dom.container as unknown as MiniElement;
 const byId = (id: string) => find((e) => e.getAttribute?.("data-testid") === id, container());
 const has = (id: string) => byId(id) != null;
+/** 상태 바의 연결 칩(lib/statusbar connChip) · 알림 패널의 '목록을 받기 전' 줄 */
+const connText = () => byId("conn")?.textContent ?? null;
+const alertsWaitingText = () => byId("alerts-waiting")?.textContent ?? null;
+/** 지도가 없어 실시간 피드를 시작하지 않음 — 상태 바 · 알림 패널이 그렇게 말한다(연결 중 · 수신 대기라고 하지 않는다) */
+const expectNoLiveFeed = async () => {
+  expect(ctl.connects, "no WS client connects without a map").toBe(0);
+  expect(connText()).toContain("실시간 수신 안 함");
+  expect(connText()).not.toContain("connecting");
+  expect(byId("conn")?.getAttribute("title")).toContain("지도를 띄우지 못해");
+  expect(byId("conn")?.getAttribute("title")).not.toContain("처음 연결하는 중");
+  expect(alertsWaitingText()).toContain("실시간 수신 안 함");
+  expect(alertsWaitingText()).not.toContain("수신 대기 중");
+  expect((await import("@/lib/store")).getData().conn).toBe("off");
+};
 const settle = async (n = 15) => { for (let i = 0; i < n; i++) await React.act(async () => { await new Promise((r) => setTimeout(r, 20)); }); };
 
 /** 페이지를 새 모듈로(지도 dynamic 은 모듈을 평가할 때 만들어진다) Next 의 라우트 오류 경계 안에 마운트한다 */
 async function mount(pagePath: "@/app/page" | "@/app/replay/page", pathname: string) {
   vi.resetModules();
+  store.setData = (await import("@/lib/store")).setData;
   React = await import("react");
   const { createRoot } = await import("react-dom/client");
   vi.stubGlobal("fetch", () => new Promise(() => {}));
@@ -100,7 +124,9 @@ describe("dashboard '/': a map that cannot be drawn replaces only the map slot",
     expect(has("error-screen")).toBe(false);
     expect(has("statusbar")).toBe(true);
     expect(has("map")).toBe(true);
-    expect(ctl).toMatchObject({ loads: 1, maps: 1 });
+    expect(ctl).toMatchObject({ loads: 1, maps: 1, connects: 1 });
+    expect(connText()).toContain("WS connecting");
+    expect(alertsWaitingText()).toContain("알림 목록 수신 대기 중");
   });
 
   it("MapLibre fails to load once: the status bar, alerts panel and radar row stay; the map slot shows the reason and a retry that loads again", async () => {
@@ -115,13 +141,18 @@ describe("dashboard '/': a map that cannot be drawn replaces only the map slot",
     expect(err?.textContent).toContain("maplibre-gl.mjs");
     expect(ctl).toMatchObject({ loads: 1, maps: 0 }); // 처음 실패를 보일 때는 다시 받지 않는다
     expect(reports.map((r) => r.component)).toEqual(["lazy:지도"]); // 시스템 로그에 한 번(조각과 같은 보고)
+    await expectNoLiveFeed();
 
     ctl.loadFails = false; // 망이 돌아왔다
     await click("lazy-retry");
-    expect(ctl).toMatchObject({ loads: 2, maps: 1 });
+    expect(ctl).toMatchObject({ loads: 2, maps: 1, connects: 1 });
     expect(has("lazy-error")).toBe(false);
     expect(has("map")).toBe(true);
     expect(has("statusbar")).toBe(true);
+    // 지도가 뜨면 피드가 시작되어 원래대로(연결 중 · 수신 대기)
+    expect(connText()).toContain("WS connecting");
+    expect(connText()).not.toContain("실시간 수신 안 함");
+    expect(alertsWaitingText()).toContain("알림 목록 수신 대기 중");
   });
 
   it("WebGL2 cannot be created (GPUInitializationError): the status bar and alerts panel stay; the map slot says why and links the map-less alerts screen (/m)", async () => {
@@ -133,6 +164,7 @@ describe("dashboard '/': a map that cannot be drawn replaces only the map slot",
     expect(note?.textContent).toContain("WebGL2 를 쓸 수 없어 지도를 그리지 않음");
     expect(find((e) => e.tagName === "A" && e.getAttribute("href") === "/m", note!)).not.toBeNull();
     expect(ctl.maps).toBe(0);
+    await expectNoLiveFeed();
   });
 
   it("any other Map constructor error still goes up to the route error screen (not swallowed)", async () => {

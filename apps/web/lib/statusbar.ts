@@ -24,7 +24,7 @@ import type { ConnState, ServerData } from "./store";
 import { CONN_ISSUE, type ConnIssue } from "./conn-issue";
 import { fmtKst, fmtKstRange, fmtTimeTitle, kstWallMs, timeParts, type TimeIn } from "./time";
 import type { FeedInfo, KrRadar, PublicStatus, RadarFrames } from "./types";
-import { connTone, feedLag, GLOBAL_STALE_S, isRxFresh, lagTone, REGION_STALE_S, RX_DEAD_MS, RX_FRESH_MS } from "./ws-protocol";
+import { connTone, feedLag, GLOBAL_STALE_S, isRxFresh, lagTone, NO_LIVE_TEXT, REGION_STALE_S, RX_DEAD_MS, RX_FRESH_MS } from "./ws-protocol";
 
 /** SIGMET 목록이 이보다 오래되면 오래됨 — api StatusService(status.sigmet.stale: lag > 900 s)와 같은 값(옮겨 적음) */
 export const SIGMET_STALE_S = 900;
@@ -200,8 +200,13 @@ const toneHealth = (t: "ok" | "warn" | "bad" | "muted"): Health => (t === "muted
  * 연결 칩. "paused" 는 탭이 숨겨져 서버에 일시정지(pause)를 보낸 상태다(components/MapView visibilitychange → lib/ws pause) — 그동안 서버는 이 탭에
  * 갱신을 보내지 않는다. 그렇게 적는다("WS paused · 탭 숨김").
  * 끊긴 동안 까닭을 알면(connIssue — 앞단 잠금 만료 · 원본에 닿지 못함 QA-1300, 연결 수 상한 QA-1462) 짧은 낱말을 줄에, 할 일을 title 앞에 적는다.
+ * "off" 는 지도를 띄우지 못해 실시간 피드를 시작하지 않은 상태다(lib/store ConnState — R9): 연결을 시도하지 않으므로 '연결 중'이 아니라 그 사실을 적는다.
  */
 export function connChip(i: Pick<StatusInput, "conn" | "reconnectAttempt" | "lastRxAt" | "nowMs" | "connIssue">): ConnChip {
+  if (i.conn === "off") return {
+    text: `WS off · ${NO_LIVE_TEXT}`, tone: "bad", live: false,
+    title: "지도를 띄우지 못해(WebGL2 없음 · 지도 코드를 받지 못함) 실시간 연결(/ws/v1)을 열지 않음 — 항공기 · 알림 · 피드 상태가 오지 않습니다. 지도가 뜨면(지도 자리의 다시 시도) 연결 · 지도 없는 알림 화면은 /m",
+  };
   const live = isRxFresh(i.conn, i.lastRxAt, i.nowMs);
   const silent = i.conn === "open" && !live;
   const retry = i.conn !== "open" && i.reconnectAttempt > 0 ? ` · retry ${i.reconnectAttempt}` : "";

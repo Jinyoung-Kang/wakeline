@@ -33,7 +33,7 @@ export function attemptAfterClose(attempt: number, code: unknown): number {
 
 /**
  * 연결 배지 색(R-09): 열림·수신 중 = ok. 일시정지·수신 없음·첫 연결 중(재시도 전) = warn — 아직 실패가 아니다.
- * 끊김·재시도 중 = bad. silent = 연결은 열려 있지만 RX_FRESH_MS 넘게 아무것도 받지 못함.
+ * 끊김·재시도 중 · 실시간 수신 안 함(off — 지도를 띄우지 못해 연결하지 않음) = bad. silent = 연결은 열려 있지만 RX_FRESH_MS 넘게 아무것도 받지 못함.
  */
 export function connTone(conn: string, silent: boolean, reconnectAttempt: number): "ok" | "warn" | "bad" {
   if (conn === "open") return silent ? "warn" : "ok";
@@ -44,12 +44,15 @@ export function connTone(conn: string, silent: boolean, reconnectAttempt: number
 
 /**
  * 피드 지연 배지 색(R-09). 값이 없고(NO DATA) 첫 연결을 시도하는 중(재시도 전)이면 정상적인 시작이다 — 연결 배지처럼 warn.
- * 실제로 오래됐거나(stale), 재시도·끊김·연결된 뒤에도 값이 없으면 bad.
+ * 실제로 오래됐거나(stale), 재시도·끊김·실시간 수신 안 함(off)·연결된 뒤에도 값이 없으면 bad.
  */
 export function lagTone(f: { lag: number | null; stale: boolean }, conn: string, reconnectAttempt: number): "ok" | "warn" | "bad" {
   if (f.lag == null && conn === "connecting" && reconnectAttempt === 0) return "warn";
   return f.stale ? "bad" : "ok";
 }
+
+/** 실시간 피드를 시작하지 않음(스토어 conn "off" — 지도를 띄우지 못함, R9) — 상태 바의 연결 칩과 알림 패널이 같은 낱말로 적는다 */
+export const NO_LIVE_TEXT = "실시간 수신 안 함";
 
 /** 연결이 열려 있고 최근(RX_FRESH_MS 안)에 무엇이든 받았는가 — ping 은 30 s 마다 오므로 조용한 정상 연결도 참이다. */
 export function isRxFresh(conn: string, lastRxAt: number | null | undefined, nowMs: number): boolean {

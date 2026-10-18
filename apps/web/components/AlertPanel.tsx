@@ -11,6 +11,7 @@ import { alertListState, alertsInScope, alertZone, EVENT_LABEL, etaRemainingS, e
 import { aircraftPos, panIfOutside } from "@/lib/focus";
 import { AltStack } from "./UnitStack";
 import { CONN_ISSUE } from "@/lib/conn-issue";
+import { NO_LIVE_TEXT } from "@/lib/ws-protocol";
 
 /**
  * 알림 패널(FR-10): 관측(경보 안)·예측(추정)을 구분해 목록으로. 행을 누르면 목록 안에서 근거 카드를 펼치고(선택하지 않음),
@@ -19,6 +20,7 @@ import { CONN_ISSUE } from "@/lib/conn-issue";
  * 목록을 아직 받지 못했으면 "없음"이라고 하지 않고 "수신 대기", 연결이 끊겼으면 마지막 목록임을 밝히고 ETA 를 멈춘다(DH-9).
  * 이 연결의 목록에 빠진 것이 있으면(계약 v5 §E2 — 형식 오류로 버린 알림 메시지 · 배치 틈) 수는 "—", "일부 누락"을 밝히고 ETA 를 멈춘다.
  * 끊긴 까닭을 알면(스토어 connIssue — lib/conn-issue, QA-1300) '연결 끊김' · '수신 대기' 줄에 함께 적는다.
+ * 지도를 띄우지 못해 실시간 피드를 시작하지 않았으면(목록 상태 off — R9) '수신 대기' 대신 실시간 수신을 하지 않는다고 적는다(기다려도 오지 않는다).
  * 예측 행의 고도는 진입 시 고도 추정값 — 보라 점선 밑줄(추정 표기)로 관측 고도와 구분한다(DH-15). 고도 칸 둘째 줄은 m(계약 v5 §A2).
  * active = 이 패널이 보이는가(상황판 오른쪽 패널의 탭). 다른 탭을 보는 동안에도 마운트된 채 남지만(R-08 — 펼친 근거 · 범위 · 스크롤을 지킨다) 내용은
  * React <Activity mode="hidden"> 아래에 둔다: 상태 · DOM 은 남고 효과(1 s 시계 · 스토어 구독)는 떼어 숨긴 동안 다시 그리지 않으며, 다시 보이면 그 순간의 값으로
@@ -73,12 +75,14 @@ function AlertPanelBody() {
       <div role="status" aria-live="polite" aria-atomic="true" className="h-[40px] shrink-0 overflow-hidden border-b border-line">
         {lastEvent ? <EventBanner key={lastEvent.at} ev={lastEvent} /> : null}
       </div>
-      {listState !== "live" && (listState !== "waiting" || list.length > 0) ? (
+      {/* 목록을 받기 전의 빈 목록(아래 alerts-waiting 줄이 말한다)에는 띠를 겹쳐 적지 않는다 */}
+      {listState !== "live" && (list.length > 0 || alertsVersion != null || (listState !== "waiting" && listState !== "off")) ? (
         <div className="border-b border-line bg-bg-2 px-2 py-1 text-[11px] text-warn" role="note" data-testid="alerts-stale" data-state={listState}>
           {listState === "waiting" ? "알림 수신 대기 — 아래는 이전 연결의 목록(갱신 안 됨 · ETA 멈춤)"
             : listState === "incomplete" ? "알림 목록 일부 누락(형식이 틀린 알림 메시지를 버림) — 수 모름 · ETA 멈춤 · 전체 목록을 다시 받으면 바로잡힘"
             : listState === "paused" ? "일시정지(탭 숨김) — 마지막으로 받은 목록 · 갱신 안 됨"
             : listState === "silent" ? "수신 없음(연결은 열림) — 마지막으로 받은 목록 · 갱신 안 됨 · ETA 멈춤"
+            : listState === "off" ? `${NO_LIVE_TEXT}(지도를 띄우지 못함) — 마지막으로 받은 목록 · 갱신 안 됨 · ETA 멈춤`
             : `연결 끊김 — ${issue ? `${issue.why} — ` : ""}마지막으로 받은 목록 · 갱신 안 됨 · ETA 멈춤`}
         </div>
       ) : null}
@@ -93,7 +97,8 @@ function AlertPanelBody() {
         ) : null}
         {list.length === 0 && alertsVersion == null ? (
           <div className="p-3 text-[11px] text-fg-3" data-testid="alerts-waiting">
-            알림 목록 수신 대기 중 — 아직 “없음”을 뜻하지 않습니다.{issue ? <span className="text-warn" data-testid="alerts-conn-issue"> 실시간 연결 끊김: {issue.why}</span> : null}
+            {listState === "off" ? `${NO_LIVE_TEXT} — 지도를 띄우지 못해 알림 목록을 받지 않습니다(“없음”을 뜻하지 않음 · 지도 없는 알림 화면 /m).`
+              : "알림 목록 수신 대기 중 — 아직 “없음”을 뜻하지 않습니다."}{issue ? <span className="text-warn" data-testid="alerts-conn-issue"> 실시간 연결 끊김: {issue.why}</span> : null}
           </div>
         ) : null}
         {list.map((a) => { const z = alertZone(a); return (
@@ -161,6 +166,7 @@ const ETA_FROZEN_TITLE: Record<Exclude<AlertListState, "live">, string> = {
   waiting: "알림 수신 대기 — 이전 연결의 목록이라 갱신되지 않음 · 이미 해제됐을 수 있습니다",
   incomplete: "알림 목록 일부 누락(형식 오류) — 전체 목록을 다시 받을 때까지 멈춤 · 이미 해제됐을 수 있습니다",
   disconnected: "연결이 끊겨 갱신되지 않음 — 이미 해제됐을 수 있습니다",
+  off: `${NO_LIVE_TEXT}(지도를 띄우지 못함) — 갱신되지 않음 · 이미 해제됐을 수 있습니다`,
 };
 
 /**

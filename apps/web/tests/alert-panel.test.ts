@@ -94,6 +94,38 @@ describe("status bar connection badge (R-09)", () => {
     setData({ feeds: { region: { provider: "adsb_fi", fetched_at: null, lag_s: 2, stale: false, received_at: now }, global: null } });
     expect(lag()[1]).toBe("ok");
   });
+  it("no live feed (conn 'off' — the map could not be drawn, R9): the badge is the error colour and NO DATA is not a 'normal first connection'", () => {
+    setData({ conn: "off", reconnectAttempt: 0 });
+    expect(conn()).toBe("bad");
+    const lag = /data-health="([a-z]+)" data-testid="lag-badge"/.exec(renderToStaticMarkup(createElement(StatusBar)))?.[1];
+    expect(lag).toBe("bad");
+  });
+});
+
+describe("no live feed (conn 'off' — the dashboard could not draw the map, R9)", () => {
+  const pred = { ...alert(9, [36.5, 127.8], "PREDICTED"), eta_at: new Date(Date.now() + 600_000).toISOString() } as Alert;
+  it("the list state is 'off' whatever the version — not 'waiting' (nothing will arrive)", () => {
+    expect(alertListState("off", null)).toBe("off");
+    expect(alertListState("off", 3, false)).toBe("off");
+  });
+  it("before any list: the waiting row says real-time receiving is off instead of '수신 대기 중', and no stale strip is stacked on it", () => {
+    setData({ conn: "off" });
+    const h = html();
+    expect(text(h)).toContain("실시간 수신 안 함 — 지도를 띄우지 못해 알림 목록을 받지 않습니다");
+    expect(text(h)).not.toContain("수신 대기");
+    expect(h).not.toContain('data-testid="alerts-stale"');
+  });
+  it("a list kept from an earlier map: the strip says receiving is off (not '수신 대기' · '연결 끊김') and the ETA is frozen with the same reason", () => {
+    setData({ conn: "off", alertsVersion: 3, alerts: new Map([[9, pred]]), status: STATUS });
+    const h = html();
+    expect(h).toContain('data-state="off"');
+    expect(text(h)).toContain("실시간 수신 안 함(지도를 띄우지 못함) — 마지막으로 받은 목록");
+    expect(text(h)).toContain("추정 ETA —");
+    expect(/title="([^"]*)" data-testid="alert-eta"/.exec(h)?.[1]).toContain("실시간 수신 안 함(지도를 띄우지 못함)");
+    setData({ alertsVersion: null }); // 이전 연결의 목록(버전 모름)도 같다
+    expect(html()).toContain('data-state="off"');
+    expect(text(html())).not.toContain("수신 대기");
+  });
 });
 
 describe("last-event banner (R-23)", () => {
