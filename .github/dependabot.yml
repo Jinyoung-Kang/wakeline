@@ -14,8 +14,9 @@ updates:
     # ESLint 10 은 eslint-config-next 가 아직 받지 않는다(CTO 리뷰 2026-10 결정 7 — 2026-10-03 다시 봄: 묶인 eslint-plugin-import 2.32 · jsx-a11y 6.10 · react 7.37 의
     # 최신판도 peer 가 ESLint ≤ 9) · TypeScript 는 6.0 까지 올렸고(2026-10-03) 7(새 컴파일러 — JS API 없음)은 typescript-eslint 가 받을 때(peer < 6.1) ·
     # @types/node 는 실행 Node(24)와 맞춘다 — Node 26 이 LTS 가 된 뒤(2026-10 말 예정) 웹 이미지와 함께
-    # maplibre-gl 은 6.11.x 에 묶는다(패치만 — 개선 작업 Q2 · 2026-10-19): 6.12.0 은 지도 배포본만 +2,591 B 라 첫 화면 JS 예산(550,000 B — ADR-026)을 넘었고
-    # 지금 여유는 276 B 다. 부 버전은 예산을 다시 정할 때(또는 줄일 곳을 찾았을 때) 계획된 작업으로 올린다
+    # maplibre-gl 은 6.11.x 에 묶는다(패치만 — 개선 작업 Q2 · 2026-10-19, 같은 날 다시 잼 — VERIFICATION #151 · PERF §21): 6.13.0 부터 워커가 공용 청크를
+    # import 하지 않고 공용 코드를 따로 싣는다(upstream #8621 — 메인 · 워커가 같은 코드를 두 번 받는다). 6.15.0 은 첫 화면 JS 684,201 B 로 예산(550,000 B —
+    # ADR-026)을 134,201 B 넘는다. 6.12.0 은 548,902 B(여유 1,098 B)로 들지만 들일지는 사용자 결정으로 남겼다. 6.13 이상은 예산을 ADR-026 절차로 다시 정할 때 계획된 작업으로 올린다
     ignore:
       - { dependency-name: "maplibre-gl", update-types: ["version-update:semver-minor", "version-update:semver-major"] }
       - { dependency-name: "eslint", update-types: ["version-update:semver-major"] }
