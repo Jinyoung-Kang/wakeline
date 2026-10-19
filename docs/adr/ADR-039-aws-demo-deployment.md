@@ -118,3 +118,8 @@
 기동 스크립트(aws-deploy `start-stack.sh`)도 같은 compose 를 직접 부른다. 그래서 설정 해시 라벨(`EDGE_CONFIG_SHA` · `REDIS_CONFIG_SHA`)이 늘 `unset` 이다.
 edge · redis 의 마운트 설정 파일만 바뀐 배포는 그 컨테이너를 `--force-recreate` 로 다시 만든다.
 
+## 개정(2026-10-19 — 시작 · 중지는 지금 사용자가 직접 한다)
+- EventBridge Scheduler 의 예약 넷(`portfolio-ec2-start` · `portfolio-ec2-stop` · `portfolio-rds-start` · `portfolio-rds-stop`)은 모두 꺼져 있다(2026-10-19 확인). EC2 · RDS 는
+  사용자가 직접 켜고 끄며, 주말에도 켜져 있을 수 있다(그날 확인한 EC2 는 10-17 토요일부터 켜져 있었다). 위 '평일 08:50–18:00' 은 예약을 다시 켤 때의 일정이다.
+- 코드는 어느 쪽이든 그대로다: 멈춤 · 다시 켜짐을 견디는 따라잡기 · ETag 프로세스 표식 · 파티션 삭제 미룸(#138–#140)은 예약과 관계없이 필요하고, 켜져 있는 동안에는
+  03:30 KST 정시 집계도 돈다. 예약을 다시 켜는 것은 AWS 설정 변경이라 사용자가 정한다(비용 · 다른 두 프로젝트와 함께 쓰는 EC2 · RDS).
