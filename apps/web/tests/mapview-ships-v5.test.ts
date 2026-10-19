@@ -202,11 +202,35 @@ describe("selected ship track: period and hover points (contract v5 §B3)", () =
     rec.failures.set("/api/v1/ships/200000001/track", new ApiError(503, "data store temporarily unavailable; retry later", 10, "UNAVAILABLE", "7ac47ac47ac47ac4"));
     rec.failures.set("/api/v1/ships/200000002/track", new TypeError("Failed to fetch"));
     await mountLoaded();
-    await act(() => useUi.getState().selectShip("200000001"));
-    await act(async () => { await Promise.resolve(); });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      await act(() => useUi.getState().selectShip("200000001"));
+      await act(async () => { await Promise.resolve(); });
+      // 503 + Retry-After: 그만큼 뒤 한 번 다시 받는다(R12) — 그 전에는 '불러오는 중', 다시 받아도 실패하면 실패와 요청 id
+      expect(getData().shipTrack).toMatchObject({ mmsi: "200000001", loaded: false, error: null });
+      await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+    } finally { vi.useRealTimers(); }
+    expect(rec.api.filter((p) => p.startsWith("/api/v1/ships/200000001/track"))).toHaveLength(2);
     expect(getData().shipTrack).toMatchObject({ mmsi: "200000001", loaded: true, error: "data store temporarily unavailable; retry later", requestId: "7ac47ac47ac47ac4" });
     await act(() => useUi.getState().selectShip("200000002"));
     await act(async () => { await Promise.resolve(); });
     expect(getData().shipTrack).toMatchObject({ mmsi: "200000002", loaded: true, error: "Failed to fetch", requestId: null });
+    expect(rec.api.filter((p) => p.startsWith("/api/v1/ships/200000002/track")), "a network failure is not fetched again").toHaveLength(1);
+  });
+
+  it("R12: a ship track 503 with Retry-After that succeeds on the one retry is drawn from the record without a failure", async () => {
+    const { ApiError } = await import("@/lib/api");
+    const { getData } = await import("@/lib/store");
+    rec.failures.set("/api/v1/ships/200000001/track", new ApiError(503, "data store temporarily unavailable; retry later", 10, "UNAVAILABLE", "7ac47ac47ac47ac4"));
+    await mountLoaded();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      await act(() => useUi.getState().selectShip("200000001"));
+      await act(async () => { await Promise.resolve(); });
+      rec.failures.delete("/api/v1/ships/200000001/track");
+      rec.responses.set("/api/v1/ships/200000001/track", { type: "Feature", geometry: { type: "MultiLineString", coordinates: [] }, properties: {}, points: [], gaps: [] });
+      await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+    } finally { vi.useRealTimers(); }
+    expect(getData().shipTrack).toMatchObject({ mmsi: "200000001", loaded: true, error: null });
   });
 });

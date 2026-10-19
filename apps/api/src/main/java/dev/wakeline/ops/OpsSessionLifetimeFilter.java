@@ -41,7 +41,9 @@ import java.util.function.IntFunction;
  * Retry-After(QA-101 — 계약 §2 의 기본 10 s, 해결 목록 GET 은 §G14 가 약속한 30 s: 해결 기록 읽기의 다시 읽는 간격). Redis 만 읽는 로그 조회도 이 확인을
  * 먼저 지나므로 DB 장애 중에는 503 이다 — 실패-닫힘(ADR-017 §6 S3, ADR-024). 이 필터는 컨트롤러 밖이라 ProblemAdvice 가 닿지 않으므로 그 규칙을 여기서
  * 부른다(IM-24): 저장소 장애({@link ProblemAdvice#isUnavailable})면 저장소 장애 503 과 같은 WARN 한 줄(원인 · request_id · path · 짧은 예외 요약,
- * 스택 없음), 그 밖의 예외(권한 · 문법 등의 결함)는 503 으로 숨기지 않고 다시 던진다 — 컨테이너가 500 + ERROR(스택)로 남긴다.
+ * 스택 없음), 그 밖의 예외(권한 · 문법 등의 결함)는 503 으로 숨기지 않고 여기서 500 + ERROR(스택)다 — 공개 경로의 ProblemAdvice '처리 안 된 오류'와
+ * 같은 줄(request_id · path)과 같은 본문(INTERNAL). 예전에는 다시 던져 컨테이너가 ERROR 를 남겼는데, 그때는 요청 id 필터가 이미 MDC 를 지운 뒤라
+ * 그 줄에 요청 id 가 없었다(개선 작업 독립 검토 R5 — OpsCredentialDefectLogIT).
  * 이 필터의 WARN 줄은 경로 원문을 따옴표 안에 싣는다({@link ProblemAdvice#loggedPath} — 보안 필터 체인은 컨트롤러 매핑 전이라 경로 패턴이 없다):
  * 로그 지문이 운영 경로의 값(공급자 이름 · 설정 키)마다 갈리지 않게(IM-25).
  * 로그아웃(DELETE /api/v1/ops/session)은 자격 비교를 하지 않는다(리뷰 cto-2026-10 S3): 권한을 줄이는 요청이라 확인할 것이 없고, DB 장애 중에도 세션을
@@ -99,7 +101,12 @@ public class OpsSessionLifetimeFilter extends OncePerRequestFilter {
             try {
                 now = currentCredential.apply(uid);
             } catch (RuntimeException e) {
-                ProblemAdvice.answeredUnavailable(e, req); // 장애면 WARN 한 줄(요청 id 로 찾게), 결함이면 여기서 던진다 → 500 + ERROR(IM-24)
+                if (!ProblemAdvice.isUnavailable(e)) { // 결함(IM-24): 500 + ERROR(스택) — 요청 id 를 실어 응답의 id 로 찾게(R5)
+                    log.error("unhandled error request_id={} {}", RequestIdFilter.current(req), ProblemAdvice.loggedPath(req), e);
+                    ProblemJson.write(res, req, 500, "INTERNAL", "internal error", "unexpected error");
+                    return;
+                }
+                ProblemAdvice.answeredUnavailable(e, req); // 장애: WARN 한 줄(요청 id 로 찾게)
                 unavailable(req, res, "ops temporarily unavailable",
                         RESOLUTIONS_LIST.matches(req) ? (int) ResolutionService.RETRY_S : Problem.UNAVAILABLE_RETRY_AFTER_S);
                 return;

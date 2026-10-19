@@ -113,7 +113,8 @@ public class AircraftRepository {
     /**
      * hex·등록부호 앞부분 일치(대문자, 호출자가 [A-Z0-9-] 로 검사한 값). 앞부분 일치를 바이트 순서 범위 [p, p 의 마지막 글자 + 1) 로 쓴다 —
      * text_pattern_ops 인덱스(V9 aircraft_hex_prefix · aircraft_registration_prefix)를 파라미터로도 쓸 수 있다(LIKE :p 는 일반 계획에서
-     * 인덱스를 못 써 표 전체를 훑었다, R-51).
+     * 인덱스를 못 써 표 전체를 훑었다, R-51). 순서는 정확 일치(hex · 등록부호가 검색어와 같음) → last_seen 최신 → hex — 실시간 검색(IM-09)과 같은 규칙이다
+     * (R4 — 예전에는 last_seen 만으로 끊어, 오래전에 본 정확 일치가 앞부분이 같은 최근 기체에 밀려 빠졌다). 정렬은 앞부분 범위로 걸러진 행에만 한다.
      */
     public List<Map<String, Object>> search(String prefix, int limit) {
         if (prefix == null || prefix.isEmpty()) return List.of();
@@ -121,7 +122,7 @@ public class AircraftRepository {
         return Sql.publicRead(db, "aircraft.search", """
                 SELECT hex, registration, type_code, last_seen FROM aircraft
                 WHERE (upper(hex) ~>=~ :lo AND upper(hex) ~<~ :hi) OR (upper(registration) ~>=~ :lo AND upper(registration) ~<~ :hi)
-                ORDER BY last_seen DESC LIMIT :n""")
+                ORDER BY (upper(hex) = :lo OR upper(registration) = :lo) IS TRUE DESC, last_seen DESC, hex LIMIT :n""")
                 .param("lo", prefix).param("hi", hi).param("n", limit).query().listOfRows().stream().map(m -> {
                     var out = new LinkedHashMap<String, Object>(m);
                     out.put("last_seen", Sql.toInstant(m.get("last_seen")));

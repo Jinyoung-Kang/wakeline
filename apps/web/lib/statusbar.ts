@@ -387,7 +387,7 @@ export function detailRows(i: StatusInput): DetailRow[] {
   const rows: DetailRow[] = [];
   rows.push({
     key: "conn", name: "WS 연결", health: toneHealth(c.tone),
-    state: i.conn === "paused" ? "일시정지(탭 숨김)" : c.text.replace(/^WS /, ""),
+    state: i.conn === "paused" ? `일시정지(탭 숨김)${i.mapless ? " · 지도 없음" : ""}` : c.text.replace(/^WS /, ""),
     value: i.reconnectAttempt > 0 ? `재시도 ${i.reconnectAttempt}` : "—", source: "/ws/v1",
     rule: `${RX_FRESH_MS / 1000} s 넘게 수신 없음 = 수신 없음 · ${RX_DEAD_MS / 1000} s = 다시 연결 · 일시정지 = 탭 숨김(서버가 보내지 않음)`,
   });

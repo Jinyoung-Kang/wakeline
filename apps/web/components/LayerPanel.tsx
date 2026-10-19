@@ -3,6 +3,7 @@ import { useEscapeClose } from "@/lib/use-escape-close";
 import { useEffect, useRef } from "react";
 import { legendDefaultOpen, loadLayers, loadLegendOpen, loadShipCats, saveLayers, saveLegendOpen } from "@/lib/prefs";
 import { SHIP_CATEGORIES, type ShipCategory } from "@/lib/ships";
+import { useServerData } from "@/lib/store";
 import { useUi, type Layers } from "@/lib/ui-store";
 import { MapChipsView } from "./MapChips";
 import { MapLegend } from "./MapLegend";
@@ -52,6 +53,8 @@ export function LayerPanelView({ layers, shipCats, legendOpen }: { layers: Layer
   const setLegendOpen = useUi((s) => s.setLegendOpen);
   const hex = useUi((s) => s.selectedHex);
   const basemapFailed = useUi((s) => s.basemapFailed);
+  // 지도가 없다(지도 없는 피드 · 피드 없음 'off' — ADR-041): 지도에 그리는 것을 다루는 단추 · 범례 · 레이어 상태 칸은 그리지 않는다(지도 자리 칩만)
+  const noMap = useServerData((d) => d.mapless === true || d.conn === "off");
   const toggle = (k: keyof Layers) => {
     toggleLayer(k);
     saveLayers(useUi.getState().layers);
@@ -63,8 +66,10 @@ export function LayerPanelView({ layers, shipCats, legendOpen }: { layers: Layer
   };
   // Esc 로 범례 닫기(lib/escape-stack) — 단추로 닫은 것과 같다(이 브라우저에 저장). 초점이 범례 안이었으면 '범례' 단추로
   const legendBtn = useRef<HTMLButtonElement>(null);
-  useEscapeClose(legendOpen, () => { setLegendOpen(false); saveLegendOpen(false); },
+  useEscapeClose(legendOpen && !noMap, () => { setLegendOpen(false); saveLegendOpen(false); },
     { panel: () => (typeof document === "undefined" ? null : document.getElementById(LEGEND_ID)), opener: legendBtn });
+  const chips = <div className="min-w-0 max-w-[50%]"><MapChipsView hex={hex} shipsOn={layers.ships} shipCats={shipCats} basemapFailed={basemapFailed} /></div>;
+  if (noMap) return <div className="pointer-events-none absolute top-3 right-3 bottom-16 left-[48px] z-10 flex flex-col gap-1">{chips}</div>;
   return (
     // bottom-16: 펼친 범례가 지도 오른쪽 아래 출처 표기(AttributionControl)를 가리지 않게(R-31).
     // left-[48px]: 왼쪽 위 줌 단추(여백 10 + 단추 29 + 테두리 2 = 41 px) 옆 — left-12 는 13 px 글꼴 기준 3 rem = 39 px 라 단추와 2 px 겹쳤다(하네스로 잼)
@@ -83,7 +88,7 @@ export function LayerPanelView({ layers, shipCats, legendOpen }: { layers: Layer
       </div>
       {/* 두 칸은 남은 높이를 채운다(stretch) — 범례가 그 높이 안에서 줄어들고 스크롤된다(지도 아래 타임라인 · 출처 줄을 덮지 않게) */}
       <div className="flex min-h-0 flex-1 justify-between gap-2">
-        <div className="min-w-0 max-w-[50%]"><MapChipsView hex={hex} shipsOn={layers.ships} shipCats={shipCats} basemapFailed={basemapFailed} /></div>
+        {chips}
         <div className="flex min-h-0 min-w-0 flex-col items-end gap-1">
           {layers.traffic ? <TrafficGridStatus /> : null}
           {layers.reception ? <ReceptionStatusPart /> : null}

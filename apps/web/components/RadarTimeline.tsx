@@ -24,20 +24,22 @@ export function RadarTimeline() {
   const setKrIdx = useUi((s) => s.setKrFrame);
   const playing = useUi((s) => s.radarPlaying);
   const setPlaying = useUi((s) => s.setRadarPlaying);
+  // 지도가 없으면(지도 없는 피드 · 'off' — ADR-041) 그릴 곳이 없다: 프레임 상태는 두고 애니메이션 · 프레임 막대 · latest 만 끈다
+  const noMap = useServerData((d) => d.mapless === true || d.conn === "off");
   const kma = source === "kma";
   const n = kma ? radarKr?.frames.length ?? 0 : radar?.past.length ?? 0;
   const idx = kma ? krIdx : rvIdx;
   const setIdx = kma ? setKrIdx : setRvIdx;
   const cur = idx ?? Math.max(0, n - 1);
   useEffect(() => {
-    if (!playing || n === 0) return;
+    if (!playing || n === 0 || noMap) return;
     const t = setInterval(() => {
       const st = useUi.getState();
       const i = kma ? st.krFrameIndex : st.radarFrameIndex;
       setIdx(((i ?? n - 1) + 1) % n);
     }, 600);
     return () => clearInterval(t);
-  }, [playing, n, setIdx, kma]);
+  }, [playing, n, setIdx, kma, noMap]);
   const time = kma ? undefined : radar?.past[cur]?.time;
   const krTm = kma ? radarKr?.frames[cur]?.tm : undefined;
   const krAvailable = !!radarKr?.available && (radarKr?.frames.length ?? 0) > 0;
@@ -64,11 +66,12 @@ export function RadarTimeline() {
       {/* '재생' 은 상단 메뉴(이력 재생 화면)의 이름이다 — 레이더 애니메이션은 다른 말로(R-60) */}
       {/* 토글: aria-pressed 가 상태를 말하므로 이름은 고정(QA 2026-10 화면 개선 제안 2 — 예전에는 이름이 재생↔정지로 바뀌어 "정지, 눌림"으로 읽혔다).
           보이는 글자 '애니메이션' 이 이름 안에 있다(WCAG 2.5.3) — ▶/■ 는 상태 표시 */}
-      <button className="btn" onClick={() => setPlaying(!playing)} disabled={n === 0} aria-pressed={playing} data-testid="radar-play"
+      <button className="btn" onClick={() => setPlaying(!playing)} disabled={n === 0 || noMap} aria-pressed={playing} data-testid="radar-play"
         aria-label="레이더 애니메이션">애니메이션 {playing ? "■" : "▶"}</button>
-      <input type="range" min={0} max={Math.max(0, n - 1)} value={cur} onChange={(e) => { setPlaying(false); setIdx(Number(e.target.value)); }} className="w-40 min-[900px]:w-64" disabled={n === 0}
+      <input type="range" min={0} max={Math.max(0, n - 1)} value={cur} onChange={(e) => { setPlaying(false); setIdx(Number(e.target.value)); }} className="w-40 min-[900px]:w-64" disabled={n === 0 || noMap}
         aria-label="레이더 프레임" aria-valuetext={label} />
       <span className="mono text-[11px]" title={labelTitle} data-testid="radar-frame-time">{label}</span>
+      {noMap ? <span className="text-[10px] text-warn" data-testid="radar-no-map">지도 없음 — 레이더를 그리지 않음(프레임 상태만)</span> : null}
       {comp ? <span className={`mono text-[11px] ${comp.warn ? "text-warn" : "text-fg-2"}`} title={comp.title} data-testid="kr-frame-composite">{comp.label}</span> : null}
       {comp?.warn ? <span className="badge warn normal-case!" title={comp.warn} data-testid="kr-frame-partial">일부 합성</span> : null}
       {miss && krAvailable ? <span className="badge warn normal-case!" data-testid="kr-frame-missing" title={`${miss.text}\n${miss.title}`}>{miss.word}</span> : null}
@@ -86,7 +89,7 @@ export function RadarTimeline() {
       {kma && !krAvailable
         ? <span className="text-[10px] text-warn" data-testid="radar-kr-unavailable">{krUnavailableText(radarKr, miss)}</span>
         : <span className="text-[10px] text-fg-3">{kma ? `${n} frames · 5 min · 기상청 HSR 500 m(LCC→Mercator 재투영)` : `${n} frames · 10 min · RainViewer(z≤7) · 커버리지 밖 회색`}</span>}
-      <button className="btn" onClick={() => { setPlaying(false); setIdx(null); }} disabled={n === 0} title="최신 프레임으로" data-testid="radar-latest"><span lang="en">latest</span></button>
+      <button className="btn" onClick={() => { setPlaying(false); setIdx(null); }} disabled={n === 0 || noMap} title="최신 프레임으로" data-testid="radar-latest"><span lang="en">latest</span></button>
       <button ref={krBtn} className="btn ml-2" aria-pressed={kr} onClick={() => setKr(!kr)} data-testid="kr-radar-toggle">범례·정합</button>
     </div>
   );

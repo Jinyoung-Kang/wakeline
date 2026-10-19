@@ -220,12 +220,13 @@ class OpsSessionLifetimeFilterTest {
     }
 
     /**
-     * IM-24(리뷰 #8): 장애가 아닌 예외(권한 42501 의 BadSqlGrammarException · 코드 결함)는 503 '잠시 뒤 재시도' 로 숨기지 않고 다시 던진다 — 컨테이너가
-     * 500 + ERROR(스택)로 남긴다(공개 경로의 ProblemAdvice 규칙과 같다). 예전에는 어떤 RuntimeException 이든 로그 없는 503 이었다.
+     * IM-24(리뷰 #8): 장애가 아닌 예외(권한 42501 의 BadSqlGrammarException · 코드 결함)는 503 '잠시 뒤 재시도' 로 숨기지 않고 500 + ERROR(스택)다
+     * (공개 경로의 ProblemAdvice 규칙과 같다). 예전에는 어떤 RuntimeException 이든 로그 없는 503 이었다.
+     * R5(개선 작업 독립 검토): 그 ERROR 줄과 본문이 요청 id 를 싣는다 — 예전에는 다시 던져 컨테이너가 남긴 줄에 요청 id 가 없었다(OpsCredentialDefectLogIT).
      */
     @Test
     @ExtendWith(OutputCaptureExtension.class)
-    void aDefectInTheCredentialLookupIsRethrownNotAnswered503(CapturedOutput output) {
+    void aDefectInTheCredentialLookupIsAnswered500WithAnErrorLineCarryingTheRequestId(CapturedOutput output) throws Exception {
         RuntimeException[] defects = {
                 new BadSqlGrammarException("credential", "SELECT password_hash FROM ops_user WHERE id = :id",
                         new SQLException("ERROR: permission denied for table ops_user", "42501")),
@@ -235,14 +236,17 @@ class OpsSessionLifetimeFilterTest {
             MockHttpSession s = loggedIn("sess-defect-0001", 7, "tag");
             MockHttpServletResponse res = new MockHttpServletResponse();
             MockFilterChain chain = new MockFilterChain();
-            assertThatThrownBy(() -> f.doFilter(request("/api/v1/ops/providers", s, "rid-im24-defect"), res, chain))
-                    .as(defect.getClass().getSimpleName()).isSameAs(defect);
-            assertThat(res.getStatus()).as("nothing written — the container answers 500").isEqualTo(200);
+            f.doFilter(request("/api/v1/ops/providers", s, "rid-im24-defect"), res, chain);
+            assertThat(res.getStatus()).as(defect.getClass().getSimpleName()).isEqualTo(500);
+            assertThat(res.getContentAsString()).contains("\"code\":\"INTERNAL\"").contains("rid-im24-defect");
             assertThat(res.getHeader("Retry-After")).isNull();
             assertThat(chain.getRequest()).isNull();
             assertThat(s.isInvalid()).isFalse();
         }
         assertThat(lines(output, "→ 503")).as("no 503 line for a defect").isEmpty();
+        assertThat(lines(output, "rid-im24-defect")).as("one ERROR line per defect, with the request id and path").hasSize(2)
+                .allSatisfy(l -> assertThat(l).contains("ERROR", "unhandled error request_id=rid-im24-defect", "/api/v1/ops/providers"));
+        assertThat(output.getAll()).as("a defect keeps its stack").contains("permission denied for table ops_user").contains("bug in the lookup").contains("\tat ");
     }
 
     /**
