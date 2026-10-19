@@ -1850,6 +1850,25 @@ AWS 리뷰 D-2 · D-3 · D-4 · D-5 · D-6 · D-7 · D-8 · B-4 · C-2. 모두 �
   실패 → 통과, 이 파일을 넷 동시에 돌려도 통과, 단언은 그대로). (6) `make e2e` 가 `wakeline-*:local` 을 덮었다 — 작업 전에 `:mainsafe` 로 태그해 두었고, 끝난 뒤 같은 이미지 ID 로 되돌렸다.
 - **남은 것**: ADR-041 '남은 것'((b2) 다시 시도 뒤 MapLibre 가 또 실패하면 'off' · 숨김 동안 상세 표 연결 행 · 지도 Hook 안의 다른 결합 · 지도 없을 때 쓸모없는 조작). 병합은 `fix/improve-2026-10` 다음.
 
+## #149 개선 작업 · Q4 · Q1 · Q2 병합 · 배포(2026-10-19, main `4d84de9e` — 로컬 · AWS)
+- **병합**: `fix/improve-2026-10` → `feat/mapless-feed-2026-10` → `fix/sigmet-abv-backfill-2026-10`(Q1 · V22) → `chore/maplibre-pin-2026-10`(Q2) 차례로 병합 커밋 넷
+  (`ad6becbf` · `7e3e3263` · `dad36918` · `4d84de9e`). 브랜치가 한 줄로 이어져 main 트리는 시험한 마지막 브랜치 끝과 같다(`git diff` 없음).
+- **확인(같은 트리)**: `make test`(pytest 2,064 · JUnit 1,351 + 커버리지 기준 · REST 계약 46 · Vitest 1,933 · 인프라 정책 195) · main 에서 `make e2e` 52 ·
+  `make security` PASS(배포할 이미지 — api · db · edge 는 `--no-cache` 로 그날 OS 갱신을 받음).
+- **push · CI**: `1d4589ba..4d84de9e`. **CI 는 돌지 않았다** — 모든 작업이 시작 전에 끝났고 주석은 "recent account payments have failed or your spending limit needs to be
+  increased"(GitHub 결제 · 지출 한도 — 저장소 밖, 사용자가 설정에서 푼다). Dependabot PR 의 CI 도 같은 까닭으로 실패한다. 같은 실행에 `ubuntu-latest` 가 2026-10-19 부터
+  Ubuntu 26 으로 옮겨 간다는 안내가 붙었다(다음 CI 실행에서 실행 환경이 바뀔 수 있다). CI 대신 위 로컬 검사가 같은 명령이다.
+- **로컬 배포**(`make up`): migrate 가 V22 를 적용(0.16 s) — 지난 SIGMET 447행이 `raw_text_lower_bound` 로(감사 기록 `SIGMET_TOP_SOURCE_V22` 한 줄 — 되돌리기 값).
+  바뀐 컨테이너만 다시 만들었고(redis 그대로) `/healthz` 200, 직후 api 오류 0. 이전 이미지는 `wakeline-*:premerge`.
+- **AWS 배포**(SSM · ADR-039): `wakeline-{api,collector,web}:rollback` = 직전(`1d4589ba`) 이미지 → `git merge --ff-only origin/main` → `build --no-cache api` · `build collector` ·
+  `build web`(합계 162 s) → `run --rm migrate`(RDS `verify-full`, V22 0.46 s) → `up -d --wait`: api · collector · ais · web healthy(edge · redis 는 바뀌지 않아 그대로),
+  `/healthz` · `/api/v1/status` 200, 5분 동안 api · collector 오류 0, 디스크 79 %. AWS 에서 바뀐 SIGMET 행 수는 RDS 를 직접 조회하지 않아 보지 않았다(감사 기록에 있다).
+- **겪은 것**: (1) "남은 작업을 권장안대로 모두 진행"이라는 일반 지시로는 main 병합이 권한 검사에서 막혔다 — 사용자가 병합 · push · 배포를 따로 말한 뒤 진행했다.
+  (2) `make e2e` 가 캐시로 다시 빌드해 `:local` 이미지 ID 가 바뀌었다 — OS 갱신 층은 그날 `--no-cache` 로 만든 층(12:56 KST)을 그대로 써서 문제없음을 층 시각으로 확인했다.
+  (3) Q2 뒤 Dependabot 이 web 묶음을 maplibre-gl 없이 다시 만들었다(#18 — next 16.4.0 등 5건, 첫 화면 JS 여유 276 B 안인지 재야 한다).
+- **남은 것**: GitHub 결제를 푼 뒤 이 실행을 다시 돌리기(`gh run rerun 39197019445`) · Dependabot PR 6건(#11 python 3.14 주 버전 · #12 postgres 다이제스트 · #13 gradle wrapper ·
+  #17 actions · #18 web · #19 collector) · AWS 시작 · 중지 일정(EventBridge 꺼짐 — 문서와 다름) · QA-1131(Caddy 2.11.8 대기).
+
 ## 자동 검사 현황(2026-10-02 15:5x KST, QA 2026-10 브랜치 `qa/2026-10` — #103 뒤, 깨끗한 `git archive` 내보내기 · 격리 스택)
 | 층 | 도구 | 수 |
 |---|---|---|
