@@ -108,6 +108,26 @@ class QueryPlanDbTest {
         assertThat(repo.search("71", 20)).extracting(r -> String.valueOf(r.get("hex")).trim()).contains("71c001", "71c002", "71d000");
         assertThat(repo.search("ZZZZ", 20)).isEmpty();
         assertThat(repo.search("N1999", 20)).extracting(r -> r.get("registration")).contains("N1999", "N19990", "N19999").doesNotContain("N2000");
+
+        // R4(개선 작업 독립 검토): 앞부분이 같은 최근 기체가 20건을 넘어도 검색어와 정확히 같은 등록부호 · hex 는 빠지지 않고 맨 앞이다(실시간 검색 IM-09 와 같은 규칙).
+        // 예전에는 last_seen 최신순으로만 끊어 30일 전에 본 'JA01' 이 최근의 'JA010'… 21건에 밀려 빠졌다
+        admin.sql("""
+                INSERT INTO aircraft (hex, registration, type_code, source, first_seen, last_seen)
+                SELECT 'e0' || lpad(to_hex(g), 4, '0'), 'JA01' || g, 'A320', 'fixture', now() - interval '2 days', now() - (g * interval '1 second')
+                FROM generate_series(0, 20) g""").update();
+        admin.sql("""
+                INSERT INTO aircraft (hex, registration, type_code, source, first_seen, last_seen) VALUES
+                  ('e1a000', 'JA01', 'B788', 'fixture', now() - interval '40 days', now() - interval '30 days'),
+                  ('ab0001', 'JA02', 'B788', 'fixture', now() - interval '40 days', now() - interval '30 days')""").update();
+        var ja01 = repo.search("JA01", 20);
+        assertThat(ja01).hasSize(20);
+        assertThat(ja01.get(0).get("registration")).as("exact registration first").isEqualTo("JA01");
+        assertThat(ja01.subList(1, 20)).extracting(r -> r.get("registration")).as("then the newest prefix matches")
+                .containsExactly("JA010", "JA011", "JA012", "JA013", "JA014", "JA015", "JA016", "JA017", "JA018", "JA019",
+                        "JA0110", "JA0111", "JA0112", "JA0113", "JA0114", "JA0115", "JA0116", "JA0117", "JA0118");
+        assertThat(repo.search("AB0001", 20)).extracting(r -> String.valueOf(r.get("hex")).trim()).as("exact hex").containsExactly("ab0001");
+        assertThat(plans.last()).as("search plan with the exact-match order: %s", plans.last()).doesNotContain("\"Node Type\": \"Seq Scan\"")
+                .contains("\"Index Name\": \"aircraft_registration_prefix\"").contains("\"Index Name\": \"aircraft_hex_prefix\"");
     }
 
     /**
