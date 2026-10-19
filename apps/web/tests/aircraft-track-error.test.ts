@@ -47,7 +47,7 @@ beforeEach(() => {
   rec.replies.clear(); FakeMap.instances.length = 0; resetData(); useUi.setState(initialUi, true);
   vi.stubGlobal("fetch", () => new Promise<Response>(() => {}));
 });
-afterEach(async () => { await m.unmount(); vi.unstubAllGlobals(); resetData(); });
+afterEach(async () => { vi.useRealTimers(); dom.document.hidden = false; await m.unmount(); vi.unstubAllGlobals(); resetData(); });
 
 async function mount() {
   const { MapView } = await import("@/components/MapView");
@@ -61,9 +61,16 @@ const RECORD_TEXT = "항적 선은 DB 기록(최근 2 h)에 실시간 관측을 
 
 describe("selected aircraft: a failed DB track is said on the card (IM-23)", () => {
   it("503 with a request id: the store keeps the failure and the card says only live points since selection, with the request id", async () => {
-    rec.replies.set(TRACK, () => Promise.reject(new ApiError(503, "data store temporarily unavailable; retry later", 10, "UNAVAILABLE", RID)));
+    // Retry-After 가 있는 503 은 그만큼 뒤 한 번 다시 받는다(R12 — 아래 묶음). 그 한 번도 실패하면 지금처럼 실패와 요청 id 를 둔다
+    let calls = 0;
+    rec.replies.set(TRACK, () => { calls++; return Promise.reject(new ApiError(503, "data store temporarily unavailable; retry later", 10, "UNAVAILABLE", RID)); });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     await mount();
     await m.act(async () => { useUi.getState().select(HEX); });
+    expect(getData().aircraftTrack).toEqual({ hex: HEX, loaded: false, error: null, requestId: null });
+    await m.act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+    vi.useRealTimers();
+    expect(calls).toBe(2);
     expect(getData().aircraftTrack).toEqual({ hex: HEX, loaded: true, error: "data store temporarily unavailable; retry later", requestId: RID });
     const html = card();
     const line = trackError(html);
@@ -102,5 +109,59 @@ describe("selected aircraft: a failed DB track is said on the card (IM-23)", () 
     const other = card("def456");
     expect(trackError(other)).toBeNull();
     expect(other).toContain(RECORD_TEXT);
+  });
+});
+
+describe("selected aircraft and ship: a 503 with Retry-After is fetched again once (R12 — the same rule as the cards, lib/use-retry-after)", () => {
+  const unavailable = () => new ApiError(503, "data store temporarily unavailable; retry later", 10, "UNAVAILABLE", RID);
+  beforeEach(() => { vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] }); });
+
+  it("the retry after Retry-After succeeds: the track is drawn from the record and nothing says it failed", async () => {
+    let calls = 0;
+    rec.replies.set(TRACK, () => (++calls === 1 ? Promise.reject(unavailable()) : Promise.resolve({ points: [] })));
+    await mount();
+    await m.act(async () => { useUi.getState().select(HEX); });
+    expect(calls).toBe(1);
+    await m.act(async () => { await vi.advanceTimersByTimeAsync(9_999); });
+    expect(calls).toBe(1);
+    expect(getData().aircraftTrack).toEqual({ hex: HEX, loaded: false, error: null, requestId: null }); // 다시 받기 전까지는 '불러오는 중'
+    await m.act(async () => { await vi.advanceTimersByTimeAsync(1); });
+    expect(calls).toBe(2);
+    expect(getData().aircraftTrack).toEqual({ hex: HEX, loaded: true, error: null, requestId: null });
+    expect(trackError(card())).toBeNull();
+  });
+
+  it("a 503 without Retry-After (or any other failure) is not fetched again — the failure shows at once", async () => {
+    let calls = 0;
+    rec.replies.set(TRACK, () => { calls++; return Promise.reject(new ApiError(503, "down", null, "UNAVAILABLE", RID)); });
+    await mount();
+    await m.act(async () => { useUi.getState().select(HEX); });
+    expect(getData().aircraftTrack).toEqual({ hex: HEX, loaded: true, error: "down", requestId: RID });
+    await m.act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+    expect(calls).toBe(1);
+  });
+
+  it("a hidden tab waits until it is shown again; choosing another aircraft while waiting drops the retry", async () => {
+    let calls = 0;
+    rec.replies.set(TRACK, () => { calls++; return calls === 1 ? Promise.reject(unavailable()) : Promise.resolve({ points: [] }); });
+    await mount();
+    await m.act(async () => { useUi.getState().select(HEX); });
+    dom.document.hidden = true;
+    await m.act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+    expect(calls).toBe(1); // 숨은 탭에서는 부르지 않는다
+    dom.document.hidden = false;
+    await m.act(async () => { dom.document.dispatch("visibilitychange"); });
+    expect(calls).toBe(2);
+    expect(getData().aircraftTrack).toMatchObject({ hex: HEX, loaded: true, error: null });
+
+    calls = 0;
+    rec.replies.set(TRACK, () => { calls++; return Promise.reject(unavailable()); });
+    await m.act(async () => { useUi.getState().select(null); });
+    await m.act(async () => { useUi.getState().select(HEX); });
+    expect(calls).toBe(1);
+    await m.act(async () => { useUi.getState().select("def456"); }); // 기다리는 동안 다른 항공기
+    await m.act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+    expect(calls).toBe(1);
+    expect(getData().aircraftTrack).toEqual({ hex: "def456", loaded: false, error: null, requestId: null });
   });
 });

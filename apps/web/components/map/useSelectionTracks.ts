@@ -8,6 +8,7 @@ import { onReady } from "@/lib/map-ready";
 import { aircraftTrack, shipTrack as fetchShipTrack } from "@/lib/endpoints/tracks";
 import { appendShipTrack, mergeStatusGaps, selectedShipPos, shipTrackFeatures, shipTrackPointFeatures, type ShipTrack } from "@/lib/ships";
 import { appendTrackPoint, mergeTrack, pointFromState, trackError, trackFeatureCollection, type TrackPt } from "@/lib/track";
+import { onceAfterRetry, retryAfterMs } from "@/lib/retry-after";
 import type { FeedRef } from "./useLiveFeed";
 
 const EMPTY_FC: GeoJSON.FeatureCollection = { type: "FeatureCollection", features: [] };
@@ -91,10 +92,15 @@ export function useSelectionTracks(map: maplibregl.Map | null, feed: FeedRef): v
       setData({ shipTrack: { mmsi: selectedShip, loaded: true, error, requestId, gaps: track.gaps.slice(), gapsTruncated: track.gapsTruncated === true, segments: track.segs.length, fromMs: from, hours: shipTrackHours } });
       onReady(map, "ship-track", () => drawShipTrack(map, track));
     };
-    fetchShipTrack(selectedShip, from, to, { signal: ctl.signal })
+    // 기록이 없거나 DB 장애 → 실시간 관측만으로 잇는다. 요청 id 는 카드의 문구에(계약 v5 §G5). 503 + Retry-After 는 한 번 다시(R12 — 위 항공기와 같다)
+    const load = (retried: boolean): void => void fetchShipTrack(selectedShip, from, to, { signal: ctl.signal })
       .then((t) => finish(t, null))
-      // 기록이 없거나 DB 장애 → 실시간 관측만으로 잇는다. 요청 id 는 카드의 문구에(계약 v5 §G5)
-      .catch((e: unknown) => { const t = trackError(e); finish({ segs: [], gaps: [] }, t.error, t.requestId); });
+      .catch((e: unknown) => {
+        const wait = retried ? null : retryAfterMs(e);
+        if (wait != null) { onceAfterRetry(wait, ctl.signal, () => load(true)); return; }
+        const t = trackError(e); finish({ segs: [], gaps: [] }, t.error, t.requestId);
+      });
+    load(false);
     return () => ctl.abort();
   }, [map, selectedShip, shipTrackHours]);
 
@@ -143,10 +149,16 @@ export function useSelectionTracks(map: maplibregl.Map | null, feed: FeedRef): v
       setData({ aircraftTrack: { hex: selectedHex, loaded: true, error, requestId } });
       onReady(map, "tracks", () => geo(map, "tracks")?.setData(trackFeatureCollection(pts)));
     };
-    // 기록이 없으면(전세계 항공기 등) api 는 200 + 빈 points — 거절은 DB 장애 · 망 실패뿐이다. 실시간 관측만으로 잇고, 실패와 요청 id 는 카드의 문구에(계약 v5 §G5)
-    aircraftTrack(selectedHex, { signal: ctl.signal })
+    // 기록이 없으면(전세계 항공기 등) api 는 200 + 빈 points — 거절은 DB 장애 · 망 실패뿐이다. 실시간 관측만으로 잇고, 실패와 요청 id 는 카드의 문구에(계약 v5 §G5).
+    // 503 + Retry-After 는 그만큼 뒤 한 번 다시 받는다(R12 — 카드들과 같은 규칙, lib/retry-after) — 그동안은 '불러오는 중', 또 실패하면 그 실패를 적는다
+    const load = (retried: boolean): void => void aircraftTrack(selectedHex, { signal: ctl.signal })
       .then((pts) => finish(pts, null))
-      .catch((e: unknown) => { const t = trackError(e); finish([], t.error, t.requestId); });
+      .catch((e: unknown) => {
+        const wait = retried ? null : retryAfterMs(e);
+        if (wait != null) { onceAfterRetry(wait, ctl.signal, () => load(true)); return; }
+        const t = trackError(e); finish([], t.error, t.requestId);
+      });
+    load(false);
     return () => ctl.abort();
   }, [map, feed, selectedHex]);
 
