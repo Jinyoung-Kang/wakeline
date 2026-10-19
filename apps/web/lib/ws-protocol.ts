@@ -51,7 +51,7 @@ export function lagTone(f: { lag: number | null; stale: boolean }, conn: string,
   return f.stale ? "bad" : "ok";
 }
 
-/** 실시간 피드를 시작하지 않음(스토어 conn "off" — 지도를 띄우지 못함, R9) — 상태 바의 연결 칩과 알림 패널이 같은 낱말로 적는다 */
+/** 실시간 피드를 시작하지 않음(스토어 conn "off" — 지도 컴포넌트 코드를 받지 못함, R9 · Q4 b2) — 상태 바의 연결 칩과 알림 패널이 같은 낱말로 적는다 */
 export const NO_LIVE_TEXT = "실시간 수신 안 함";
 
 /** 연결이 열려 있고 최근(RX_FRESH_MS 안)에 무엇이든 받았는가 — ping 은 30 s 마다 오므로 조용한 정상 연결도 참이다. */

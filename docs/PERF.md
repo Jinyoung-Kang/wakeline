@@ -817,6 +817,23 @@ B 몰림(300 → 400 rps 각 60 s) → I 쉼 300 s(마지막 60 s = 몰림 뒤 �
   548,679 B. 재는 법: `.next/server/app/m/page_client-reference-manifest.js` 의 entryJSFiles(`/m/page` · 레이아웃) + build-manifest 의 rootMainFiles · polyfill 을 gzip 6.
 - 지정 보존 크기(추정 — 운영에서 잰 값으로 바로잡는다): 대상 20개가 1년 내내 끊김 없이 보이면 약 1,050만 행. 실제는 `SELECT pg_total_relation_size('retained_track')`.
 
+## 21. 지도 없는 실시간 피드(ADR-041 — 2026-10-19)
+- 첫 화면 JS(`npm run build && npm run check:first-js -- --in-image` — 웹 이미지 Node 24.21.0, 커밋마다): 시작 549,227 B → **549,724 B**(+497 B, 여유 276 B · 파일 18개 그대로).
+  | 커밋 | 바뀐 것 | B | 차이 |
+  |---|---|---|---|
+  | `abee9281` | screen 표시 · close() 주인 | 549,267 | +40 |
+  | `6e281b3c` | subscribeWithoutMap · select 방어 · 상수 | 549,325 | +58 |
+  | `304b63ef` | useMaplessFeed · 상태 바 · 지도 자리 칩 · 미리 받기 | 549,629 | +304 |
+  | `c4a33dee` | 카드 · 목록 문구(나중에 받는 조각) | 549,628 | −1 |
+  | `225a06bb` | (b1) 페이지 catch · MaplessFeed 다시 내보내기 | 549,703 | +75 |
+  | `a77d6db2` | 지도 없는 구독이 앞선 선택을 비움 | 549,700 | −3 |
+  | `999e510e` | 'off' title 괄호 줄임 | 549,693 | −7 |
+  | `9f8e89ea` | (b2) 받지 못한 조각을 다시 받지 않음 | 549,724 | +31 |
+- 계획 추정(빌드 사본에 줄인 코드를 넣어 이 Mac zlib 으로 잼)은 +302 B 였다 — 실제는 한국어 화면 글(연결 title · 칩 둘)과 Hook 코드(한 곳에서만 쓰여도 (b1) 뒤로는 인라인되지 않음)로 더 컸다.
+- '/' 의 react-loadable-manifest 는 항목 하나(지도 조각) · 파일 3개 그대로 — 새 청크 · 새 preload 대상은 없다(페이지의 import() 셋이 같은 loader 모듈).
+- (b2) 받기 횟수: 고치기 전에는 받지 못한 지도 조각을 catch 가 다시 받아(Turbopack 런타임은 실패한 청크를 지우고 내장 재시도 1번) 실패 자리 · 'off' 까지 받기 4번이었다 —
+  빌드된 런타임을 Node 에서 가짜 document 로 돌린 재현에서 받기 한 번이 50 ms 에 실패하면 약 789 → 322 ms, 3 s 에 실패하면 약 12.6 → 6.3 s(독립 리뷰 F1). 브라우저에서는 재지 않았다.
+
 ## 재현
 ```bash
 make bench SHIPS=1               # k6 REST + WS(선박 포함), api 층 직접

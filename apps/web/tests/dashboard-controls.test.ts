@@ -27,6 +27,7 @@ vi.mock("@/lib/ws", () => ({
   WakelineWsClient: class {
     connect() {}
     subscribe() {}
+    subscribeWithoutMap() {}
     close() {}
     pause() {}
     resume() {}

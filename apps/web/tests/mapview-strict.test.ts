@@ -52,6 +52,7 @@ vi.mock("@/lib/ws", () => ({
     constructor() { rec.clients.push(this); }
     connect() { this.log.push("connect"); }
     subscribe() { this.log.push("subscribe"); }
+    subscribeWithoutMap() { this.log.push("subscribeWithoutMap"); }
     close() { this.log.push("close"); }
     pause() { this.log.push("pause"); }
     resume() { this.log.push("resume"); }

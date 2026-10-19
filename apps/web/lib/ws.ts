@@ -14,9 +14,13 @@
  * - 서버 시계(WS-3): welcome·status·작은 diff/snapshot(≤ 32 KiB)의 시각으로 오프셋을 추정해(store) 워커에도 보낸다 — 경과·stale·외삽이 한 기준을 쓴다.
  * - 레이어(계약 v2 §B3): {type:"layers", aircraft, ships} — 서버 기본값(항공기 켬·선박 끔)과 다를 때만 welcome 에서, 바뀔 때마다 보낸다.
  *   선박: ships_snapshot/ships_diff(세션별 연속 sseq — 항공기 seq 와 같은 규칙, 틈이면 resync) · ships_grid(계약 v4 §C 규칙 — 줌 < 4·상한 초과) ·
- *   select_ship → ship_selected(목적지 풀이 destination_info 포함 — 계약 v4 §B). 구독한 화면(bbox·줌)은 스토어 viewport 에도 둔다(선박 칩 문구).
+ *   select_ship → ship_selected(목적지 풀이 destination_info 포함 — 계약 v4 §B). 지도 화면을 따르는 구독(screen — 기본)이면 구독한 화면(bbox·줌)을
+ *   스토어 viewport 에도 둔다(선박 칩 문구 · 화면 밖 판단 · 선박 카드가 '화면'으로 읽는다).
  *   받은 값은 lib/ships.ts 로 검증한다(MMSI·위치가 틀리면 버림, 필드는 모르면 null). 메인 스레드 선박 수 상한 MAX_SHIPS.
  * - 수요(계약 v2 §A3): {type:"demand"} 를 그대로 스토어에 — 연결이 끊기면 지운다(서버 임대는 60 s 안에 만료되므로 "추적 중"이라 말하지 않는다).
+ * - 스토어 연결 상태의 주인(connectTurn): 마지막으로 connect 한 클라이언트. 사용자가 닫을 때(close) 주인일 때만 conn · demand 를 지운다.
+ * - 지도 없는 구독(Q4 — subscribeWithoutMap · NO_MAP_*): 두 레이어를 끄고 고정 영역을 zoom 5 로 구독해 알림 · SIGMET · 레이더 · 피드 상태만 받는다.
+ *   viewport 를 쓰지 않고 select · select_ship 을 보내지 않는다 — 서버 수요(핫 리전 · 집중 추적)를 만들지 않는다.
  * - 앞단 확인(QA-1300): 브라우저 WebSocket API 는 업그레이드 응답을 보여 주지 않는다(AWS 데모 앞단의 잠금 401 · 오프라인 503 도 close 1006 뿐).
  *   열린 적 없이 끝난 연결이 FRONT_CHECK_AFTER_FAILS 번 이어지면 같은 출처 GET 하나(lib/endpoints/status — 최소 간격 FRONT_CHECK_MIN_GAP_MS)로 가려
  *   스토어 connIssue(lib/conn-issue)에 둔다 — 상태 바 · 알림 패널이 까닭(접근 코드 만료 · 서버에 닿지 못함)을 적는다. 재접속은 그대로 이어 간다
@@ -97,6 +101,27 @@ function defaultUrl() {
 }
 const isObj = (v: unknown): v is Msg => typeof v === "object" && v !== null && !Array.isArray(v);
 
+/**
+ * 지도 없는 구독(Q4 — 상황판이 지도를 띄우지 못했을 때, subscribeWithoutMap): 알림 · SIGMET · 레이더 · 피드 상태만 받고 서버 수요를 만들지 않는다.
+ * 서버는 구독(sub)이 있는 세션에만 초기 세트 · 방송을 보낸다(WsSession.java:219 subscribed()) — 그래서 고정 영역 하나를 구독한다(api 코드에서 확인한 근거).
+ * - NO_MAP_ZOOM 5: 핫 리전 수요는 zoom ≥ HOT_MIN_ZOOM 7 이고 항공기 레이어를 켰을 때만 생긴다(DemandService.java:78 · :294) — 레이어를 끈 것과 두 겹으로 막는다.
+ *   bbox 면적이 상한(max-bbox-area-sqdeg 2500 — application.yml:94)을 넘어도 zoom ≤ 5 는 받는다(WakelineWsHandler.java:205).
+ * - NO_MAP_BBOX 1 deg²: 서버 bbox 검사(Bbox.checked — WakelineWsHandler.java:224)와 면적 상한을 통과하는 작은 영역. 두 레이어를 끈 세션에서 bbox 는 서버
+ *   어디서도 쓰이지 않는다 — 항공기 스냅샷 · diff · 팬아웃 깨우기는 항공기 레이어를 켰을 때만(WsHub.java:431 · :528 · :571 — 스냅샷의 bbox 는 :679),
+ *   선박은 선박 레이어를 켰을 때만(ShipFanout.java:286), 핫 리전은 항공기 레이어 · zoom ≥ 7 일 때만(DemandService.java:294) bbox 를 읽는다.
+ * 서버 규칙이 바뀌면 tests/ws-client.test.ts 가 api 코드를 읽어 잡는다(NO_MAP_ZOOM < HOT_MIN_ZOOM · ≤ 5 · 면적 ≤ 상한).
+ */
+export const NO_MAP_BBOX: [number, number, number, number] = [127, 36, 128, 37];
+export const NO_MAP_ZOOM = 5;
+
+/**
+ * connect 할 때마다 오르는 번호. 이 번호를 받은 클라이언트(마지막으로 connect 한 것)가 스토어 연결 상태(conn · demand)의 주인이고,
+ * close() 는 주인일 때만 그 상태를 지운다: 넘겨받기 순서가 엇갈려 앞 클라이언트를 닫기 전에 다음 클라이언트가 연결했어도,
+ * 늦게 닫힌 앞 클라이언트가 새 연결의 상태를 덮지 않는다. 클라이언트가 하나일 때(StrictMode 의 두 번 마운트 포함 — 닫은 뒤에
+ * 새 클라이언트가 연결한다)는 소켓을 가진 클라이언트가 늘 주인이다.
+ */
+let connectTurn = 0;
+
 export class WakelineWsClient {
   private ws: SocketLike | null = null;
   private welcomed = false;
@@ -115,6 +140,13 @@ export class WakelineWsClient {
   private readonly budget = new SendBudget();
   private bbox: [number, number, number, number] | null = null;
   private zoom = 7;
+  /**
+   * 구독이 지도 화면을 따르는가(기본 true) — 그럴 때만 구독한 bbox · 줌을 스토어 viewport 에 둔다(welcome · resume 의 다시 구독도 같다).
+   * false(subscribeWithoutMap — 지도 없는 클라이언트)면 select · selectShip 도 보내지 않는다(집중 추적 수요를 만들지 않는다 — 그 전의 선택도 그때 비운다).
+   */
+  private screen = true;
+  /** 마지막 connect 때 받은 번호(connectTurn) */
+  private turn = 0;
   private selected: string | null = null;
   private selectedShip: string | null = null;
   /** 켜진 레이어(서버 기본: 항공기 켬 · 선박 끔) */
@@ -160,6 +192,7 @@ export class WakelineWsClient {
 
   connect() {
     this.closedByUser = false;
+    this.turn = ++connectTurn;
     if (this.timer) { clearTimeout(this.timer); this.timer = null; }
     this.stopConnTimers();
     setData({ conn: "connecting", reconnectAttempt: this.attempt });
@@ -194,7 +227,8 @@ export class WakelineWsClient {
 
   /**
    * 사용자가 닫음(화면을 떠남). 소켓의 처리기를 떼고 참조를 버린 뒤 닫는다 — 닫기 핸드셰이크가 늦게 끝나도(반쯤 열린 연결)
-   * 그 onclose 가 같은 스토어를 쓰는 다음 클라이언트의 상태를 'closed'·수요 없음으로 덮지 않는다(R-75). 스토어는 여기서 한 번만 쓴다.
+   * 그 onclose 가 같은 스토어를 쓰는 다음 클라이언트의 상태를 'closed'·수요 없음으로 덮지 않는다(R-75). 스토어는 여기서 한 번만,
+   * 이 클라이언트가 스토어 연결 상태의 주인일 때만 쓴다(connectTurn — 다음 클라이언트가 먼저 연결했으면 그 상태를 덮지 않는다).
    */
   close() {
     this.closedByUser = true;
@@ -211,7 +245,7 @@ export class WakelineWsClient {
     ws.onclose = null;
     ws.onerror = null;
     try { ws.close(1000); } catch { /* 이미 닫힘 */ }
-    setData({ conn: "closed", demand: null });
+    if (this.turn === connectTurn) setData({ conn: "closed", demand: null });
   }
 
   /**
@@ -290,14 +324,31 @@ export class WakelineWsClient {
   subscribe(bbox: [number, number, number, number], zoom: number) {
     this.bbox = bbox;
     this.zoom = zoom;
-    setData({ viewport: { bbox, zoom } });
+    if (this.screen) setData({ viewport: { bbox, zoom } });
     if (!this.welcomed) return; // welcome 에서 보낸다
     if (this.paused) { this.subscribedOnConn = false; return; } // resume 때 subscribe 로 보낸다
     this.sendControlled("subscribe", { type: "subscribe", bbox, zoom, detail: "lite" });
     this.subscribedOnConn = true;
   }
 
+  /**
+   * 지도 없이 구독한다(위 NO_MAP_* 의 근거): 두 레이어를 끄고(서버는 항공기 · 선박 목록을 보내지 않는다 — 항공기 수는 모름) 화면 구독이 아님으로 두어
+   * (지도 화면이 없다 — viewport 를 쓰지 않는다) 고정 영역을 zoom 5 로 구독한다. 새 클라이언트에서 connect 전에 부른다 — welcome 에서 layers → subscribe 순으로
+   * 보낸다. 이 뒤의 select · selectShip 은 아무것도 하지 않는다(선택을 서버에 알리지 않는다 — 집중 추적 수요 없음).
+   * 이보다 먼저 고른 항공기 · 선박도 이 클라이언트에서 비운다 — 남기면 welcome 마다(재연결 포함) select · select_ship 을 보낸다: select 는 집중 추적
+   * 수요가 되고(DemandService.want — 레이어와 관계없이 선택이면 수요), select_ship 은 ship_selected 를 받게 한다. 이 뒤의 select(null) · selectShip(null) 은
+   * 아무것도 하지 않으므로 남은 선택을 지울 길도 없다. 스토어의 selected · shipSelected 는 그대로 둔다(같은 스토어를 쓰는 지도 클라이언트와의 넘겨받기).
+   */
+  subscribeWithoutMap() {
+    this.setLayers(false, false);
+    this.screen = false;
+    this.selected = null;
+    this.selectedShip = null;
+    this.subscribe(NO_MAP_BBOX, NO_MAP_ZOOM);
+  }
+
   select(hex: string | null) {
+    if (!this.screen) return; // 지도 없는 클라이언트(subscribeWithoutMap)
     this.selected = hex;
     if (getData().selected?.hex !== hex) setData({ selected: null });
     if (this.welcomed) this.sendControlled("select", { type: "select", hex });
@@ -305,6 +356,7 @@ export class WakelineWsClient {
 
   /** 선박 선택(계약 v2 §B3 select_ship). 형식이 틀린 MMSI 는 선택 해제로 다룬다. */
   selectShip(mmsi: string | null) {
+    if (!this.screen) return; // 지도 없는 클라이언트(subscribeWithoutMap)
     const v = isMmsi(mmsi) ? mmsi : null;
     this.selectedShip = v;
     if (getData().shipSelected?.mmsi !== v) setData({ shipSelected: null });

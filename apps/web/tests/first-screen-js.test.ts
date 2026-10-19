@@ -4,7 +4,7 @@
  * - 빌드 결과 읽기: Next 의 첫 로드 목록 + '/' 의 next/dynamic + MapLibre 배포본 + 지도가 띄우는 public 워커. 형식이 다르면 0 으로 세지 않고 실패.
  * - 측정 스크립트 인자: 로컬 서버는 127.0.0.1:8790–8799 만(다른 프로젝트 포트와 겹치지 않게).
  */
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { gzipSync } from "node:zlib";
@@ -125,6 +125,14 @@ describe("first-screen files from the build output", () => {
     const src = readFileSync(join(ROOT, "components/map/useLiveFeed.ts"), "utf8");
     const started = [...src.matchAll(/new Worker\(\s*["'`]\/([^"'`]+)["'`]/g)].map((m) => m[1]).sort();
     expect(started).toEqual([...FIRST_SCREEN_PUBLIC_SCRIPTS].sort());
+  });
+  it("only the map's live feed starts a worker — the map-less feed (Q4 — components/map/useMaplessFeed.ts) opens its WS client without one", () => {
+    const files = ["app", "components", "lib"].flatMap((d) => readdirSync(join(ROOT, d), { recursive: true, encoding: "utf8" }).map((f) => `${d}/${f}`))
+      .filter((f) => /\.(ts|tsx)$/.test(f));
+    expect(files.filter((f) => /new Worker\(/.test(readFileSync(join(ROOT, f), "utf8")))).toEqual(["components/map/useLiveFeed.ts"]);
+    const mapless = readFileSync(join(ROOT, "components/map/useMaplessFeed.ts"), "utf8");
+    expect(mapless).toMatch(/new WakelineWsClient\(\{ postMessage\(\) \{\} \}\)/);
+    expect(mapless).not.toMatch(/\bWorker\b/);
   });
 });
 

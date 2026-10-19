@@ -107,7 +107,8 @@ describe("afterFirstPaint", () => {
 
   it("both map screens start their map chunk and MapLibre after the first paint", () => {
     const read = (p: string) => readFileSync(new URL(`../${p}`, import.meta.url), "utf8");
-    expect(read("app/page.tsx")).toMatch(/dynamic\(\(\) => afterFirstPaint\(\)\.then\(\(\) => Promise\.all\(\[import\("@\/components\/MapView"\), loadMaplibre\(\)\]\)\)/);
+    // 상황판의 지도 청크 import() 에는 거절 표시가 붙는다(Q4 b2 — 받지 못한 청크를 다시 받지 않고 곧바로 실패 자리를 보이려고, app/page.tsx)
+    expect(read("app/page.tsx")).toMatch(/dynamic\(\(\) => afterFirstPaint\(\)\.then\(\(\) => Promise\.all\(\[import\("@\/components\/MapView"\)\.catch\(markMapViewFailed\), loadMaplibre\(\)\]\)\)/);
     expect(read("app/replay/page.tsx")).toMatch(/dynamic\(\(\) => afterFirstPaint\(\)\.then\(\(\) => Promise\.all\(\[import\("@\/components\/ReplayMap"\), loadMaplibre\(\)\]\)\)/);
   });
 });

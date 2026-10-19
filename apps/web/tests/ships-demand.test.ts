@@ -690,4 +690,45 @@ describe("ShipCard / ShipPanel / MapChips / AircraftCard demand chip (server ren
     setData({ demand: null });
     expect(renderToStaticMarkup(createElement(AircraftCard, { hex: "71c123" }))).toContain("집중 추적 상태 수신 전");
   });
+
+  // 지도 없는 피드(Q4 — lib/ws subscribeWithoutMap · 스토어 mapless): select 를 보내지 않고 두 레이어를 끈 구독이라 집중 추적 · 선박 위치 · 항적은 오지 않는다 —
+  // 카드 · 목록이 그것을 기다리는 척하지 않는다(계획 §4.4). 지도 있음(기본)의 문구는 그대로다
+  it("aircraft card without the map: the selection is not sent (no focus tracking) · REST detail 30 s; no focus-tracking wording", () => {
+    const card = () => renderToStaticMarkup(createElement(AircraftCard, { hex: "71c123" }));
+    setData({ mapless: true, conn: "open", lastRxAt: -1, demand: null });
+    let html = card();
+    expect(html).toContain("지도 없음 — 선택을 서버에 알리지 않음(집중 추적 안 함) · 위치는 REST 상세 30 s");
+    expect(html).not.toContain("집중 추적 상태 수신 전");
+    expect(html).not.toContain("선택한 동안");
+    expect(html).not.toContain('data-testid="demand-chip"');
+    // 연결이 실시간이 아니어도 같은 사실(지도 없는 피드는 select 를 보내지 않는다) — '집중 추적 상태 모름'으로 바꾸지 않는다
+    setData({ conn: "closed" });
+    html = card();
+    expect(html).toContain("지도 없음 — 선택을 서버에 알리지 않음(집중 추적 안 함) · 위치는 REST 상세 30 s");
+    expect(html).not.toContain("집중 추적 상태 모름");
+    // 지도 있음: 지금 문구 그대로
+    setData({ mapless: false, conn: "open", lastRxAt: -1 });
+    html = card();
+    expect(html).toContain("집중 추적 상태 수신 전");
+    expect(html).toContain("선택한 동안은 서버 수집기가 이 항공기를 따로 조회하므로(집중 추적)");
+    expect(html).not.toContain("지도 없음");
+  });
+  it("ship list without the map: says ship positions are not received instead of waiting", () => {
+    const panel = () => renderToStaticMarkup(createElement(ShipPanelView, { selected: null, shipsOn: true }));
+    setData({ mapless: true });
+    expect(panel()).toContain("지도 없음 — 선박 위치를 받지 않음");
+    expect(panel()).not.toContain("선박 수신 대기");
+    setData({ mapless: false });
+    expect(panel()).toContain("선박 수신 대기");
+    expect(panel()).not.toContain("지도 없음");
+  });
+  it("ship card without the map: the track line says the track is not received instead of loading forever", () => {
+    const card = () => renderToStaticMarkup(createElement(ShipCard, { mmsi: "431011305" }));
+    setData({ mapless: true });
+    expect(card()).toContain("지도 없음 — 항적을 받지 않음");
+    expect(card()).not.toContain("항적 불러오는 중");
+    setData({ mapless: false });
+    expect(card()).toContain("항적 불러오는 중…");
+    expect(card()).not.toContain("지도 없음");
+  });
 });
