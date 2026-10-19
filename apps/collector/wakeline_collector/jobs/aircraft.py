@@ -230,8 +230,9 @@ class AircraftJob:
         http_status = e.status if isinstance(e, ProviderHttpError | PreSendFailed) else None
         self._last_error = (name, why)
         retried = self.chain.probing(name)  # 3회 연속 실패로 쉬는 중이지만 다른 공급자가 없어 다시 시도한 호출
-        await ctx.status.failure(name, at=datetime.now(UTC), error=why, http_status=http_status)
-        ctx.db.record_run(self.job_name, name, started, status="error", http_status=http_status, error_text=why)
+        at = datetime.now(UTC)  # 한 번 잰 실패 시각: last_error_at = 이 실행의 finished_at(IM-12)
+        await ctx.status.failure(name, at=at, error=why, http_status=http_status)
+        ctx.db.record_run(self.job_name, name, started, status="error", http_status=http_status, error_text=why, finished_at=at)
         if http_status == 429:
             wait = await self.chain.on_rate_limited(name)  # 적고 저장 — 재시작해도 쉼·미룸을 잇는다(Redis 오류는 삼킨다)
             log.warning(

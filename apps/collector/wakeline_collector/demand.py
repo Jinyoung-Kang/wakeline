@@ -255,7 +255,7 @@ def status_value(
 
 
 class DemandStatus:
-    """wakeline:demand:status 쓰기. 부가 기능이라 Redis 오류는 삼킨다(분당 1회 경고)."""
+    """wakeline:demand:status 쓰기. 부가 기능이라 Redis 오류는 삼킨다(분당 1회 경고) — 썼는지는 돌려준다(put · delete)."""
 
     def __init__(self, redis: Redis):
         self._r = redis
@@ -271,25 +271,31 @@ class DemandStatus:
             self._last_log = now
             log.warning("demand status %s failed (%s)", what, type(e).__name__)
 
-    async def put(self, values: dict[str, dict[str, Any]]) -> None:
+    async def put(self, values: dict[str, dict[str, Any]]) -> bool:
+        """돌려주는 값: 썼는가(쓸 것이 없으면 True). False 면 Redis 에 무엇이 남았는지 모른다 — 부르는 쪽이 다음 틱에 다시 쓴다(IM-19)."""
         if not values:
-            return
+            return True
         try:
             async with asyncio.timeout(AUX_TIMEOUT_S):
                 await self._r.hset(STATUS_KEY, mapping={k: orjson.dumps(v).decode() for k, v in values.items()})
             self._fields.update(values)
+            return True
         except Exception as e:  # noqa: BLE001
             self._warn("hset", e)
+            return False
 
-    async def delete(self, fields: list[str]) -> None:
+    async def delete(self, fields: list[str]) -> bool:
+        """돌려주는 값: 지웠는가(지울 것이 없으면 True)."""
         if not fields:
-            return
+            return True
         try:
             async with asyncio.timeout(AUX_TIMEOUT_S):
                 await self._r.hdel(STATUS_KEY, *fields)
             self._fields.difference_update(fields)
+            return True
         except Exception as e:  # noqa: BLE001
             self._warn("hdel", e)
+            return False
 
     async def prune(self, active: set[str]) -> None:
         """임대가 사라진 필드를 지운다. 처음 한 번은 이전 프로세스가 남긴 필드까지(HKEYS)."""

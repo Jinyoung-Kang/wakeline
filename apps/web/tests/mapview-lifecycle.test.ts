@@ -250,6 +250,67 @@ describe("MapView lifecycle (R-01: live data does not wait for the external base
 });
 
 /**
+ * 검색 · 목록이 요청한 지도 이동(ui-store requestFlyTo)은 지도가 한 번 따른다. 상황판 지도는 첫 그리기 뒤 MapLibre 를 받은 다음에야 마운트되고(app/page.tsx),
+ * 상단 검색('/')은 그 전부터 쓸 수 있다 — 마운트 전의 요청도 따른다(IM-14). 이미 따른 요청은 다른 화면에서 돌아와 지도를 다시 만들어도 되풀이하지 않는다.
+ */
+describe("MapView follows a requested map move once, even one made before the map mounted (IM-14)", () => {
+  /** 모든 지도 대역의 이동(flyTo · jumpTo) — map = 만든 순서(FakeMap.instances 의 번호), center = 옮긴 중심 */
+  let moves: { map: number; center: unknown }[] = [];
+  beforeEach(() => {
+    moves = [];
+    const record = (map: FakeMap, o: { center?: unknown }) => { moves.push({ map: FakeMap.instances.indexOf(map), center: o.center }); return map; };
+    vi.spyOn(FakeMap.prototype, "flyTo").mockImplementation(function (this: FakeMap, o: { center?: unknown }) { return record(this, o); } as never);
+    vi.spyOn(FakeMap.prototype, "jumpTo").mockImplementation(function (this: FakeMap, o: { center?: unknown }) { return record(this, o); } as never);
+  });
+  afterEach(() => { vi.restoreAllMocks(); });
+  async function unmount() { const r = root!; root = null; await React.act(async () => { r.unmount(); }); }
+  const load = (map: FakeMap) => act(() => { map.fire("style.load"); map.fire("load"); });
+
+  it("a move chosen in the top search before the map chunk arrived is followed once the map loads", async () => {
+    useUi.getState().requestFlyTo(129.1, 35.1, 9);
+    const map = await mount();
+    expect(moves).toHaveLength(0); // 스타일 · load 전 — 기본 레이어가 준비되면 옮긴다(lib/map-ready onReady)
+    await load(map);
+    // 수정 전: 0 — 마운트 때 이미 있던 요청을 '처리함'으로 보았다(컴포넌트 ref 를 그 id 로 시작)
+    expect(moves).toEqual([{ map: FakeMap.instances.indexOf(map), center: [129.1, 35.1] }]);
+  });
+
+  it("a move already followed is not repeated when the dashboard mounts the map again (returning from another screen); a new request is", async () => {
+    useUi.getState().requestFlyTo(129.1, 35.1, 9);
+    const first = await mount();
+    await load(first);
+    await act(() => useUi.getState().requestFlyTo(126.5, 33.4, 9));
+    expect(moves.map((m) => m.center)).toEqual([[129.1, 35.1], [126.5, 33.4]]);
+    await unmount();
+    const again = await mount();
+    await load(again);
+    expect(moves).toHaveLength(2);
+    await act(() => useUi.getState().requestFlyTo(130.9, 37.5, 9));
+    expect(moves.slice(2)).toEqual([{ map: FakeMap.instances.indexOf(again), center: [130.9, 37.5] }]);
+  });
+
+  it("a move the map never got to follow (left before the style loaded) is followed by the next map", async () => {
+    useUi.getState().requestFlyTo(129.1, 35.1, 9);
+    await mount();
+    await unmount(); // 스타일 · load 전에 떠났다 — 지도는 옮기지 못했다
+    const again = await mount();
+    await load(again);
+    expect(moves).toEqual([{ map: FakeMap.instances.indexOf(again), center: [129.1, 35.1] }]);
+  });
+
+  it("under StrictMode only the surviving map moves, once", async () => {
+    useUi.getState().requestFlyTo(129.1, 35.1, 9);
+    root = createRoot(dom.container as never);
+    await React.act(async () => { root!.render(React.createElement(React.StrictMode, null, React.createElement(MapView))); });
+    expect(FakeMap.instances).toHaveLength(2);
+    expect(FakeMap.instances[0].removed).toBe(true);
+    await load(FakeMap.instances[0]); // 지운 지도 — 옮기지 않는다
+    await load(FakeMap.instances[1]);
+    expect(moves).toEqual([{ map: 1, center: [129.1, 35.1] }]);
+  });
+});
+
+/**
  * StrictMode(next dev — next.config reactStrictMode: true)는 효과를 마운트 → 정리 → 마운트로 두 번 돌린다. 지도 effect 의 정리가 첫 지도를 지우고 두 번째
  * 지도를 만든다. '이미 그림' 기록(SIGMET · AIS 범위)이 첫 지도의 것으로 남으면 두 번째 지도에 그리지 않았다(web-review B8 — cacheComponents 의 Activity 도 같다).
  */

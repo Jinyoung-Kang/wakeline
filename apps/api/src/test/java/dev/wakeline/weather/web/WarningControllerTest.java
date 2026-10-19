@@ -36,7 +36,7 @@ class WarningControllerTest {
         Instant at = Instant.now().minusSeconds(60);
         s.replaceIfNewer(at, "kma_warning", List.of(new WarningRecord("S1312020", "남해동부바깥먼바다", "S1310000", "남해동부전해상", true, "풍랑", "예비", "발표", true,
                 Instant.parse("2026-10-09T07:00:00Z"), null, Instant.parse("2026-10-10T03:00:00Z"), Instant.parse("2026-10-10T09:00:00Z"),
-                "10-10 오후(12–18시 KST)", null, "raw")), 1);
+                "10-10 오후(12–18시 KST)", null, "raw")), 1, System.currentTimeMillis());
         MockMvc m = mvc(s);
         m.perform(get("/api/v1/warnings")).andExpect(status().isOk())
                 .andExpect(header().string("ETag", "\"w" + dev.wakeline.platform.web.Etags.BOOT + "-1\"")).andExpect(header().string("Cache-Control", "max-age=30, public"))
@@ -53,7 +53,7 @@ class WarningControllerTest {
     @Test
     void anEtagFromAnEarlierProcessWithTheSameVersionIsNotAnsweredWith304() throws Exception {
         WarningStore s = new WarningStore();
-        s.replaceIfNewer(Instant.now().minusSeconds(60), "kma_warning", List.of(), 0);
+        s.replaceIfNewer(Instant.now().minusSeconds(60), "kma_warning", List.of(), 0, System.currentTimeMillis());
         MockMvc m = mvc(s);
         String etag = m.perform(get("/api/v1/warnings")).andReturn().getResponse().getHeader("ETag");
         assertThat(etag).isNotEqualTo("\"w1\"").contains(dev.wakeline.platform.web.Etags.BOOT);

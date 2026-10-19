@@ -256,6 +256,43 @@ class OpsPipelineControllerTest {
         assertThat(c.rawPurgeFailed()).isNull();
     }
 
+    /**
+     * IM-13: 수집기는 같은 해시에 '다음에 움직일 때'(traffic_grid_fill_resume_at — 다음 UTC 정시 · 날 · 재시도 · 쉼 끝, traffic_grid_tiles_resume_at —
+     * 타일 차단기의 끝)를 쓴다. 미래 시각이라 '가장 최근 *_at' 으로 세면 나이가 null 이 되고 collector 손실 지표가 모두 null('—')이었다.
+     * *_resume_at 은 보고 시각이 아니다 — 60 s 안의 가까운 미래여도 세지 않는다.
+     */
+    @Test
+    void aResumeTimeIsNotAReportTime() {
+        collector.putAll(Map.of("region_at", NOW.minusSeconds(5).toString(), "traffic_grid_fill_resume_at", NOW.plusSeconds(1800).toString(),
+                "publish_dropped", "7", "log_dropped", "0"));
+        OpsPipelineController.CollectorSignals c = controller(metrics()).pipeline().collector();
+        assertThat(c.heartbeatAgeS()).isEqualTo(5.0);
+        assertThat(c.publishDropped()).isEqualTo(7L);
+        assertThat(c.logDropped()).isEqualTo(0L);
+
+        collector.put("traffic_grid_tiles_resume_at", NOW.plusSeconds(30).toString()); // 시계 차이 허용(60 s) 안이어도 보고 시각이 아니다
+        assertThat(controller(metrics()).pipeline().collector().heartbeatAgeS()).isEqualTo(5.0);
+    }
+
+    /** 미래로 60 s 넘게 앞선 보고 시각은 그 필드만 건너뛴다 — 필드 하나 때문에 나이 · 손실 지표 전체를 모름으로 만들지 않는다. */
+    @Test
+    void aReportTimeFarInTheFutureSkipsOnlyThatField() {
+        collector.putAll(Map.of("region_at", NOW.minusSeconds(5).toString(), "focus_at", NOW.plusSeconds(61).toString(), "publish_dropped", "7"));
+        OpsPipelineController.CollectorSignals c = controller(metrics()).pipeline().collector();
+        assertThat(c.heartbeatAgeS()).isEqualTo(5.0);
+        assertThat(c.publishDropped()).isEqualTo(7L);
+
+        collector.put("focus_at", NOW.plusSeconds(60).toString()); // 60 s 까지는 시계 차이 — 지금 보고한 것으로(나이 0)
+        assertThat(controller(metrics()).pipeline().collector().heartbeatAgeS()).isEqualTo(0.0);
+
+        collector.clear(); // 보고 시각이 모두 미래면 모름
+        collector.putAll(Map.of("region_at", NOW.plusSeconds(600).toString(), "traffic_grid_fill_resume_at", NOW.plusSeconds(1800).toString(),
+                "publish_dropped", "7"));
+        c = controller(metrics()).pipeline().collector();
+        assertThat(c.heartbeatAgeS()).isNull();
+        assertThat(c.publishDropped()).isNull();
+    }
+
     @Test
     void windowIsUnknownWithoutStreamMetrics() {
         OpsPipelineController.Pipeline p = controller(null).pipeline();

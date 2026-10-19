@@ -7,7 +7,7 @@
  */
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { activeJobs, jobBadgeText, jobProvider, noProviderLine } from "@/lib/active-provider";
-import { RUN_STATUS_TITLE, runStatusClass } from "@/lib/ops";
+import { activeReadError, providersReadError, RUN_STATUS_TITLE, runStatusClass } from "@/lib/ops";
 import { detailRows, statusChips, type StatusInput } from "@/lib/statusbar";
 import { domUtcLeaks, utcLeaks } from "./helpers/kst-only";
 import { installMiniDom, MiniElement } from "./helpers/mini-dom";
@@ -54,6 +54,36 @@ describe("the collector's wakeline:active fields, as they are", () => {
     expect(activeJobs(NONE).map((j) => [j.job, j.name, j.none != null])).toEqual([["region", "adsb_lol", true], ["global", "opensky", false]]);
     expect(activeJobs(undefined)).toEqual([]);
     expect(jobProvider(undefined, "region")).toBeNull();
+  });
+});
+
+/**
+ * IM-16: api 가 Redis 를 읽지 못하면 수집기 해시 자리에 자기 표시 {"error":"redis unavailable"}를 싣는다(StatusService.safeHash — active 도 공급자 행도,
+ * 계약 v5 §G24). 전에는 밑줄 없는 키 'error' 를 작업 하나로 읽어 운영 공급자 탭에 초록 배지 'error: redis unavailable' 를 그렸다(장애가 정상처럼 보였다).
+ */
+const REDIS_DOWN = { error: "redis unavailable" };
+const ACTIVE_READ_ERROR = "작업별 공급자를 읽지 못함(api: redis unavailable) — 작업 배지 없음(쓰는 공급자 · 공급자 없음을 모른다). 15 s 마다 다시 읽는다";
+const PROVIDERS_READ_ERROR = "Redis 를 읽지 못함(api: redis unavailable) — 아래 공급자 행은 수집기 값이 아니라 api 가 공급자 목록마다 붙인 표시다(수집한 적 없는 공급자 · fixture 도 보이고 칸은 ‘—’). 15 s 마다 다시 읽는다";
+/** api StatusService.PROVIDERS 순서 — Redis 장애 때는 수집한 적 없는 공급자까지 모두 표시 행이 된다(평소에는 빈 해시를 건너뛴다) */
+const API_PROVIDERS = ["adsb_lol", "adsb_fi", "opensky", "awc", "rainviewer", "kma_radar", "kma_warning", "adsbdb", "portmis", "komsa_traffic", "mof_grid4", "fixture"];
+/** OpsController.providers 가 표시 행에도 붙이는 해결 표시까지 — 수집기 필드는 없다 */
+const markerRow = (name: string) => ({ ...REDIS_DOWN, name, last_error_resolution: null, last_error_resolved: false });
+
+describe("the api's 'could not read Redis' marker is not a job (IM-16)", () => {
+  it("activeJobs counts no job and a warning says the jobs' providers could not be read, with the api's reason as given", () => {
+    expect(activeJobs(REDIS_DOWN)).toEqual([]);
+    expect(jobProvider(REDIS_DOWN, "error")).toBeNull();
+    expect(jobProvider(REDIS_DOWN, "region")).toBeNull();
+    expect(activeReadError(REDIS_DOWN)).toBe(ACTIVE_READ_ERROR);
+    expect(activeReadError({ error: { code: 1 } })).toBe(ACTIVE_READ_ERROR.replace("redis unavailable", "이유 모름"));
+    for (const a of [NONE, undefined, null, {}, { error: "" }]) expect(activeReadError(a), JSON.stringify(a)).toBeNull();
+  });
+  it("provider rows that are all the api's marker are one line 'Redis 를 읽지 못함'; some of them are named; collector rows are none", () => {
+    expect(providersReadError(API_PROVIDERS.map(markerRow))).toBe(PROVIDERS_READ_ERROR);
+    const some = [{ name: "adsb_lol", last_success_at: "2026-09-30T03:16:00Z", consecutive_failures: "0" }, markerRow("portmis"), markerRow("fixture")];
+    expect(providersReadError(some)).toBe("공급자 2/3 행을 Redis 에서 읽지 못함(api: redis unavailable): portmis · fixture — 그 행의 칸은 수집기 값이 아니다(‘—’). 15 s 마다 다시 읽는다");
+    expect(providersReadError([{ name: "adsb_lol", last_error: "HTTP 502", consecutive_failures: "3" }])).toBeNull(); // 수집기의 오류는 last_error — 표시가 아니다
+    expect(providersReadError([])).toBeNull();
   });
 });
 
@@ -148,5 +178,30 @@ describe("ops providers tab: the job badge is red and says 공급자 없음 (it 
     expect(global.textContent).toBe("global: opensky");
     expect(global.getAttribute("class")).toContain("badge ok");
     expect(domUtcLeaks(byTestId("ops-dashboard")!)).toEqual([]);
+    expect(byTestId("ops-active-read-error")).toBeNull();
+    expect(byTestId("ops-providers-read-error")).toBeNull();
+  });
+  it("Redis down (IM-16): no green 'error: redis unavailable' badge — a warning about the jobs, and one line 'Redis 를 읽지 못함' above the table", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"], now: NOW });
+    // OpsController.providers 가 Redis 장애 때 싣는 모양(StatusService.safeHash 의 표시 — active · collector · 공급자 행마다, 자동 전환 기록은 맨 위 error)
+    const DATA: Record<string, unknown> = {
+      "/api/v1/ops/session": { username: "op" },
+      "/api/v1/ops/providers": { providers: API_PROVIDERS.map(markerRow), active: REDIS_DOWN, collector: REDIS_DOWN, switches: [], error: "redis unavailable",
+        budget_days: [], budget_day_zone: "UTC", generated_at: new Date(NOW).toISOString() },
+    };
+    vi.stubGlobal("fetch", async (url: string) => new Response(JSON.stringify(url in DATA ? DATA[url] : { detail: "no such resource" }), { status: url in DATA ? 200 : 404, headers: { "Content-Type": "application/json" } }));
+    root = createRoot(dom.container as never);
+    await React.act(async () => { root!.render(React.createElement(OpsPage)); });
+    await settle();
+    await settle();
+    expect(byTestId("ops-active-error")?.textContent ?? null).toBeNull(); // 작업 'error' 의 배지(고치기 전: 초록 'error: redis unavailable')
+    expect(byTestId("ops-dashboard")!.textContent).not.toContain("error: redis unavailable");
+    const jobs = byTestId("ops-active-read-error")!;
+    expect(jobs.textContent).toBe(ACTIVE_READ_ERROR);
+    expect(jobs.getAttribute("class")).toContain("text-warn");
+    expect(jobs.getAttribute("class")).not.toContain("badge ok");
+    const rows = byTestId("ops-providers-read-error")!;
+    expect(rows.textContent).toBe(PROVIDERS_READ_ERROR);
+    expect(rows.getAttribute("role")).toBe("alert");
   });
 });

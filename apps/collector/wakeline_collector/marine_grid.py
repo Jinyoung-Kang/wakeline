@@ -27,6 +27,7 @@ import xml.etree.ElementTree as ET  # noqa: S405 — 형 표기만. 해석은 xm
 from dataclasses import dataclass
 from typing import Literal
 
+from wakeline_collector.masking import mask_head
 from wakeline_collector.xml_intake import checked_text, parse_text
 from wakeline_collector.xml_intake import child_local as _child_local
 from wakeline_collector.xml_intake import find_local as _find_local
@@ -273,7 +274,8 @@ def _collection(body: bytes, limit: int) -> ET.Element:
     root = parse_text(checked_text(body, limit, WfsError, WfsTooLarge), WfsError)
     err = _error_document(root)
     if err is not None:
-        raise WfsError(err[:300])
+        # 가린 뒤 자른다(QA-1140) — 자른 뒤 가리면(describe_error) 300 경계에 걸친 키의 앞부분이 남는다(IM-05)
+        raise WfsError(mask_head(err, 300))
     if _local(root.tag) != "FeatureCollection":
         raise WfsError(f"unexpected root element {_local(root.tag)[:40]}")
     return root

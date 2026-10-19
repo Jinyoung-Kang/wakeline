@@ -1,5 +1,6 @@
 package dev.wakeline.weather.core;
 
+import dev.wakeline.platform.support.FetchedAtGuard;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
@@ -27,9 +28,13 @@ public class SigmetStore {
         return s;
     }
 
-    /** fetched_at 단조 보장: 현재보다 새 목록일 때만 교체한다(백로그 재생이 되돌리지 않게). @return 새 상태, 거부되면 null */
-    public synchronized State replaceIfNewer(Instant fetchedAt, String provider, Map<String, SigmetRecord> byId) {
-        if (!fetchedAt.isAfter(state.get().fetchedAt())) return null;
+    /**
+     * fetched_at 단조 보장({@link FetchedAtGuard}): 새 목록일 때만 교체한다(백로그 재생이 되돌리지 않게).
+     * @param nowMs api 의 지금(ms)
+     * @return 새 상태, 거부되면 null
+     */
+    public synchronized State replaceIfNewer(Instant fetchedAt, String provider, Map<String, SigmetRecord> byId, long nowMs) {
+        if (!FetchedAtGuard.newer(fetchedAt, state.get().fetchedAt(), nowMs)) return null;
         return replace(fetchedAt, provider, byId);
     }
 

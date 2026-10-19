@@ -203,6 +203,12 @@ describe("connection chip", () => {
     expect(connChip({ conn: "open", reconnectAttempt: 0, lastRxAt: NOW - 46_000, nowMs: NOW }).text).toBe("WS open · 수신 없음");
     expect(connChip({ conn: "closed", reconnectAttempt: 3, lastRxAt: null, nowMs: NOW })).toMatchObject({ text: "WS closed · retry 3", tone: "bad" });
   });
+  it("'off' (the map could not be drawn, so no WS client exists — R9) says real-time receiving is off, not '처음 연결하는 중'", () => {
+    const c = connChip({ conn: "off", reconnectAttempt: 0, lastRxAt: null, nowMs: NOW });
+    expect(c).toMatchObject({ text: "WS off · 실시간 수신 안 함", tone: "bad", live: false });
+    expect(c.title).toContain("지도를 띄우지 못해");
+    expect(c.title).not.toContain("연결하는 중");
+  });
 });
 
 describe("fitting the row: hide ok/unknown chips from the end, never a pinned one, never skip ahead", () => {

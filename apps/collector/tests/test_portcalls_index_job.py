@@ -15,12 +15,12 @@ from urllib.parse import parse_qs, urlsplit
 import httpx
 import pytest
 import respx
-from fakes import FakeRedis, make_ctx
+from fakes import FakeRedis, ingest_runs, make_ctx
 from portcall_index_fakes import DirectSource, FakeIndexDb
 from portmis_observed import ObservedPortMis, full_record_bytes, real_item, response, synthetic_item
 
 from wakeline_collector.budget import hour_key
-from wakeline_collector.db import DayApplied
+from wakeline_collector.db import DayApplied, Db
 from wakeline_collector.http import HttpClient
 from wakeline_collector.jobs import portcalls_index as ix
 from wakeline_collector.jobs.maintenance import PORT_CALL_RETENTION_DAYS, MaintenanceJob
@@ -714,6 +714,39 @@ async def test_a_provider_error_code_is_a_failure_not_an_empty_day():
         respx.get(URL).mock(return_value=httpx.Response(200, content=body))
         await job.step()
     assert db.applied == [] and "resultCode 22" in r.kv["wakeline:provider:portmis"]["last_error"]
+
+
+class _InsertingDb(FakeIndexDb):
+    """실행 기록을 목록(runs)에도 두고, 실제 Db.record_run 으로도 대기열에 넣는다 — INSERT 에 실제로 넘길 값(finished_at 등)을 보려고."""
+
+    def record_run(self, job: str, provider: str, started_at: datetime, **kw) -> None:  # type: ignore[override]
+        super().record_run(job, provider, started_at, **kw)
+        Db.record_run(self, job, provider, started_at, **kw)
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        httpx.Response(500, text="<html>err</html>"),
+        httpx.Response(
+            200, content=b"<response><header><resultCode>22</resultCode><resultMsg>LIMITED</resultMsg></header></response>"
+        ),
+        httpx.ConnectError("refused"),
+    ],
+    ids=["http_500", "result_code_22", "connect_error"],
+)
+async def test_a_provider_error_run_finishes_at_the_instant_recorded_as_last_error_at(answer):
+    """IM-12: api 의 RUNS 요약은 해결한 공급자 오류의 last_error_at 까지 끝난(finished_at <= upto) error 실행을 가린다 — 두 시각은 같은 순간이어야
+    한다(ADR-024 · 계약 v5 §G14). 고치기 전: _provider_failure 가 작업의 시계로 last_error_at 을 쓰고, 단위가 _Stop 으로 멈춘 뒤 record_run 이
+    finished_at 을 따로(벽시계로) 재었다."""
+    job, db, r, _clock = _job(db=_InsertingDb())
+    with respx.mock:
+        respx.get(URL).mock(side_effect=[answer])
+        await job.step()
+    (run,) = await ingest_runs(db)
+    st = r.kv["wakeline:provider:portmis"]
+    assert run["status"] == "error" and run["provider"] == "portmis"
+    assert run["finished_at"] == datetime.fromisoformat(st["last_error_at"]) == NOW
 
 
 async def test_rate_limited_waits_are_not_charged_and_pause_everything():

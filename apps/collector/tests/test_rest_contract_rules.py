@@ -960,3 +960,59 @@ def test_ship_coverage_fetched_at_is_clamped_to_generated_at_when_a_report_is_ah
     # 미래 값 그대로는 틀렸다(api 가 내리지 않았다)
     raw = coverage(cells=cells, cell_count=1, positions=3, meta={**meta, "fetched_at": ahead})
     assert rcc._ship_coverage(raw)
+
+
+# IM-29: --dir 은 RestSamplesIT 가 늘 같은 표본을 기록하는 결정적 입력이다. 표본이 빠지면 그 응답의 계약 검사가 빠진 것이므로 실패해야 한다
+# (--base-url 의 skip 은 실행 중 스택에 고를 자료가 없을 때라 지금대로). 기록 목록(index.json)이 원본이다 — RestSamplesIT 는 옛 파일을 지우지 않는다.
+def _record(d: Path, name: str, index: dict[str, str]) -> None:
+    path = f"/api/v1/{name}"
+    body = {
+        "name": name,
+        "path": path,
+        "status": 200,
+        "content_type": "application/json",
+        "cache_control": "public, max-age=5",
+        "body": {},
+    }
+    (d / f"{name}.json").write_text(json.dumps(body))
+    index[name] = path
+
+
+def _write_index(d: Path, index: dict[str, str]) -> None:
+    (d / "index.json").write_text(json.dumps(index))
+
+
+def test_dir_mode_fails_when_a_check_has_no_recorded_sample(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(rcc, "CHECKS", [rcc.Check("status", "status", 200, "application/json", True)])
+    _write_index(tmp_path, {})
+    assert rcc.main(["--dir", str(tmp_path)]) == 1
+    out = capsys.readouterr().out
+    assert "status" in out and "no recorded sample" in out and "FAILED" in out
+
+
+def test_dir_mode_fails_when_a_recorded_sample_has_no_check(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(rcc, "CHECKS", [])
+    index: dict[str, str] = {}
+    _record(tmp_path, "stray", index)
+    _write_index(tmp_path, index)
+    assert rcc.main(["--dir", str(tmp_path)]) == 1
+    out = capsys.readouterr().out
+    assert "stray" in out and "no check reads it" in out
+
+
+def test_dir_mode_reads_only_what_this_run_recorded(tmp_path, monkeypatch, capsys):
+    """옛 실행이 남긴 파일(index 에 없는 이름)은 검사하지 않고, 그것으로 빠진 표본을 메우지도 않는다."""
+    monkeypatch.setattr(rcc, "CHECKS", [rcc.Check("status", "status", 200, "application/json", True)])
+    _record(tmp_path, "status", {})  # 파일은 있지만 이번 기록 목록에는 없다
+    _write_index(tmp_path, {})
+    assert rcc.main(["--dir", str(tmp_path)]) == 1
+    out = capsys.readouterr().out
+    assert "no recorded sample" in out and "not in index.json" in out
+
+
+def test_live_mode_still_skips_what_the_stack_has_no_data_for(monkeypatch, capsys):
+    monkeypatch.setattr(rcc, "CHECKS", [rcc.Check("ship_detail", "ship_detail", 200, "application/json", True)])
+    monkeypatch.setattr(rcc, "live_paths", lambda base: {"ship_detail": None})
+    assert rcc.main(["--base-url", "http://localhost:8700"]) == 0
+    assert rcc.main(["--base-url", "http://localhost:8700", "--strict"]) == 1
+    assert "skip ship_detail" in capsys.readouterr().out

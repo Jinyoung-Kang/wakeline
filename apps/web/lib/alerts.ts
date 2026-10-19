@@ -64,11 +64,12 @@ export const EVENT_LABEL: Record<AlertEventType, string> = {
  * - paused: 탭 숨김으로 서버가 보내지 않는 중.
  * - incomplete: 이 연결의 목록에 빠진 것이 있다(계약 v5 §E2 — 형식 오류로 버린 알림 메시지·원소, 배치 버전 틈). 받은 배치는 반영하지만 수는 모르고
  *   ETA 는 멈춘다 — 전체 목록을 다시 받으면 live.
+ * - off: 지도를 띄우지 못해 실시간 피드를 시작하지 않음(스토어 conn "off" — R9) — 기다려도 목록이 오지 않는다('수신 대기'라고 하지 않는다).
  * rxFresh = isRxFresh(conn, lastRxAt, now) — 화면은 useRxFresh() 로 얻는다. incomplete = 스토어 alertsIncomplete.
  */
-export type AlertListState = "live" | "waiting" | "incomplete" | "disconnected" | "silent" | "paused";
+export type AlertListState = "live" | "waiting" | "incomplete" | "disconnected" | "silent" | "paused" | "off";
 export function alertListState(conn: string, alertsVersion: number | null | undefined, rxFresh = true, incomplete = false): AlertListState {
-  if (conn === "paused") return "paused";
+  if (conn === "paused" || conn === "off") return conn;
   if (conn === "open") return alertsVersion == null ? (incomplete ? "incomplete" : "waiting") : rxFresh ? "live" : "silent";
   return alertsVersion != null ? "disconnected" : "waiting";
 }

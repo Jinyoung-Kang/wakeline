@@ -12,6 +12,8 @@ from pathlib import Path
 import pytest
 from pyproj import Transformer
 
+from wakeline_collector import masking
+from wakeline_collector.errors import describe_error
 from wakeline_collector.marine_grid import (
     CELL_DEG,
     Cell,
@@ -228,6 +230,30 @@ def test_service_exception_report_is_an_error_with_its_text():
     )
     with pytest.raises(WfsError, match="InvalidParameterValue.*Illegal property name"):
         parse_wfs(body, "GR4_F2K41_C3")
+
+
+def test_service_exception_text_is_masked_before_the_300_char_cut():
+    """IM-05(QA-1140 과 같은 원인): 오류 문서 글을 300자에서 자른 뒤 가리면(describe_error) 경계에 걸친 등록 키의 앞부분이 남는다 —
+    가린 뒤 자른다(mask_head)."""
+    key = "IM05fakeDataGoKrServiceKey0123456789WXYZ"  # 40글자 — 가짜(이 시험만)
+    saved = set(masking._SECRETS)
+    masking.register_secrets(key)  # main.configure_logging 이 하는 것과 같다(R-83)
+    try:
+        # 앞머리 'ServiceExceptionReport — InvalidParameterValue: '(48글자) 뒤 — 키는 285–325번째 글자로 300 에 걸친다
+        text = "x" * 232 + " key " + key
+        body = (
+            b'<ServiceExceptionReport version="1.2.0"><ServiceException code="InvalidParameterValue">'
+            + text.encode()
+            + b"</ServiceException></ServiceExceptionReport>"
+        )
+        with pytest.raises(WfsError) as ei:
+            parse_wfs(body, "GR4_F2K41_C3")
+        for got in (str(ei.value), describe_error(ei.value, limit=400)):
+            assert not [key[:n] for n in range(6, len(key)) if key[:n] in got], got[-40:]
+        assert str(ei.value) == "ServiceExceptionReport — InvalidParameterValue: " + "x" * 232 + " key ***"
+    finally:
+        masking._SECRETS.clear()
+        masking._SECRETS.update(saved)
 
 
 def test_ows_exception_report_is_an_error():

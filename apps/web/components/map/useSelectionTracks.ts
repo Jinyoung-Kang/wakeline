@@ -46,6 +46,7 @@ function drawShipTrack(map: maplibregl.Map, track: ShipTrack) {
 export function useSelectionTracks(map: maplibregl.Map | null, feed: FeedRef): void {
   const layers = useUi((s) => s.layers);
   const selectedHex = useUi((s) => s.selectedHex);
+  const selectNonce = useUi((s) => s.selectNonce);
   const selectedShip = useUi((s) => s.selectedShip);
   const selectShip = useUi((s) => s.selectShip);
   const shipTrackHours = useUi((s) => s.shipTrackHours);
@@ -121,25 +122,31 @@ export function useSelectionTracks(map: maplibregl.Map | null, feed: FeedRef): v
     publishShipTrack(ref);
   }, [map, ais]);
 
-  // ---- 선택 항공기: WS select + 항적(REST 한 번, 이후 selected 로 연장) ----
+  // ---- 선택 항공기: WS select — 같은 항공기를 다시 골라도(selectNonce — selectedHex 는 그대로) 다시 보낸다: 서버가 선택 시각을 새로 잡아
+  //      집중 추적 30분 상한 뒤 "다시 선택하면 이어짐"(lib/demand)대로 된다. 지도가 바뀌면 새 피드에. 처음 고를 때는 두 값이 함께 바뀌어 한 번 ----
+  useEffect(() => { feed.current?.client.select(selectedHex); }, [map, feed, selectedHex, selectNonce]);
+
+  // ---- 선택 항공기 항적: REST 한 번, 이후 selected 로 연장 — 다른 항공기 · 지도일 때만(같은 항공기를 다시 골라도 지우거나 다시 받지 않는다) ----
   useEffect(() => {
-    feed.current?.client.select(selectedHex);
     feed.current?.worker.postMessage({ type: "invalidate" }); // 선택 강조를 바로 다시 그린다
     track.current = { hex: selectedHex, pts: [], pending: [], loaded: false };
+    setData({ aircraftTrack: selectedHex ? { hex: selectedHex, loaded: false, error: null, requestId: null } : null });
     if (!map) return;
     onReady(map, "tracks", () => { geo(map, "tracks")?.setData(EMPTY_FC); feed.current?.refreshPrediction(); });
     if (!selectedHex) return;
-    // 다른 항공기를 고르거나 지도가 바뀌거나 떠나면 요청을 끊는다(끊은 요청의 답은 쓰지 않는다)
+    // 다른 항공기를 고르거나 지도가 바뀌거나 떠나면 요청을 끊는다(끊은 요청의 답 · 오류는 쓰지 않는다)
     const ctl = new AbortController();
-    const finish = (rest: TrackPt[]) => {
+    const finish = (rest: TrackPt[], error: string | null, requestId: string | null = null) => {
       if (ctl.signal.aborted || track.current.hex !== selectedHex) return;
       const pts = mergeTrack(rest, track.current.pending);
       track.current = { hex: selectedHex, pts, pending: [], loaded: true };
+      setData({ aircraftTrack: { hex: selectedHex, loaded: true, error, requestId } });
       onReady(map, "tracks", () => geo(map, "tracks")?.setData(trackFeatureCollection(pts)));
     };
+    // 기록이 없으면(전세계 항공기 등) api 는 200 + 빈 points — 거절은 DB 장애 · 망 실패뿐이다. 실시간 관측만으로 잇고, 실패와 요청 id 는 카드의 문구에(계약 v5 §G5)
     aircraftTrack(selectedHex, { signal: ctl.signal })
-      .then((pts) => finish(pts))
-      .catch(() => finish([])); // DB 기록이 없거나(전세계 항공기) DB 장애 → 실시간 관측만으로 잇는다
+      .then((pts) => finish(pts, null))
+      .catch((e: unknown) => { const t = trackError(e); finish([], t.error, t.requestId); });
     return () => ctl.abort();
   }, [map, feed, selectedHex]);
 

@@ -6,8 +6,8 @@ import { DISPLAY_TZ, fmtKst, fmtKstClock, fmtTimeTitle, utcDayWindowKst } from "
 import { fmtLatencyMs } from "@/lib/format";
 import { liveNote, mirrorDiffers, switchCell, toggleNote, type SwitchNote } from "@/lib/provider-switch";
 import {
-  classifyOpsError, editSetting, fmtBudgetLimit, isAuthMiss, parseSetting, pipelineLossCount, providerLastError, providerMissing, providersNowMs, rebaseSetting,
-  RUN_STATUS_TITLE, runStatusClass, runStatusTone, SESSION_EXPIRED_NOTE, settingConflict, qualityPartialDay, settingIfMatch, settingSpec, signOut, switchHistoryError, dlqReadError, withProviderResolutions,
+  activeReadError, classifyOpsError, editSetting, fmtBudgetLimit, isAuthMiss, jobHeartbeatEntries, parseSetting, pipelineLossCount, providerLastError, providerMissing, providersNowMs, providersReadError, rebaseSetting,
+  RUN_STATUS_TITLE, runStatusClass, runStatusTone, SESSION_EXPIRED_NOTE, settingAfterSave, settingConflict, settingSaveNote, qualityPartialDay, settingIfMatch, settingSpec, signOut, switchHistoryError, dlqReadError, withProviderResolutions,
   type SettingEdit,
 } from "@/lib/ops";
 import { hiddenCount, hiddenText, parseResolutionState, RESOLUTION_STATE_TEXT, RESOLVE_EFFECT, type ResolvedMode } from "@/lib/resolutions";
@@ -250,8 +250,10 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
           <div className="mb-2 flex flex-wrap gap-3 text-[11px]">
             {/* 작업별 공급자 — 공급자 없음(수집기 {job}_none_*, 운영 로그 2026-09-30)이면 빨간 배지와 까닭. 전에는 마지막으로 쓴 공급자를 초록으로 보였다 */}
             {activeJobs(prov.active).map((j) => <span key={j.job} className={`badge ${j.none ? "bad" : "ok"}`} title={jobBadgeTitle(j, providersNowMs(prov))} data-testid={`ops-active-${j.job}`}>{jobBadgeText(j, providersNowMs(prov))}</span>)}
-            {/* 채우기 시각 둘(traffic_grid_fill_pass_at · _resume_at)은 아래 채우기 줄에서 뜻과 함께 보인다 — 작업 heartbeat 칩으로 겹쳐 적지 않는다 */}
-            {Object.entries(prov.collector ?? {}).filter(([k]) => k.endsWith("_at") && !k.startsWith("traffic_grid_fill_")).map(([k, v]) => <span key={k} className="mono text-fg-3" title={`${k} — 이 작업이 마지막으로 보고한 시각(collector heartbeat)${fmtTimeTitle(at(v)) ? ` · ${fmtTimeTitle(at(v))}` : ""}`}>{k.replace("_at", "")} {fmtKst(at(v))}</span>)}
+            {/* api 가 Redis 를 읽지 못한 표시(active.error)는 작업이 아니다 — 경고 글자(IM-16, 전에는 초록 'error: redis unavailable' 배지) */}
+            {(() => { const w = activeReadError(prov.active); return w ? <span className="text-warn" data-testid="ops-active-read-error">{w}</span> : null; })()}
+            {/* 작업이 마지막으로 보고한 시각({job}_at)만 — *_resume_at(다음에 움직일 때)과 채우기 시각은 빼고 아래 채우기 줄이 뜻과 함께 보인다(lib/ops jobHeartbeatEntries) */}
+            {jobHeartbeatEntries(prov.collector).map(([k, v]) => <span key={k} className="mono text-fg-3" title={`${k} — 이 작업이 마지막으로 보고한 시각(collector heartbeat)${fmtTimeTitle(at(v)) ? ` · ${fmtTimeTitle(at(v))}` : ""}`}>{k.replace("_at", "")} {fmtKst(at(v))}</span>)}
             {prov.collector?.fixture === "1" ? <span className="badge warn">FIXTURE</span> : null}
           </div>
           {/* 연안 교통량 격자 위치 채우기 진행(ADR-023 2026-10-01 개정) — 수렴을 DB · 컨테이너 로그 없이 본다(수집기 heartbeat 그대로) */}
@@ -271,6 +273,8 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
           ) : null}
           <div role="status" aria-live="polite">{resolveNote ? <div className="mb-2 text-[11px] text-ok" data-testid="resolve-ok">{resolveNote}</div> : null}</div>
           {(() => { const s = parseResolutionState(prov.resolution_state); return s && s !== "ok" ? <div className="mb-2 text-[11px] text-warn" data-testid="ops-resolution-state">{RESOLUTION_STATE_TEXT[s]}</div> : null; })()}
+          {/* 공급자 행이 api 의 Redis 장애 표시뿐이면 표 위에 한 줄(IM-16 — 수집한 적 없는 공급자까지 '—' 로 늘어선 까닭) */}
+          {(() => { const w = providersReadError(prov.providers); return w ? <div className="mb-2 text-[11px] text-warn" role="alert" data-testid="ops-providers-read-error">{w}</div> : null; })()}
           <table><thead><tr><th>provider</th><th>last success (KST)</th><th>latency</th><th>records</th><th>fails</th><th title={BUDGET_USED_TITLE}>budget used / limit</th><th>remaining (hdr)</th><th title={LAST_ERROR_TITLE}>last error</th><th title="켜고 끄기 — 원본은 DB provider_switch, 수집기는 Redis 미러를 따른다">switch · DB → Redis</th></tr></thead>
             <tbody>{prov.providers.map((p) => { const sw = prov.provider_switch?.find((x) => x.provider === String(p.name)); const cell = switchCell(sw); const off = sw?.disabled ?? p.disabled === "1";
               const busy = busySwitch.has(String(p.name)); const miss = providerMissing(p, providersNowMs(prov)); return <Fragment key={String(p.name)}><tr>
@@ -384,8 +388,11 @@ function OpsDashboard({ me, onLeave }: { me: { username: string }; onLeave: (not
   );
 }
 
-/** 설정 저장의 결과 문구: 성공(ok, role=status)과 실패(bad, role=alert)를 색·역할로 구분한다(R-56). 서버 실패는 요청 id(복사 — 계약 v5 §C8)를 붙인다 */
-type SettingsMsg = { ok: boolean; text: string; error?: unknown };
+/**
+ * 설정 저장의 결과 문구: 성공(ok, role=status) · 저장됐지만 Redis 미러 실패(warn, role=alert — IM-17, lib/ops settingSaveNote) · 실패(bad, role=alert)를
+ * 색·역할로 구분한다(R-56). 서버 실패는 요청 id(복사 — 계약 v5 §C8)를 붙인다
+ */
+type SettingsMsg = { tone: "ok" | "warn" | "bad"; text: string; error?: unknown };
 
 /** msg · setMsg = 결과 문구 — 대시보드가 갖는다(탭을 오가도 실패가 남게 — PLAN §5 결정 4) */
 function SettingsForm({ items, msg, setMsg, onSaved, onAuthMiss }: {
@@ -413,15 +420,24 @@ function SettingsForm({ items, msg, setMsg, onSaved, onAuthMiss }: {
     rescue(() => [inputs.current.get(k)]);
     // 서버 검증 규칙(SettingsService.validate)을 보내기 전에 — 규칙을 모르는 키는 서버가 검사
     const parsed = parseSetting(k, ed.value);
-    if (!parsed.ok) { setFieldErr((f) => ({ ...f, [k]: parsed.error })); setMsg({ ok: false, text: `${k}: 저장하지 않음 — ${parsed.error}` }); return; }
+    if (!parsed.ok) { setFieldErr((f) => ({ ...f, [k]: parsed.error })); setMsg({ tone: "bad", text: `${k}: 저장하지 않음 — ${parsed.error}` }); return; }
     setFieldErr((f) => { const c = { ...f }; delete c[k]; return c; });
     saving.current.add(k);
     setBusy(new Set(saving.current));
     try {
       const r = await saveSetting(k, parsed.value, settingIfMatch(ed));
-      // changed=false — 지금 값과 같아 version · 감사 행이 그대로다(계약 v5 §G45)
-      const same = typeof r === "object" && r !== null && (r as { changed?: unknown }).changed === false;
-      setMsg({ ok: true, text: same ? `${k} 지금 값과 같음 — 바뀐 것 없음` : `${k} 저장됨 — 다음 주기부터 적용` }); drop(k); onSaved();
+      // changed=false — 지금 값과 같아 version · 감사 행이 그대로다(계약 v5 §G45). mirrored=false — DB 에만 저장, 수집기가 읽는 Redis 는 아직(IM-17)
+      const note = settingSaveNote(k, r);
+      setMsg({ tone: note.warn ? "warn" : "ok", text: note.text });
+      // 보낸 편집 그대로일 때만 지운다 — 응답을 기다리는 동안 고친 값은 응답의 version 위에 남는다(IM-15, lib/ops settingAfterSave)
+      setEdit((e) => {
+        const next = settingAfterSave(e[k], ed, r);
+        if (next === e[k]) return e;
+        const c = { ...e };
+        if (next === undefined) delete c[k]; else c[k] = next;
+        return c;
+      });
+      onSaved();
     }
     catch (e) {
       if (isAuthMiss(e)) onAuthMiss(e);
@@ -429,7 +445,7 @@ function SettingsForm({ items, msg, setMsg, onSaved, onAuthMiss }: {
       const text = conflict ? "편집하는 동안 다른 곳에서 바뀌었습니다 — 새 값을 확인한 뒤 다시 저장하세요"
         : e instanceof ApiError && e.status === 400 ? `서버가 값을 거절했습니다(${e.message})`
         : e instanceof ApiError ? `저장 실패(HTTP ${e.status})` : "서버에 연결할 수 없습니다(네트워크)";
-      setMsg({ ok: false, text: `${k}: ${text}`, error: e });
+      setMsg({ tone: "bad", text: `${k}: ${text}`, error: e });
       if (conflict) onSaved(); // 새 값·version 을 바로 받아 충돌 표시
     } finally {
       saving.current.delete(k);
@@ -440,8 +456,12 @@ function SettingsForm({ items, msg, setMsg, onSaved, onAuthMiss }: {
     <div>
       <div className="mb-2 text-[11px] text-fg-3">변경은 If-Match(version) 낙관적 잠금 + CSRF 헤더로 보호되며 감사 로그에 남습니다. collector 는 다음 주기에 반영합니다. 편집하는 동안 서버 값이 바뀌면 행에 표시하고, 덮어쓰기는 직접 골라야 합니다.</div>
       <div className="mb-2 text-[11px] text-fg-3"><span className="mono">ais_bboxes</span>: 선박 수신 영역 <span className="mono">lat1,lon1,lat2,lon2</span>(여러 상자는 <span className="mono">;</span>) · 비우면 .env <span className="mono">AIS_BBOXES</span> · 전세계 <span className="mono">-90,-180,90,180</span> · ais 가 30 s 안에 같은 연결로 다시 구독합니다.</div>
-      <div role="status" aria-live="polite">{msg?.ok ? <div className="mb-2 text-[11px] text-ok" data-testid="settings-ok">{msg.text}</div> : null}</div>
-      {msg && !msg.ok ? <div className="mb-2 text-[11px] text-bad" role="alert" data-testid="settings-error">{msg.text}<RequestIdOf error={msg.error} />
+      <div role="status" aria-live="polite">{msg?.tone === "ok" ? <div className="mb-2 text-[11px] text-ok" data-testid="settings-ok">{msg.text}</div> : null}</div>
+      {/* 미러 실패 경고도 실패처럼 다음 저장이나 '알림 닫기' 까지 — 설정 목록에는 미러 상태가 없어 주기 미러가 맞췄는지 이 화면은 모른다(IM-17) */}
+      {msg?.tone === "warn" ? <div className="mb-2 text-[11px] text-warn" role="alert" data-testid="settings-unmirrored"
+        title="설정 목록(GET /ops/settings)은 Redis 미러 상태를 싣지 않는다 — 이 경고는 주기 미러가 맞춘 뒤에도 다음 저장이나 '알림 닫기' 까지 남는다">{msg.text}
+        <button className={SMALL_BTN} onClick={() => setMsg(null)}>알림 닫기</button></div> : null}
+      {msg?.tone === "bad" ? <div className="mb-2 text-[11px] text-bad" role="alert" data-testid="settings-error">{msg.text}<RequestIdOf error={msg.error} />
         {/* 실패는 다음 저장이나 이 단추 전까지 남는다(PLAN §5 결정 4) — 15 s 새로고침도, 다른 탭에 다녀오는 것도 지우지 않는다(문구는 대시보드에) */}
         <button className={SMALL_BTN} onClick={() => setMsg(null)}>알림 닫기</button></div> : null}
       <table><thead><tr><th>key</th><th>value</th><th>version</th><th>updated (KST)</th><th></th></tr></thead>

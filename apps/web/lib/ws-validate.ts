@@ -20,7 +20,7 @@ import {
   parsePortCalls, PORT_CALL_AUTHORITIES, PORT_CALL_CALL_SIGN_STATES, PORT_CALL_DISABLED_REASONS, PORT_CALL_GAP_ISSUES, PORT_CALL_REVISIONS, PORT_CALL_SOURCE,
   PORT_CALL_STALE_AFTER_S, PORT_CALL_STATUSES, PORT_CALL_WINDOW_DAYS, type PortCallsInfo,
 } from "./portcalls";
-import { parseRoute, ROUTE_STATUSES, type RouteInfo } from "./route";
+import { parseRoute, ROUTE_STATUSES, type RouteInfo } from "./route-parse";
 import {
   DEST_KINDS, isMmsi, parseDestinationInfo, parseGridCellsCounted, parseShipLite, parseShipState, parseShipStatic, SHIP_CATEGORIES, STATIC_SOURCES,
   type DestinationInfo, type ShipGridCell, type ShipLite, type ShipState, type ShipStatic, type StaticSource,

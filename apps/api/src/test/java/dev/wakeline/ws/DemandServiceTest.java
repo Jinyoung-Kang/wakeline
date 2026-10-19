@@ -6,8 +6,12 @@ import dev.wakeline.aircraft.core.AircraftState;
 import dev.wakeline.demand.HotCell;
 import dev.wakeline.ships.core.ShipStatic;
 import dev.wakeline.aircraft.core.Snapshot;
+import dev.wakeline.geo.Bbox;
+import dev.wakeline.platform.config.AppProperties;
 import dev.wakeline.settings.RegionSettings;
 import org.junit.jupiter.api.Test;
+import org.springframework.data.redis.core.HashOperations;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import tools.jackson.databind.JsonNode;
 
 import java.time.Instant;
@@ -22,6 +26,10 @@ import java.util.concurrent.atomic.AtomicLong;
 
 import static dev.wakeline.ws.WsTestKit.ofType;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyCollection;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 /**
  * 수요 계산(계약 v2 §A1·§A3): 세션 → focus/hot/covered 규칙, 셀 공유, 상한(6·50)과 순위, 30분 상한, 임대 교체(원자·만료 60 s),
@@ -66,8 +74,14 @@ class DemandServiceTest {
         final AtomicLong clock = new AtomicLong(System.currentTimeMillis());
         final java.util.concurrent.atomic.AtomicInteger ips = new java.util.concurrent.atomic.AtomicInteger();
         final ScheduledExecutorService exec = Executors.newSingleThreadScheduledExecutor();
-        final DemandService demand = new DemandService(k.hub, () -> new RegionSettings.Region(36.5, 127.8, 250), k.snapshots, leases, stats,
-                WsTestKit.JSON, k.meters, exec, clock::get);
+        final DemandService demand;
+
+        Rig() { this(() -> new RegionSettings.Region(36.5, 127.8, 250)); }
+
+        /** 관심 지역을 주입한다(운영 RegionSettings::current 와 같은 모양). */
+        Rig(java.util.function.Supplier<RegionSettings.Region> region) {
+            demand = new DemandService(k.hub, region, k.snapshots, leases, stats, WsTestKit.JSON, k.meters, exec, clock::get);
+        }
 
         long now() { return clock.get(); }
 
@@ -149,6 +163,35 @@ class DemandServiceTest {
 
             assertThat(demands(paused)).isEmpty();
             assertThat(r.stats.counts()).isEqualTo(new DemandStats.Counts(0, 0, 1, 1, 1, 1));
+        }
+    }
+
+    /**
+     * IM-10: 관심 지역 반경은 공급자 상한 250 NM 까지다. 관심 지역 중심(36.5,127.8)에서 약 270 NM 떨어진 화면은 관심 지역 피드에 없으므로
+     * 핫 리전 수요를 내야 한다. 전에는 운영자가 저장한 400 NM 을 그대로 써 이 화면을 covered_by_region 으로 보아 핫 리전을 막았다 —
+     * 수집기는 /dist/400 을 불러도 공급자 상한 밖은 받지 못한다. 여기서는 Redis 해시에 남은 400(범위가 50–500 이던 때 저장한 값)을 운영과 같은
+     * RegionSettings 로 읽는다.
+     */
+    @Test @SuppressWarnings("unchecked")
+    void screenBeyondTheProviderRadiusGetsAHotRegionEvenIfA400NmRegionWasStored() throws Exception {
+        HashOperations<String, Object, Object> hash = mock(HashOperations.class);
+        when(hash.multiGet(any(), anyCollection())).thenReturn(List.of("36.5,127.8", "400"));
+        StringRedisTemplate redis = new StringRedisTemplate() {
+            @Override public <HK, HV> HashOperations<String, HK, HV> opsForHash() { return (HashOperations<String, HK, HV>) (HashOperations<?, ?, ?>) hash; }
+        };
+        AppProperties props = new AppProperties("", "36.5,127.8", 250, 120, 200, 5, 10, 30, 2500, 0, "classpath:schemas", 72, 30, 120, List.of(), List.of());
+        RegionSettings region = new RegionSettings(redis, null, null, props);
+        region.refreshNow();
+        String north = "{\"type\":\"subscribe\",\"bbox\":[127.3,40.7,128.3,41.3],\"zoom\":8}"; // 화면 중심 41.0,127.8 — 약 270 NM 북쪽
+        String northCell = HotCell.forViewport(new Bbox(127.3, 40.7, 128.3, 41.3)).key();
+        try (Rig r = new Rig(region::current)) {
+            FakeWsSession beyond = r.session("beyond", north);
+            FakeWsSession inside = r.session("inside", SEOUL);
+            r.refresh();
+            assertThat(r.leases.last().hot()).extracting(DemandLeases.Lease::member).containsExactly(northCell);
+            assertThat(lastDemand(beyond).path("hot").path("state").asString()).isEqualTo("pending");
+            assertThat(lastDemand(beyond).path("hot").path("cell").asString()).isEqualTo(northCell);
+            assertThat(lastDemand(inside).path("hot").path("state").asString()).isEqualTo("covered_by_region"); // 250 NM 안은 그대로
         }
     }
 
@@ -539,7 +582,7 @@ class DemandServiceTest {
             Instant t = Instant.ofEpochMilli(r.now());
             AircraftState a = new AircraftState("abc123", null, null, null, null, 35.5, 139.6, 30000, 400.0, 90.0, 0.0, false, null,
                     t, "adsb_fi", t, 0, false);
-            r.k.snapshots.applyFocus(new Snapshot(r.k.snapshots.nextVersion(), "focus", "adsb_fi", t, t, "-", Map.of("abc123", a)));
+            r.k.snapshots.applyFocus(new Snapshot(r.k.snapshots.nextVersion(), "focus", "adsb_fi", t, t, "-", Map.of("abc123", a)), r.now());
             FakeWsSession f = r.session("s", TOKYO);
             assertThat(ofType(f, "snapshot").getLast().path("aircraft").toString()).contains("abc123");
             r.refresh(); // 아무도 abc123 을 선택하지 않았다 → focus 관측을 뺀다 → 팬아웃(diff remove)

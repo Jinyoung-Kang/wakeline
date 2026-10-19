@@ -67,10 +67,16 @@ class FakePopup {
   remove() { this.open = false; return this; }
 }
 
+/** MapLibre 의 GPUInitializationError 대역 — 실제 Map 생성자는 WebGL2 문맥을 만들지 못하면 이것을 던진다(코드는 instanceof 로 가린다) */
+export class FakeGPUInitializationError extends Error {
+  constructor(message = "Failed to initialize WebGL2 context") { super(message); this.name = "GPUInitializationError"; }
+}
+
 export const workerUrls: string[] = [];
 /** vi.mock 에 넘기는 모듈 모양(maplibre-gl 의 쓰는 부분만) */
 export const fakeMaplibreModule = {
   Map: FakeMap,
+  GPUInitializationError: FakeGPUInitializationError,
   NavigationControl: Ctl,
   AttributionControl: Ctl,
   Popup: FakePopup,

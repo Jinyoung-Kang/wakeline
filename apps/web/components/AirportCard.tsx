@@ -11,6 +11,8 @@ import { useNow } from "@/lib/clock";
 import { serverNowMs } from "@/lib/store";
 import { CAT_COLORS, catSourceLabel, ceilingLabel, fmtDuration, isMetarStale, metarAgeS } from "@/lib/format";
 import { ErrorNote } from "./logs/ErrorNote";
+import { useRetryAfterOnce } from "@/lib/use-retry-after";
+import { RetryNote } from "./RetryNote";
 import { RAW_BULLETIN_LABEL, RAW_BULLETIN_TITLE } from "@/lib/time";
 import { KstTime } from "./KstTime";
 import { fmtTempPair, fmtVisSm, fmtWind, WX_UNREADABLE } from "@/lib/airport-wx";
@@ -20,17 +22,23 @@ import { fmtTempPair, fmtVisSm, fmtWind, WX_UNREADABLE } from "@/lib/airport-wx"
  * METAR 가 2 시간보다 오래되면 "오래됨" — 지도에서도 회색 고리로 그린다(GAP-14).
  * 관측·수신 시각은 KST 만(계약 v5 §G20 · lib/time, 마우스를 올리면 연도 · ms 까지) — METAR · TAF 원문은 발표된 그대로(data-raw — 안의 "…Z" 는 발표 형식).
  * 시정은 AWC 원문 값(vis_raw, 법정마일)에 단위 SM 을 붙이고 "6+" 는 "6 SM 이상"(DH-7) — km 로 읽히지 않게.
+ * 조회 실패는 ErrorNote(서버 detail · HTTP 상태 · code · 요청 id — 계약 v5 §C8). 일시적 실패(503 + Retry-After — 공개 조회 허가 고갈)는 그 뒤
+ * 한 번 다시 받고, 다시 해 볼 만한 실패에는 '다시 시도' 단추(lib/use-retry-after · RetryNote — QA-1463 · IM-22: 전에는 카드를 닫았다 다시 열어야 받았다).
  */
 export function AirportCard({ icao }: { icao: string }) {
   // 공항마다의 결과(lib/use-api-resource): 다음 공항을 불러오는 동안 앞 공항의 값 · 오류 · 요청 id 를 보이지 않는다(web-review B5).
-  // 본문은 parseWx 로 검사한다(web-review B10) — 읽을 수 없으면 그리지 않고 그렇다고 말한다. 오류는 ApiError 면 요청 id 까지(계약 v5 §C8)
-  const wx = useApiResource(icao, (signal) => airportWx(icao, { signal }).then((x) => x ?? Promise.reject(new Error(WX_UNREADABLE))));
+  // 본문은 parseWx 로 검사한다(web-review B10) — 읽을 수 없으면(null) 그리지 않고 그렇다고 말한다(다시 받아도 같은 답이라 '다시 시도'는 없다 — 공항 기상 이력 화면과 같다).
+  // 오류는 ApiError 면 요청 id 까지(계약 v5 §C8)
+  const wx = useApiResource(icao, (signal) => airportWx(icao, { signal }));
+  const auto = useRetryAfterOnce(icao, wx.status, wx.error, wx.retry);
+  /** '다시 시도'를 누르면 단추가 사라진다 — 초점을 상태 줄로(공항 기상 이력 화면과 같은 목적) */
+  const statusBox = useRef<HTMLDivElement>(null);
   const selectAirport = useUi((s) => s.selectAirport);
   const root = useRef<HTMLDivElement>(null);
   useEscapeClose(true, () => selectAirport(null), { panel: root }); // Esc 로 닫기(lib/escape-stack)
   const now = useNow(30_000);
   const w = wx.data && wx.data.airport.icao === icao ? wx.data : null;
-  const err = wx.error;
+  const unreadable = wx.status === "loaded" && !wx.data;
   const m = w?.latest;
   const nowMs = now ? serverNowMs(now) : 0;
   const age = m && nowMs ? metarAgeS(m, nowMs) : null;
@@ -40,7 +48,10 @@ export function AirportCard({ icao }: { icao: string }) {
     <div ref={root} className="flex h-full flex-col" data-testid="airport-card">
       <div className="row"><span className="label">Airport · {icao}</span><div className="flex gap-1">{isRefusedSegment(icao) ? null : <Link href={`/airports/${encodeURIComponent(icao)}`} className="btn">이력</Link>}<WatchButton kind="airport" id={icao} label={w?.airport.name} /><button className="btn" onClick={() => selectAirport(null)}>닫기</button></div></div>
       <div className="min-h-0 flex-1 overflow-y-auto px-2 py-1 text-[12px]">
-        {err ? <div className="text-bad"><ErrorNote error={err} /></div> : null}
+        <div ref={statusBox} tabIndex={-1} className="outline-none">
+          {wx.status === "failed" ? <div className="text-bad"><ErrorNote error={wx.error} /></div> : unreadable ? <div className="text-bad">{WX_UNREADABLE}.</div> : null}
+          {wx.status === "failed" ? <RetryNote error={wx.error} auto={auto} onRetry={() => { statusBox.current?.focus(); wx.retry(); }} /> : null}
+        </div>
         {w ? <>
           <div className="font-semibold">{w.airport.name ?? icao}</div>
           {m ? <>

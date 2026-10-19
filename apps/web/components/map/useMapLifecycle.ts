@@ -1,6 +1,6 @@
 "use client";
 import type * as maplibregl from "maplibre-gl";
-import { useEffect, useEffectEvent, useRef, type RefObject } from "react";
+import { useEffect, useEffectEvent, useState, type RefObject } from "react";
 import { addBaseLayers, RADAR_SLOT, STYLE_URL } from "@/lib/maplayers";
 import { maplibre } from "@/lib/maplibre";
 import { watchBasemapStyle } from "@/lib/basemap-fallback";
@@ -9,6 +9,7 @@ import { useUi } from "@/lib/ui-store";
 import { mapAttributionHtml, styleHasBasemapCredit } from "@/lib/attribution";
 import { mapAttributionControl } from "@/lib/map-attribution";
 import { onReady, setDashboardMap, useDashboardMap } from "@/lib/map-ready";
+import { setNoLiveFeed } from "@/lib/store";
 import { addTrafficGridLayers, TRAFFIC_LAYERS } from "@/lib/traffic-grid";
 
 const REGION_CENTER: [number, number] = [127.8, 36.5];
@@ -19,19 +20,31 @@ const REGION_CENTER: [number, number] = [127.8, 36.5];
  * - 배경지도 스타일(외부 호스트)을 받지 못하면(오류 · STYLE_LOAD_TIMEOUT_MS) 로컬 최소 스타일로 한 번 바꾸고 알린다(R-01). 받으면 알려진 층의 색만 바꾼다(계약 v4 §E).
  * - 'load' 에서: onFirstLoad(상황판의 미리 받기 — ADR-026), 기본 · 선박 · 연안 교통량 레이어, 출처 표기(compact ⓘ — FR-20).
  * - 레이어 단추에 따른 기본 레이어 보이기, 검색 등이 요청한 지도 이동(움직임 줄이기 설정이면 바로).
- * 돌려주는 것: 지금 지도(손잡이 — 만들기 전 · 떠난 뒤 null).
+ * - WebGL2 문맥을 만들 수 없으면(Map 생성자의 GPUInitializationError) 던지지 않고 noWebgl — 지도 자리만 안내로 바꾼다(components/map/NoWebgl, IM-21:
+ *   전에는 화면 전체의 오류 경계까지 올라가 상태 바 · 알림 패널도 지웠다). 다른 예외는 그대로 위로. 실시간 피드(useLiveFeed)는 지도와 함께 만들어지므로
+ *   시작하지 않는다 — 남은 상태 바 · 알림 패널이 '연결 중'으로 보이지 않게 스토어에 적는다(conn "off" — R9).
+ * 돌려주는 것: 지금 지도(손잡이 — 만들기 전 · 떠난 뒤 · 만들지 못함 null) · noWebgl.
  */
-export function useMapLifecycle(el: RefObject<HTMLDivElement | null>, onFirstLoad?: () => void): maplibregl.Map | null {
+export function useMapLifecycle(el: RefObject<HTMLDivElement | null>, onFirstLoad?: () => void): { map: maplibregl.Map | null; noWebgl: boolean } {
   const firstLoad = useEffectEvent(() => onFirstLoad?.());
+  const [noWebgl, setNoWebgl] = useState(false);
   useEffect(() => {
     if (!el.current) return;
     // MapLibre 는 public 배포본(워커와 공용 청크를 나눠 쓴다 — R-02). 상황판은 이 컴포넌트를 불러올 때 loadMaplibre() 를 함께 기다린다(app/page.tsx).
     const ml = maplibre();
-    const map = new ml.Map({
-      container: el.current, style: STYLE_URL, center: REGION_CENTER, zoom: 6, minZoom: 1, maxZoom: 12,
-      hash: true, // #zoom/lat/lon — 지도 위치를 링크로 공유
-      attributionControl: false, canvasContextAttributes: { antialias: false },
-    });
+    let map: maplibregl.Map;
+    try {
+      map = new ml.Map({
+        container: el.current, style: STYLE_URL, center: REGION_CENTER, zoom: 6, minZoom: 1, maxZoom: 12,
+        hash: true, // #zoom/lat/lon — 지도 위치를 링크로 공유
+        attributionControl: false, canvasContextAttributes: { antialias: false },
+      });
+    } catch (e) {
+      if (!(e instanceof ml.GPUInitializationError)) throw e;
+      setNoWebgl(true); // eslint-disable-line react-hooks/set-state-in-effect -- 바깥(브라우저의 GPU)이 지도를 거절했다: 한 번, 지도 자리를 안내로 바꾼다
+      setNoLiveFeed(); // 지도가 없으면 WS · 워커도 없다(useLiveFeed) — 연결을 시도하지 않는다고 적는다
+      return;
+    }
     map.addControl(new ml.NavigationControl({ showCompass: false }), "top-left");
     setDashboardMap(map); // 다른 Hook 과 켤 때 받는 레이어 조각(관측 수신 범위)이 이 지도에 그린다
     // R-01: 배경지도 스타일(외부 호스트)을 받지 못하면(오류 · 시간 제한) 로컬 최소 스타일로 한 번 바꾸고 화면에 알린다 · 받으면 알려진 층의 색만 바꾼다(lib/basemap-fallback).
@@ -62,16 +75,19 @@ export function useMapLifecycle(el: RefObject<HTMLDivElement | null>, onFirstLoa
   const map = useDashboardMap();
   const layers = useUi((s) => s.layers);
   const flyTo = useUi((s) => s.flyTo);
-  /** 마운트 전에 처리된 이동 요청은 다시 하지 않는다(다른 화면에서 돌아올 때) */
-  const flyHandled = useRef(useUi.getState().flyTo?.id ?? 0);
 
   // ---- 검색 등에서 요청한 지도 이동(움직임 줄이기 설정이면 바로 이동) ----
+  // 따른 요청 id 는 컴포넌트 ref 가 아니라 ui-store(flyHandled)에 둔다: 다른 화면에서 돌아와 지도를 다시 만들어도 이미 따른 요청은 되풀이하지 않고, 지도가
+  // 마운트되기 전의 요청(지도 조각 · MapLibre 를 받기 전에 상단 검색으로 고름 — app/page.tsx)은 따른다. 실제로 옮길 때(onReady 의 실행) 적는다 — load 전에
+  // 떠난 지도가 따르지 못한 요청은 다음 지도가 따른다.
   useEffect(() => {
-    if (!map || !flyTo || flyTo.id <= flyHandled.current) return;
-    flyHandled.current = flyTo.id;
+    if (!map || !flyTo || flyTo.id <= useUi.getState().flyHandled) return;
     const reduce = typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
     const opts = { center: [flyTo.lon, flyTo.lat] as [number, number], zoom: Math.max(map.getZoom(), flyTo.zoom) };
-    onReady(map, "fly", () => (reduce ? map.jumpTo(opts) : map.flyTo({ ...opts, duration: 1200, essential: true })));
+    onReady(map, "fly", () => {
+      useUi.getState().setFlyHandled(flyTo.id);
+      if (reduce) map.jumpTo(opts); else map.flyTo({ ...opts, duration: 1200, essential: true });
+    });
   }, [map, flyTo]);
 
   // ---- 레이어 토글 ----
@@ -90,5 +106,5 @@ export function useMapLifecycle(el: RefObject<HTMLDivElement | null>, onFirstLoa
     });
   }, [map, layers]);
 
-  return map;
+  return { map, noWebgl };
 }

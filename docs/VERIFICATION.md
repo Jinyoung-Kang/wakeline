@@ -1812,6 +1812,23 @@ AWS 리뷰 D-2 · D-3 · D-4 · D-5 · D-6 · D-7 · D-8 · B-4 · C-2. 모두 �
   (15:14Z)는 권한 항목 wakeline 46 · buildrisk 85 · macrodash 0(역할 하나가 소유), PostGIS 0, 모두 `pg_restore -l` 통과. 실패가 남긴 빈 `.part` 2개는 지웠고, aws-deploy `2ba7d5d` 가
   실패 때 지우게 하고(시험 `rds/test_backup.py`) README 에 '백업 받기'(비밀번호는 Secrets Manager 에서)를 적었다.
 
+## #147 개선 작업(2026-10-18, 브랜치 `fix/improve-2026-10` — [PLAN](improve/PLAN.md) · [REPORT](improve/REPORT.md) · [ADR-040](adr/ADR-040-engine-and-ingest-clock-basis.md) · 계약 v5 §G54–§G58)
+- **방법**: 12영역 리뷰어 + 빠진 곳 3영역 → 발견 47(S1 0 · S2 1 · S3 12 · S4 33) → S1–S3 은 처음 보는 검증 에이전트가 재현 · 추적(확인 13 · 반박 1) → 계획 40항목 →
+  언어별 레인 셋(scratchpad worktree, 항목마다 실패 시험 먼저 · 레인 전체 검사 뒤 커밋) + 인프라 · 도구는 직접 → cherry-pick → 독립 검토(계획서 + diff 만, 지적 18 → 확인 16) → 정확성 지적 8건 고침 + 문서 → 고친 8건 재확인(모두 고쳐짐 · 새 low 2 — 1건 고침 · 1건 ADR-040 에 기록).
+- **고치기 전 실패 → 고친 뒤 통과(대표)**: IM-01 AWC 표본 131건 중 'TOP ABV' 4건이 `json` → `raw_text_lower_bound` · IM-07 100 s 장애 뒤 재전송 `[PREDICTED, ENTERED, PREDICTION_CLEARED, LOST,
+  PREDICTED, ENTERED]` → `[PREDICTED, ENTERED]` · IM-08 시계 300 s 역행 뒤 region 메시지 거부 → 받음 · IM-03 Redis 장애 중 모음이 상한 10 위로 20→60 → 상한 안 · IM-09 'UAL1' 이 결과에서
+  빠지는 확률 ≈ 48 %(HashMap 순서 흉내) → 늘 맨 앞 · IM-12 `finished_at` 이 `last_error_at` 보다 430 µs 늦음 → 같음 · IM-20 열린 알림 근거 DB 장애 503 → 200 + `meta.db_unavailable` ·
+  IM-28 AWS 호스트에서 13개 make 대상이 그대로 실행 → 멈춤 · R1 역행 뒤 `[ENTERED]`(LEFT 없음) → `[ENTERED, LEFT]` · R2 모든 피드가 멈춘 동안 새 SIGMET 이 멈춘 위치로 ENTERED · PREDICTED → 없음.
+  각 커밋 본문에 실패 출력이 있다.
+- **수치**(같은 Mac · 같은 날, 기준선 main `1d4589ba` → 브랜치): JUnit 1,288 → 1,349(LINE 97.50 → 97.60 % · BRANCH 87.02 → 87.54 %) · pytest 2,031 → 2,064 · Vitest 1,860 → 1,910 ·
+  인프라 정책 186 → 195 · edge 컨테이너 시험 42 → 44 · E2E 51 → 51 · REST 계약 46 · 첫 화면 JS 549,840 → 549,227 B(여유 160 → 773 B).
+- **겪은 것**: (1) 운영 이미지를 `:mainsafe` 로 태그할 때 zsh `:l` 함정(#113)이 다시 걸려 엉뚱한 이미지를 태그했다 — 확인하고 `${s}` 로 다시 태그. (2) api 레인의 IM-20a 에이전트가 전체 시험이 끝나기 전에
+  돌아와 커밋하지 않았다 — 이 브랜치로 옮기니 그 시험이 IM-25 의 새 로그 형식을 몰라 실패, 기대만 맞췄다. (3) `npm install` 로 vitest 패치만 올리려 했으나 범위가 넓어지고(5.0.5 · 의존 97개)
+  정확한 판 고정은 npm 내부 오류(arborist `edgesOut`)로 실패 — 웹 Dependabot 묶음은 maplibre 결정 뒤로. (4) `make security` 에서 api · db · edge 가 trivy HIGH(curl · expat — 10-14 뒤 공개)로
+  실패 — 빌드 캐시의 옛 `apt-get upgrade` 층 때문. `--no-cache` 로 다시 빌드하니 통과(배포 때도 그렇게). (5) 내 실수: `ca9ac73f` 에 빠진 파일을 `git commit --amend` 로 넣었다(push 전이지만 규칙 위반 — 앞으로는 다음 커밋으로).
+- **남은 것**: 사용자 결정 Q1(지난 SIGMET 행 재분류 마이그레이션) · Q2(maplibre 6.12 예산) · Q4(WS 를 지도와 떼기). 기록만 한 것: 항공기 DB 보충 검색 순서(R4) · 선택 항적의 503 재시도(R12) ·
+  병합 뷰의 벽시계 만료 · 역행 뒤 SIGMET · 특보 이력 중복 막기 · 역행 직후 `left_at < entered_at` 가능(ADR-040 '남은 것').
+
 ## 자동 검사 현황(2026-10-02 15:5x KST, QA 2026-10 브랜치 `qa/2026-10` — #103 뒤, 깨끗한 `git archive` 내보내기 · 격리 스택)
 | 층 | 도구 | 수 |
 |---|---|---|

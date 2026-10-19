@@ -1,5 +1,6 @@
 package dev.wakeline.aircraft.core;
 
+import dev.wakeline.platform.support.FetchedAtGuard;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
@@ -14,7 +15,7 @@ import java.util.concurrent.atomic.AtomicReference;
 /**
  * 핫 상태는 메모리에(4.1절). 스코프 네 벌(계약 v2 §A3):
  * <ul>
- *   <li>region(고정 관심 지역 10 s) · global(전세계 120 s): 스코프마다 스냅샷 한 벌, fetched_at 이 더 새 것만 교체(REL-8).</li>
+ *   <li>region(고정 관심 지역 10 s) · global(전세계 120 s): 스코프마다 스냅샷 한 벌, 새 fetched_at 만 교체(REL-8 — 판단은 {@link FetchedAtGuard}).</li>
  *   <li>hot(뷰포트 핫 리전, 셀 키별 30 s): 셀마다 마지막 메시지 한 벌. 마지막 메시지 뒤 90 s 가 지나면 뺀다.</li>
  *   <li>focus(선택 항공기 집중 추적, hex 별 5 s): hex 마다 마지막 관측. 관측(seen_at) 뒤 60 s 가 지나거나 hex 가 focus 임대에서
  *       빠지면 뺀다(임대는 api 의 DemandService 가 쓰고 {@link #setLeases} 로 알려 준다).</li>
@@ -238,15 +239,16 @@ public class SnapshotStore {
     }
 
     /**
-     * fetched_at 단조 보장 교체(REL-8): 같은 스코프의 현재 스냅샷보다 새 것일 때만 바꾼다(region·global).
+     * fetched_at 단조 보장 교체(REL-8): 같은 스코프의 현재 스냅샷보다 새 것일 때만 바꾼다(region·global, {@link FetchedAtGuard}).
+     * @param nowMs api 의 지금(ms)
      * @return 이전 스냅샷, 거부되면(백로그·중복) null
      */
-    public Snapshot replaceIfNewer(Snapshot s) {
+    public Snapshot replaceIfNewer(Snapshot s, long nowMs) {
         requireRegionOrGlobal(s);
         Snapshot[] prev = new Snapshot[1];
         swap(c -> {
             Snapshot cur = GLOBAL.equals(s.scope()) ? c.global() : c.region();
-            if (!s.fetchedAt().isAfter(cur.fetchedAt())) { prev[0] = null; return c; }
+            if (!FetchedAtGuard.newer(s.fetchedAt(), cur.fetchedAt(), nowMs)) { prev[0] = null; return c; }
             prev[0] = cur;
             return withRegionGlobal(c, s);
         });
@@ -261,21 +263,22 @@ public class SnapshotStore {
     /**
      * hot 셀 교체: 그 셀의 현재 메시지보다 fetched_at 이 새 것일 때만. 같이 오래된 셀(이 메시지보다 90 s 넘게 오래된)을 걷어내고
      * 셀 수 상한을 지킨다. 임대에서 빠진 셀이어도 받는다(관측은 관측이다 — 90 s 뒤 스스로 빠진다).
+     * @param nowMs api 의 지금(ms)
      * @return 그 셀의 이전 스냅샷(없었으면 빈 스냅샷), 거부되면 null
      */
-    public Snapshot replaceHotIfNewer(String cell, Snapshot s) {
+    public Snapshot replaceHotIfNewer(String cell, Snapshot s, long nowMs) {
         if (!HOT.equals(s.scope())) throw new IllegalArgumentException("hot snapshot expected");
         Snapshot[] prev = new Snapshot[1];
         swap(c -> {
             Snapshot cur = c.hot().get(cell);
-            if (cur != null && !s.fetchedAt().isAfter(cur.fetchedAt())) { prev[0] = null; return c; }
+            if (cur != null && !FetchedAtGuard.newer(s.fetchedAt(), cur.fetchedAt(), nowMs)) { prev[0] = null; return c; }
             prev[0] = cur != null ? cur : Snapshot.empty(HOT);
             long horizon = s.fetchedAt().toEpochMilli() - HOT_TTL_S * 1000;
             Map<String, Snapshot> hot = new HashMap<>();
             for (var e : c.hot().entrySet()) if (e.getValue().fetchedAt().toEpochMilli() > horizon) hot.put(e.getKey(), e.getValue());
             hot.put(cell, s);
             while (hot.size() > MAX_HOT_CELLS) hot.remove(oldestKey(hot, x -> x.fetchedAt().toEpochMilli()));
-            Instant hotAt = s.fetchedAt().isAfter(c.hotFetchedAt()) ? s.fetchedAt() : c.hotFetchedAt();
+            Instant hotAt = FetchedAtGuard.newer(s.fetchedAt(), c.hotFetchedAt(), nowMs) ? s.fetchedAt() : c.hotFetchedAt();
             return new Scopes(nextVersion(), c.region(), c.global(), Map.copyOf(hot), c.focus(),
                     Math.max(c.hotVersion(), s.version()), hotAt, c.focusVersion(), c.focusFetchedAt(), c.hotLeased(), c.focusLeased());
         });
@@ -285,9 +288,12 @@ public class SnapshotStore {
     /**
      * focus 메시지 반영. hex 마다: focus 임대에 있고(임대를 아직 모르면 통과), 그 hex 의 현재 관측보다 fetched_at 이 새롭고 seen_at 이
      * 오래되지 않았을 때만 바꾼다(묶음 요청이 여러 메시지로 나뉘어 와도 hex 별로 판단). 받은 것이 하나도 없으면 null.
+     * 벽시계가 뒤로 가서 받아들인 관측(FetchedAtGuard.Verdict.CLOCK_STEPPED_BACK)은 seen_at 을 견주지 않는다 — 이전 관측의 seen_at 도 옛 시계라
+     * (수집기는 공급자 시각이 수신 시각과 어긋나면 수신 시각으로 잰다) 새 관측이 늘 더 오래돼 보인다(IM-08).
+     * @param nowMs api 의 지금(ms)
      * @return 받아들인 hex 들의 이전 관측(없었으면 빠짐)을 담은 스냅샷(scope focus) — 팬아웃 범위 계산용, 없으면 null
      */
-    public Snapshot applyFocus(Snapshot s) {
+    public Snapshot applyFocus(Snapshot s, long nowMs) {
         if (!FOCUS.equals(s.scope())) throw new IllegalArgumentException("focus snapshot expected");
         Snapshot[] prev = new Snapshot[1];
         swap(c -> {
@@ -297,7 +303,10 @@ public class SnapshotStore {
             for (AircraftState a : s.states().values()) {
                 if (leased != null && !leased.contains(a.hex())) continue;
                 FocusObs cur = c.focus().get(a.hex());
-                if (cur != null && (!s.fetchedAt().isAfter(cur.fetchedAt()) || a.seenAt().isBefore(cur.state().seenAt()))) continue;
+                if (cur != null) {
+                    FetchedAtGuard.Verdict v = FetchedAtGuard.judge(s.fetchedAt(), cur.fetchedAt(), nowMs);
+                    if (!v.accepted() || (v == FetchedAtGuard.Verdict.NEWER && a.seenAt().isBefore(cur.state().seenAt()))) continue;
+                }
                 if (focus == null) focus = new HashMap<>(c.focus());
                 focus.put(a.hex(), new FocusObs(a, s.fetchedAt()));
                 if (cur != null) before.put(a.hex(), cur.state());
@@ -307,7 +316,7 @@ public class SnapshotStore {
             focus.values().removeIf(f -> f.expiresAtMs() <= horizon); // 이 메시지 시각 기준으로 이미 만료된 관측(메모리 상한)
             while (focus.size() > MAX_FOCUS) focus.remove(oldestKey(focus, f -> f.state().seenAt().toEpochMilli()));
             prev[0] = new Snapshot(c.focusVersion(), FOCUS, s.provider(), c.focusFetchedAt(), c.focusFetchedAt(), "-", Map.copyOf(before));
-            Instant focusAt = s.fetchedAt().isAfter(c.focusFetchedAt()) ? s.fetchedAt() : c.focusFetchedAt();
+            Instant focusAt = FetchedAtGuard.newer(s.fetchedAt(), c.focusFetchedAt(), nowMs) ? s.fetchedAt() : c.focusFetchedAt();
             return new Scopes(nextVersion(), c.region(), c.global(), c.hot(), Map.copyOf(focus), c.hotVersion(), c.hotFetchedAt(),
                     Math.max(c.focusVersion(), s.version()), focusAt, c.hotLeased(), c.focusLeased());
         });

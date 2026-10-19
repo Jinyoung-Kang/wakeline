@@ -9,6 +9,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { trafficGridFill } from "@/lib/traffic-grid-fill";
+import { jobHeartbeatEntries } from "@/lib/ops";
 import { TrafficGridFill } from "@/components/TrafficGridFill";
 import { installMiniDom, MiniElement } from "./helpers/mini-dom";
 import { domUtcLeaks, htmlUtcLeaks, utcLeaks } from "./helpers/kst-only";
@@ -187,6 +188,44 @@ describe("traffic grid fill line (lib)", () => {
   });
 });
 
+/**
+ * 작업 heartbeat 시각 칩('이 작업이 마지막으로 보고한 시각') — 같은 해시의 *_resume_at 은 '다음에 움직일 때'(미래 시각)라 보고 시각이 아니다(IM-13,
+ * 리뷰 발견 41). 전에는 traffic_grid_fill_ 만 빼서 bbox 개정이 더한 traffic_grid_tiles_resume_at 이 '마지막으로 보고한 시각' 칩으로 그려졌다.
+ */
+describe("job heartbeat chips (lib)", () => {
+  const HASH: Record<string, string> = {
+    ...HB,
+    traffic_grid_tiles_done: "12",
+    traffic_grid_tiles_queued: "30",
+    traffic_grid_tiles_resume_at: "2026-09-30T19:05:00Z",
+    portcalls_index_at: "2026-09-30T18:55:10Z",
+    portcalls_index_state: "active",
+    radar_kr_at: "2026-09-30T18:55:30Z",
+    publish_dropped: "0",
+    adsb_fi_rps_1m: "0.800",
+  };
+
+  it("keeps only the times each job reported — not *_resume_at (when it moves next) nor the fill row's own times", () => {
+    expect(jobHeartbeatEntries(HASH).map(([k]) => k)).toEqual(["traffic_grid_at", "portcalls_index_at", "radar_kr_at"]);
+    expect(Object.fromEntries(jobHeartbeatEntries(HASH))).toEqual({
+      traffic_grid_at: "2026-09-30T18:55:40Z", portcalls_index_at: "2026-09-30T18:55:10Z", radar_kr_at: "2026-09-30T18:55:30Z",
+    });
+  });
+
+  it("drops any *_resume_at by its name, set or empty — a future 'resume' field is never a report time", () => {
+    const keys = (c: Record<string, unknown>) => jobHeartbeatEntries(c).map(([k]) => k);
+    expect(keys({ metar_at: "2026-09-30T18:55:00Z", traffic_grid_tiles_resume_at: "" })).toEqual(["metar_at"]);
+    expect(keys({ metar_at: "2026-09-30T18:55:00Z", radar_kr_resume_at: "2026-10-01T00:00:00Z" })).toEqual(["metar_at"]);
+    expect(keys({ traffic_grid_fill_resume_at: "2026-09-30T19:00:00Z", traffic_grid_fill_pass_at: "2026-09-30T18:18:17Z" })).toEqual([]);
+  });
+
+  it("is empty without a collector hash", () => {
+    expect(jobHeartbeatEntries(undefined)).toEqual([]);
+    expect(jobHeartbeatEntries(null)).toEqual([]);
+    expect(jobHeartbeatEntries({})).toEqual([]);
+  });
+});
+
 // ---- 운영 화면에 실제로 붙었는가(마운트) -------------------------------------------------------------------------------
 
 const dom = installMiniDom();
@@ -234,6 +273,30 @@ describe("ops providers tab", () => {
     // 채우기 시각 둘은 줄 안에서 뜻과 함께 보인다 — 일반 heartbeat 시각 칩(traffic_grid_fill_pass …)으로 한 번 더 나오지 않는다
     expect(byTestId("ops-dashboard")!.textContent).not.toContain("traffic_grid_fill_");
     expect(byTestId("ops-dashboard")!.textContent).toContain("traffic_grid 10-01 03:55:40 KST"); // 작업 heartbeat 칩은 그대로
+  });
+
+  it("does not draw the tile breaker's resume time (a future *_resume_at) as a 'last reported' heartbeat chip", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"], now: Date.parse("2026-09-30T18:56:00Z") });
+    const collector = {
+      ...HB, traffic_grid_fill_state: "filling", traffic_grid_tiles_done: "12", traffic_grid_tiles_queued: "30", traffic_grid_tiles_persisted: "yes",
+      traffic_grid_tiles_resume_at: "2026-09-30T19:05:00Z",
+    };
+    const body: Record<string, unknown> = {
+      "/api/v1/ops/session": { username: "op" },
+      "/api/v1/ops/providers": {
+        providers: [], active: {}, collector, switches: [], budget_days: [], budget_day_zone: "UTC", generated_at: "2026-09-30T18:56:00Z",
+      },
+    };
+    vi.stubGlobal("fetch", async (url: string) =>
+      new Response(JSON.stringify(url in body ? body[url] : { items: [] }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    root = createRoot(dom.container as never);
+    await React.act(async () => { root!.render(React.createElement(OpsPage)); });
+    for (let i = 0; i < 3; i++) await React.act(async () => { await new Promise((r) => setTimeout(r, 30)); });
+    const text = byTestId("ops-dashboard")!.textContent;
+    expect(text).not.toContain("traffic_grid_tiles_resume"); // 전에는 'traffic_grid_tiles_resume 10-01 04:05:00 KST' 칩
+    expect(text).toContain("traffic_grid 10-01 03:55:40 KST"); // 작업 heartbeat 칩은 그대로
+    // 타일이 쉬는 끝은 채우기 줄에서 뜻과 함께 보인다
+    expect(byTestId("ops-traffic-grid-fill")!.textContent).toContain("연달아 오류로 쉼 · 다음 10-01 04:05 KST");
   });
 
   it("judges the heartbeat age by the response's server time — a collector that stopped 10 minutes ago shows no numbers", async () => {

@@ -9,7 +9,12 @@ import { TRAFFIC_POLL_NONE, type TrafficPollState } from "./traffic-grid";
 import type { ReceptionPollState } from "./reception";
 import type { ConnIssue } from "./conn-issue";
 
-export type ConnState = "connecting" | "open" | "closed" | "paused";
+/**
+ * 실시간 연결(WS — lib/ws) 상태. "off" = 이 화면이 실시간 피드(WS 클라이언트 · 보간 워커 — components/map/useLiveFeed 가 지도와 함께 만든다)를
+ * 시작하지 않았다: 상황판이 지도를 띄우지 못함(WebGL2 없음 · 지도 코드를 받지 못함 — IM-21, R9). 연결을 시도하지 않으므로 '연결 중'이라고 보이지 않는다.
+ * 다시 시도로 지도가 뜨면 피드의 connect() 가 "connecting" 부터 다시 적는다.
+ */
+export type ConnState = "connecting" | "open" | "closed" | "paused" | "off";
 
 /**
  * 선박 레이어 표시 상태(계약 v2 §B3). mode 는 서버가 마지막으로 보낸 메시지 종류:
@@ -57,6 +62,16 @@ export interface ShipTrackInfo {
   hours?: number;
 }
 
+/**
+ * 선택 항공기 DB 항적(REST, 최근 2 h) 조회 결과(지도는 MapView 가 그리고, 카드는 실패를 적는다 — 선박 ShipTrackInfo 와 같은 모양).
+ * api 는 기록이 없는 항공기에도 200 + 빈 points 로 답한다 — error 는 실제 실패(503 · 500 · 망 실패)뿐이다. 끊긴 요청은 쓰지 않는다
+ */
+export interface AircraftTrackInfo {
+  hex: string; loaded: boolean; error: string | null;
+  /** 항적 조회 실패의 요청 id(계약 v5 §G5 — 서버가 준 것만, 없으면 null) */
+  requestId: string | null;
+}
+
 export interface ServerData {
   conn: ConnState;
   reconnectAttempt: number;
@@ -91,6 +106,7 @@ export interface ServerData {
   lastEvent: { type: AlertEventType; alert: Alert; at: number } | null;
   /** WS "selected" — 선택 항공기의 최신 full 상태와 예측 가능 여부 */
   selected: SelectedInfo | null;
+  aircraftTrack: AircraftTrackInfo | null;
   /** WS "demand" — 이 세션의 핫 리전·집중 추적 상태(서버 보고값 그대로). 연결이 끊기면 null */
   demand: DemandInfo | null;
   ships: ShipsView;
@@ -158,6 +174,7 @@ const initial: ServerData = {
   status: null,
   lastEvent: null,
   selected: null,
+  aircraftTrack: null,
   demand: null,
   ships: SHIPS_OFF,
   shipSelected: null,
@@ -184,6 +201,10 @@ export function setData(patch: Partial<ServerData>) {
 }
 export function getData() {
   return data;
+}
+/** 상황판이 지도를 띄우지 못해 실시간 피드를 시작하지 않음(conn "off" — ConnState) — 지난 연결의 재시도 횟수 · 까닭은 지운다(그 연결의 것이다) */
+export function setNoLiveFeed() {
+  setData({ conn: "off", reconnectAttempt: 0, connIssue: null });
 }
 /** 테스트용: 스토어 초기화 */
 export function resetData() {

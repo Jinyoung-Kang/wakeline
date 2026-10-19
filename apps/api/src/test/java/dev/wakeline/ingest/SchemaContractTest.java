@@ -109,6 +109,15 @@ class SchemaContractTest {
         assertThat(V.validatePayload("sigmet", payload)).isNotNull();
     }
 
+    /** 빈 자연키는 스트림에서 거절한다 — WS sigmet_properties.id 가 minLength 1 이라 받아 두면 웹이 그 경보를 버린다(지도에 없는 경보). */
+    @Test void sigmetWithEmptyId_isRejected() {
+        String payload = """
+                {"sigmets":[{"id":"","fir_id":"X","series_id":"1","hazard":"TS","base_ft":0,"top_ft":null,
+                 "valid_from":"2026-09-27T04:00:00Z","valid_to":"2026-09-27T08:00:00Z","geometry":null,"raw_text":"R","provider":"awc_isigmet","fetched_at":"2026-09-27T05:10:05Z"}]}""";
+        assertThat(V.validatePayload("sigmet", payload)).startsWith("/sigmets/0/id:");
+        assertThat(V.validatePayload("sigmet", payload.replace("\"id\":\"\"", "\"id\":\"X:1:1\""))).isNull();
+    }
+
     /** 이전 형식(출처 필드 없음): 추정하지 않는다 — base_source null, top 이 null 이면 top_source 는 정의상 unknown. */
     @Test void legacySigmetWithoutSourceFields_decodesWithoutGuessing() throws Exception {
         var n = M.readTree("""

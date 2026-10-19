@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import math
 import re
+import time
 from typing import Any, cast
 
 from redis.asyncio import Redis
@@ -18,13 +19,18 @@ from wakeline_collector.config import settings
 
 KEY = "wakeline:settings"
 log = logging.getLogger("settings")
+# 읽기 실패 WARN 은 이만큼에 한 줄 — 다른 Redis 도우미(budget · status · demand)와 같다. region 작업이 주기(5–120 s)마다 refresh 하므로
+# 전에는 Redis 장애 동안 분당 6–12줄이 찍혀 진짜 원인 줄을 가렸다(IM-26)
+WARN_EVERY_S = 60.0
 # 운영 API(SettingsService.validate)가 받는 범위와 같다 — 그 밖의 값은 가장 가까운 끝으로 자른다
 REGION_POLL_RANGE_S = (5, 120)
 GLOBAL_POLL_RANGE_S = (60, 3600)
 SIGMET_POLL_RANGE_S = (60, 3600)
 RADAR_POLL_RANGE_S = (30, 3600)
 METAR_POLL_RANGE_S = (300, 7200)
-REGION_RADIUS_RANGE_NM = (50, 500)
+# 관심 지역 반경 상한 250 NM 은 공급자 점 반경 조회의 상한이다(adsb.fi /api/v3/…/dist/{nm} ≤ 250 NM — ADR-013, hot 의 readsb.HOT_RADIUS_MAX_NM 과 같다).
+# 전에는 50–500 이라 반경 400 이 그대로 URL 에 실려 나갔고, api 는 그 반경 안을 '관심 지역이 덮음'으로 보아 핫 리전을 걸지 않았다(IM-10)
+REGION_RADIUS_RANGE_NM = (50, 250)
 
 # api 가 읽는 글자 규칙(Java Double.parseDouble 의 십진 표기 · Integer.parseInt) — 파이썬 float · int 만 받는 'nan' · 'inf' · 'infinity' · 밑줄 '1_0' ·
 # 유니코드 공백은 받지 않는다. Java 의 16진 실수(0x1p3)는 운영 API 가 쓰지 않는 모양이라 받지 않는다(기본값)
@@ -72,12 +78,47 @@ class RuntimeSettings:
     def __init__(self, redis: Redis):
         self._r = redis
         self._cache: dict[str, str] = {}
+        self.errors = 0  # 읽기 실패 누적
+        self._streak = 0  # 마지막으로 읽은 뒤 이어진 실패 수(0 = 정상)
+        self._streak_since = 0.0  # 그 첫 실패의 단조 시각
+        # 마지막 WARN 의 단조 시각(None = 아직 없음 — 기동 직후의 작은 시계 값에서도 첫 실패는 알린다)
+        self._warned_at: float | None = None
 
     async def refresh(self) -> None:
         try:
-            self._cache = cast(dict[str, str], await self._r.hgetall(KEY)) or {}
+            values = cast(dict[str, str], await self._r.hgetall(KEY)) or {}
         except Exception as e:  # noqa: BLE001 — Redis 장애 시 마지막 값 유지
+            self._failed(e)
+            return
+        self._cache = values
+        if self._streak:
+            log.info(
+                "settings refresh recovered after %d failure(s) over %.0f s — using the Redis values again",
+                self._streak,
+                time.monotonic() - self._streak_since,
+            )
+            self._streak = 0
+
+    def _failed(self, e: Exception) -> None:
+        """실패는 모두 세고, WARN 은 WARN_EVERY_S 에 한 줄. 이어진 실패의 첫 줄은 예전 문구 그대로(로그 지문이 같아야 /logs 의 '해결' 표시가
+        풀리지 않는다), 그 뒤 줄은 이어진 실패 수와 시간을 싣는다. 억제된 실패는 다음 WARN 이나 회복 INFO 의 수에 들어간다."""
+        self.errors += 1
+        self._streak += 1
+        now = time.monotonic()
+        if self._streak == 1:
+            self._streak_since = now
+        if self._warned_at is not None and now - self._warned_at < WARN_EVERY_S:
+            return
+        self._warned_at = now
+        if self._streak == 1:
             log.warning("settings refresh failed: %s", type(e).__name__)
+        else:
+            log.warning(
+                "settings refresh failed: %s — %d failures in a row over %.0f s, keeping the last values",
+                type(e).__name__,
+                self._streak,
+                now - self._streak_since,
+            )
 
     def _get(self, key: str, default: Any) -> Any:
         v = self._cache.get(key)
@@ -115,7 +156,7 @@ class RuntimeSettings:
 
     @property
     def region(self) -> tuple[float, float, int]:
-        """(lat, lon, 반경 NM) — api RegionSettings.parse 와 같은 해석: 빈 값 · 해석 실패 · 유한하지 않은 중심은 .env 기본값, 반경은 [50, 500] 로 자른다."""
+        """(lat, lon, 반경 NM) — api RegionSettings.parse 와 같은 해석: 빈 값 · 해석 실패 · 유한하지 않은 중심은 .env 기본값, 반경(.env 기본값 포함)은 [50, 250] 로 자른다."""
         center = self._cache.get("region_center") or ""
         lat, lon = parse_center(center) or (settings.region_lat, settings.region_lon)
         radius_text = self._cache.get("region_radius_nm") or ""

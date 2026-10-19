@@ -3,6 +3,7 @@ import { ApiError } from "./api";
 import { pathSegment } from "./endpoints/path";
 import { fmtDuration } from "./format";
 import { krMissing, type KrMissingInfo } from "./kr-radar";
+import { MIRROR_PERIOD_S } from "./provider-switch";
 import { compareInstants, parseResolvedRef, uptoOf, type Resolution, type ResolvedRef } from "./resolutions";
 import { fmtKstMinute, fmtTimeTitle, kstDayOf } from "./time";
 
@@ -322,11 +323,15 @@ export function withProviderResolutions<P extends { providers: Record<string, un
 // ---- 설정 편집의 낙관적 잠금(R-35) ----
 
 /** 편집 중인 값과 편집을 시작할 때 본 서버 version */
-export interface SettingEdit { value: string; version: number }
+/**
+ * 설정 편집 — value 와 편집을 시작할 때 본 version(If-Match). savedOver: 이 탭의 저장이 편집을 응답 version 으로 옮길 때 그 저장 전 목록 version
+ * ({@link settingAfterSave}) — 목록이 아직 그 version 인 동안만 '편집이 목록보다 새 것'을 충돌로 보지 않는다({@link settingConflict})
+ */
+export interface SettingEdit { value: string; version: number; savedOver?: number }
 
 /** 입력: 처음 편집하면 지금 서버 version 을 기억하고, 이미 편집 중이면 그 version 을 유지한다(새로고침이 바꾸지 않는다). */
 export function editSetting(prev: SettingEdit | undefined, item: { version: number }, value: string): SettingEdit {
-  return { value, version: prev?.version ?? item.version };
+  return { value, version: prev?.version ?? item.version, ...(prev?.savedOver !== undefined ? { savedOver: prev.savedOver } : {}) };
 }
 
 /** 저장 요청의 If-Match — 편집을 시작할 때 본 version */
@@ -334,14 +339,53 @@ export function settingIfMatch(edit: SettingEdit): string {
   return String(edit.version);
 }
 
-/** 편집하는 동안 서버 값이 바뀌었는가(다른 운영자·다른 탭) */
+/**
+ * 편집하는 동안 서버 값이 바뀌었는가(다른 운영자·다른 탭) — 목록의 version 이 편집이 본 version 과 다르면. 예외 하나: 이 탭의 저장이 남은 편집을 응답
+ * version 으로 옮겼고({@link settingAfterSave}) 뒤따르는 새로고침(GET /ops/settings)이 아직 오지 않았거나 실패해 목록이 그 저장 전 version 그대로인 동안 —
+ * 그것은 충돌이 아니라 '목록이 아직 옛것'이다(R10 — 전에는 v4 → v3 거짓 충돌 줄에 save 가 막혔다). 목록이 그보다도 낮아지면(DB 를 백업으로 되돌림 등)
+ * 다시 충돌로 보인다 — 아니면 save 가 If-Match 로 409 를 되풀이하고 충돌 줄의 '새 값 보기' · '덮어쓰기'가 나오지 않는다(R10 재확인)
+ */
 export function settingConflict(edit: SettingEdit | undefined, item: { version: number }): boolean {
-  return edit != null && edit.version !== item.version;
+  if (edit == null || edit.version === item.version) return false;
+  return !(edit.version > item.version && edit.savedOver === item.version);
 }
 
 /** 운영자가 "내 값으로 덮어쓰기"를 고른 경우: 지금 본 서버 version 으로 옮긴다 */
 export function rebaseSetting(edit: SettingEdit, item: { version: number }): SettingEdit {
   return { value: edit.value, version: item.version };
+}
+
+/**
+ * 저장(PUT) 성공 뒤의 편집. now = 지금 편집, sent = 보낸 편집, response = PUT 응답(SettingsService.update — 저장된 설정 + changed · mirrored).
+ * 지금 편집이 보낸 값 그대로면 지운다(서버 값이 이미 그것). 응답을 기다리는 동안 입력은 막히지 않아 고친 값이 있으면 남긴다(IM-15 — 전에는 무엇이든
+ * 지워 '저장됨' 아래 말없이 사라졌다). 그 편집은 방금 저장한 값 위의 것이라 응답의 version 으로 옮긴다 — 다음 저장의 If-Match 가 되고, 뒤따르는 새로고침이
+ * 그 version 을 '다른 곳의 변경' 충돌로 보이지 않는다. 응답에 정수 version 이 없거나 편집이 이미 더 새 version(기다리는 동안 '내 값으로 덮어쓰기')이면
+ * 편집의 version 을 그대로 둔다 — 짐작하지 않고, 서버가 더 새 version 이면 충돌 줄로 고르게 한다(목록이 옮긴 version 보다 옛것인 동안은 충돌이 아니다 — {@link settingConflict})
+ */
+export function settingAfterSave(now: SettingEdit | undefined, sent: SettingEdit, response: unknown): SettingEdit | undefined {
+  if (now === undefined || now.value === sent.value) return undefined;
+  const v = typeof response === "object" && response !== null ? (response as { version?: unknown }).version : undefined;
+  return typeof v === "number" && Number.isInteger(v) && v > now.version ? { value: now.value, version: v, savedOver: sent.version } : now;
+}
+
+/**
+ * 저장(PUT) 성공의 결과 문구(IM-17). 수집기는 Redis 미러(wakeline:settings)만 읽는다 — api 는 커밋 뒤 미러하고 실패하면 mirrored=false 를 싣는다
+ * (SettingsService.update — 주기 미러가 {@link MIRROR_PERIOD_S} s 마다 다시 맞춘다, StartupMirror). 그때 '다음 주기부터 적용' 은 사실이 아니라
+ * 경고(warn — role=alert)로 보인다: 공급자 켜고 끄기(lib/provider-switch toggleNote)와 같은 문구. 바뀐 것 없음(changed=false)이어도 api 는 다시
+ * 미러하는데, 그 실패는 수집기가 이 값을 따르는지 모른다는 뜻이다(이전 값이라고 짐작하지 않는다). 설정 목록(GET /ops/settings)은 미러 상태를 싣지 않아
+ * 주기 미러가 맞췄는지 화면이 알 수 없다 — 경고는 실패처럼 다음 저장이나 '알림 닫기' 까지 둔다. mirrored 가 없으면(필드 없는 응답) 전처럼 성공이다.
+ */
+export function settingSaveNote(key: string, response: unknown): { warn: boolean; text: string } {
+  const r = typeof response === "object" && response !== null ? (response as { changed?: unknown; mirrored?: unknown; version?: unknown }) : {};
+  const same = r.changed === false;
+  if (r.mirrored !== false) return { warn: false, text: same ? `${key} 지금 값과 같음 — 바뀐 것 없음` : `${key} 저장됨 — 다음 주기부터 적용` };
+  const v = typeof r.version === "number" && Number.isInteger(r.version) ? `v${r.version}` : "v—";
+  const retry = `api 가 ${MIRROR_PERIOD_S} s 주기로 다시 미러한다`;
+  return {
+    warn: true,
+    text: same ? `${key} 지금 값과 같음 — 바뀐 것 없음(${v}) · Redis 미러 실패 — 수집기가 이 값을 따르는지 모른다. ${retry}`
+      : `${key} DB 저장됨(${v}) · Redis 미러 실패 — 수집기는 아직 이전 값을 따른다. ${retry}`,
+  };
 }
 
 // ---- 로그인·설정 폼(R-56) ----
@@ -381,7 +425,8 @@ const SETTING_SPECS: Record<string, SettingSpec> = {
   sigmet_poll_s: { kind: "int", min: 60, max: 3600, unit: "초" },
   radar_poll_s: { kind: "int", min: 30, max: 3600, unit: "초" },
   metar_poll_s: { kind: "int", min: 300, max: 7200, unit: "초" },
-  region_radius_nm: { kind: "int", min: 50, max: 500, unit: "NM" },
+  // 공급자 반경 조회(adsb.fi dist)의 상한 250 NM — 핫 리전과 같은 상한(ADR-013). 넘는 값을 받으면 그 반경으로 요청하고 api 는 그 안을 '관심 지역이 덮음'으로 본다(IM-10)
+  region_radius_nm: { kind: "int", min: 50, max: 250, unit: "NM" },
   global_enabled: { kind: "bool" },
   aircraft_providers: { kind: "text", pattern: PROVIDERS, hint: "adsb_fi · adsb_lol · opensky 를 쉼표로 — 앞이 먼저(기본 adsb_fi,adsb_lol,opensky · opensky 는 전세계만)" },
   region_center: {
@@ -513,6 +558,34 @@ export function dlqReadError(resp: unknown): string | null {
 }
 
 /**
+ * /ops/providers 의 active(수집기 wakeline:active)를 api 가 읽지 못했다는 표시(error — Redis 장애 · 차단기 열림, StatusService.safeHash · 계약 v5 §G24)
+ * → 경고 줄 글자. 그동안 작업별 공급자도 공급자 없음도 모른다 — 배지를 짓지 않는다(lib/active-provider activeJobs 는 error 를 작업으로 세지 않는다, IM-16).
+ * error 가 없거나 빈 글자면 null(경고 없음). 까닭은 api 가 준 글자 그대로, 글자가 아니면 '이유 모름'(switchHistoryError 와 같은 규칙).
+ */
+export function activeReadError(active: unknown): string | null {
+  const e = obj(active).error;
+  if (e == null || e === "") return null;
+  return `작업별 공급자를 읽지 못함(api: ${typeof e === "string" ? e : "이유 모름"}) — 작업 배지 없음(쓰는 공급자 · 공급자 없음을 모른다). 15 s 마다 다시 읽는다`;
+}
+
+/**
+ * /ops/providers 의 공급자 행 가운데 api 가 Redis 를 읽지 못해 수집기 해시 자리에 실은 표시 행(StatusService.safeHash — {"error":"redis unavailable"} 에
+ * name · 해결 표시만 붙는다, 계약 v5 §G24). 수집기는 공급자 해시에 error 를 쓰지 않는다(status.py — 오류는 last_error). 표시 행은 빈 해시처럼 건너뛰지
+ * 않아 수집한 적 없는 공급자(fixture 포함)까지 api 목록 전부가 행이 되고 칸은 모두 '—' 다(IM-16 — 전에는 그 사실이 화면 어디에도 없었다).
+ * 모두 표시 행이면 'Redis 를 읽지 못함' 한 줄, 일부면(장애가 목록을 읽는 중에 났다) 그 공급자 이름, 없으면 null. 까닭은 api 가 준 글자 그대로, 글자가
+ * 아니면 '이유 모름'(switchHistoryError 와 같은 규칙).
+ */
+export function providersReadError(providers: readonly Record<string, unknown>[]): string | null {
+  const marked = providers.filter((p) => p.error != null && p.error !== "");
+  if (!marked.length) return null;
+  const e = marked[0].error;
+  const why = `(api: ${typeof e === "string" ? e : "이유 모름"})`;
+  return marked.length === providers.length
+    ? `Redis 를 읽지 못함${why} — 아래 공급자 행은 수집기 값이 아니라 api 가 공급자 목록마다 붙인 표시다(수집한 적 없는 공급자 · fixture 도 보이고 칸은 ‘—’). 15 s 마다 다시 읽는다`
+    : `공급자 ${marked.length}/${providers.length} 행을 Redis 에서 읽지 못함${why}: ${marked.map((p) => String(p.name)).join(" · ")} — 그 행의 칸은 수집기 값이 아니다(‘—’). 15 s 마다 다시 읽는다`;
+}
+
+/**
  * /ops/providers 응답을 만든 서버 시각(generated_at — 시간대가 있는 ISO 만) → ms. 없거나 틀리면 0(모름 — providerMissing 이 '확인 멈춤'을 판정하지 않는다).
  * 공급자 해시의 시각(수집기 missing_checked_at)의 나이를 브라우저 시계가 아니라 서버 기준 지금으로 잰다(계약 v5 §G22 — 브라우저 시계가 15분 넘게
  * 틀려도 상황판 칩과 같은 판정, 통합 리뷰 2026-09-30). 응답은 15 s 마다 새로 받는다 — 그 사이 지난 시간은 더하지 않는다(다음 응답이 다시 잰다).
@@ -522,6 +595,18 @@ export function providersNowMs(resp: unknown): number {
   if (typeof v !== "string" || !/^\d{4}-\d\d-\d\dT\d\d:\d\d(:\d\d(\.\d+)?)?(Z|[+-]\d\d:\d\d)$/.test(v)) return 0;
   const ms = Date.parse(v);
   return Number.isFinite(ms) && ms > 0 ? ms : 0;
+}
+
+/**
+ * 수집기 heartbeat 해시(wakeline:collector — /ops/providers 의 collector) → 작업 heartbeat 시각 칩의 [필드, 값](해시 순서 그대로). 이름이 _at 으로
+ * 끝나는 필드 가운데 작업이 마지막으로 보고한 시각({job}_at)만 남기고, 같은 해시의 다른 *_at 은 뺀다:
+ * - *_resume_at: '다음에 움직일 때'(채우기 · 타일 차단기가 쉼을 끝내는 때 — 미래 시각, ADR-023 2026-10-01 개정). 보고 시각이 아니다 — 이름으로 빼서
+ *   값이 비었든 앞으로 생길 다른 작업의 것이든 같다(api 의 heartbeat 나이도 같은 규칙, IM-13). 그래서 작업 이름은 _resume 으로 끝나면 안 된다
+ * - traffic_grid_fill_*: 채우기 시각(_pass_at · _resume_at)은 채우기 줄(TrafficGridFill)이 뜻과 함께 보인다 — 칩으로 겹쳐 적지 않는다
+ * 타일이 쉬는 끝(traffic_grid_tiles_resume_at)도 채우기 줄이 보인다. 전에는 traffic_grid_fill_ 만 빼서 그것이 '마지막으로 보고한 시각' 칩으로 그려졌다.
+ */
+export function jobHeartbeatEntries(collector: Record<string, unknown> | null | undefined): [string, unknown][] {
+  return Object.entries(collector ?? {}).filter(([k]) => k.endsWith("_at") && !k.endsWith("_resume_at") && !k.startsWith("traffic_grid_fill_"));
 }
 
 /**

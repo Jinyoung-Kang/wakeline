@@ -41,6 +41,11 @@ interface UiState {
   krFrameIndex: number | null;
   setKrFrame: (i: number | null) => void;
   selectedHex: string | null;
+  /**
+   * 항공기를 고를 때마다 오르는 값(같은 hex 를 다시 골라도 — 해제 null 에는 그대로). selectedHex 가 같아도 '다시 골랐다'를 알린다:
+   * components/map/useSelectionTracks 가 WS select 를 다시 보내 서버가 선택 시각을 새로 잡는다(집중 추적 30분 상한 뒤 "다시 선택하면 이어짐").
+   */
+  selectNonce: number;
   select: (hex: string | null) => void;
   selectedSigmet: string | null;
   selectSigmet: (id: string | null) => void;
@@ -51,9 +56,15 @@ interface UiState {
   selectShip: (mmsi: string | null) => void;
   panel: UiPanel;
   setPanel: (p: UiPanel) => void;
-  /** 지도 이동 요청(검색 결과 선택 등). id 가 바뀔 때마다 MapView 가 한 번 이동한다. */
+  /** 지도 이동 요청(검색 결과 선택 등). id 가 바뀔 때마다 MapView 가 한 번 이동한다(따른 id 는 flyHandled). */
   flyTo: { lon: number; lat: number; zoom: number; id: number } | null;
   requestFlyTo: (lon: number, lat: number, zoom?: number) => void;
+  /**
+   * 지도가 따른 마지막 이동 요청 id(flyTo.id — components/map/useMapLifecycle 이 옮길 때 적는다). 지도 컴포넌트 밖(여기)에 두어, 지도를 다시 만들어도(다른
+   * 화면에서 돌아옴) 따른 요청은 되풀이하지 않고, 지도가 마운트되기 전의 요청(지도 조각 · MapLibre 를 받기 전의 상단 검색 — app/page.tsx)은 따른다(IM-14).
+   */
+  flyHandled: number;
+  setFlyHandled: (id: number) => void;
   legendOpen: boolean;
   setLegendOpen: (b: boolean) => void;
   /** 선종 필터(계약 v5 §B3): 켜진 선종(SHIP_CATEGORIES 순서). 저장은 lib/prefs.ts(브라우저에만) */
@@ -82,7 +93,8 @@ export const useUi = create<UiState>((set) => ({
   krFrameIndex: null,
   setKrFrame: (i) => set({ krFrameIndex: i }),
   selectedHex: null,
-  select: (hex) => set({ selectedHex: hex, panel: hex ? "aircraft" : "alerts" }),
+  selectNonce: 0,
+  select: (hex) => set((s) => ({ selectedHex: hex, selectNonce: hex ? s.selectNonce + 1 : s.selectNonce, panel: hex ? "aircraft" : "alerts" })),
   selectedSigmet: null,
   // 카드를 닫으면 같은 탭의 목록으로 돌아간다(R-40 — SIGMET·공항 탭에 목록이 있다)
   selectSigmet: (id) => set((s) => ({ selectedSigmet: id, panel: id ? "sigmet" : s.panel })),
@@ -95,6 +107,8 @@ export const useUi = create<UiState>((set) => ({
   setPanel: (p) => set({ panel: p }),
   flyTo: null,
   requestFlyTo: (lon, lat, zoom = 8) => set((s) => ({ flyTo: { lon, lat, zoom, id: (s.flyTo?.id ?? 0) + 1 } })),
+  flyHandled: 0,
+  setFlyHandled: (id) => set({ flyHandled: id }),
   legendOpen: false, // 처음 값은 LayerPanel 이 저장된 선택 또는 화면 폭으로 정한다(lib/prefs legendDefaultOpen)
   setLegendOpen: (b) => set({ legendOpen: b }),
   shipCats: [...SHIP_CATEGORIES],

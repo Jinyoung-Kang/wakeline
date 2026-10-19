@@ -77,7 +77,18 @@ def _columns(res: ParseResult) -> list[list[Any]]:
 
 
 async def import_edition(pool: Any, *, label: str, sha256: str, res: ParseResult) -> ImportReport:
-    """한 트랜잭션으로 넣고 켠다(모듈 설명). 상한 IMPORT_TIMEOUT_S 를 넘기면 끊는다(풀이 연결을 버린다 — 서버가 되돌린다)."""
+    """한 트랜잭션으로 넣고 켠다(모듈 설명). 트랜잭션 전체가 상한 IMPORT_TIMEOUT_S 를 넘기면 끊는다(풀이 연결을 버린다 — 서버가 되돌린다).
+
+    모든 도형을 PostGIS 로 검사하는 두 문장(고친 도형 셈 · _INSERT)은 timeout 으로 그 상한의 남은 시간을 받는다 — 주지 않으면 asyncpg 가 풀의
+    command_timeout(db.OP_TIMEOUT_S 10 s)을 써서 점이 많은 차수 · 느린 DB 에서 문장 하나가 10 s 를 넘으면 상한 전에 끊겼다. 한 행 · 색인으로 읽고
+    쓰는 나머지 문장은 풀의 문장 상한 그대로다. 문장의 시간 초과로 끊겨도 바깥 wait_for 의 취소로 끊겨도 감싼 풀(db._GuardedPool)이 ROLLBACK 을
+    기다리지 않고 연결을 버린다(VERIFICATION #111).
+    """
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + IMPORT_TIMEOUT_S
+
+    def left() -> float:
+        return deadline - loop.time()  # 0 이하면 asyncpg 가 보내지 않고 TimeoutError
 
     async def txn() -> ImportReport:
         async with pool.acquire() as con, con.transaction():
@@ -98,9 +109,11 @@ async def import_edition(pool: Any, *, label: str, sha256: str, res: ParseResult
             )
             cols = _columns(res)
             fixed = await con.fetchval(
-                "SELECT count(*) FROM unnest($1::text[]) w WHERE NOT ST_IsValid(ST_GeomFromText(w, 4326))", cols[-1]
+                "SELECT count(*) FROM unnest($1::text[]) w WHERE NOT ST_IsValid(ST_GeomFromText(w, 4326))",
+                cols[-1],
+                timeout=left(),
             )
-            status = await con.execute(_INSERT, eid, *cols, DISPLAY_TOLERANCE_DEG)
+            status = await con.execute(_INSERT, eid, *cols, DISPLAY_TOLERANCE_DEG, timeout=left())
             inserted = int(status.rsplit(" ", 1)[-1])
             dropped = len(res.features) - inserted
             if inserted == 0:

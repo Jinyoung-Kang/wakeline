@@ -121,9 +121,48 @@ def test_top_from_raw_text_only_when_json_top_null():
     raw = "WSCG31 FCBB 270517 FCCC SIGMET B1 VALID ... EMBD TS OBS AT 0500Z WI N0341 E00724 - N0516 E00908 TOP FL420 MOV W 04KT INTSF="
     s = parse_isigmet(_item(base=None, top=None, rawSigmet=raw), NOW)
     assert (s.top_ft, s.top_source, s.base_source) == (42000, "raw_text", "assumed_surface")
-    # JSON 상한이 있으면 원문은 보지 않는다
+    # JSON 상한이 있으면 그 값을 쓴다 — 원문 값으로 바꾸지 않는다(원문이 같은 값의 'TOP ABV' 일 때만 출처가 하한, 아래 시험)
     s2 = parse_isigmet(_item(base=None, top=30000, rawSigmet=raw), NOW)
     assert (s2.top_ft, s2.top_source) == (30000, "json")
+
+
+def test_json_top_equal_to_raw_abv_is_a_lower_bound():
+    """IM-01: AWC 가 'TOP ABV FLnnn' 의 값을 JSON top 으로 그대로 주면 그 상한도 하한이다(DH-4 의 원래 재현 FIMM:A01).
+    원문의 어느 'TOP ABV' 값이든 JSON 값과 같으면 하한(V4 SQL 은 첫 'TOP ABV' 값만 본다 — 이 규칙이 하한 쪽으로만 넓다).
+    값이 하나인 이 경우는 MigrationDbTest 와 같다 — ABV_JSON → 하한, ABV_OTHER(값이 다름) · TOPS · TOP FLnnn → json 그대로."""
+    abv = "EMBD TS OBS WI AREA TOP ABV FL390 MOV E 05KT NC="
+    s = parse_isigmet(_item(base=None, top=39000, rawSigmet=abv), NOW)
+    assert (s.top_ft, s.top_source, s.band_note) == (39000, "raw_text_lower_bound", None)
+    s = parse_isigmet(_item(base=None, top=38000, rawSigmet="FRQ TS FCST TOP ABV\nFL380 STNR="), NOW)
+    assert (s.top_ft, s.top_source) == (38000, "raw_text_lower_bound")
+    # 값이 다르면 단정하지 않는다 — 발표된 JSON 상한 그대로
+    s = parse_isigmet(_item(base=None, top=45000, rawSigmet="TS TOP ABV FL390="), NOW)
+    assert (s.top_ft, s.top_source) == (45000, "json")
+    s = parse_isigmet(_item(base=None, top=30000, rawSigmet="EMBD TS OBS TOP FL420 MOV W 04KT INTSF="), NOW)
+    assert (s.top_ft, s.top_source) == (30000, "json")
+    # 'TOP FLnnn'(ABV 없음)이 같은 값이면 발표된 상한 그대로
+    s = parse_isigmet(_item(base=None, top=38000, rawSigmet="EMBD TS TOP FL380 MOV NE="), NOW)
+    assert (s.top_ft, s.top_source) == (38000, "json")
+    # 'TOPS ABV' 는 계약 정규식이 일부러 받지 않는다(미국 대류 SIGMET 형태는 따로 정한다)
+    s = parse_isigmet(_item(base=None, top=45000, rawSigmet="SEV TURB TOPS ABV FL450 CB="), NOW)
+    assert (s.top_ft, s.top_source) == (45000, "json")
+
+
+def test_json_top_matching_any_raw_abv_value_is_a_lower_bound():
+    """R8: 원문에 TOP 값이 여럿이어도(관측분 · 예보분) JSON top 이 그 가운데 어느 'TOP ABV FLnnn' 값과 같으면 하한이다.
+    단일 값 조건을 여기에 쓰면 FL390 을 고정 상한으로 써서 폴리곤 안 FL390 위 항공기를 경보 밖으로 뺀다."""
+    obs_abv = "EMBD TS OBS TOP ABV FL390 FCST TOP FL410"
+    s = parse_isigmet(_item(base=None, top=39000, rawSigmet=obs_abv), NOW)
+    assert (s.top_ft, s.top_source, s.band_note) == (39000, "raw_text_lower_bound", None)
+    # JSON 값이 'TOP FLnnn'(ABV 없음) 쪽과 같으면 발표된 상한 그대로
+    s = parse_isigmet(_item(base=None, top=41000, rawSigmet=obs_abv), NOW)
+    assert (s.top_ft, s.top_source) == (41000, "json")
+    # ABV 가 첫 TOP 이 아니어도 같다(V4 SQL 의 첫 'TOP ABV' 일치와도 같은 결과)
+    s = parse_isigmet(_item(base=None, top=41000, rawSigmet="EMBD TS OBS TOP FL390 FCST TOP ABV FL410"), NOW)
+    assert (s.top_ft, s.top_source) == (41000, "raw_text_lower_bound")
+    # JSON 이 null 이면 원문에서 값을 정하는 규칙(하나의 값일 때만)은 그대로 — 여럿이면 추정하지 않는다
+    s = parse_isigmet(_item(base=None, top=None, rawSigmet=obs_abv), NOW)
+    assert (s.top_ft, s.top_source) == (None, "unknown")
 
 
 def test_top_abv_and_whitespace_variants():
@@ -185,11 +224,28 @@ def test_real_fixture_top_null_filled_from_official_text(fixtures_dir):
     # 실응답 두 건은 JSON top=null 이지만 원문에 TOP FL420 / TOP FL380 이 있다
     assert (parsed["FCCC:B1:1790486220"].top_ft, parsed["FCCC:B1:1790486220"].top_source) == (42000, "raw_text")
     assert (parsed["UTAA:1:1790491440"].top_ft, parsed["UTAA:1:1790491440"].top_source) == (38000, "raw_text")
+    # 원문 'TOP ABV FLnnn' 과 같은 값을 JSON top 으로 준 네 건은 상한의 하한이다(IM-01 — 원문 TOP 값이 하나라 V4 와 같은 결과)
+    abv = {
+        "GVSC:1:1790480580": 40000,
+        "MMID:L2:1790487720": 48000,
+        "GOOO:A02:1790490600": 44000,
+        "TTZP:2:1790491500": 42000,
+    }
+    assert {k: (parsed[k].top_ft, parsed[k].top_source) for k in abv} == {k: (v, "raw_text_lower_bound") for k, v in abv.items()}
     assert all(
         p.top_source == "json"
         for p in parsed.values()
-        if p.top_ft is not None and p.id not in ("FCCC:B1:1790486220", "UTAA:1:1790491440")
+        if p.top_ft is not None and p.id not in ("FCCC:B1:1790486220", "UTAA:1:1790491440", *abv)
     )
+
+
+def test_real_fixture_json_top_equal_to_abv_is_lower_bound(fixtures_dir):
+    """실응답 GVSC:1 — JSON top=40000 · 원문 'TOP ABV FL400'. 상한을 FL400 으로 쓰면 폴리곤 안 FL410 항공기가 경보 밖이 된다."""
+    items = json.loads((fixtures_dir / "awc_isigmet.json").read_text())
+    item = next(it for it in items if it.get("firId") == "GVSC" and it.get("seriesId") == "1")
+    assert item["top"] == 40000 and "TOP ABV FL400" in item["rawSigmet"]
+    s = parse_isigmet(item, NOW)
+    assert (s.top_ft, s.top_source) == (40000, "raw_text_lower_bound")
 
 
 def test_real_fixture_parses(fixtures_dir):

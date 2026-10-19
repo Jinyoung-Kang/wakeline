@@ -253,6 +253,73 @@ def test_the_import_command_writes_and_reports(monkeypatch, capsys):
     assert rc == 2 and "DB 실패" in err and "secret123" not in err
 
 
+def test_an_edition_with_nothing_inserted_is_reported_as_a_data_refusal_not_a_database_failure(monkeypatch, capsys):
+    """'도형이 하나도 안 들어감'(AirspaceImportError — 되돌려졌다)은 자료 문제다: 종료 1 '거절:'(모듈 설명 '1 자료 거절 · 2 DB 실패').
+    예전에는 DB 오류와 함께 잡혀 종료 2 'DB 실패' 로 보고돼 운영자가 DB 장애로 오해했다."""
+    from wakeline_collector import airspace_store, db
+
+    class Pool:
+        async def close(self):
+            pass
+
+    async def open_pool():
+        return Pool()
+
+    async def nothing_inserted(pool, **_):
+        raise airspace_store.AirspaceImportError("no geometry was inserted — the edition is not activated")
+
+    monkeypatch.setattr(db, "open_pool", open_pool)
+    monkeypatch.setattr(airspace_store, "import_edition", nothing_inserted)
+    rc, _, err = _run(monkeypatch, capsys, _kml())
+    assert rc == 1 and err.startswith("거절: no geometry was inserted") and "DB 실패" not in err
+
+
+def test_the_heavy_import_statements_get_the_remaining_import_limit_instead_of_the_pool_statement_limit():
+    """모든 도형을 PostGIS 로 검사하는 두 문장(고친 도형 셈 · _INSERT)은 timeout 으로 남은 IMPORT_TIMEOUT_S 를 받는다 — 주지 않으면 asyncpg 가 풀의
+    command_timeout(OP_TIMEOUT_S 10 s)을 써서, 점이 많은 차수 · 느린 DB 에서 문장 하나가 10 s 를 넘으면 120 s 상한 전에 'DB 실패' 로 끝났다."""
+    import asyncio
+    import contextlib
+
+    from wakeline_collector import airspace_store, db
+
+    seen: list[tuple[str, float | None]] = []
+
+    class Con:
+        def transaction(self):
+            return contextlib.nullcontext()
+
+        async def fetchrow(self, sql, *args, timeout=None):
+            seen.append((sql, timeout))
+            return None  # 처음 보는 원본
+
+        async def fetchval(self, sql, *args, timeout=None):
+            seen.append((sql, timeout))
+            if "RETURNING id" in sql:
+                return 9
+            if "ST_IsValid" in sql:
+                return 0
+            return None  # 켜진 앞 차수 없음
+
+        async def execute(self, sql, *args, timeout=None):
+            seen.append((sql, timeout))
+            return f"INSERT 0 {len(args[1])}" if sql == airspace_store._INSERT else "UPDATE 1"
+
+        async def fetch(self, sql, *args, timeout=None):
+            seen.append((sql, timeout))
+            return [{"category": "restricted", "n": 20}]
+
+    class Pool:
+        def acquire(self):
+            return contextlib.nullcontext(Con())
+
+    rep = asyncio.run(airspace_store.import_edition(Pool(), label="합성", sha256="0" * 64, res=parse(_kml())))
+    assert (rep.status, rep.inserted) == ("imported", 20)
+    heavy = [t for sql, t in seen if "ST_GeomFromText" in sql]
+    assert len(heavy) == 2  # 고친 도형 셈 · _INSERT
+    assert all(t is not None and db.OP_TIMEOUT_S < t <= airspace_store.IMPORT_TIMEOUT_S for t in heavy), heavy
+    assert heavy[1] <= heavy[0]  # 같은 상한에서 남은 시간 — 문장마다 새로 120 s 가 아니다
+
+
 def test_the_import_command_refuses_bad_input_and_arguments(monkeypatch, capsys):
     assert _run(monkeypatch, capsys, b"<gpx/>")[0] == 1
     assert _run(monkeypatch, capsys, _kml(), tty=True)[0] == 3

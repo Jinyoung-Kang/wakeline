@@ -68,6 +68,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     try:
         rep = asyncio.run(_write(label, sha, res))
+    except airspace_store.AirspaceImportError as e:  # 자료 문제(넣은 도형 0개 — 되돌려졌다): DB 장애가 아니다
+        print(f"거절: {e}", file=sys.stderr)
+        return 1
     except Exception as e:  # noqa: BLE001 — 명령의 끝: 까닭을 보이고 실패 코드(되돌려졌다 — 한 트랜잭션)
         print(f"DB 실패(아무것도 바뀌지 않음): {type(e).__name__}: {(mask(str(e)) or '')[:300]}", file=sys.stderr)
         return 2

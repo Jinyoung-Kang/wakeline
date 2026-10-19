@@ -1,6 +1,7 @@
 package dev.wakeline.weather.core;
 
 import dev.wakeline.aircraft.core.AircraftState;
+import dev.wakeline.platform.support.FetchedAtGuard;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -22,6 +23,7 @@ import java.util.stream.Collectors;
  *
  * <p>히스테리시스는 엔진 실행 횟수가 아니라 <b>서로 다른 관측</b>(그 기체의 seen_at 이 바뀐 것)을 센다.
  * 엔진은 region 스냅샷(~10 s)·global 스냅샷(~120 s)·SIGMET 갱신마다 돌지만, 같은 위치를 다시 판정해도 세지 않는다.
+ * '새 관측인가' 는 {@link FetchedAtGuard} 와 같은 규칙이다 — 벽시계가 뒤로 간 뒤의 새 관측은 seen_at 이 마지막으로 센 관측보다 작아도 센다(IM-08).
  * <ul>
  *   <li>진입(ENTERED): 안쪽 관측 2회 연속. 근거에 실제 두 관측의 seen_at 을 남긴다.</li>
  *   <li>이탈(LEFT, close_reason=left): 판정 가능한 바깥 관측 3회 연속(지상 관측은 공중 위험 공역 밖으로 본다.
@@ -39,6 +41,14 @@ import java.util.stream.Collectors;
  *   <li>확정 전(안쪽 1회) 트랙은 바깥 관측 1회에 버리고, 부재 3번이면 버린다.</li>
  * </ul>
  * 예측은 처음 한 번 PREDICTED, 예상 진입 시각(eta_at)이 30 s 이상 바뀔 때만 PREDICTION_UPDATED, 사라지면 PREDICTION_CLEARED.
+ *
+ * <p>두 시각(IM-07): 기체 위치가 '현재 관측' 인가(위 신선도 기준)와 스코프 피드 끊김(Scopes.feedStale · Cycle 의 *FeedStale)은
+ * <b>데이터 시각</b> ref 로 본다 — 엔진이 판정 뷰의 마지막 스냅샷 fetched_at(now 를 넘지 않음)을 준다. 장애 뒤 수집기 큐가 원래 fetched_at
+ * 그대로 다시 보낸 스냅샷도 그 시각의 관측이므로, 다시 온 메시지마다 부재로 세어 거짓 LOST 를 내지 않는다. 구역 종료(만료 · 철회 — ended)
+ * 와 알림의 사건 시각(entered_at · left_at · judged_at)은 <b>판정 시각</b> now 로 둔다(피드 장애 중에도 만료된 경보의 알림은 닫힌다).
+ * 새로 여는 것 — 아직 아무 관측도 세지 않은 트랙의 첫 셈과 새 예측(PREDICTED) — 은 now 로도 신선한 위치로만 한다(R2): 모든 기체 피드가 멈춰
+ * ref 가 멈춘 동안 새 구역(SIGMET 수신 · 공역 판 교체)이 멈춘 위치를 덮어도, 그 위치로 진입 확정의 첫 관측을 세거나 예측을 열지 않는다.
+ * 이미 있는 것(셈이 시작된 트랙 · 열린 예측)의 유지와 부재는 ref 그대로다. ref 를 받지 않는 step 은 ref = now(예전 동작).
  */
 public final class AlertStateMachine {
     public static final int ENTER_CONFIRM = 2;
@@ -74,7 +84,7 @@ public final class AlertStateMachine {
         String sourceOf(String hex);
         /** 스코프의 최신 메시지 버전(부재 계수 표식 — 하나의 단조 카운터에서 나온다). */
         long version(String scope);
-        /** 스코프 피드가 끊겼는가(새 메시지가 기준 시간 넘게 없음). */
+        /** 스코프 피드가 끊겼는가(새 메시지가 기준 시간 넘게 없음 — 데이터 시각 ref 기준: 다른 스코프가 ref 를 올렸는데 이 스코프만 뒤처짐). */
         boolean feedStale(String scope);
         /** 그 출처가 아직 이 hex 를 조회 대상으로 두는가(focus: 임대에 있음 · hot: 셀이 살아 있음 · region/global: 항상). */
         boolean covering(String source, String hex);
@@ -82,7 +92,7 @@ public final class AlertStateMachine {
 
     /**
      * 한 판정 주기의 스냅샷 맥락. regionVersion/globalVersion = 각 스코프 현재 스냅샷 버전(하나의 단조 카운터에서 나온다),
-     * *FeedStale = 그 스코프에 새 스냅샷이 끊겼는가(region 60 s · global 300 s), regionHexes = 관심 지역 스냅샷에 있는 hex.
+     * *FeedStale = 그 스코프에 새 스냅샷이 끊겼는가(데이터 시각 기준 region 60 s · global 300 s), regionHexes = 관심 지역 스냅샷에 있는 hex.
      * scopes 가 있으면(엔진) 스코프 판단·부재 표식은 그것을 따른다 — 병합 뷰는 신선도 우선이라 region 에 있어도 다른 스코프의 관측일 수 있다(DH-2).
      */
     public record Cycle(long regionVersion, long globalVersion, boolean regionFeedStale, boolean globalFeedStale, Set<String> regionHexes,
@@ -187,7 +197,7 @@ public final class AlertStateMachine {
         boolean confirmed;
         Alert alert;
         Zone zone;
-        /** 마지막으로 센 관측의 seen_at — 이보다 새 seen_at 이어야 다음 관측으로 센다. */
+        /** 마지막으로 센 관측의 seen_at — 이보다 새 seen_at 이어야 다음 관측으로 센다(벽시계가 뒤로 갔으면 지금 근처의 seen_at 도 — FetchedAtGuard). */
         Instant lastSeenAt;
         String scope;
         /** 마지막 관측의 세부 출처(hot 은 셀 포함) — 소실 때 그 추적이 이미 끝났는지 본다. */
@@ -205,6 +215,15 @@ public final class AlertStateMachine {
 
     public List<Event> step(Map<String, List<IntersectionEngine.Hit>> hits, List<IntersectionEngine.Prediction> predictions,
                             Map<String, AircraftState> states, Instant now, Cycle cycle) {
+        return step(hits, predictions, states, now, now, cycle);
+    }
+
+    /**
+     * 한 판정 주기. now = 판정 시각(구역 종료 · 사건 시각 · 새로 여는 것의 신선도), ref = 데이터 시각(위치가 '현재 관측' 인가 — ref ≤ now).
+     * cycle 의 피드 끊김 판단도 같은 ref 로 만든 것이어야 한다.
+     */
+    public List<Event> step(Map<String, List<IntersectionEngine.Hit>> hits, List<IntersectionEngine.Prediction> predictions,
+                            Map<String, AircraftState> states, Instant now, Instant ref, Cycle cycle) {
         List<Event> out = new ArrayList<>();
         Map<Key, IntersectionEngine.Hit> insideNow = new HashMap<>();
         for (List<IntersectionEngine.Hit> hs : hits.values())
@@ -223,12 +242,18 @@ public final class AlertStateMachine {
                 continue;
             }
             AircraftState a = states.get(k.hex());
-            if (a != null && a.fresh(now)) {
+            if (a != null && a.fresh(ref)) {
                 t.scope = cycle.scopeOf(k.hex());
                 t.source = cycle.sourceOf(k.hex());
                 t.absent = 0;
                 t.absenceMarker = cycle.absenceMarker(t.scope);
-                if (t.lastSeenAt != null && !a.seenAt().isAfter(t.lastSeenAt)) continue; // 같은 관측을 다시 판정 — 세지 않는다
+                // 같은 관측을 다시 판정 — 세지 않는다. 벽시계가 뒤로 간 뒤의 새 관측은 센다: 수집기는 공급자 시각이 수신 시각과 어긋나면 수신 시각으로
+                // seen_at 을 매기므로 그 seen_at 도 약 역행 폭만큼 작다(IM-08 — 역행 판정은 FetchedAtGuard, SnapshotStore.applyFocus 와 같은 원인).
+                // 역행 전 관측의 재판정(미래 seen_at 이 그대로 다시 옴)은 여전히 거른다.
+                if (t.lastSeenAt != null && !FetchedAtGuard.newer(a.seenAt(), t.lastSeenAt, now.toEpochMilli())) continue;
+                // 아직 아무 관측도 세지 않은 트랙의 첫 셈은 판정 시각으로도 신선한 위치로만(R2): 모든 기체 피드가 멈춰 ref 가 멈춘 동안 새 구역이
+                // 멈춘 위치를 덮어도 그 위치를 진입 확정의 첫 관측으로 쓰지 않는다. 기체는 있으므로 부재로도 세지 않는다(위에서 absent = 0).
+                if (t.lastSeenAt == null && !a.fresh(now)) continue;
                 IntersectionEngine.Hit h = insideNow.get(k);
                 if (h != null) {
                     t.lastSeenAt = a.seenAt();
@@ -260,7 +285,7 @@ public final class AlertStateMachine {
                 // 공중인데 고도 미보고: 판정할 수 없는 관측 — 안/밖 어느 쪽으로도 세지 않는다
                 continue;
             }
-            // 관측 없음(스냅샷에서 사라짐 또는 위치가 오래됨): 그 기체 스코프의 새 스냅샷마다 1회
+            // 관측 없음(스냅샷에서 사라짐 또는 위치가 데이터 시각보다 오래됨): 그 기체 스코프의 새 스냅샷마다 1회
             long m = cycle.absenceMarker(t.scope);
             if (m > t.absenceMarker) {
                 t.absent++;
@@ -288,6 +313,8 @@ public final class AlertStateMachine {
             Alert prev = prevP == null ? null : prevP.alert();
             AircraftState a = states.get(p.hex());
             if (prev == null) {
+                // 새 예측도 판정 시각으로 신선한 위치로만 연다(R2 — 멈춘 위치로 열지 않는다). 이미 있는 예측의 유지 · 갱신은 데이터 시각 그대로.
+                if (a == null || !a.fresh(now)) continue;
                 Alert al = predictedAlert(ids.getAsLong(), p, a, now, now);
                 predicted.put(k, new Pred(al, p.zone()));
                 out.add(new Event(EventType.PREDICTED, al));

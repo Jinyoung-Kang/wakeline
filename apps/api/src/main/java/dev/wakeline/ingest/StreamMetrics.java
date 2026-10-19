@@ -18,7 +18,8 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * 스트림 소비 지표(REL-20) — 30 s 마다 XINFO GROUPS·XINFO STREAM 을 읽어 게이지로 낸다(기본 Redis 연결 — 스트림 전용 연결의 BLOCK 에 막히지 않게).
+ * 스트림 소비 지표(REL-20) — 소비하는 스트림({@link StreamConsumer#STREAMS}) 각각의 XINFO GROUPS·XINFO STREAM 을 30 s 마다 읽어 게이지로 낸다
+ * (기본 Redis 연결 — 스트림 전용 연결의 BLOCK 에 막히지 않게).
  * <ul>
  *   <li>wakeline_stream_lag{stream}: 그룹 api 에 아직 전달되지 않은 엔트리 수(Redis 7+ XINFO GROUPS lag). Redis 가 셀 수 없으면 NaN.</li>
  *   <li>wakeline_stream_pending{stream}: 전달됐지만 ACK 되지 않은 엔트리 수(PEL) — durable 해지기를 기다리는 메시지 포함.</li>
@@ -37,7 +38,6 @@ import java.util.regex.Pattern;
 @Component
 public class StreamMetrics {
     private static final Logger log = LoggerFactory.getLogger(StreamMetrics.class);
-    static final List<String> STREAMS = List.of(StreamConsumer.S_AIRCRAFT, StreamConsumer.S_SIGMET, StreamConsumer.S_RADAR, StreamConsumer.S_SHIPS);
     /** 이보다 오래된 측정의 첫 엔트리로는 창을 계산하지 않는다 — 측정이 멈춘 동안(스케줄러 막힘) 앞이 잘렸을 수 있다. 30 s 주기의 4배. */
     public static final long WINDOW_SAMPLE_MAX_AGE_MS = 120_000;
     /** 첫 엔트리 시각이 지금보다 이만큼 넘게 미래면(시계 틀어짐) 믿지 않는다 — 그 안쪽은 0 으로. */
@@ -70,7 +70,7 @@ public class StreamMetrics {
     StreamMetrics(StringRedisTemplate redis, MeterRegistry meters, LongSupplier clockMs) {
         this.redis = redis;
         this.clockMs = clockMs;
-        for (String s : STREAMS) {
+        for (String s : StreamConsumer.STREAMS) {
             latest.put(s, new Measured(Sample.UNKNOWN, -1));
             Gauge.builder("wakeline_stream_lag", this, m -> m.sample(s).lag()).tag("stream", s)
                     .description("그룹 api 에 아직 전달되지 않은 엔트리 수").register(meters);
@@ -111,7 +111,7 @@ public class StreamMetrics {
 
     @Scheduled(initialDelay = 15_000, fixedDelay = 30_000)
     public void refresh() {
-        for (String s : STREAMS) {
+        for (String s : StreamConsumer.STREAMS) {
             try {
                 StreamInfo.XInfoStream info = redis.opsForStream().info(s);
                 StreamInfo.XInfoGroups groups = redis.opsForStream().groups(s);

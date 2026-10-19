@@ -71,11 +71,11 @@ public class AircraftControllerTest {
         Instant now = Instant.now();
         snapshots.replaceIfNewer(new Snapshot(snapshots.nextVersion(), "global", "opensky", now, now, "-",
                 Map.of("a1b2c3", ac("a1b2c3", "UAL1  ", 40, -100, now.minusSeconds(20), "opensky"),
-                        "b00001", ac("b00001", "UAL2", 41, -101, now.minusSeconds(900), "opensky"))));
+                        "b00001", ac("b00001", "UAL2", 41, -101, now.minusSeconds(900), "opensky"))), now.toEpochMilli());
         snapshots.replaceIfNewer(new Snapshot(snapshots.nextVersion(), "region", "adsb_lol", now, now, "-",
                 Map.of("71be01", ac("71be01", "KAL081", 37.4, 126.5, now.minusSeconds(3), "adsb_lol"),
                         "71be02", ac("71be02", " syn736 ", 50.0, 10.0, now.minusSeconds(3), "adsb_lol"),
-                        "71be03", ac("71be03", null, 50.1, 10.1, now.minusSeconds(3), "adsb_lol"))));
+                        "71be03", ac("71be03", null, 50.1, 10.1, now.minusSeconds(3), "adsb_lol"))), now.toEpochMilli());
         mvc = mvc(new DbDown());
     }
 
@@ -104,13 +104,13 @@ public class AircraftControllerTest {
                 .andExpect(jsonPath("$.code").value("UNAVAILABLE")).andExpect(jsonPath("$.detail").value("aircraft history store unavailable"));
         List<String> lines = warnLines(out);
         assertThat(lines).hasSize(1);
-        assertThat(lines.get(0)).contains("statement cancelled (SQLSTATE 57014) request_id=- path=/api/v1/aircraft/ffffff elapsed_ms=- → 503: ")
+        assertThat(lines.get(0)).contains("statement cancelled (SQLSTATE 57014) request_id=- path=/api/v1/aircraft/{hex} uri=\"/api/v1/aircraft/ffffff\" elapsed_ms=- → 503: ")
                 .contains("canceling statement due to user request");
         m.perform(get("/api/v1/aircraft/71be01")).andExpect(status().isOk()).andExpect(jsonPath("$.meta.db_unavailable").value(true));
         m.perform(get("/api/v1/aircraft/search").queryParam("q", "KAL")).andExpect(status().isOk()).andExpect(jsonPath("$.meta.db_unavailable").value(true));
         lines = warnLines(out);
         assertThat(lines).hasSize(3);
-        assertThat(lines.get(1)).contains("statement cancelled (SQLSTATE 57014) request_id=- path=/api/v1/aircraft/71be01 elapsed_ms=- → 200 without stored data (meta.db_unavailable): ");
+        assertThat(lines.get(1)).contains("statement cancelled (SQLSTATE 57014) request_id=- path=/api/v1/aircraft/{hex} uri=\"/api/v1/aircraft/71be01\" elapsed_ms=- → 200 without stored data (meta.db_unavailable): ");
         assertThat(lines.get(2)).contains("path=/api/v1/aircraft/search query=\"q=KAL\" elapsed_ms=- → 200 without stored data (meta.db_unavailable): ");
         assertThat(out.getAll()).doesNotContain("unhandled error");
     }
@@ -175,7 +175,7 @@ public class AircraftControllerTest {
                 .andExpect(jsonPath("$.route.fetched_at").doesNotExist());
         Instant now = Instant.now();
         snapshots.replaceIfNewer(new Snapshot(snapshots.nextVersion(), "region", "adsb_lol", now.plusSeconds(1), now, "-",
-                Map.of("71be04", ac("71be04", "ıab12ſ", 50.2, 10.2, now, "adsb_lol"))));
+                Map.of("71be04", ac("71be04", "ıab12ſ", 50.2, 10.2, now, "adsb_lol"))), now.toEpochMilli());
         mvc.perform(get("/api/v1/aircraft/71be04")).andExpect(status().isOk())
                 .andExpect(jsonPath("$.route.status").value("no_callsign"))
                 .andExpect(jsonPath("$.route.callsign").doesNotExist())
@@ -192,6 +192,34 @@ public class AircraftControllerTest {
                 .andExpect(jsonPath("$.meta.db_unavailable").value(true));
         mvc.perform(get("/api/v1/aircraft/search").param("q", "KAL0")).andExpect(jsonPath("$.items[0].hex").value("71be01"));
         mvc.perform(get("/api/v1/aircraft/search").param("q", "K%")).andExpect(status().isBadRequest()); // LIKE 와일드카드 차단
+    }
+
+    /**
+     * IM-09: 실시간 일치가 20건을 넘으면 정확 일치 → seen_at 최신 → hex 순 상위 20건(선박 검색과 같은 규칙). 예전에는 병합 뷰(HashMap)를 도는 순서대로
+     * 처음 만난 20건에서 끊어, 정확히 맞는 호출부호(UAL1)가 UAL1xx 에 밀려 빠졌고 다시 검색해도 같았다. hex a1ff00 은 이 병합 뷰의 버킷 순서에서
+     * 일치 42건 중 마지막에 온다 — 또 UAL1 은 가장 오래 전에 보였고 hex 도 가장 뒤라, 정확 일치 규칙만이 그것을 맨 앞에 둔다.
+     * 나머지는 seen_at 이 둘씩 같고(쌍 안에서는 hex 가 작은 쪽 — 호출부호 번호가 큰 쪽이 먼저) 최근 것부터.
+     */
+    @Test
+    void searchPutsTheExactCallsignFirstAndKeepsTheNewestWhenMoreThanTheLimitMatch() throws Exception {
+        Instant now = Instant.now();
+        Map<String, AircraftState> states = new java.util.HashMap<>();
+        states.put("a1ff00", ac("a1ff00", "UAL1    ", 40, -100, now.minusSeconds(120), "opensky")); // OpenSky 식 뒤 공백
+        for (int k = 0; k <= 40; k++) {
+            String hex = String.format("a1%04x", 40 - k); // UAL100 = a10028 … UAL140 = a10000
+            states.put(hex, ac(hex, "UAL1" + String.format("%02d", k), 40, -100, now.minusSeconds(10 + k / 2), "opensky"));
+        }
+        snapshots.replaceIfNewer(new Snapshot(snapshots.nextVersion(), "global", "opensky", now.plusSeconds(1), now, "-", states), now.toEpochMilli());
+        MvcResult r = mvc.perform(get("/api/v1/aircraft/search").param("q", "UAL1")).andExpect(status().isOk())
+                .andExpect(jsonPath("$.items.length()").value(AircraftController.SEARCH_LIMIT))
+                .andExpect(jsonPath("$.items[*].hex").value(hasItem("a1ff00")))
+                .andExpect(jsonPath("$.items[0].hex").value("a1ff00"))
+                .andExpect(jsonPath("$.items[0].live").value(true))
+                .andReturn();
+        List<String> callsigns = com.jayway.jsonpath.JsonPath.read(r.getResponse().getContentAsString(), "$.items[*].callsign");
+        assertThat(callsigns.stream().map(String::trim).toList()).containsExactly("UAL1",
+                "UAL101", "UAL100", "UAL103", "UAL102", "UAL105", "UAL104", "UAL107", "UAL106", "UAL109", "UAL108",
+                "UAL111", "UAL110", "UAL113", "UAL112", "UAL115", "UAL114", "UAL117", "UAL116", "UAL119");
     }
 
     @Test

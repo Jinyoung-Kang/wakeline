@@ -8,7 +8,7 @@ import java.util.concurrent.atomic.AtomicLong;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/** REL-1/COR-2: 알림 id 는 시간 기반(epochMillis×1000+카운터)·단조 — 재시작 후 이전 실행의 id 와 겹치지 않는다. */
+/** REL-1/COR-2: 알림 id 는 시간 기반(epochMillis×1000+카운터)·단조 — 시계가 앞으로 간 재시작 뒤 이전 실행의 id 와 겹치지 않는다(뒤로 간 재시작은 AlertIds 머리말의 예외). */
 class AlertIdsTest {
 
     @Test void monotonicWithinSameMillisecond_andSeededFromClock() {

@@ -579,12 +579,15 @@ describe("ops writes in flight: one request per click burst (web-review B2)", ()
   const button = (text: string) => find((e) => e.tagName === "BUTTON" && visibleText(e) === text);
   const SETTINGS = { items: [{ key: "region_poll_s", value: 10, version: 3, updated_by: "op", updated_at: "2026-09-28T15:00:00Z" }] };
   const PROVIDERS = { ...(BODY["/api/v1/ops/providers"] as object), providers: [{ name: "adsbdb" }], provider_switch: [{ provider: "adsbdb", disabled: false, version: 1, updated_at: "2026-09-28T00:59:00Z", updated_by: "op", redis_disabled: "0", mirror_differs: false }] };
-  /** 쓰기(PUT · POST)는 붙잡아 두고 부른 순서대로 writes 에 쌓는다 — 응답 전에 두 번 누르는 상황 */
-  function stubHeldWrites(writes: { method: string; url: string; reply: (r: Response) => void }[]) {
+  /**
+   * 쓰기(PUT · POST)는 붙잡아 두고 부른 순서대로 writes 에 쌓는다 — 응답 전에 두 번 누르는 상황. settings = 그때그때의 GET /ops/settings 본문
+   * (Promise 면 그 응답 — GET 을 붙잡아 둘 때)
+   */
+  function stubHeldWrites(writes: { method: string; url: string; reply: (r: Response) => void; init?: RequestInit }[], settings: () => unknown = () => SETTINGS) {
     vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
       const method = init?.method ?? "GET";
-      if (method !== "GET") return new Promise<Response>((r) => writes.push({ method, url, reply: r }));
-      if (url === "/api/v1/ops/settings") return json(200, SETTINGS);
+      if (method !== "GET") return new Promise<Response>((r) => writes.push({ method, url, reply: r, init }));
+      if (url === "/api/v1/ops/settings") { const s = settings(); return s instanceof Promise ? s : json(200, s); }
       if (url === "/api/v1/ops/providers") return json(200, PROVIDERS);
       return url in BODY ? json(200, BODY[url]) : json(404, { detail: "no such resource" });
     });
@@ -642,6 +645,68 @@ describe("ops writes in flight: one request per click burst (web-review B2)", ()
     expect(byTestId("settings-error")?.textContent).toContain("서버가 값을 거절했습니다");
     expect(button("save")!.getAttribute("aria-busy")).toBeNull();
     expect(button("save")!.getAttribute("disabled")).toBeNull(); // 편집 값이 남아 있다 — 고쳐 다시 저장할 수 있다
+  });
+
+  /**
+   * IM-15: 저장 응답을 기다리는 동안 그 키의 입력은 막히지 않는다 — 운영자가 오타를 고치면(15 → 20) 저장 성공 뒤의 drop 이 그 새 편집까지 말없이 지웠다
+   * ('저장됨' 만 남고 20 은 어디에도 없었다). 보낸 편집 그대로일 때만 지우고, 고친 값은 방금 저장이 만든 version 위의 편집으로 남는다
+   */
+  const V4_ROW = { key: "region_poll_s", value: 15, version: 4, updated_by: "op", updated_at: "2026-09-28T23:41:15Z" };
+  const regionPollInput = () => find((e) => e.tagName === "INPUT" && e.getAttribute("aria-label") === "region_poll_s 값")!;
+  const valueOf = (e: MiniElement) => (e as unknown as { value?: unknown }).value ?? e.getAttribute("value");
+  /**
+   * IM-15 의 앞부분: 15 를 저장하고 PUT 을 기다리는 동안 20 으로 고친 뒤, 서버가 15 를 v4 로 저장했다고 답한다. 저장 뒤 새로고침(GET /ops/settings)은
+   * 붙잡아 두고 그 응답 함수를 돌려준다 — 목록은 아직 v3 인 구간(R10)
+   */
+  const retypeWhileSaving = async (writes: { method: string; url: string; reply: (r: Response) => void; init?: RequestInit }[]) => {
+    let held: ((r: Response) => void)[] | null = null; // null = GET 에 곧바로 답한다(처음 불러오기)
+    stubHeldWrites(writes, () => (held ? new Promise<Response>((r) => held!.push(r)) : SETTINGS));
+    await mount();
+    await editRegionPoll("15");
+    await React.act(async () => { void propsOf(button("save")!).onClick(); });
+    expect(writes.map((w) => `${w.method} ${w.url}`)).toEqual(["PUT /api/v1/ops/settings/region_poll_s"]);
+    await React.act(async () => { propsOf(regionPollInput()).onChange({ target: { value: "20" } }); });
+    const gets: ((r: Response) => void)[] = [];
+    held = gets;
+    writes[0].reply(json(200, { ...V4_ROW, changed: true, mirrored: true }));
+    await settle();
+    expect(gets).toHaveLength(1); // 저장 뒤 새로고침이 떠 있다 — 목록은 아직 v3
+    return gets;
+  };
+
+  it("a value typed while the save is in flight survives the save's success, on the version that save made, and can be saved again", async () => {
+    const writes: { method: string; url: string; reply: (r: Response) => void; init?: RequestInit }[] = [];
+    const gets = await retypeWhileSaving(writes);
+    expect(byTestId("settings-ok")?.textContent).toBe("region_poll_s 저장됨 — 다음 주기부터 적용");
+    expect(valueOf(regionPollInput())).toBe("20");
+    // R10 — 수정 전: 새로고침이 오기 전 목록(v3)과 옮긴 편집(v4)이 달라 '편집하는 동안 서버 값이 바뀜(v4 → v3: 10)' 거짓 충돌(role=alert)에 save 가 막혔다
+    expect(byTestId("setting-conflict")).toBeNull();
+    expect(button("save")!.getAttribute("disabled")).toBeNull();
+    // 새로고침도 서버가 저장한 v4 를 본다
+    gets[0](json(200, { items: [V4_ROW] }));
+    await settle();
+    expect(valueOf(regionPollInput())).toBe("20");
+    expect(byTestId("setting-conflict")).toBeNull(); // v4 는 방금 이 저장이 만든 것 — 다른 곳의 변경이 아니다
+    expect(button("save")!.getAttribute("disabled")).toBeNull();
+    await React.act(async () => { void propsOf(button("save")!).onClick(); });
+    expect(writes.map((w) => `${w.method} ${w.url}`)).toEqual(["PUT /api/v1/ops/settings/region_poll_s", "PUT /api/v1/ops/settings/region_poll_s"]);
+    expect((writes[1].init?.headers as Record<string, string>)["If-Match"]).toBe("4");
+    expect(JSON.parse(String(writes[1].init?.body))).toEqual({ value: 20 });
+  });
+
+  it("when the refresh after the save fails the list stays old, but that is no conflict: the kept edit saves on the version the save made (R10)", async () => {
+    const writes: { method: string; url: string; reply: (r: Response) => void; init?: RequestInit }[] = [];
+    const gets = await retypeWhileSaving(writes);
+    gets[0](json(503, { detail: "settings store unavailable" }, "application/problem+json"));
+    await settle();
+    expect(valueOf(regionPollInput())).toBe("20");
+    // 수정 전: 다음 15 s 주기가 성공할 때까지 거짓 충돌이 남았고, '내 값으로 덮어쓰기' 가 편집을 v3 으로 되돌려 다음 저장이 409 였다
+    expect(byTestId("setting-conflict")).toBeNull();
+    expect(button("save")!.getAttribute("disabled")).toBeNull();
+    await React.act(async () => { void propsOf(button("save")!).onClick(); });
+    expect(writes).toHaveLength(2);
+    expect((writes[1].init?.headers as Record<string, string>)["If-Match"]).toBe("4");
+    expect(JSON.parse(String(writes[1].init?.body))).toEqual({ value: 20 });
   });
 
   it("a double click on a provider's disable sends one POST; the switch is busy until the answer", async () => {
@@ -765,6 +830,120 @@ describe("ops write failures stay until the next write or a dismiss (web-review 
     expect(byTestId("settings-error")?.textContent).toContain("feedface0000cafe");
     await click(button("알림 닫기", byTestId("settings-error")!));
     expect(byTestId("settings-error")).toBeNull();
+  });
+});
+
+/**
+ * IM-17: 설정 저장은 DB 에 커밋한 뒤 Redis(wakeline:settings)로 미러하고, 실패하면 응답에 mirrored=false 를 싣는다(SettingsService.update) — 수집기는
+ * Redis 만 읽는다. 화면은 mirrored 를 읽지 않아 늘 '저장됨 — 다음 주기부터 적용'(초록)을 보였다. 공급자 켜고 끄기(R-94)와 같은 경고(role=alert)로 보이고,
+ * 설정 목록에는 미러 상태가 없어 실패 알림처럼 다음 저장이나 '알림 닫기' 전까지 남긴다.
+ */
+describe("IM-17 ops: a settings save the api could not mirror to Redis warns that the collector still follows the old value", () => {
+  beforeAll(() => { (dom.document as unknown as { cookie: string }).cookie = "WAKELINE_CSRF=t"; });
+  const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+  const find = (pred: (e: MiniElement) => boolean, from: MiniElement = dom.container): MiniElement | null => {
+    if (pred(from)) return from;
+    for (const c of from.childNodes) { const f = c instanceof MiniElement ? find(pred, c) : null; if (f) return f; }
+    return null;
+  };
+  const propsOf = (e: MiniElement): Record<string, (...a: unknown[]) => unknown> => {
+    const k = Object.keys(e).find((x) => x.startsWith("__reactProps$"));
+    return (e as unknown as Record<string, Record<string, (...a: unknown[]) => unknown>>)[k!];
+  };
+  const button = (text: string, from?: MiniElement) => find((e) => e.tagName === "BUTTON" && visibleText(e) === text, from);
+  const click = async (e: MiniElement | null) => { expect(e).not.toBeNull(); await React.act(async () => { await propsOf(e!).onClick(); }); await settle(); };
+  const SETTINGS = { items: [{ key: "region_poll_s", value: 10, version: 3, updated_by: "op", updated_at: "2026-09-28T15:00:00Z" }] };
+  const saved = (extra: Record<string, unknown>) => ({ key: "region_poll_s", value: 15, version: 4, updated_by: "op", updated_at: "2026-09-28T23:41:15Z", changed: true, ...extra });
+  /** PUT 응답 본문 — 시험마다 바꾼다 */
+  let putBody: unknown = saved({ mirrored: true });
+  function stub() {
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      const method = init?.method ?? "GET";
+      if (method === "PUT") return json(200, putBody);
+      if (url === "/api/v1/ops/settings") return json(200, SETTINGS);
+      return url in BODY ? json(200, BODY[url]) : json(404, { detail: "no such resource" });
+    });
+  }
+  const mount = async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"], now: Date.parse("2026-09-28T23:41:14Z") });
+    vi.stubGlobal("self", globalThis);
+    stub();
+    root = createRoot(dom.container as never);
+    await React.act(async () => { root!.render(React.createElement(OpsPage)); });
+    await settle();
+    await settle();
+    await click(byTestId("ops-tab-settings"));
+  };
+  const saveRegionPoll = async (v: string) => {
+    await React.act(async () => { propsOf(find((e) => e.tagName === "INPUT" && e.getAttribute("aria-label") === "region_poll_s 값")!).onChange({ target: { value: v } }); });
+    await click(button("save"));
+  };
+  const UNMIRRORED = "region_poll_s DB 저장됨(v4) · Redis 미러 실패 — 수집기는 아직 이전 값을 따른다. api 가 60 s 주기로 다시 미러한다";
+
+  it("mirrored=false → a warning (role=alert) naming the saved version, not the green 'applied from the next cycle'", async () => {
+    putBody = saved({ mirrored: false });
+    await mount();
+    await saveRegionPoll("15");
+    const w = byTestId("settings-unmirrored");
+    expect(w?.getAttribute("role")).toBe("alert");
+    expect(w?.textContent ?? "").toContain(UNMIRRORED);
+    expect(byTestId("settings-ok")).toBeNull(); // 수정 전: "region_poll_s 저장됨 — 다음 주기부터 적용"
+    expect(byTestId("settings-error")).toBeNull(); // 저장은 됐다 — 실패가 아니다
+    expect(alertText()).toContain("Redis 미러 실패");
+  });
+
+  it("the warning stays through the 15 s reload and another tab, and goes away with '알림 닫기'", async () => {
+    putBody = saved({ mirrored: false });
+    await mount();
+    await saveRegionPoll("15");
+    await React.act(async () => { vi.advanceTimersByTime(15_000); });
+    await settle();
+    expect(byTestId("settings-unmirrored")?.textContent ?? "").toContain(UNMIRRORED); // 설정 목록에는 미러 상태가 없다 — 새로고침이 지우지 않는다
+    await click(byTestId("ops-tab-providers"));
+    await click(byTestId("ops-tab-settings"));
+    expect(byTestId("settings-unmirrored")?.textContent ?? "").toContain(UNMIRRORED);
+    await click(button("알림 닫기", byTestId("settings-unmirrored")!));
+    expect(byTestId("settings-unmirrored")).toBeNull();
+  });
+
+  it("the next save replaces the warning: a mirrored save shows the success line", async () => {
+    putBody = saved({ mirrored: false });
+    await mount();
+    await saveRegionPoll("15");
+    expect(byTestId("settings-unmirrored")).not.toBeNull();
+    putBody = saved({ value: 20, mirrored: true });
+    await saveRegionPoll("20");
+    expect(byTestId("settings-unmirrored")).toBeNull();
+    expect(byTestId("settings-ok")?.textContent).toBe("region_poll_s 저장됨 — 다음 주기부터 적용");
+  });
+
+  it("mirrored=true → the success line as now (role=status, no alert)", async () => {
+    putBody = saved({ mirrored: true });
+    await mount();
+    await saveRegionPoll("15");
+    expect(byTestId("settings-ok")?.textContent).toBe("region_poll_s 저장됨 — 다음 주기부터 적용");
+    expect(byTestId("settings-unmirrored")).toBeNull();
+    expect(alertText()).toBe("");
+  });
+
+  it("an unchanged value whose re-mirror failed still warns — without claiming the collector follows an older value", async () => {
+    putBody = saved({ value: 10, version: 3, changed: false, mirrored: false });
+    await mount();
+    await saveRegionPoll("10");
+    expect(byTestId("settings-ok")).toBeNull();
+    expect(byTestId("settings-unmirrored")?.textContent ?? "")
+      .toContain("region_poll_s 지금 값과 같음 — 바뀐 것 없음(v3) · Redis 미러 실패 — 수집기가 이 값을 따르는지 모른다. api 가 60 s 주기로 다시 미러한다");
+  });
+
+  it("the note reads only what the response says: no integer version → v—, no mirrored field (older api) → the success line", async () => {
+    const { settingSaveNote } = await import("@/lib/ops");
+    expect(settingSaveNote("region_poll_s", { changed: true, mirrored: false })).toEqual({
+      warn: true, text: "region_poll_s DB 저장됨(v—) · Redis 미러 실패 — 수집기는 아직 이전 값을 따른다. api 가 60 s 주기로 다시 미러한다",
+    });
+    expect(settingSaveNote("region_poll_s", { version: "4", mirrored: false }).text).toContain("DB 저장됨(v—)");
+    expect(settingSaveNote("region_poll_s", {})).toEqual({ warn: false, text: "region_poll_s 저장됨 — 다음 주기부터 적용" });
+    expect(settingSaveNote("region_poll_s", null)).toEqual({ warn: false, text: "region_poll_s 저장됨 — 다음 주기부터 적용" });
+    expect(settingSaveNote("region_poll_s", { changed: false, mirrored: true })).toEqual({ warn: false, text: "region_poll_s 지금 값과 같음 — 바뀐 것 없음" });
   });
 });
 

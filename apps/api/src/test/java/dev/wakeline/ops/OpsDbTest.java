@@ -227,10 +227,17 @@ class OpsDbTest {
         assertThat(s.get("region_center")).containsEntry("updated_by", "env");
         assertThat(auditCount("SETTING_SEED_ENV")).isEqualTo(2);
         assertThat(s.seedFromEnv("35.1,129.0", 200, audit::recordSystem)).isEmpty(); // 같은 값 — 다시 쓰지 않는다
+        // 공급자 상한(250 NM)을 넘는 .env 반경은 쓰지 않는다(IM-10 — 전에는 50–500 을 받아 400 이 그대로 저장됐다)
+        assertThat(s.seedFromEnv("35.1,129.0", 400, audit::recordSystem)).isEmpty();
+        assertThat(s.get("region_radius_nm").get("value").toString()).isEqualTo("200");
         // 운영자가 바꾼 뒤에는 .env 가 덮어쓰지 않는다
-        s.update("region_radius_nm", JsonNodeFactory.instance.numberNode(300), 2, "alice", (b, a) -> { });
+        s.update("region_radius_nm", JsonNodeFactory.instance.numberNode(250), 2, "alice", (b, a) -> { });
         assertThat(s.seedFromEnv("35.1,129.0", 150, audit::recordSystem)).isEmpty();
-        assertThat(s.get("region_radius_nm").get("value").toString()).isEqualTo("300");
+        assertThat(s.get("region_radius_nm").get("value").toString()).isEqualTo("250");
+        // 운영자도 250 을 넘겨 저장하지 못한다(400 BAD_VALUE — 값과 version 은 그대로)
+        assertThatThrownBy(() -> s.update("region_radius_nm", JsonNodeFactory.instance.numberNode(251), 3, "alice", (b, a) -> { }))
+                .isInstanceOf(Problem.class).satisfies(e -> assertThat(((Problem) e).code()).isEqualTo("BAD_VALUE"));
+        assertThat(s.get("region_radius_nm")).containsEntry("version", 3);
         // 검증을 통과하지 못한 .env 값은 쓰지 않는다
         assertThat(s.seedFromEnv("123,456", 200, audit::recordSystem)).isEmpty();
     }

@@ -2,6 +2,7 @@ package dev.wakeline.qa;
 
 import dev.wakeline.ops.OpsSessionLifetimeFilter;
 import org.junit.jupiter.api.Test;
+import org.springframework.jdbc.CannotGetJdbcConnectionException;
 import org.springframework.mock.web.MockFilterChain;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
@@ -21,6 +22,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 스택 B 증거: docs/qa/2026-10/evidence/reliability/sweeps/ops-db-down.json — 운영 GET 11개 모두 503 · Retry-After 없음.
  * <p>/ops/logs 가 DB 장애 중 503 인 것 자체는 의도다(Redis 만 읽는 경로지만 운영 요청은 모두 세션 자격 확인 — R-95 의 실패-닫힘 — 을 먼저 지난다,
  * ADR-017 §6 S3 · ADR-024 고침). 이 시험은 Retry-After 만 본다(처음 판은 상태 503 도 단언했다 — 그 상태는 OpsSessionLifetimeFilterTest 가 본다).
+ * DB 장애는 JdbcClient 가 실제로 던지는 모양(풀 대기 초과 → CannotGetJdbcConnectionException)으로 흉내 낸다 — 장애가 아닌 예외는 503 이 아니라 다시
+ * 던져진다(IM-24).
  */
 class Qa101OpsUnavailableRetryAfterTest {
     static final Instant NOW = Instant.parse("2026-10-02T03:00:00Z");
@@ -28,7 +31,8 @@ class Qa101OpsUnavailableRetryAfterTest {
     @Test
     void opsRequestRefusedBecauseTheCredentialCannotBeReadCarriesRetryAfter() throws Exception {
         OpsSessionLifetimeFilter dbDown = new OpsSessionLifetimeFilter(Duration.ofHours(8), Clock.fixed(NOW, ZoneOffset.UTC),
-                uid -> { throw new IllegalStateException("db down"); });
+                uid -> { throw new CannotGetJdbcConnectionException("Failed to obtain JDBC Connection",
+                        new java.sql.SQLTransientConnectionException("HikariPool-1 - Connection is not available, request timed out after 3000ms.")); });
         MockHttpSession s = new MockHttpSession();
         s.setAttribute(OpsSessionLifetimeFilter.AUTH_AT, NOW.minus(Duration.ofMinutes(5)).toEpochMilli());
         s.setAttribute(OpsSessionLifetimeFilter.USER_ID, 7);

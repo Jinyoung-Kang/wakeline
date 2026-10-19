@@ -53,6 +53,39 @@ class GitIgnoreScopeTest(unittest.TestCase):
                 r = subprocess.run(["git", "check-ignore", "--no-index", "-q", probe], cwd=ROOT)
                 self.assertEqual(r.returncode, 1, f"{probe} 가 .gitignore 에 걸린다")
 
+    def test_every_env_file_variant_is_ignored_but_the_examples(self):
+        """IM-06: 비밀값 파일 규칙이 .dockerignore(.env · .env.* · **/.env.*)와 같다. `cp .env .env.bak`(비밀번호 교체 전 사본) · `.env.aws`(AWS 값)도
+        `git add -A` 로 커밋되지 않는다 — 이 저장소는 이력을 다시 쓰지 않으므로 커밋되면 모든 비밀값을 바꿔야 한다. 이름만 적은 두 example 은 추적한다."""
+        for probe in (".env", ".env.bak", ".env.aws", ".env.local", "infra/.env", "apps/web/.env.production", "apps/web/.env.local"):
+            with self.subTest(path=probe):
+                r = subprocess.run(["git", "check-ignore", "--no-index", "-q", probe], cwd=ROOT)
+                self.assertEqual(r.returncode, 0, f"{probe} 가 .gitignore 에 걸리지 않는다")
+        for probe in (".env.example", ".env.aws.example"):
+            with self.subTest(path=probe):
+                r = subprocess.run(["git", "check-ignore", "--no-index", "-q", probe], cwd=ROOT)
+                self.assertEqual(r.returncode, 1, f"{probe} 가 .gitignore 에 걸린다")
+
+    def test_scan_copy_refuses_any_env_file_variant(self):
+        """IM-06: 스캔 복사(scan_lib.sh repo_copy)의 마지막 가드도 같은 규칙 — 강제로 추적된 .env.bak 이 섞여도 복사를 멈춘다(example 은 통과)."""
+        import shutil
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td) / "repo"
+            repo.mkdir()
+            git = ["git", "-c", "user.email=t@example.invalid", "-c", "user.name=t"]
+            subprocess.run([*git, "init", "-q"], cwd=repo, check=True)
+            (repo / ".env.example").write_text("A=\n")
+            subprocess.run([*git, "add", ".env.example"], cwd=repo, check=True)
+            copy = f'source "{ROOT / "tools" / "scan_lib.sh"}"; repo_copy "$1"'
+            ok = subprocess.run(["bash", "-c", copy, "_", str(Path(td) / "out-ok")], cwd=repo, capture_output=True, text=True)
+            self.assertEqual(ok.returncode, 0, ok.stderr)
+            (repo / ".env.bak").write_text("DB_API_PASSWORD=x\n")
+            subprocess.run([*git, "add", "-f", ".env.bak"], cwd=repo, check=True)
+            bad = subprocess.run(["bash", "-c", copy, "_", str(Path(td) / "out-bad")], cwd=repo, capture_output=True, text=True)
+            self.assertNotEqual(bad.returncode, 0, "강제로 추적된 .env.bak 이 스캔 복사본에 들어갔다")
+            shutil.rmtree(Path(td) / "out-bad", ignore_errors=True)
+
     def test_backup_tool_writes_owner_only_and_uses_local_socket(self):
         t = (ROOT / "tools" / "db-backup.sh").read_text()
         self.assertIn("umask 077", t)
@@ -302,3 +335,92 @@ class CollectorPostgresTest(unittest.TestCase):
             if not line.lstrip().startswith("#"):
                 with self.subTest(line=n):
                     self.assertNotRegex(line, r"-e\s+[A-Za-z_]*PASSWORD[A-Za-z_]*=", "비밀번호 값은 환경으로(-e NAME)")
+
+
+class AwsHostGuardTest(unittest.TestCase):
+    """IM-28: AWS 배포 호스트(.env 에 RDS_HOST 값이 있다 — .env.aws.example · ADR-039)에서는 컨테이너를 다시 만들거나 지우는 make 대상이 멈춘다.
+    그 대상들은 compose.yml 하나(AWS 덧붙임 없이)로 같은 compose 프로젝트(name: wakeline)를 다시 만들어, RDS 대신 빈 로컬 db 를 띄우고
+    공개 Origin · realip · 공개 데모 플래그를 뺀다 — 그동안 받은 자료는 로컬 db 에 쌓이고 스트림은 ACK 되어 RDS 에 영구 공백이 생긴다.
+    그 호스트의 .env 는 make init 으로 만든다(같은 Makefile 을 쓰는 호스트다). 가드는 레시피를 펼칠 때 멈추므로 make -n 으로도 확인된다."""
+
+    GUARDED = ("up", "down", "clean", "build", "demo", "demo-down", "e2e", "bench",
+               "backup", "restore", "rotate-db-passwords", "db-postgis-update", "db-superuser-local-only")
+    OPEN = ("ps", "logs", "init", "help", "test-infra", "test-api", "infra-docker-test")
+    HOST = "wakeline-guard-probe.example.invalid"
+
+    def make_n(self, target: str, env_text: str) -> subprocess.CompletedProcess:
+        import tempfile
+
+        with tempfile.NamedTemporaryFile("w", suffix=".env", delete=False) as f:
+            f.write(env_text)
+        try:
+            return subprocess.run(["make", "-n", *([target] if target else []), f"GUARD_ENV_FILE={f.name}"], cwd=ROOT, capture_output=True, text=True, timeout=60)
+        finally:
+            os.unlink(f.name)
+
+    def test_rebuilding_targets_stop_on_an_aws_host_without_printing_the_value(self):
+        for target in self.GUARDED:
+            with self.subTest(target=target):
+                r = self.make_n(target, f"REDIS_PASSWORD=x\nRDS_HOST={self.HOST}\n")
+                self.assertNotEqual(r.returncode, 0, f"make {target} 가 AWS 호스트에서 멈추지 않는다")
+                self.assertIn("ADR-039", r.stderr)
+                self.assertIn("compose.aws.yml", r.stderr)
+                self.assertNotIn(self.HOST, r.stdout + r.stderr, "RDS_HOST 값은 출력하지 않는다")
+
+    def test_read_only_targets_still_work_on_an_aws_host(self):
+        for target in self.OPEN:
+            with self.subTest(target=target):
+                r = self.make_n(target, f"RDS_HOST={self.HOST}\n")
+                self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_local_hosts_are_not_affected(self):
+        for env_text in ("REDIS_PASSWORD=x\n", "RDS_HOST=\n", "# RDS_HOST=x\n"):
+            with self.subTest(env=env_text):
+                r = self.make_n("up", env_text)
+                self.assertEqual(r.returncode, 0, r.stderr)
+                self.assertIn("docker compose -f infra/compose.yml --env-file .env up -d --build", r.stdout)
+
+    def test_plain_make_still_prints_the_help(self):
+        """독립 검토: 가드 대상을 Makefile 첫 규칙으로 두자 인자 없는 make 의 기본 목표가 help 에서 가드로 바뀌었다(아무것도 출력하지 않음)."""
+        for env_text in ("REDIS_PASSWORD=x\n", f"RDS_HOST={self.HOST}\n"):
+            with self.subTest(env=env_text.split("=")[0]):
+                r = self.make_n("", env_text)
+                self.assertEqual(r.returncode, 0, r.stderr)
+                self.assertIn("grep -E", r.stdout, "기본 목표는 help(명령 목록)")
+                self.assertNotIn("docker compose", r.stdout)
+
+    def dc(self, args: list[str], env_text: str) -> tuple[subprocess.CompletedProcess, str]:
+        """tools/dc 를 가짜 docker(받은 인자를 파일에 적고 0)로 부른다 — 실제 compose 는 돌지 않는다."""
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as td:
+            log = Path(td) / "docker.log"
+            fake = Path(td) / "docker"
+            fake.write_text(f'#!/bin/bash\necho "docker $*" >> "{log}"\n')
+            fake.chmod(0o755)
+            envf = Path(td) / "guard.env"
+            envf.write_text(env_text)
+            env = {**os.environ, "PATH": f"{td}:{os.environ['PATH']}", "GUARD_ENV_FILE": str(envf)}
+            r = subprocess.run([str(ROOT / "tools" / "dc"), *args], capture_output=True, text=True, env=env, timeout=30)
+            return r, (log.read_text() if log.exists() else "")
+
+    def test_tools_dc_refuses_to_recreate_the_stack_on_an_aws_host(self):
+        """독립 검토: tools/dc 도 compose.yml 하나로 같은 프로젝트를 부른다(Makefile 과 같은 원인) — 만들고 지우는 하위 명령은 AWS 호스트에서 멈춘다."""
+        for sub in (["up", "-d"], ["up", "-d", "--wait", "db"], ["create"], ["run", "--rm", "migrate"], ["down"], ["rm", "-f"], ["build"]):
+            with self.subTest(cmd=" ".join(sub)):
+                r, calls = self.dc(sub, f"RDS_HOST={self.HOST}\n")
+                self.assertNotEqual(r.returncode, 0)
+                self.assertEqual(calls, "", "docker 를 부르지 않는다")
+                self.assertIn("ADR-039", r.stderr)
+                self.assertIn("compose.aws.yml", r.stderr)
+                self.assertNotIn(self.HOST, r.stdout + r.stderr)
+        for sub in (["ps"], ["logs", "api"], ["exec", "-T", "api", "true"], ["stop", "api"], ["restart", "api"]):
+            with self.subTest(cmd=" ".join(sub)):
+                r, calls = self.dc(sub, f"RDS_HOST={self.HOST}\n")
+                self.assertEqual(r.returncode, 0, r.stderr)
+                self.assertIn(f"docker compose -f infra/compose.yml --env-file .env {' '.join(sub)}", calls)
+
+    def test_tools_dc_is_unchanged_on_a_local_host(self):
+        r, calls = self.dc(["up", "-d", "--wait", "db"], "REDIS_PASSWORD=x\nRDS_HOST=\n")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("docker compose -f infra/compose.yml --env-file .env up -d --wait db", calls)

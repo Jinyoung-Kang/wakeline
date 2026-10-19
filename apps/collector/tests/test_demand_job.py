@@ -494,6 +494,130 @@ async def test_disabled_status_is_cleared_when_re_enabled_before_next_turn():
     assert len(prov.calls) == 1 and f"hot:{key}" not in _status(r)
 
 
+class DropsStatusWrites(FakeRedis):
+    """wakeline:demand:status 쓰기(HSET · HDEL)를 drop_hset · drop_hdel 번만 떨군다 — Redis 순간 끊김 · 1.5 s 넘는 지연(DemandStatus 는 오류를
+    삼킨다). hset_prefix: 이 접두어 필드가 든 HSET 만 떨군다. applied=True: Redis 에는 쓰이고 답만 잃는다(시간 초과)."""
+
+    drop_hset = 0
+    drop_hdel = 0
+    hset_prefix = ""
+    applied = False
+
+    async def hset(self, key, field=None, value=None, mapping=None):
+        if key == STATUS_KEY and self.drop_hset and any(k.startswith(self.hset_prefix) for k in mapping or {}):
+            self.drop_hset -= 1
+            if self.applied:
+                await super().hset(key, field, value, mapping)
+            raise ConnectionError("redis timeout")
+        return await super().hset(key, field, value, mapping)
+
+    async def hdel(self, key, *fields):
+        if key == STATUS_KEY and self.drop_hdel:
+            self.drop_hdel -= 1
+            raise ConnectionError("redis timeout")
+        return await super().hdel(key, *fields)
+
+
+async def test_im19_disabled_status_dropped_by_redis_is_written_on_the_next_tick():
+    """IM-19: 끈 직후 '꺼짐' 쓰기(HSET 한 번)가 Redis 오류로 사라지면 다음 틱에 다시 쓴다. 고치기 전에는 쓰기 전에 '썼음'으로 기억해서
+    임대가 이어지는 동안 끄기 전 'active' 가 남았다(api 는 15 s 뒤 '조회 대기'로 보인다 — 실제로는 운영자 끔)."""
+    r = DropsStatusWrites()
+    (key,) = await _hot_leases(r, 1)
+    await r.zadd(FOCUS_KEY, {"abcdef": _now_ms() + 60_000})
+    prov = FakeDemandProvider()
+    prov.ac = [_ac("abcdef")]
+    t, _ctx, clk = _tracker(r, prov)
+    await t.tick()
+    await _drain(t)
+    assert _status(r)["focus:abcdef"]["state"] == "active"
+    await r.hset("wakeline:provider:adsb_fi", "disabled", "1")
+    r.drop_hset = 1
+    clk[0] = 5.0
+    await t.tick()
+    assert r.drop_hset == 0 and _status(r)["focus:abcdef"]["state"] == "active"  # 이 쓰기가 사라졌다
+    clk[0] = 6.0
+    await t.tick()
+    st = _status(r)
+    for f in ("focus:abcdef", f"hot:{key}"):
+        assert st[f]["state"] == "disabled" and st[f]["last_error"] == "provider disabled by operator"
+        assert st[f]["interval_s"] is None and st[f]["last_success_at"]
+    r.drop_hset = 1
+    clk[0] = 7.0
+    await t.tick()
+    assert r.drop_hset == 1  # 쓴 뒤에는 같은 상태를 다시 쓰지 않는다(떨굴 쓰기가 남는다)
+    assert len(prov.calls) == 2
+
+
+async def test_im19_capacity_throttled_status_dropped_by_redis_is_written_on_the_next_tick():
+    """IM-19: 용량 밖 셀의 throttled(용량 계획) 쓰기도 같다 — 한 번 실패하면 다음 틱에 다시, 쓴 뒤에는 같은 값을 다시 쓰지 않는다."""
+    r = DropsStatusWrites()
+    keys = await _hot_leases(r, 6)
+    await r.zadd(FOCUS_KEY, {"a00000": _now_ms() + 60_000})
+    prov = FakeDemandProvider()
+    lim = RateLimiter(2.0, 2, {"opendata.adsb.fi": (0.2, 1)})  # hot 은 한 셀도 못 돈다(용량 0 — 위 계획 시험과 같다)
+    t, _ctx, clk = _tracker(r, prov, limiter=lim)
+    r.drop_hset, r.hset_prefix = 1, "hot:"
+    await t.tick()
+    await _drain(t)
+    assert r.drop_hset == 0 and not [f for f in _status(r) if f.startswith("hot:")]  # 이 쓰기가 사라졌다(focus 결과는 쓰였다)
+    clk[0] = 1.0
+    await t.tick()
+    st = _status(r)
+    for k in keys:
+        assert st[f"hot:{k}"]["state"] == "throttled" and st[f"hot:{k}"]["last_error"] == "capacity: 0 of 6 cells served at 120 s"
+    r.drop_hset = 1
+    clk[0] = 2.0
+    await t.tick()
+    assert r.drop_hset == 1 and [c[0] for c in prov.calls] == ["icao"]
+
+
+async def test_im19_disabled_status_clear_dropped_by_redis_is_retried_on_the_next_tick():
+    """IM-19(같은 원인): 다시 켠 뒤 '꺼짐' 지우기(HDEL)가 Redis 오류로 사라지면 다음 틱에 다시 지운다. 고치기 전에는 지우기 전에 잊어서
+    셀 차례(30 s · 120 s)까지 '운영자 끔'이 남았다."""
+    r = DropsStatusWrites()
+    (key,) = await _hot_leases(r, 1)
+    prov = FakeDemandProvider()
+    t, _ctx, clk = _tracker(r, prov)
+    await t.tick()
+    await _drain(t)
+    await r.hset("wakeline:provider:adsb_fi", "disabled", "1")
+    clk[0] = 5.0
+    await t.tick()
+    assert _status(r)[f"hot:{key}"]["last_error"] == "provider disabled by operator"
+    await r.hset("wakeline:provider:adsb_fi", "disabled", "0")
+    r.drop_hdel = 1
+    clk[0] = 10.0
+    await t.tick()
+    assert r.drop_hdel == 0 and _status(r)[f"hot:{key}"]["state"] == "disabled"  # 이 지우기가 사라졌다
+    clk[0] = 11.0
+    await t.tick()
+    assert len(prov.calls) == 1 and f"hot:{key}" not in _status(r)
+    r.drop_hdel = 1
+    clk[0] = 12.0
+    await t.tick()
+    assert r.drop_hdel == 1  # 지운 뒤에는 다시 지우지 않는다
+
+
+async def test_im19_disabled_status_whose_write_timed_out_is_still_cleared_when_re_enabled():
+    """쓰기가 Redis 에 닿았는데 답만 잃은 경우(시간 초과): 무엇이 남았는지 모르니 같은 값으로 보지 않고(다시 쓴다), 다시 켜면 그 필드도 지운다."""
+    r = DropsStatusWrites()
+    r.applied = True
+    (key,) = await _hot_leases(r, 1)
+    prov = FakeDemandProvider()
+    t, _ctx, clk = _tracker(r, prov)
+    await t.tick()
+    await _drain(t)
+    await r.hset("wakeline:provider:adsb_fi", "disabled", "1")
+    r.drop_hset = 1
+    clk[0] = 5.0
+    await t.tick()
+    assert r.drop_hset == 0 and _status(r)[f"hot:{key}"]["state"] == "disabled"  # 쓰였지만 실패로 보였다
+    await r.hset("wakeline:provider:adsb_fi", "disabled", "0")
+    clk[0] = 6.0
+    await t.tick()
+    assert len(prov.calls) == 1 and f"hot:{key}" not in _status(r)
+
+
 # ---- fixture 모드 · 루프 ------------------------------------------------------------------------------------------------
 async def test_fixture_mode_focus_and_hot_without_external_calls(fixtures_dir):
     base = FixtureAircraftProvider()

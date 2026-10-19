@@ -95,8 +95,10 @@ public class AircraftController {
     }
 
     /**
-     * 검색(계약 §2): 병합 뷰(관심 지역 + 전세계)에서 hex · 호출부호 · 등록기호 앞부분 일치, 최대 20건. 모자라면 DB(과거에 본 기체의
-     * 정적 정보 — 현재 위치가 아니다, last_seen 포함)로 채운다. DB 가 없으면 실시간 결과만 주고 meta.db_unavailable = true(WARN 한 줄).
+     * 검색(계약 §2): 병합 뷰(관심 지역 + 전세계)에서 hex · 호출부호 · 등록기호 앞부분 일치, 최대 20건 — 20건을 넘게 맞으면 정확 일치(열쇠 하나가
+     * 검색어와 같음) → seen_at 최신 → hex 순 상위 20건(IM-09, 선박 검색과 같은 규칙 — 예전에는 병합 뷰를 도는 순서대로 끊어 정확히 맞는 호출부호가
+     * 빠질 수 있었다). 모자라면 DB(과거에 본 기체의 정적 정보 — 현재 위치가 아니다, last_seen 포함)로 채운다. DB 가 없으면 실시간 결과만 주고
+     * meta.db_unavailable = true(WARN 한 줄).
      * 실시간 항목은 lite 인코딩에 실시간 상태의 registration · type_code(아는 것만 — 계약 v5 §G33)를 더한다: 등록번호로 찾은 항목에 맞은 근거가
      * 보이게(QA-206 — 예전에는 lite 라 빠져 웹 검색 목록이 서버가 아는 등록번호를 '—' 로 그렸다).
      */
@@ -110,21 +112,27 @@ public class AircraftController {
         String needle = raw.toUpperCase(java.util.Locale.ROOT);
         Instant now = Instant.now();
         SnapshotStore.View view = snapshots.view(now);
+        java.util.Comparator<AircraftState> order = java.util.Comparator.comparing((AircraftState a) -> !anySearchKey(a, needle::equals))
+                .thenComparing(AircraftState::seenAt, java.util.Comparator.reverseOrder()).thenComparing(AircraftState::hex);
+        // 상위 20건만 남기며 고른다(IM-09 — 병합 뷰는 HashMap 이라 도는 순서대로 끊으면 정확 일치가 빠질 수 있다. 선박 검색과 같은 규칙)
+        java.util.PriorityQueue<AircraftState> top = new java.util.PriorityQueue<>(SEARCH_LIMIT + 1, order.reversed());
+        for (AircraftState a : view.states().values()) {
+            if (!anySearchKey(a, k -> k.startsWith(needle))) continue;
+            if (top.size() == SEARCH_LIMIT && order.compare(a, top.peek()) >= 0) continue; // 지금 남긴 것 중 가장 뒤보다 앞서지 않는다
+            top.add(a);
+            if (top.size() > SEARCH_LIMIT) top.poll();
+        }
+        List<AircraftState> live = new ArrayList<>(top);
+        live.sort(order);
         List<Map<String, Object>> out = new ArrayList<>();
         java.util.Set<String> seen = new java.util.HashSet<>();
-        for (AircraftState a : view.states().values()) {
-            if (out.size() >= SEARCH_LIMIT) break;
-            boolean m = a.hex().toUpperCase(java.util.Locale.ROOT).startsWith(needle)
-                    || (a.callsign() != null && a.callsign().trim().toUpperCase(java.util.Locale.ROOT).startsWith(needle))
-                    || (a.registration() != null && a.registration().toUpperCase(java.util.Locale.ROOT).startsWith(needle));
-            if (m) {
-                Map<String, Object> item = new LinkedHashMap<>(AircraftJson.encode(a, "lite", false));
-                if (a.registration() != null) item.put("registration", a.registration());
-                if (a.typeCode() != null) item.put("type_code", a.typeCode());
-                item.put("live", true);
-                out.add(item);
-                seen.add(a.hex());
-            }
+        for (AircraftState a : live) {
+            Map<String, Object> item = new LinkedHashMap<>(AircraftJson.encode(a, "lite", false));
+            if (a.registration() != null) item.put("registration", a.registration());
+            if (a.typeCode() != null) item.put("type_code", a.typeCode());
+            item.put("live", true);
+            out.add(item);
+            seen.add(a.hex());
         }
         boolean dbUnavailable = false;
         if (out.size() < SEARCH_LIMIT) {
@@ -144,6 +152,13 @@ public class AircraftController {
         Map<String, Object> meta = Meta.of(req, view.region().provider(), view.region().fetchedAt(), 60);
         if (dbUnavailable) meta.put("db_unavailable", true);
         return ResponseEntity.ok().cacheControl(CacheControl.maxAge(5, TimeUnit.SECONDS).cachePublic()).body(Map.of("items", out, "meta", meta));
+    }
+
+    /** 검색 열쇠(hex · 앞뒤 공백을 뺀 호출부호 · 등록기호 — 대문자) 중 하나가 조건에 맞는가. 앞부분 일치와 정확 일치가 같은 정규화를 쓴다. */
+    private static boolean anySearchKey(AircraftState a, java.util.function.Predicate<String> p) {
+        return p.test(a.hex().toUpperCase(java.util.Locale.ROOT))
+                || (a.callsign() != null && p.test(a.callsign().trim().toUpperCase(java.util.Locale.ROOT)))
+                || (a.registration() != null && p.test(a.registration().toUpperCase(java.util.Locale.ROOT)));
     }
 
     /**

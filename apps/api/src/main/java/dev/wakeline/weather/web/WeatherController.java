@@ -1,5 +1,6 @@
 package dev.wakeline.weather.web;
 
+import dev.wakeline.airspace.core.AirspaceStore;
 import dev.wakeline.geo.Bbox;
 import dev.wakeline.platform.config.AppProperties;
 import dev.wakeline.platform.support.Times;
@@ -8,6 +9,7 @@ import dev.wakeline.platform.web.Etags;
 import dev.wakeline.platform.web.Meta;
 import dev.wakeline.platform.web.Params;
 import dev.wakeline.platform.web.Problem;
+import dev.wakeline.platform.web.ProblemAdvice;
 import dev.wakeline.weather.core.Alert;
 import dev.wakeline.weather.core.EngineService;
 import dev.wakeline.weather.core.RadarStore;
@@ -19,6 +21,7 @@ import dev.wakeline.weather.data.KrRadarFrames;
 import dev.wakeline.weather.data.KrRadarMissing;
 import dev.wakeline.weather.data.KrRadarReader;
 import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.dao.DataAccessException;
 import org.springframework.http.CacheControl;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -48,13 +51,16 @@ public class WeatherController {
     private final KrRadarReader radarKr;
     private final tools.jackson.databind.ObjectMapper json;
     private final io.micrometer.core.instrument.MeterRegistry meters;
+    /** 켜진 공역 차수(메모리) — 열린 알림의 공역 사본을 DB 에서 읽지 못할 때만 읽는다 */
+    private final AirspaceStore airspaces;
     /** 닫힌 알림 보존(일 — MaintenanceJobs 와 같은 설정). 근거 공유 화면이 '보존 기간이 지나 볼 수 없음'을 적는다 */
     @org.springframework.beans.factory.annotation.Value("${wakeline.alert-retention-days:30}")
     int alertRetentionDays = 30;
 
     public WeatherController(SigmetStore sigmets, EngineService engine, RadarStore radar, AirportRepository airports, AlertRepository alertRepo, AppProperties props,
                              KrRadarReader radarKr, tools.jackson.databind.ObjectMapper json,
-                             io.micrometer.core.instrument.MeterRegistry meters) {
+                             io.micrometer.core.instrument.MeterRegistry meters, AirspaceStore airspaces) {
+        this.airspaces = airspaces;
         this.radarKr = radarKr;
         this.json = json;
         this.meters = meters;
@@ -125,6 +131,9 @@ public class WeatherController {
      * 알림 한 건 — 근거 공유(계약 v5 §G51 · SPEC F5): 열린 알림은 엔진 메모리에서(아직 저장 전일 수 있다), 아니면 DB(닫힌 알림 보존 30일). 그 구역의 사본
      * (SIGMET 원문 · 유효 시간 · 고도대 / 공역 이름 · 고도 한계 원문 · 차수)을 함께 — 경보가 끝나거나 차수가 바뀐 뒤에도 근거를 읽을 수 있게.
      * id 가 숫자가 아니면 400 BAD_ID, 없으면 404. 캐시: 열린 알림은 5 s(바뀐다), 닫힌 알림은 300 s(바뀌지 않는다).
+     * DB 장애(저장소를 못 쓰는 예외): 열린 알림은 메모리 값으로 200 — 사본도 메모리(SigmetStore · 켜진 공역 차수 — {@link AlertCopies}, 메모리에도 없으면
+     * null) + meta.db_unavailable = true + WARN 한 줄(ProblemAdvice — 다른 '실시간 값 + 저장소' 경로와 같다, 계약 §2). 닫힌 알림은 DB 가 원본이라 503.
+     * DB 결함(문법 · 권한)은 열린 알림이어도 500.
      */
     @GetMapping("/alerts/{id}")
     public ResponseEntity<Map<String, Object>> alert(@PathVariable String id, HttpServletRequest req) {
@@ -149,10 +158,25 @@ public class WeatherController {
             open = row.get("left_at") == null;
         }
         m.put("source", live != null ? "engine" : "db");
-        m.put("sigmet", sigmetId == null ? null : alertRepo.sigmetCopy(sigmetId));
-        m.put("airspace", airspaceId == null ? null : alertRepo.airspaceCopy(airspaceId.longValue()));
+        Map<String, Object> sigmet = null;
+        Map<String, Object> airspace = null;
+        boolean dbUnavailable = false;
+        try {
+            if (sigmetId != null) sigmet = alertRepo.sigmetCopy(sigmetId);
+            if (airspaceId != null) airspace = alertRepo.airspaceCopy(airspaceId.longValue());
+        } catch (DataAccessException e) {
+            if (live == null) throw e;                  // 엔진에 없는 알림(닫힌 알림)은 DB 가 원본 — 503(ProblemAdvice) 그대로
+            ProblemAdvice.answeredWithoutStore(e, req); // WARN 한 줄 — 결함(문법 · 권한)이면 그대로 던진다(500)
+            dbUnavailable = true;
+            if (sigmetId != null) sigmet = AlertCopies.sigmet(sigmets.get(sigmetId));
+            if (airspaceId != null) airspace = AlertCopies.airspace(airspaces.snapshot(), airspaceId.longValue());
+        }
+        m.put("sigmet", sigmet);
+        m.put("airspace", airspace);
         m.put("retention_days", alertRetentionDays());
-        m.put("meta", Meta.of(req, live != null ? "engine" : "db", Instant.now(), 60));
+        Map<String, Object> meta = Meta.of(req, live != null ? "engine" : "db", Instant.now(), 60);
+        if (dbUnavailable) meta.put("db_unavailable", true);
+        m.put("meta", meta);
         return ResponseEntity.ok().cacheControl(CacheControl.maxAge(open ? 5 : 300, TimeUnit.SECONDS).cachePublic()).body(m);
     }
 

@@ -13,6 +13,7 @@
   hot 은 거기에 focus 몫까지 남기고 멈춘다).
 - 발행: wakeline:aircraft 에 scope focus(requested·missing) / hot(cell·region). 품질 게이트는 관심 지역과 같은 규칙.
 - 상태: wakeline:demand:status 에 실제 결과를 그대로 쓴다 — 약속한 주기를 못 지키면 throttled, 공급자가 모르면 not_found.
+  꺼짐 · 용량 제한처럼 같은 값을 다시 쓰지 않는 상태도 쓰기 · 지우기가 Redis 오류로 실패하면 다음 틱에 다시 한다(IM-19).
 - 노선(계약 v4 §A · G A-1): 콜사인은 api 가 정한다 — 임대 메타의 callsign 을 틱마다 확인해(같은 콜사인은 focus 주기에 한 번)
   RouteLookup 에 넘긴다. adsb.fi 가 그 항공기를 돌려주지 않거나 adsb_fi 가 꺼져 있어도 "조회 중" 이 끝없이 남지 않게.
   메타에 콜사인이 없는 hex 는 focus 결과를 발행한 뒤 응답의 콜사인(품질 게이트를 통과한 상태, 없으면 격리된 기록의 원문)을 넘긴다.
@@ -64,6 +65,11 @@ HOT_NEW_WINDOW_S = 30.0
 DISABLED_MSG = "provider disabled by operator"
 PLAN_UTILIZATION = 0.8  # 계획은 호스트 상한의 80 %까지만 채운다(지터·재시도 여유)
 SHUTDOWN_WAIT_S = 5.0
+# DemandTracker._written 의 값: (state, interval_s, last_error) — 그 필드에 마지막으로 쓴 상태(Redis 가 받았다고 답한 것).
+_Sig = tuple[str, int | None, str | None]
+# 쓰기가 실패한 필드의 state 자리. Redis 에 무엇이 남았는지 모르니 어떤 상태와도 같지 않게 둔다(다음 틱에 다시 쓴다) — 사유는 남겨
+# '꺼짐'이 쓰였을 수도 있으면 다시 켤 때 지운다(쓰기가 Redis 에 닿고 답만 잃었을 수 있다, 시간 초과).
+_UNSAVED = ""
 
 
 class DemandProvider(Protocol):
@@ -161,7 +167,7 @@ class DemandTracker:
         self._cells: dict[str, _Cell] = {}
         self._served: set[str] = set()  # 직전 계획에서 조회 대상이 된 셀(용량 밖 셀은 깨어날 이유가 없다)
         self._last_ok: dict[str, datetime] = {}
-        self._written: dict[str, tuple[str, int | None, str | None]] = {}
+        self._written: dict[str, _Sig] = {}
         self._route_asked: dict[str, float] = {}  # 임대 메타 콜사인 → 마지막으로 노선 조회에 넘긴 시각
         self.counts = {"focus_requests": 0, "hot_requests": 0, "throttled": 0, "errors": 0, "published": 0}
 
@@ -201,11 +207,11 @@ class DemandTracker:
             # 이미 속도 상한 대기열에 들어간 조회도 보내지 않는다(리뷰 2026-09-28b #2 후속): 취소하면 대기열에서 빠진다.
             # 이미 전송된 요청이면 예산은 쓴 것으로 둔다(과대 집계는 안전 쪽).
             await self.aclose(wait_s=0)
-            await self.status.put(self._disabled(demand))
+            await self._write(self._disabled(demand))
         else:
             await self._lift_disabled()
             self._schedule_focus(demand, now)
-            await self.status.put(self._schedule_hot(demand, now))
+            await self._write(self._schedule_hot(demand, now))
         await self.status.prune(demand.fields)
         self._forget(demand)
         return TICK_S if disabled else self._next_delay(demand, now)
@@ -294,13 +300,13 @@ class DemandTracker:
         self._focus_due = now + FOCUS_INTERVAL_S
         self._focus_task = asyncio.create_task(self._run_focus(hexes), name="demand-focus")
 
-    def _schedule_hot(self, demand: Demand, now: float) -> dict[str, dict[str, Any]]:
+    def _schedule_hot(self, demand: Demand, now: float) -> dict[str, _Sig]:
         cells = demand.hot
         self._served = set()
         if not cells:
             return {}
         interval, served = self._plan(len(cells), len(demand.focus))
-        updates: dict[str, dict[str, Any]] = {}
+        updates: dict[str, _Sig] = {}
         for rank, cell in enumerate(cells):
             st = self._cells.get(cell.key)
             if st is None:
@@ -331,16 +337,19 @@ class DemandTracker:
         return True
 
     async def _lift_disabled(self) -> None:
-        """다시 켜지면 '꺼짐' 상태를 지운다(다음 조회 결과가 쓰일 때까지 대기) — 지난 사유를 남겨 두지 않는다."""
+        """다시 켜지면 '꺼짐' 상태를 지운다(다음 조회 결과가 쓰일 때까지 대기) — 지난 사유를 남겨 두지 않는다.
+        지우기가 Redis 오류로 실패하면 '꺼짐'으로 기억해 둔 채 다음 틱에 다시 지운다(IM-19). 그 사이 결과가 쓰인 필드는 결과로 둔다."""
         lifted = [f for f, w in self._written.items() if w[2] == DISABLED_MSG]
+        if not lifted or not await self.status.delete(lifted):
+            return
         for f in lifted:
-            del self._written[f]
-        await self.status.delete(lifted)
+            if (w := self._written.get(f)) is not None and w[2] == DISABLED_MSG:
+                del self._written[f]
 
-    def _disabled(self, demand: Demand) -> dict[str, dict[str, Any]]:
+    def _disabled(self, demand: Demand) -> dict[str, _Sig]:
         """운영자가 끈 공급자: 조회하지 않고 모든 필드를 disabled 로(주기 없음 — 조회가 돌지 않는다)."""
         self._served = set()
-        updates: dict[str, dict[str, Any]] = {}
+        updates: dict[str, _Sig] = {}
         for f in demand.focus:
             self._status_if_changed(updates, f.field, "disabled", None, DISABLED_MSG)
         for c in demand.hot:
@@ -348,25 +357,28 @@ class DemandTracker:
         return updates
 
     # ---- 상태 --------------------------------------------------------------------------------------------------------
-    def _status_if_changed(
-        self, out: dict[str, dict[str, Any]], field: str, state: str, interval: int | None, err: str | None
-    ) -> None:
+    def _status_if_changed(self, out: dict[str, _Sig], field: str, state: str, interval: int | None, err: str | None) -> None:
+        """마지막으로 쓴 상태와 다를 때만 out 에 담는다(쓰기 · 기억은 _write)."""
         sig = (state, interval, err)
-        if self._written.get(field) == sig:
+        if self._written.get(field) != sig:
+            out[field] = sig
+
+    async def _write(self, sigs: dict[str, _Sig]) -> None:
+        """상태를 쓰고, Redis 가 받은 뒤에만 '썼음'(self._written)으로 기억한다 — fallback 의 _state_saved 와 같은 규칙(IM-19). 실패하면
+        state 를 _UNSAVED 로 기억해 다음 틱에 다시 쓴다: 꺼짐 · 용량 제한은 같은 값을 다시 쓰지 않는 상태라, 쓰기 전에 기억하던 때는 한 번
+        실패하면 임대가 이어지는 동안 끄기 전 'active' 가 남았다(api 는 '조회 대기'로 보였다)."""
+        if not sigs:
             return
-        self._written[field] = sig
-        out[field] = status_value(state, interval, self._last_ok.get(field), err, self.provider.name)
+        saved = await self.status.put(
+            {f: status_value(state, iv, self._last_ok.get(f), err, self.provider.name) for f, (state, iv, err) in sigs.items()}
+        )
+        for f, (state, iv, err) in sigs.items():
+            self._written[f] = (state if saved else _UNSAVED, iv, err)
 
     async def _put_status(self, items: dict[str, tuple[str, int, str | None]]) -> None:
         """조회 결과 상태. 그 사이 임대가 사라진 필드는 쓰지 않는다(지운 필드를 되살리지 않게)."""
         live = self.poller.current.fields
-        out: dict[str, dict[str, Any]] = {}
-        for field, (state, interval, err) in items.items():
-            if field not in live:
-                continue
-            self._written[field] = (state, interval, err)
-            out[field] = status_value(state, interval, self._last_ok.get(field), err, self.provider.name)
-        await self.status.put(out)
+        await self._write({field: sig for field, sig in items.items() if field in live})
 
     # ---- 예산 --------------------------------------------------------------------------------------------------------
     async def _reserve(self, headroom: int) -> tuple[bool, str | None]:

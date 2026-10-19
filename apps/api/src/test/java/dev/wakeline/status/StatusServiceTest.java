@@ -35,7 +35,7 @@ class StatusServiceTest {
         SnapshotStore snapshots = new SnapshotStore();
         Instant now = Instant.now();
         snapshots.replaceIfNewer(new Snapshot(snapshots.nextVersion(), "global", "opensky", now, now, "-",
-                Map.of("a00001", ac("a00001", now.minusSeconds(30)), "a00002", ac("a00002", now.minusSeconds(900)))));
+                Map.of("a00001", ac("a00001", now.minusSeconds(30)), "a00002", ac("a00002", now.minusSeconds(900)))), now.toEpochMilli());
         var region = new AtomicReference<>(new RegionSettings.Region(36.5, 127.8, 250));
         var status = new StatusService(snapshots, new SigmetStore(), new RadarStore(),
                 new EngineService(snapshots, new SigmetStore(), e -> { }, new SimpleMeterRegistry()), new StringRedisTemplate(), region::get);
@@ -45,10 +45,10 @@ class StatusServiceTest {
         assertThat(((Map<?, ?>) s.get("region")).get("provider")).isNull();      // 수집 이력 없음 — "-" 를 값처럼 내보내지 않는다
         assertThat(((Map<?, ?>) s.get("global")).get("aircraft")).isEqualTo(1);  // 900 s 전 기체는 '현재' 가 아니다
 
-        region.set(new RegionSettings.Region(35.5, 139.7, 300)); // 운영자가 /ops 에서 바꿈 → collector 와 같은 값
+        region.set(new RegionSettings.Region(35.5, 139.7, 200)); // 운영자가 /ops 에서 바꿈 → collector 와 같은 값
         Map<?, ?> r = (Map<?, ?>) status.publicStatus().get("region");
         assertThat(r.get("center")).isEqualTo(List.of(35.5, 139.7));
-        assertThat(r.get("radius_nm")).isEqualTo(300);
+        assertThat(r.get("radius_nm")).isEqualTo(200);
     }
 
     /** 레이더를 한 번도 받지 않았으면(fetched_at 자리표시 EPOCH) "오래됨" — SIGMET 과 같은 규칙. 전에는 lag -1 이라 false 였다. */
@@ -94,6 +94,21 @@ class StatusServiceTest {
         assertThat(StatusService.adsbFiRps(Map.of("adsb_fi_rps_1m", "-1", "region_at", now.toString()), now)).isNull();
         assertThat(StatusService.adsbFiRps(Map.of("region_at", now.toString()), now)).isNull();
         assertThat(StatusService.adsbFiRps(Map.of("adsb_fi_rps_1m", "0", "region_at", "garbage", "kma_at", now.toString()), now)).isEqualTo(0.0);
+    }
+
+    /**
+     * IM-13: 수집기가 같은 해시에 쓰는 '다음에 움직일 때'(*_resume_at — 다음 UTC 정시 · 날 등 미래 시각)를 보고 시각으로 세면 멈춘 수집기의 마지막
+     * 호출률이 120 s 검사를 늘 통과했다. *_resume_at 은 보고 시각이 아니고, 미래로 60 s 넘게 앞선 값은 그 필드만 건너뛴다.
+     */
+    @Test
+    void adsbFiRps_aFutureResumeTimeDoesNotKeepAStoppedCollectorFresh() {
+        Instant now = Instant.parse("2026-09-28T03:00:00Z");
+        assertThat(StatusService.adsbFiRps(Map.of("adsb_fi_rps_1m", "0.8", "region_at", now.minusSeconds(600).toString(),
+                "traffic_grid_fill_resume_at", now.plusSeconds(6 * 3600).toString()), now)).isNull();
+        assertThat(StatusService.adsbFiRps(Map.of("adsb_fi_rps_1m", "0.8", "region_at", now.minusSeconds(600).toString(),
+                "focus_at", now.plusSeconds(3600).toString()), now)).isNull();                                           // 시계가 틀린 보고 시각
+        assertThat(StatusService.adsbFiRps(Map.of("adsb_fi_rps_1m", "0.8", "region_at", now.minusSeconds(8).toString(),
+                "traffic_grid_tiles_resume_at", now.plusSeconds(1800).toString()), now)).isEqualTo(0.8);                  // 살아 있는 수집기
     }
 
     @Test

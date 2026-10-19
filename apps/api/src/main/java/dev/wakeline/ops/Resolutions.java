@@ -1,5 +1,6 @@
 package dev.wakeline.ops;
 
+import dev.wakeline.platform.support.Spaces;
 import dev.wakeline.platform.web.Problem;
 
 import java.util.HashMap;
@@ -44,11 +45,11 @@ public final class Resolutions {
     }
 
     /**
-     * 조회 매개변수 resolved=hide(기본 — 없거나 빈 값) | show → 가리는가. 대소문자 · 앞뒤 공백은 가리지 않는다. 그 밖은 400 BAD_RESOLVED
-     * (/ops/logs · /ops/logs/groups · /ops/runs 가 같은 규칙).
+     * 조회 매개변수 resolved=hide(기본 — 없거나 빈 값) | show → 가리는가. 대소문자 · 앞뒤 공백 글자는 가리지 않는다(제어 문자는 공백이 아니다 —
+     * 계약 v5 §G43 · QA-1103). 그 밖은 400 BAD_RESOLVED(/ops/logs · /ops/logs/groups · /ops/runs 가 같은 규칙).
      */
     public static boolean hide(String resolved) {
-        String v = resolved == null ? "" : resolved.strip().toLowerCase(Locale.ROOT);
+        String v = resolved == null ? "" : Spaces.strip(resolved).toLowerCase(Locale.ROOT);
         return switch (v) {
             case "", "hide" -> true;
             case "show" -> false;

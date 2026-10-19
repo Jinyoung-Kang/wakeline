@@ -5,9 +5,14 @@
 2. 닫히지 않은 링은 닫고, 자기교차는 make_valid 로 정리. 경도 ±180 을 걸치면(점프든 180 을 넘는 이어진 경도든) [-180, 180] 조각으로 분할.
 3. 고도대(ft)와 그 출처(계약 §4):
    - base: JSON 값이 있으면 base_source="json". null 이면 base_ft=0 + base_source="assumed_surface"(발표 없음, 판정은 SFC 가정).
-   - top : JSON 값이 있으면 top_source="json". null(또는 base 보다 낮은 잘못된 값)이면 원문(raw text)이
-           "TOP FLnnn" / "TOP ABV FLnnn" 로 하나의 값을 명시할 때만 그 값 + top_source="raw_text"
-           (ABV 는 상한의 하한값 — 발표된 값을 그대로 저장). 그 밖에는 top_ft=None + top_source="unknown"(미발표, 판정은 무제한 가정).
+   - top : JSON 값이 있으면 그 값 + top_source="json". 다만 원문의 "TOP ABV FLnnn" 값 가운데 어느 하나가 바로 그 값이면(AWC 가
+           ABV 값을 top 으로 준 경우 — 원문에 TOP 값이 여럿이어도) top_source="raw_text_lower_bound" — 상한이 아니라 상한의 하한이다
+           (IM-01 · R8). V4 SQL 보정은 원문의 첫 "TOP ABV" 값만 보므로 이 규칙이 하한 쪽으로만 조금 넓다(알림을 빼는 쪽으로는
+           갈리지 않는다). JSON 값과 같은 ABV 값이 없으면 단정하지 않고 "json" 그대로, "TOPS ABV" 는 정규식이 일부러 받지 않아
+           "json" 그대로.
+           JSON 이 null(또는 base 보다 낮은 잘못된 값)이면 원문이 "TOP FLnnn" / "TOP ABV FLnnn" 로 하나의 값을 명시할 때만 그 값 +
+           top_source="raw_text"(ABV 는 "raw_text_lower_bound" — 발표된 값을 그대로 저장, 판정은 위쪽 무제한 가정).
+           그 밖에는 top_ft=None + top_source="unknown"(미발표, 판정은 무제한 가정).
 4. 자연키 fir_id:series_id:valid_from. 폴리곤을 만들 수 없는 경보는 geometry=None + excluded_reason.
 """
 
@@ -178,11 +183,17 @@ def resolve_band(base: Any, top: Any, raw: str) -> tuple[int, BaseSource, int | 
         base_ft, base_source = 0, "assumed_surface"
     note = None
     t = _num(top)
+    rt = raw_text_top(raw)
     if t is not None and t > 0 and int(t) >= base_ft:
+        # 원문 "TOP ABV FLnnn" 값 가운데 하나와 같으면 AWC 가 하한을 top 으로 준 것 — 고정 상한으로 쓰면 위쪽 항공기를 빼게 된다
+        # (IM-01). 원문에 TOP 값이 여럿이어도(관측분 · 예보분) 같다 — 여기서는 값을 고르지 않고 JSON 값의 성격만 보므로
+        # raw_text_top 의 단일 값 조건을 쓰지 않는다(R8). 같은 ABV 값이 없으면 단정하지 않고 발표된 JSON 그대로(V4 의 ABV_OTHER).
+        abv_tops = {int(m.group(2)) * 100 for m in _TOP_RE.finditer(raw or "") if m.group(1)}
+        if int(t) in abv_tops:
+            return base_ft, base_source, int(t), "raw_text_lower_bound", None
         return base_ft, base_source, int(t), "json", None
     if t is not None:
         note = "invalid_top"  # 발표값이 있으나 base 이하/0 이하 — 쓰지 않는다(넓히거나 좁혀 추정하지 않음)
-    rt = raw_text_top(raw)
     if rt is not None and rt[0] >= base_ft:
         return base_ft, base_source, rt[0], ("raw_text_lower_bound" if rt[1] else "raw_text"), note
     return base_ft, base_source, None, "unknown", note

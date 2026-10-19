@@ -163,6 +163,10 @@ DB 연결 수: 역할별 상한이 없고(`infra/db/init/01-roles.sh`) 서버 ma
 | 노선 실행기 포화(4 + max(256, 연결 상한)) | — | 곧바로 unavailable · 센다 — 세션마다 작업 하나 이하라 연결 상한 안에서는 넘치지 않는다 |
 | 스레드 하나를 잡는 시간(읽기 하나) | — | ≤ 3 s(서버가 답하지 않을 때) · 곧바로(끊긴 것을 아는 연결 — REJECT_COMMANDS) · 공유 연결을 아직 맺지 못했을 때는 연결 맺기(시도마다 ≤ 10 s, 잠금 안에서 하나씩 — 앞 시도들을 기다린다) + 3 s. 어느 쪽이든 WS 답은 마감에, REST 는 붙었으면 ≤ 3 s |
 
+> **이후 바뀜(IM-36 확인)**: 아래 '남은 것'의 잠금 · 캐시는 이제 `StatusService.cachedPublicStatusOrNull`(`statusLock` · 3 s 캐시, `WsHub` 는 그 함수를 받는다)에 있다.
+> ADR-032 의 `RedisBreaker` 가 `safeHash` 의 첫 무응답에 5 s 동안 열려 그동안의 읽기는 곧바로 'redis unavailable' 표시로 답하고, 다시 닫을지는 뒤 스레드의
+> PING 이 정한다 — 그래서 Redis 가 멈춘 동안 우편함이 기다리는 것은 장애마다 첫 명령 하나(상한 3 s)다(9 s 합이 아니다). 우편함 밖으로 옮기는 일은 그만큼 작아졌다.
+
 **남은 것(이 개정의 범위 밖 — 같은 종류)**: heartbeat · 초기 세트의 status 메시지는 여전히 우편함에서 Redis 를 읽는다 — `WsHub.statusPayload`
 (3 s 캐시)가 허브 전체 잠금(`statusLock`) 안에서 `StatusService.publicStatus` 를 부르고, 그 안의 `safeHash` 셋(collector heartbeat · radar_kr meta · active
 providers — HGETALL)이 각 명령 상한 3 s 를 기다릴 수 있다(설정값의 합 ≤ 9 s, 잰 값 아님). Redis 가 멈춘 동안에는 heartbeat 주기(30 s)마다 한 세션이 그만큼

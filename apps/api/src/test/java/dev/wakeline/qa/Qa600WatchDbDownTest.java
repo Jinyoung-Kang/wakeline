@@ -38,7 +38,7 @@ class Qa600WatchDbDownTest {
         Instant now = Instant.now();
         SnapshotStore snapshots = new SnapshotStore();
         snapshots.replaceIfNewer(new Snapshot(snapshots.nextVersion(), "region", "adsb_lol", now, now, "-", Map.of("71be01",
-                new AircraftState("71be01", "KAL081", null, null, null, 37.4, 126.5, 30000, 450.0, 90.0, 0.0, false, "1200", now, "adsb_lol", now, 0, false))));
+                new AircraftState("71be01", "KAL081", null, null, null, 37.4, 126.5, 30000, 450.0, 90.0, 0.0, false, "1200", now, "adsb_lol", now, 0, false))), now.toEpochMilli());
         EngineService engine = mock(EngineService.class);
         when(engine.activeAlerts(null)).thenReturn(List.of());
         AirportRepository airports = mock(AirportRepository.class);

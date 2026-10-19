@@ -8,6 +8,8 @@
  *   공급자 — 다른 공급자가 없어서, 없으면 빈 값). none_since 가 비어 있으면 공급자가 있다. 다시 시도 중이어도 공급자 없음이다(일하는 공급자가 없다 —
  *   리뷰 2026-09-30: 수집기 첫 판은 이때 상태를 비워 초록 'region: adsb_fi' 였다).
  * 수집기가 멈추면 이 값을 지울 주체가 없다 — 지역 피드의 나이(STALE)가 함께 보인다.
+ * - error: 수집기 값이 아니다 — api 가 Redis 를 읽지 못하면 해시 자리에 싣는 표시 {"error":"redis unavailable"}(StatusService.safeHash · 계약 v5 §G24).
+ *   작업이 아니다(전에는 밑줄 없는 키라 작업으로 읽혀 운영 탭에 초록 'error: redis unavailable' 배지가 그려졌다 — IM-16). 경고 글자는 lib/ops activeReadError(운영 화면 전용 — 이 모듈은 상태 바와 함께 첫 화면 JS 에 실린다).
  */
 import { fmtKst, timeParts } from "./time";
 
@@ -37,9 +39,12 @@ const iso = (v: unknown): string | null => {
   return s && /(Z|[+-]\d\d:?\d\d)$/.test(s) && timeParts(s) ? s : null;
 };
 
+/** api 가 Redis 를 읽지 못했다는 표시의 키(위 머리말) — 작업 이름이 아니다 */
+const API_ERROR = "error";
+
 export function jobProvider(active: Record<string, string> | null | undefined, job: string): JobProvider | null {
   const noneRaw = str(active?.[`${job}_none_since`]);
-  if (!active || (!(job in active) && !noneRaw)) return null; // 한 번도 고르지 못한 작업(예: 전세계 — OpenSky 설정 안 됨)도 공급자 없음이면 있다
+  if (!active || job === API_ERROR || (!(job in active) && !noneRaw)) return null; // 한 번도 고르지 못한 작업(예: 전세계 — OpenSky 설정 안 됨)도 공급자 없음이면 있다
   return {
     job, name: str(active[job]) || null, reason: str(active[`${job}_reason`]), since: iso(active[`${job}_since`]),
     none: noneRaw
@@ -49,12 +54,12 @@ export function jobProvider(active: Record<string, string> | null | undefined, j
 }
 
 const NONE_SUFFIX = "_none_since";
-/** 작업들(밑줄 없는 키 · 공급자 없음이 적힌 작업 — 수집기가 쓴 순서) */
+/** 작업들(밑줄 없는 키 · 공급자 없음이 적힌 작업 — 수집기가 쓴 순서). api 의 표시 키 error 는 작업이 아니다(lib/ops activeReadError) */
 export function activeJobs(active: Record<string, string> | null | undefined): JobProvider[] {
   const jobs: string[] = [];
   for (const k of Object.keys(active ?? {})) {
     const job = !k.includes("_") ? k : k.endsWith(NONE_SUFFIX) && str(active![k]) ? k.slice(0, -NONE_SUFFIX.length) : null;
-    if (job && !job.includes("_") && !jobs.includes(job)) jobs.push(job);
+    if (job && job !== API_ERROR && !job.includes("_") && !jobs.includes(job)) jobs.push(job);
   }
   return jobs.map((j) => jobProvider(active, j)!);
 }

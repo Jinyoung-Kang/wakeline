@@ -13,8 +13,9 @@ import java.util.Map;
 /**
  * 하나만 받는 요청 파라미터가 두 번 이상 오면 400 BAD_REQUEST(계약 v5 §G43 — QA 2026-10 기능 개선 제안 4). 예전에는 Spring 이 너그럽게 읽었다: 형이 있으면
  * 첫 값(from=a&amp;from=b → a), 글자면 쉼표로 이어 붙였다(hazard=TS&amp;hazard=ICE → "TS,ICE" — 일치 0건). 어느 값을 뜻했는지 서버가 고르지 않는다.
- * 여러 값을 받는 파라미터(List · 배열 — 운영 로그의 level · service)는 그대로. 컨트롤러가 선언한 {@code @RequestParam} 만 본다(선언하지 않은 이름은 쓰지
- * 않으므로 상관없다). 여기서 던진 {@link Problem} 은 {@link ProblemAdvice} 가 problem+json 으로 답한다.
+ * 여러 값을 받는 파라미터(List · 배열 · Map)는 그대로. 컨트롤러가 선언한 {@code @RequestParam} 만 본다 — 선언하지 않고 요청에서 바로 읽는 이름은
+ * 여러 값을 받는 운영 로그의 level · service 뿐이다(LogsController — @RequestParam List 의 글자 → 목록 변환이 제어 문자를 지워서). 여기서 던진
+ * {@link Problem} 은 {@link ProblemAdvice} 가 problem+json 으로 답한다.
  */
 public final class SingleValueParams implements HandlerInterceptor {
     @Override

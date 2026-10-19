@@ -1,17 +1,25 @@
 "use client";
 import dynamic from "next/dynamic";
 import { prefetchDashboardPartsWhenIdle } from "@/components/DashboardParts";
+import { failedPart } from "@/components/LazyPart";
 import { LayerPanel } from "@/components/LayerPanel";
 import { RadarTimeline } from "@/components/RadarTimeline";
 import { SidePanel } from "@/components/SidePanel";
 import { StatusBar } from "@/components/StatusBar";
 import { loadMaplibre } from "@/lib/maplibre";
+import { setNoLiveFeed } from "@/lib/store";
 import { afterFirstPaint } from "@/lib/after-paint";
 
 // 지도 컴포넌트 청크와 MapLibre(public 배포본 — 지도 워커와 공용 청크를 한 번만 받는다, R-02)를 함께 받는다.
 // 받기는 첫 그리기 뒤에 시작한다(lib/after-paint — ADR-026 개정 2026-10-02): 서버가 그린 화면이 먼저 보이고, 지도 라이브러리의 내려받기 · 해석 ·
 // WebGL 준비가 첫 그리기를 붙잡지 않는다(소프트웨어 GL 에서 2–5 s — PERF §15). 그 사이 자리는 아래 격자 배경.
-const MapView = dynamic(() => afterFirstPaint().then(() => Promise.all([import("@/components/MapView"), loadMaplibre()])).then(([m]) => m.MapView), {
+// 받지 못하면 거절하지 않고 지도 자리에 까닭 · '다시 시도'(같은 두 가지를 다시 받는다 — components/LazyPart failedPart, IM-21). 거절하면 화면 전체의 오류 경계까지
+// 올라가 상태 바 · 알림 패널을 지웠고, 거절을 기억한 lazy 라 다시 시도로 돌아오지 않았다. 받지 못한 동안 실시간 피드(지도와 함께 시작한다 — components/map/useLiveFeed)는
+// 없으므로 스토어에 그렇게 적는다(conn "off" — 상태 바 · 알림 패널이 '연결 중'으로 보이지 않게, R9). 다시 시도로 지도가 뜨면 피드가 연결부터 다시 적는다
+const MapView = dynamic(() => afterFirstPaint().then(() => Promise.all([import("@/components/MapView"), loadMaplibre()])).then(([m]) => m.MapView).catch((e: unknown) => {
+  setNoLiveFeed();
+  return failedPart("지도", e, () => Promise.all([import("@/components/MapView"), loadMaplibre()]).then(([m]) => m.MapView), { frameClassName: "grid-bg flex h-full w-full flex-col justify-center p-3 text-[11px]" });
+}), {
   ssr: false, loading: () => <div className="grid-bg h-full w-full" />,
 });
 

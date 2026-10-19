@@ -1,6 +1,9 @@
-# secrets
+# secrets — .dockerignore · tools/scan_lib.sh(repo_copy)와 같은 규칙: .env 와 그 변형(.env.bak · .env.aws · .env.local …)은 모두 빼고, 이름만 적은 example 만 추적한다(IM-06)
 .env
+.env.*
 *.env.local
+!.env.example
+!.env.aws.example
 # build
 apps/api/build/
 apps/api/.gradle/

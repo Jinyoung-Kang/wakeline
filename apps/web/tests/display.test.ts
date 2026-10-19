@@ -1,8 +1,11 @@
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { band, BASE_ASSUMED_LABEL, fmtBool, fmtEta, TOP_UNKNOWN_LABEL } from "@/lib/format";
 import { activeSigmetFeatures, isExpired, sigmetBandSource, topAboveFromRaw } from "@/lib/sigmet";
 import { closeReasonLabel, etaRemainingS } from "@/lib/alerts";
 import { evidenceBand, evidenceBandSource } from "@/lib/evidence-band";
+import { EvidenceCard } from "@/components/EvidenceCard";
 import { appendTrackPoint, mergeTrack, pointFromState, trackFeatureCollection, trackFromRest } from "@/lib/track";
 import { predictionFeature, predictionKey, predictionTargets } from "@/lib/maplayers";
 import type { AircraftState, Alert, SelectedInfo, SigmetCollection, SigmetProps } from "@/lib/types";
@@ -77,6 +80,19 @@ describe("alerts: ETA countdown, close reasons, evidence band", () => {
     expect(evidenceBand({})).toBeNull();
     expect(evidenceBandSource({ base_assumed_surface: true, top_assumed_unbounded: true }, null, null)).toEqual({ base_source: "assumed_surface", top_source: "unknown", top_above: false });
     expect(evidenceBandSource({}, { base_source: "json", top_source: "raw_text", raw_text: "TOP ABV FL400" }, 40000)).toEqual({ base_source: "json", top_source: "raw_text", top_above: true });
+  });
+  it("evidence card: a 'TOP ABV FLnnn' top (lower bound) is named as the unbounded-top assumption the judge made (IM-01)", () => {
+    // 판정(api SigmetRecord.putBand)이 'FLnnn 이상'을 무제한으로 가정하면 근거에 top_is_lower_bound · top_assumed_unbounded 를 남긴다 — 카드도 가정이라고 밝힌다
+    const obs = (evidence: Record<string, unknown>): Alert => ({ id: 1, kind: "OBSERVED", hex: "h", sigmet_id: "GVSC:1", fir_id: "GVSC", hazard: "TS",
+      entered_at: "2026-09-27T05:09:00Z", eta_s: null, alt_ft: 41000, estimated: false, evidence: { judged_at: "2026-09-27T05:09:00Z", ...evidence } });
+    const assumptions = (a: Alert) => /data-testid="evidence-assumptions">(.*?)<\/div>/.exec(renderToStaticMarkup(createElement(EvidenceCard, { a })))?.[1].replace(/<!-- -->/g, "") ?? null;
+    const lower = assumptions(obs({ band_ft: [0, 40000], base_source: "json", top_source: "raw_text_lower_bound", top_is_lower_bound: true, top_assumed_unbounded: true }));
+    expect(lower).toBe("판정 가정: 상한은 그 값 이상 → 무제한으로 가정");
+    // 판정의 표시(top_assumed_unbounded)만 있어도 같다 — 발표값이 있는 상한을 '미발표'라고 하지 않는다
+    expect(assumptions(obs({ band_ft: [0, 40000], base_source: "json", top_source: "json", top_assumed_unbounded: true }))).toBe("판정 가정: 상한은 그 값 이상 → 무제한으로 가정");
+    // 상한 미발표는 그대로, 고정 상한(json)에는 상한 가정이 없다
+    expect(assumptions(obs({ band_ft: [0, null], base_source: "json", top_source: "unknown", top_assumed_unbounded: true }))).toBe("판정 가정: 상한 미발표 → 무제한으로 가정");
+    expect(assumptions(obs({ band_ft: [0, 40000], base_source: "json", top_source: "json" }))).toBeNull();
   });
   it("unknown booleans render as —", () => {
     expect(fmtBool(undefined)).toBe("—");

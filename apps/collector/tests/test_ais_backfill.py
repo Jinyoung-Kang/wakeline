@@ -8,11 +8,14 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Iterable
 from datetime import datetime
 from typing import Any
 
+import pytest
 from fakes import FakeRedis
+from redis.exceptions import TimeoutError as RedisTimeoutError
 from test_ais_helpers import decode, validator
 
 from wakeline_collector.ais import sink as sink_mod
@@ -40,8 +43,30 @@ class Clock:
         return self.t
 
 
-def _setup(**book_kw: Any) -> tuple[FakeRedis, ShipBook, AisSink, Clock]:
-    r = FakeRedis()
+class HangingRedis(FakeRedis):
+    """답하지 않는 Redis(pause · 망 단절): hanging 이면 XADD 가 socket_timeout 만큼 기다린 뒤 TimeoutError 를 낸다. 기다리는 동안 이벤트 루프는
+    다른 태스크(정리 — 위치를 받아들인다)를 돌린다. 바로 실패하는 FakeRedis.down 은 그 틈이 없다. gate 가 있으면 시간 초과 대신 gate 가 열릴
+    때까지 기다린다(그사이 취소)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.hanging = False
+        self.waiting = asyncio.Event()  # XADD 가 기다리기 시작했다
+        self.gate: asyncio.Event | None = None
+
+    async def xadd(self, stream, fields, **kw):
+        if not self.hanging:
+            return await super().xadd(stream, fields, **kw)
+        self.waiting.set()
+        if self.gate is not None:
+            await self.gate.wait()
+        else:
+            await asyncio.sleep(0.01)
+        raise RedisTimeoutError("Timeout reading from socket")
+
+
+def _setup(r: FakeRedis | None = None, **book_kw: Any) -> tuple[FakeRedis, ShipBook, AisSink, Clock]:
+    r = r or FakeRedis()
     clock = Clock(T0)
     book = ShipBook("aisstream", **book_kw)
     shards = ShardSet("aisstream")
@@ -191,6 +216,158 @@ async def test_a_failure_while_sending_the_held_samples_keeps_the_rest_in_order(
     rows = _rows_like_the_api(_entries(r))
     assert all(len(v) == 2 for v in rows.values()) and len(rows) == 5, rows
     assert not book.holding
+
+
+async def test_positions_received_while_a_held_send_waits_on_redis_stay_within_the_cap():
+    """XADD 가 기다리는 동안(답하지 않는 Redis — socket_timeout) 정리 태스크가 받은 위치도 상한을 지킨다. 예전에는 보낼 묶음을 꺼내 backlog 를
+    비운 채 기다려 그동안의 표본이 상한 검사를 지나쳤고, 실패하면 꺼낸 묶음을 되돌려 실패한 발행마다 상한 위로 쌓였다(그 표본은 dropped 로도
+    세지 않았다 — 메모리가 끝없이 늘어 OOM 이면 모은 것을 공백 기록 없이 모두 잃는다)."""
+    r = HangingRedis()
+    _r, book, sink, clock = _setup(r, backfill_max=3)
+    ships = ("440000001", "440000002", "440000003")
+    _receive(book, clock, *[(m, T0 + 5) for m in ships])
+    assert await sink.flush() == 1  # 장애 전: 평소대로
+    r.hanging = True
+    _receive(book, clock, *[(m, T0 + 10) for m in ships])
+    assert await sink.flush() == 0 and book.holding and book.backlog == 3  # 표본 3(보내지 못한 최신값) — 상한
+
+    async def receive_while_waiting(k: int) -> None:
+        await asyncio.wait_for(r.waiting.wait(), 1)
+        _receive(book, clock, *[(m, T0 + 60 * k + i) for i, m in enumerate(ships)])  # 새 분(창 k)의 첫 위치
+
+    failures = 4
+    for k in range(1, failures + 1):
+        r.waiting.clear()
+        sent, _ = await asyncio.gather(sink.flush(), receive_while_waiting(k))
+        assert sent == 0 and book.holding
+        assert book.backlog <= book.backfill_max, f"failed flush {k}: backlog {book.backlog} > cap {book.backfill_max}"
+    assert book.backlog == 3 and book.backfill_dropped == 3 * failures  # 상한을 넘은 (MMSI, 창)은 모두 세었다
+
+    r.hanging = False
+    clock.t = T0 + 300
+    await sink.flush()
+    await sink.publish_gaps()
+    entries = _entries(r)
+    (gap,) = [e for e in entries if e["kind"] == "ais_gap"]
+    assert gap["started_at"] == iso_ms(T0 + 60) and gap["ended_at"] == iso_ms(T0 + 300)  # 처음 모으지 못한 위치부터
+    assert str(3 * failures) in gap["reason"]
+    rows = _rows_like_the_api(entries)
+    assert rows["440000001"] == [iso_ms(T0 + 5), iso_ms(T0 + 60 * failures)]  # 창 0(장애 전) · 최신값
+    assert not book.holding and book.backlog == 0
+
+
+async def test_a_report_first_received_while_the_first_failed_xadd_waits_is_held():
+    """장애가 시작되는 첫 XADD 를 기다리는 동안(답하지 않는 Redis — socket_timeout) 처음 받은 선박의 그 분 보고도 모은다. 예전에는 hold 가 그
+    발행에 든(보내지 못한) 선박만 표본으로 넣었다 — 기다리는 동안 처음 받은 선박은 모으기 전이라 '바뀜' 표시만 남았고, 장애 중 다음 분의 보고가
+    그 위치를 덮어 복구 뒤 스트림에 실리지 않았다(그 분의 행이 공백 기록 없이 빠졌다). 장애가 없었다면 다음 발행에 실려 그 분의 행이 됐다."""
+    r = HangingRedis()
+    _r, book, sink, clock = _setup(r)
+    _receive(book, clock, ("440000001", T0 + 1))  # 이번 발행에 드는 선박
+    r.hanging = True
+
+    async def receive_while_waiting() -> None:
+        await asyncio.wait_for(r.waiting.wait(), 1)
+        _receive(book, clock, ("440000002", T0 + 59))  # 창 0 의 하나뿐인 보고 — 발행에서 꺼낼 때는 '바뀜' 이 아니었던 선박
+
+    sent, _ = await asyncio.gather(sink.flush(), receive_while_waiting())
+    assert sent == 0 and book.holding
+    r.hanging, r.down = False, True
+    _receive(book, clock, ("440000002", T0 + 75))  # 장애 중 창 1
+    assert await sink.flush() == 0
+
+    r.down = False
+    clock.t = T0 + 90
+    await sink.flush()
+    rows = _rows_like_the_api(_entries(r))
+    assert rows["440000002"] == [iso_ms(T0 + 59), iso_ms(T0 + 75)], "기다리는 동안 받은 창 0 의 보고가 빠졌다"
+    assert rows["440000001"] == [iso_ms(T0 + 1)]
+    assert not book.holding and book.backlog == 0
+
+
+async def test_a_new_minute_received_after_its_part_was_sent_is_held_when_a_later_part_fails(monkeypatch):
+    """여러 조각으로 나눈 발행에서 앞 조각은 보냈고 뒤 조각의 XADD 를 기다리는 동안, 이미 보낸 선박이 새 분(창)의 보고를 보내면 그것도 모은다.
+    hold 가 보내지 못한 조각의 선박만 표본으로 넣던 때에는 그 보고도 '바뀜' 표시만 남아 장애 중 다음 분의 보고에 덮였다."""
+    monkeypatch.setattr(sink_mod, "CHUNK", 1)
+    r = HangingRedis()
+    _r, book, sink, clock = _setup(r)
+    _receive(book, clock, ("440000001", T0 + 1), ("440000003", T0 + 2))
+    orig = r.xadd
+    calls = 0
+
+    async def second_part_hangs(stream, fields, **kw):
+        nonlocal calls
+        calls += 1
+        r.hanging = calls == 2
+        return await orig(stream, fields, **kw)
+
+    r.xadd = second_part_hangs  # type: ignore[method-assign]
+    first_seen: dict[str, str] = {}
+
+    async def receive_while_waiting() -> None:
+        await asyncio.wait_for(r.waiting.wait(), 1)
+        (ship,) = _entries(r)[0]["ships"]  # 보낸 앞 조각의 선박(조각 순서는 집합 순서라 정하지 않는다)
+        first_seen["mmsi"], first_seen["at"] = ship["mmsi"], ship["seen_at"]
+        _receive(book, clock, (ship["mmsi"], T0 + 61))  # 창 1 의 첫 보고
+
+    sent, _ = await asyncio.gather(sink.flush(), receive_while_waiting())
+    assert sent == 1 and book.holding
+    r.xadd = orig  # type: ignore[method-assign]
+    r.hanging, r.down = False, True
+    _receive(book, clock, (first_seen["mmsi"], T0 + 130))  # 장애 중 창 2
+    assert await sink.flush() == 0
+
+    r.down = False
+    clock.t = T0 + 140
+    await sink.flush()
+    rows = _rows_like_the_api(_entries(r))
+    assert rows[first_seen["mmsi"]] == [first_seen["at"], iso_ms(T0 + 61), iso_ms(T0 + 130)], "보낸 뒤 받은 창 1 의 보고가 빠졌다"
+    assert not book.holding and book.backlog == 0
+
+
+async def test_an_unsent_position_overwritten_while_the_failed_xadd_waits_is_held_as_it_was_sent():
+    """보내지 못한 발행에 실렸던 위치 그 값을 모은다. 예전에는 hold 가 보내지 못한 선박의 지금 상태(ship.state)만 표본으로 넣었다 — 실패한 XADD 를
+    기다리는 동안(답하지 않는 Redis — socket_timeout) 같은 선박이 다음 분을 보고하면 실패한 발행의 앞 분 위치가 backlog 에도 '바뀜' 에도 남지 않아
+    그 분의 행이 공백 기록 없이 빠졌다(A: :58 → 행 :01 하나). 같은 분이면 행 수는 같아도 값이 장애가 없을 때와 달랐다(B: :40 대신 :42)."""
+    r = HangingRedis()
+    _r, book, sink, clock = _setup(r)
+    _receive(book, clock, ("440000002", T0 + 40), ("440000001", T0 + 58))  # 창 0 — 둘 다 이번 발행에 든다
+    r.hanging = True
+
+    async def receive_while_waiting() -> None:
+        await asyncio.wait_for(r.waiting.wait(), 1)
+        _receive(book, clock, ("440000002", T0 + 42), ("440000001", T0 + 61))  # B 는 같은 창 0, A 는 창 1
+
+    sent, _ = await asyncio.gather(sink.flush(), receive_while_waiting())
+    assert sent == 0 and book.holding
+    r.hanging = False
+    clock.t = T0 + 90
+    await sink.flush()
+    rows = _rows_like_the_api(_entries(r))
+    # 장애가 없었다면: 이번 발행이 :58 · :40 을, 다음 발행이 :01 · :42 를 싣는다 → A 는 창마다 한 행, B 는 창 0 의 :40
+    assert rows["440000001"] == [iso_ms(T0 + 58), iso_ms(T0 + 61)], "실패한 발행에 실렸던 창 0 의 위치가 빠졌다"
+    assert rows["440000002"] == [iso_ms(T0 + 40)], "같은 창이면 보내지 못한 그 값이 행이다"
+    assert not book.holding and book.backlog == 0
+
+
+async def test_a_held_send_cancelled_mid_xadd_keeps_the_positions_for_the_final_flush():
+    """종료 때 발행 루프가 모은 위치를 보내는 XADD 에서 취소돼도 그 위치를 떼지 않는다 — final() 의 flush 가 다시 보낸다."""
+    r = HangingRedis()
+    _r, book, sink, clock = _setup(r)
+    r.hanging = True
+    _receive(book, clock, ("440000001", T0 + 5), ("440000002", T0 + 6))
+    assert await sink.flush() == 0 and book.backlog == 2
+    r.waiting.clear()
+    r.gate = asyncio.Event()
+    t = asyncio.create_task(sink.flush())
+    await asyncio.wait_for(r.waiting.wait(), 1)
+    t.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await t
+    assert book.holding and book.backlog == 2
+    r.hanging = False
+    assert await sink.flush() == 2  # 모은 위치 1 + 최신값 1
+    assert [e.get("backfill", False) for e in _entries(r)] == [True, False]
+    assert not book.holding and book.backlog == 0
 
 
 async def test_the_start_of_holding_is_logged_once_per_outage_even_when_another_warning_took_the_throttle(caplog):

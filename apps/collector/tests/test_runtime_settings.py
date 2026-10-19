@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import logging
+from types import SimpleNamespace
+
 from fakes import FakeRedis
 
+from wakeline_collector import runtime_settings
 from wakeline_collector.config import settings
 from wakeline_collector.runtime_settings import KEY, RuntimeSettings
 
@@ -20,7 +24,7 @@ async def test_overrides_and_clamps():
             "metar_poll_s": "900",
             "aircraft_providers": "adsb_fi, adsb_lol ,",
             "region_center": "35.0,129.0",
-            "region_radius_nm": "900",
+            "region_radius_nm": "900",  # 운영 API 범위(50–250, 공급자 반경 상한 — IM-10) 밖 → 250
             "global_enabled": "false",
         },
     )
@@ -29,7 +33,7 @@ async def test_overrides_and_clamps():
     assert rt.region_poll_s == 120 and rt.global_poll_s == 60 and rt.sigmet_poll_s == 600
     assert rt.radar_poll_s == 30 and rt.metar_poll_s == 900
     assert rt.provider_order == ["adsb_fi", "adsb_lol"]
-    assert rt.region == (35.0, 129.0, 500) and rt.global_enabled is False
+    assert rt.region == (35.0, 129.0, 250) and rt.global_enabled is False
     await r.hset(KEY, mapping={"region_poll_s": "1"})
     await rt.refresh()
     assert rt.region_poll_s == 5
@@ -97,4 +101,51 @@ async def test_region_reads_like_the_api_region_settings_parse():
         await r.hset(KEY, "region_radius_nm", radius)
         rt = RuntimeSettings(r)  # type: ignore[arg-type]
         await rt.refresh()
-        assert rt.region[2] == max(50, min(500, want_nm)), radius
+        assert rt.region[2] == max(50, min(250, want_nm)), radius
+
+
+async def test_region_radius_is_cut_to_the_provider_limit_from_redis_and_from_the_env_default(monkeypatch):
+    """IM-10: 반경 범위는 50–250 NM — api SettingsService 와 같고 공급자 점 반경 조회의 상한(adsb.fi dist ≤ 250 NM, ADR-013)이다.
+    Redis 값(운영 API 를 거치지 않은 미러 · 직접 고친 값 포함)도, Redis 가 비었을 때의 .env 기본값(REGION_RADIUS_NM)도 이 범위로 자른다."""
+    r = FakeRedis()
+    await r.hset(KEY, "region_radius_nm", "400")
+    rt = RuntimeSettings(r)  # type: ignore[arg-type]
+    await rt.refresh()
+    assert rt.region[2] == 250
+    monkeypatch.setattr(settings, "region_radius_nm", 400)
+    rt = RuntimeSettings(FakeRedis())  # type: ignore[arg-type]
+    await rt.refresh()
+    assert rt.region[2] == 250
+
+
+async def test_refresh_failures_warn_once_a_minute_with_the_running_count_and_recovery_logs_one_info(monkeypatch, caplog):
+    """IM-26: Redis 장애 동안 region 작업(기본 10 s)이 주기마다 refresh 한다 — 실패 WARN 은 다른 Redis 도우미(budget · status · demand)처럼
+    60 s 에 한 줄(그동안 이어진 실패 수를 싣는다), 다시 읽히면 INFO 한 줄. 첫 실패 WARN 의 문구는 그대로다(로그 지문 — /logs 의 '해결' 표시)."""
+    clk = [0.0]  # 기동 직후처럼 작은 단조 시계 값에서도 첫 실패는 알린다
+    monkeypatch.setattr(runtime_settings, "time", SimpleNamespace(monotonic=lambda: clk[0]), raising=False)
+    caplog.set_level(logging.INFO, logger="settings")
+
+    def lines(level: int) -> list[str]:
+        return [x.getMessage() for x in caplog.records if x.name == "settings" and x.levelno == level]
+
+    r = FakeRedis()
+    await r.hset(KEY, mapping={"region_poll_s": "30"})
+    rt = RuntimeSettings(r)  # type: ignore[arg-type]
+    await rt.refresh()
+    r.down = True
+    for _ in range(6):  # t = 0, 10, … 50 s
+        await rt.refresh()
+        clk[0] += 10
+    assert lines(logging.WARNING) == ["settings refresh failed: ConnectionError"]
+    await rt.refresh()  # t = 60 s — 첫 WARN 뒤 60 s
+    warns = lines(logging.WARNING)
+    assert len(warns) == 2 and warns[1].startswith("settings refresh failed: ConnectionError — 7 failures in a row"), warns
+    assert rt.region_poll_s == 30  # 장애 동안 마지막 값
+    clk[0] += 10
+    r.down = False
+    await r.hset(KEY, mapping={"region_poll_s": "40"})
+    await rt.refresh()  # t = 70 s — 회복
+    await rt.refresh()  # 정상 읽기는 더 남기지 않는다
+    infos = lines(logging.INFO)
+    assert len(infos) == 1 and "recovered after 7 failure(s)" in infos[0], infos
+    assert len(lines(logging.WARNING)) == 2 and rt.region_poll_s == 40

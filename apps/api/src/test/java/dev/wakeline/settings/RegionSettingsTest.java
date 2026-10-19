@@ -3,6 +3,7 @@ package dev.wakeline.settings;
 import dev.wakeline.platform.config.AppProperties;
 import dev.wakeline.platform.web.Problem;
 import dev.wakeline.geo.Bbox;
+import dev.wakeline.demand.HotCell;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.core.HashOperations;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -29,13 +30,48 @@ class RegionSettingsTest {
 
     @Test
     void parsesLikeTheCollector() {
-        assertThat(RegionSettings.parse("35.5,139.7", "300", DEF)).isEqualTo(new RegionSettings.Region(35.5, 139.7, 300));
-        assertThat(RegionSettings.parse(" 35.5 , 139.7 ", "300", DEF)).isEqualTo(new RegionSettings.Region(35.5, 139.7, 300));
+        assertThat(RegionSettings.parse("35.5,139.7", "200", DEF)).isEqualTo(new RegionSettings.Region(35.5, 139.7, 200));
+        assertThat(RegionSettings.parse(" 35.5 , 139.7 ", "200", DEF)).isEqualTo(new RegionSettings.Region(35.5, 139.7, 200));
         assertThat(RegionSettings.parse(null, null, DEF)).isEqualTo(DEF);                  // 해시에 값 없음 → 기본값
         assertThat(RegionSettings.parse("nonsense", "abc", DEF)).isEqualTo(DEF);           // 해석 실패 → 기본값
         assertThat(RegionSettings.parse("1,2,3", "250", DEF)).isEqualTo(DEF);
-        assertThat(RegionSettings.parse("36,127", "10", DEF).radiusNm()).isEqualTo(50);    // [50, 500] 로 자른다
-        assertThat(RegionSettings.parse("36,127", "9999", DEF).radiusNm()).isEqualTo(500);
+        assertThat(RegionSettings.parse("36,127", "10", DEF).radiusNm()).isEqualTo(50);    // [50, 250] 로 자른다
+        assertThat(RegionSettings.parse("36,127", "250", DEF).radiusNm()).isEqualTo(250);
+        assertThat(RegionSettings.parse("36,127", "9999", DEF).radiusNm()).isEqualTo(250);
+    }
+
+    /**
+     * IM-10: 관심 지역 반경의 상한은 공급자 상한 250 NM(adsb.fi 공식 문서 '최대 250 NM' — 핫 리전 HotCell.MAX_RADIUS_NM 과 같은 값)이다.
+     * 전에는 50–500 을 받아 수집기가 /dist/400 을 그대로 부르고, api 는 그 400 NM 원 안을 '관심 지역이 덮음'으로 보아 핫 리전을 막았다.
+     * 저장 검증은 250 을 넘는 값을 400 으로 거절하고, 이미 저장된 값과 .env 기본값은 읽을 때 250 으로 자른다.
+     */
+    @Test
+    void regionRadiusStopsAtTheProviderRadius() {
+        var f = JsonNodeFactory.instance;
+        for (int ok : new int[]{50, 120, HotCell.MAX_RADIUS_NM})
+            assertThatCode(() -> SettingsService.validate("region_radius_nm", f.numberNode(ok))).as("" + ok).doesNotThrowAnyException();
+        for (int bad : new int[]{49, HotCell.MAX_RADIUS_NM + 1, 400, 500})
+            assertThatThrownBy(() -> SettingsService.validate("region_radius_nm", f.numberNode(bad))).as("" + bad).isInstanceOf(Problem.class)
+                    .satisfies(e -> assertThat(((Problem) e).code()).isEqualTo("BAD_VALUE"))
+                    .hasMessageContaining("[50," + HotCell.MAX_RADIUS_NM + "]");
+        // 이미 저장된 값(범위가 50–500 이던 때 저장한 400)은 읽을 때 자른다
+        assertThat(RegionSettings.parse("36.5,127.8", "400", DEF).radiusNm()).isEqualTo(HotCell.MAX_RADIUS_NM);
+        // .env 기본값(WAKELINE_REGION_RADIUS_NM=400)도 같다
+        AppProperties props = new AppProperties("", "36.5,127.8", 400, 120, 200, 5, 10, 30, 2500, 0, "classpath:schemas", 72, 30, 120, List.of(), List.of());
+        assertThat(RegionSettings.defaults(props)).isEqualTo(new RegionSettings.Region(36.5, 127.8, HotCell.MAX_RADIUS_NM));
+    }
+
+    /** IM-10: Redis 해시(collector 가 읽는 값)에 남은 400 도 api 의 관심 지역에서는 250 이다 — 수집기와 같은 자르기. */
+    @Test
+    @SuppressWarnings("unchecked")
+    void storedRadiusAboveTheProviderRadiusIsReadAs250() {
+        HashOperations<String, Object, Object> hash = mock(HashOperations.class);
+        when(hash.multiGet(any(), anyCollection())).thenReturn(List.of("36.5,127.8", "400"));
+        StringRedisTemplate redis = new StringRedisTemplate() {
+            @Override public <HK, HV> HashOperations<String, HK, HV> opsForHash() { return (HashOperations<String, HK, HV>) (HashOperations<?, ?, ?>) hash; }
+        };
+        AppProperties props = new AppProperties("", "36.5,127.8", 250, 120, 200, 5, 10, 30, 2500, 0, "classpath:schemas", 72, 30, 120, List.of(), List.of());
+        assertThat(new RegionSettings(redis, null, null, props).refreshNow()).isEqualTo(new RegionSettings.Region(36.5, 127.8, 250));
     }
 
     @Test

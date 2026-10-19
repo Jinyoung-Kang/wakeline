@@ -35,6 +35,7 @@ import org.springframework.web.context.request.async.AsyncRequestNotUsableExcept
 import org.springframework.web.util.DisconnectedClientHelper;
 import org.springframework.web.method.annotation.HandlerMethodValidationException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.servlet.HandlerMapping;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.net.URI;
@@ -47,7 +48,8 @@ import java.util.regex.Pattern;
  * 모든 오류를 application/problem+json(RFC 9457)으로. 확장 필드 code · request_id. 스택·내부 메시지는 싣지 않는다.
  * <ul>
  *   <li>DB·Redis 연결 실패·풀 대기 초과·일시 오류 → 503 + Retry-After: 10 (5.1절 'DB 종료·느림', 계약 §2). WARN 한 줄(스택 없음) — 원인은 예외가
- *       스스로 말하는 것(SQLSTATE · 예외 종류)만, 그리고 경로 + 쿼리 문자열(가림 규칙을 거쳐) · 걸린 시간 · 공개 조회면 끊긴 문장의 이름과 그 한도
+ *       스스로 말하는 것(SQLSTATE · 예외 종류)만, 그리고 경로(매칭된 경로 패턴 — 원문은 따옴표 안, {@link #loggedPath}) + 쿼리 문자열(가림 규칙을
+ *       거쳐) · 걸린 시간 · 공개 조회면 끊긴 문장의 이름과 그 한도
  *       (호출부의 이름표 — Sql.publicRead)를 싣는다(조사 2026-10-01 오류 F3). 컨트롤러가 DB 없이 답하는 길(503 · meta.db_unavailable)도 같은 줄을
  *       남긴다({@link #storeUnavailable} · {@link #answeredWithoutStore}).
  *       잠금 대기 한도(SQLSTATE 55P03)는 Spring 의 기본 번역이 모르는 부류라 UncategorizedSQLException 으로 오지만 같은 503 이다(예전: 500 + ERROR).
@@ -142,7 +144,7 @@ public class ProblemAdvice {
 
     /**
      * 저장소(DB·Redis)를 지금 쓸 수 없다 — 서버 버그가 아니므로 스택 없이 한 줄, 클라이언트에는 재시도 간격을 준다.
-     * 줄: {원인} request_id=… path=… [query="…"] elapsed_ms=… → 503: {예외 종류 ← 가장 안쪽 원인: 메시지}.
+     * 줄: {원인} request_id=… path=… [uri="…"] [query="…"] elapsed_ms=… → 503: {예외 종류 ← 가장 안쪽 원인: 메시지}.
      */
     @ExceptionHandler({DataAccessResourceFailureException.class, NonTransientDataAccessResourceException.class,
             TransientDataAccessException.class, RecoverableDataAccessException.class, CannotCreateTransactionException.class})
@@ -203,13 +205,40 @@ public class ProblemAdvice {
     }
 
     /**
+     * 컨트롤러 밖(보안 필터 체인 — 이 advice 가 닿지 않는다)에서 저장소를 못 써 부르는 쪽이 503 + Retry-After 로 답할 때: 저장소를 못 쓰는 예외면
+     * {@link #unavailable} 과 같은 모양의 WARN 한 줄을 남기고 돌아온다. 그 밖의 예외(결함 — 문법 · 권한 · 코드)는 그대로 던진다 → 필터 밖으로 나가
+     * 컨테이너가 500 + ERROR(스택)로 남긴다('잠시 뒤 재시도' 503 에 숨기지 않는다 — IM-24, OpsSessionLifetimeFilter 의 자격 확인).
+     */
+    public static void answeredUnavailable(RuntimeException e, HttpServletRequest req) {
+        if (!isUnavailable(e)) throw e;
+        warnUnavailable(e, req, ANSWERED_503);
+    }
+
+    /**
      * 저장소를 못 써서 503 또는 DB 없이 답한 요청의 WARN 한 줄(스택 없음):
-     * {원인} request_id=… path=… [query="…"] elapsed_ms=… [statement=… statement_limit_s=…] → {무엇으로 답했는지}: {예외 종류 ← 가장 안쪽 원인: 메시지}.
+     * {원인} request_id=… path=… [uri="…"] [query="…"] elapsed_ms=… [statement=… statement_limit_s=…] → {무엇으로 답했는지}: {예외 종류 ← 가장 안쪽 원인: 메시지}.
+     * 경로는 {@link #loggedPath} — 같은 장애가 경로의 id(항공기 hex · 공항 ICAO)마다 다른 로그 묶음이 되지 않게.
      */
     static void warnUnavailable(Throwable e, HttpServletRequest req, String answered) {
         Long elapsed = RequestIdFilter.elapsedMs(req);
-        log.warn("{} request_id={} path={}{} elapsed_ms={}{} → {}: {}", cause(e), RequestIdFilter.current(req), req.getRequestURI(), query(req),
+        log.warn("{} request_id={} {}{} elapsed_ms={}{} → {}: {}", cause(e), RequestIdFilter.current(req), loggedPath(req), query(req),
                 elapsed == null ? "-" : elapsed, statement(e), answered, brief(e));
+    }
+
+    /**
+     * 서버 로그 스트림으로 가는 줄(WARN · ERROR)의 경로(IM-25): 매칭된 경로 패턴({@link HandlerMapping#BEST_MATCHING_PATTERN_ATTRIBUTE} — 코드가 정한
+     * 글자, 예 {@code /api/v1/aircraft/{hex}})을 따옴표 없이, 원문이 그와 다르면 원문을 따옴표 안에 덧붙인다
+     * ({@code path=/api/v1/aircraft/{hex} uri="/api/v1/aircraft/71be01"}). 패턴이 없으면(보안 필터 체인 — 컨트롤러 매핑 전) 원문만 따옴표 안에
+     * ({@code path="/api/v1/ops/…"}). 로그 지문(LogEvents.template)은 따옴표 안을 '…' 로 바꾸고 16진 8자 이상 · 숫자열만 지운다 — 원문을 따옴표 밖에
+     * 싣던 때는 한 장애가 항공기 hex · 공항 ICAO 마다 다른 묶음(/ops/logs/groups)이 되고 억제도 묶음마다 따로 돌았다. 원문은 쿼리 문자열과 같게
+     * 가림 규칙(LogMasker)을 거치고 따옴표는 %22 로 적는다(따옴표 구간이 끊기지 않게).
+     */
+    public static String loggedPath(HttpServletRequest req) {
+        String raw = req.getRequestURI();
+        String quoted = "\"" + LogMasker.maskAll(raw).replace("\"", "%22") + "\"";
+        if (req.getAttribute(HandlerMapping.BEST_MATCHING_PATTERN_ATTRIBUTE) instanceof String pattern && !pattern.isEmpty())
+            return pattern.equals(raw) ? "path=" + pattern : "path=" + pattern + " uri=" + quoted;
+        return "path=" + quoted;
     }
 
     /** Sql.tag 가 SQL 앞 주석으로 싣는 문장 이름표(이름 · 그 문장의 한도). Spring 은 실패한 문장의 SQL 을 예외 메시지('SQL [...]')에 싣는다. */
@@ -301,7 +330,7 @@ public class ProblemAdvice {
             log.debug("client gone while writing the response path={}: {}", req.getRequestURI(), brief(e));
             return null;
         }
-        log.error("unhandled error request_id={} path={}", RequestIdFilter.current(req), req.getRequestURI(), e);
+        log.error("unhandled error request_id={} {}", RequestIdFilter.current(req), loggedPath(req), e);
         return build(HttpStatus.INTERNAL_SERVER_ERROR, "INTERNAL", "internal error", "unexpected error", req);
     }
 
@@ -310,7 +339,7 @@ public class ProblemAdvice {
         HttpStatusCode sc = er.getStatusCode();
         HttpStatus st = HttpStatus.resolve(sc.value());
         if (st == null) st = sc.is4xxClientError() ? HttpStatus.BAD_REQUEST : HttpStatus.INTERNAL_SERVER_ERROR;
-        if (st.is5xxServerError()) log.warn("{} {} {} request_id={}: {}", st.value(), req.getMethod(), req.getRequestURI(), RequestIdFilter.current(req), e.getClass().getSimpleName());
+        if (st.is5xxServerError()) log.warn("{} {} {} request_id={}: {}", st.value(), req.getMethod(), loggedPath(req), RequestIdFilter.current(req), e.getClass().getSimpleName());
         else log.info("client error {} {} {} request_id={}: {}", st.value(), req.getMethod(), req.getRequestURI(), RequestIdFilter.current(req), e.getClass().getSimpleName());
         HttpHeaders headers = new HttpHeaders();
         headers.putAll(er.getHeaders());

@@ -1,6 +1,7 @@
 package dev.wakeline.ships.core;
 
 import dev.wakeline.geo.Bbox;
+import dev.wakeline.platform.support.FetchedAtGuard;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
@@ -206,7 +207,7 @@ public class ShipStore {
 
     /**
      * ships 메시지 하나를 반영한다(스트림 소비 스레드·부트스트랩). 정적 정보 먼저(같은 메시지의 위치가 새 선박을 만들 때 붙도록), 그다음 위치.
-     * @param nowMs 지금(ms) — 미래 시각 검사·정적 정보 보관 기준
+     * @param nowMs 지금(ms) — 미래 시각 검사·정적 정보 보관 · 봉투 fetched_at 단조 가드({@link FetchedAtGuard})의 기준
      */
     public Change apply(Collection<ShipState> states, Collection<ShipStatic> stats, Instant fetchedAt, String provider, long nowMs) {
         Set<String> changed = new HashSet<>();
@@ -239,7 +240,8 @@ public class ShipStore {
                 changed.add(s.mmsi());
                 if (newest == null || s.seenAt().isAfter(newest)) newest = s.seenAt();
             }
-            Instant fa = fetchedAt != null && (cur.fetchedAt == null || fetchedAt.isAfter(cur.fetchedAt)) ? fetchedAt : cur.fetchedAt;
+            // 봉투 fetched_at(meta 의 기준)은 단조 가드를 따른다 — 벽시계가 뒤로 간 뒤의 값도 받는다(IM-08). 위치는 MMSI 별 seen_at(공급자 시각)으로 따로 본다
+            Instant fa = fetchedAt != null && (cur.fetchedAt == null || FetchedAtGuard.newer(fetchedAt, cur.fetchedAt, nowMs)) ? fetchedAt : cur.fetchedAt;
             String pv = fa == fetchedAt && provider != null ? provider : cur.provider;
             view = new View(next == null ? cur.version : cur.version + 1, next == null ? cur.ships : Collections.unmodifiableMap(next),
                     fa, pv, newest, nowMs);

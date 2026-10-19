@@ -175,7 +175,7 @@ public class SettingsService {
             case "sigmet_poll_s" -> intRange(v, 60, 3600);
             case "radar_poll_s" -> intRange(v, 30, 3600);
             case "metar_poll_s" -> intRange(v, 300, 7200);
-            case "region_radius_nm" -> intRange(v, 50, 500);
+            case "region_radius_nm" -> intRange(v, RegionSettings.MIN_RADIUS_NM, RegionSettings.MAX_RADIUS_NM); // 공급자 상한 250 NM(IM-10)
             case "global_enabled" -> { if (!v.isBoolean()) throw Problem.badRequest("BAD_VALUE", "boolean required"); }
             case "aircraft_providers" -> {
                 if (!v.isString() || !v.asString().matches("^(adsb_lol|adsb_fi|opensky)(,(adsb_lol|adsb_fi|opensky))*$"))

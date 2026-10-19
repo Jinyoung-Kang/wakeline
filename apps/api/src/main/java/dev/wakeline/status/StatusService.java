@@ -201,8 +201,9 @@ public class StatusService {
     }
 
     /**
-     * collector heartbeat 의 adsb_fi_rps_1m(수집기 속도 상한이 센 실제 호출률). 값이 숫자가 아니거나, heartbeat 의 가장 최근 *_at 이
-     * 120 s 보다 오래되었으면(수집기가 멈춤 — 마지막 값이 지금 값이 아니다) null.
+     * collector heartbeat 의 adsb_fi_rps_1m(수집기 속도 상한이 센 실제 호출률). 값이 숫자가 아니거나, 수집기가 마지막으로 보고한 시각
+     * ({@link CollectorHeartbeat#latestReport} — *_resume_at 과 60 s 넘게 미래인 값은 세지 않는다)이 없거나 120 s 보다 오래되었으면(수집기가
+     * 멈춤 — 마지막 값이 지금 값이 아니다) null.
      */
     static Double adsbFiRps(Map<String, Object> hb, Instant now) {
         Object raw = hb.get("adsb_fi_rps_1m");
@@ -214,18 +215,18 @@ public class StatusService {
             return null;
         }
         if (!Double.isFinite(v) || v < 0 || v > 1000) return null;
-        Instant newest = null;
-        for (var e : hb.entrySet()) {
-            if (!String.valueOf(e.getKey()).endsWith("_at")) continue;
-            try {
-                Instant t = Instant.parse(String.valueOf(e.getValue()));
-                if (newest == null || t.isAfter(newest)) newest = t;
-            } catch (java.time.format.DateTimeParseException ignored) {
-                // 시각이 아닌 값은 건너뛴다
-            }
-        }
+        Instant newest = CollectorHeartbeat.latestReport(hb, now, StatusService::heartbeatTime);
         if (newest == null || now.toEpochMilli() - newest.toEpochMilli() > HEARTBEAT_MAX_AGE_S * 1000) return null;
         return Math.round(v * 1000) / 1000.0;
+    }
+
+    /** heartbeat 의 시각 값(Instant.parse — 앞뒤 공백 없이). 시각이 아닌 값은 null(그 필드는 건너뛴다). */
+    private static Instant heartbeatTime(Object v) {
+        try {
+            return Instant.parse(String.valueOf(v));
+        } catch (java.time.format.DateTimeParseException e) {
+            return null;
+        }
     }
 
     /**

@@ -1,9 +1,11 @@
 package dev.wakeline.logs;
 
+import dev.wakeline.platform.support.Spaces;
 import dev.wakeline.platform.web.Problem;
 import dev.wakeline.ops.Resolution;
 import dev.wakeline.ops.ResolutionService;
 import dev.wakeline.ops.Resolutions;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -13,6 +15,7 @@ import org.springframework.web.bind.annotation.RestController;
 import tools.jackson.databind.JsonNode;
 
 import java.time.Instant;
+import java.util.Arrays;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -59,30 +62,30 @@ public class LogsController {
         this.resolutions = resolutions;
     }
 
+    /** service · level 은 {@link #multi} 로 요청에서 그대로 읽는다(@RequestParam List 로 받지 않는 까닭은 그곳에). */
     @GetMapping
-    public LogReader.Page list(@RequestParam(required = false) List<String> service, @RequestParam(required = false) List<String> level,
-                               @RequestParam(required = false) String q, @RequestParam(required = false) String fp,
+    public LogReader.Page list(HttpServletRequest req, @RequestParam(required = false) String q, @RequestParam(required = false) String fp,
                                @RequestParam(required = false) String rid, @RequestParam(required = false) Instant since,
                                @RequestParam(required = false) Instant until, @RequestParam(required = false) String cursor,
                                @RequestParam(defaultValue = "100") int limit, @RequestParam(required = false) String resolved) {
-        if (cursor != null && !cursor.isBlank() && LogReader.parseCursor(cursor) == null)
+        if (!Spaces.isBlank(cursor) && LogReader.parseCursor(cursor) == null) // 제어 문자만 있는 cursor 는 빈 값이 아니다(§G43 · QA-1103)
             throw Problem.badRequest("BAD_CURSOR", "cursor must be the next_cursor of the previous page (server:<stream id> or client:<stream id>)");
-        var f = filter(service, level, q, fp, rid, since, until);
+        var f = filter(multi(req, "service"), multi(req, "level"), q, fp, rid, since, until);
         boolean hide = Resolutions.hide(resolved);
-        return reader.list(f, cursor == null || cursor.isBlank() ? null : cursor, Math.max(1, Math.min(limit, LIMIT_MAX)), resolver(), hide);
+        return reader.list(f, Spaces.isBlank(cursor) ? null : cursor, Math.max(1, Math.min(limit, LIMIT_MAX)), resolver(), hide);
     }
 
     @GetMapping("/groups")
-    public LogReader.Groups groups(@RequestParam(required = false) Instant since, @RequestParam(required = false) List<String> service,
-                                   @RequestParam(required = false) List<String> level, @RequestParam(required = false) String resolved) {
-        var f = filter(service, level, null, null, null, since, null);
+    public LogReader.Groups groups(HttpServletRequest req, @RequestParam(required = false) Instant since,
+                                   @RequestParam(required = false) String resolved) {
+        var f = filter(multi(req, "service"), multi(req, "level"), null, null, null, since, null);
         return reader.groups(f, resolver(), Resolutions.hide(resolved));
     }
 
     @GetMapping("/{id:\\d{1,20}-\\d{1,20}}")
     public JsonNode one(@PathVariable String id, @RequestParam(required = false) String stream) {
         LogStream only = null;
-        if (stream != null && !stream.isBlank() && (only = LogStream.ofLabel(stream.strip())) == null)
+        if (!Spaces.isBlank(stream) && (only = LogStream.ofLabel(Spaces.strip(stream))) == null)
             throw Problem.badRequest("BAD_STREAM", "stream must be server or client");
         JsonNode n = LogReader.parseId(id) == null ? null // 64비트를 넘는 id 는 스트림에 있을 수 없다
                 : reader.get(id, only, resolver());
@@ -95,11 +98,12 @@ public class LogsController {
         if (!SERVICES.containsAll(services)) throw Problem.badRequest("BAD_SERVICE", "service must be one or more of api, collector, ais, web-client");
         Set<String> levels = values(level, true);
         if (!LEVELS.containsAll(levels)) throw Problem.badRequest("BAD_LEVEL", "level must be ERROR and/or WARN");
-        String text = q == null || q.isBlank() ? null : q.strip();
+        // 앞뒤는 공백 글자만 지운다 — strip() · isBlank() 는 탭 · U+001C–U+001F 같은 제어 문자도 지워 형식 검사를 지났다(§G43 · QA-1103)
+        String text = Spaces.isBlank(q) ? null : Spaces.strip(q);
         if (text != null && text.length() > Q_MAX) throw Problem.badRequest("BAD_QUERY", "q must be at most " + Q_MAX + " characters");
-        String f = fp == null || fp.isBlank() ? null : fp.strip();
+        String f = Spaces.isBlank(fp) ? null : Spaces.strip(fp);
         if (f != null && !FP.matcher(f).matches()) throw Problem.badRequest("BAD_FP", "fp must be 16 lowercase hex digits");
-        String r = rid == null || rid.isBlank() ? null : rid.strip();
+        String r = Spaces.isBlank(rid) ? null : Spaces.strip(rid);
         if (r != null && !LogEvents.REQUEST_ID.matcher(r).matches()) throw Problem.badRequest("BAD_RID", "rid must be 8-64 characters of [0-9A-Za-z-]");
         if (since != null && until != null && since.isAfter(until)) throw Problem.badRequest("BAD_RANGE", "since must not be after until");
         return new LogReader.Filter(services, levels, text, f, r, since, until);
@@ -120,14 +124,24 @@ public class LogsController {
         };
     }
 
-    /** 쉼표·되풀이 모두 받는다. 빈 값은 버린다. */
+    /**
+     * 여러 값을 받는 파라미터(service · level)의 받은 그대로의 값(되풀이는 여러 칸, 쉼표는 {@link #values} 가 나눈다). 없으면 null.
+     * {@code @RequestParam List<String>} 으로 받지 않는다: 값이 하나면 Spring 의 글자 → 목록 변환(StringToCollectionConverter)이 쉼표로 나누며
+     * 칸마다 {@code trim()} 해 NUL · 탭 · U+001F 같은 제어 문자를 지운다({@code service=api%00} → api — 계약 v5 §G43 · QA-1103 과 갈림).
+     */
+    private static List<String> multi(HttpServletRequest req, String name) {
+        String[] v = req.getParameterValues(name);
+        return v == null ? null : Arrays.asList(v);
+    }
+
+    /** 쉼표·되풀이 모두 받는다. 빈 값(공백 글자만)은 버린다 — 제어 문자는 남아 정해진 값 검사가 400 으로 거른다(§G43 · QA-1103). */
     private static Set<String> values(List<String> raw, boolean upper) {
         Set<String> out = new LinkedHashSet<>();
         if (raw == null) return out;
         for (String s : raw) {
             if (s == null) continue;
             for (String v : s.split(",")) {
-                String t = v.strip();
+                String t = Spaces.strip(v);
                 if (!t.isEmpty()) out.add(upper ? t.toUpperCase(Locale.ROOT) : t);
             }
         }

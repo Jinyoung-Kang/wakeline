@@ -82,6 +82,19 @@ class IntersectionEngineTest {
         assertThat(run(s, acSeen("abc0a4", 36, 127, 17000, NOW.minusSeconds(301), "opensky"))).isEmpty();
     }
 
+    /** IM-07: 위치 신선도는 데이터 시각 ref 로(늦게 온 스냅샷의 위치도 그 시각에는 현재), 구역 유효시간은 판정 시각 now 로. */
+    @Test void observe_freshnessOnDataTime_validityOnNow() {
+        SigmetRecord s = sigmet("A", 14000, 21000);
+        ZoneIndex idx = new ZoneIndex(List.of(s), NOW);
+        AircraftState late = acSeen("abc0a5", 36, 127, 17000, NOW.minusSeconds(91), "adsb_lol"); // 벽시계로 91 s, 그 스냅샷 시각으로 1 s
+        assertThat(IntersectionEngine.observe(List.of(late), idx, NOW)).isEmpty();
+        assertThat(IntersectionEngine.observe(List.of(late), idx, NOW, NOW.minusSeconds(90))).containsKey("abc0a5");
+        // 데이터 시각에는 유효했어도 지금 만료된 경보는 판정하지 않는다
+        SigmetRecord ended = sigmet("E", 14000, 21000, NOW.minusSeconds(3600), NOW.minusSeconds(30));
+        ZoneIndex idx2 = new ZoneIndex(List.of(ended), NOW.minusSeconds(90));
+        assertThat(IntersectionEngine.observe(List.of(late), idx2, NOW, NOW.minusSeconds(90))).isEmpty();
+    }
+
     @Test void onBoundaryEdge_hits() {
         // 폴리곤 경계선 위의 점 — intersects 는 경계를 포함한다
         assertThat(run(sigmet("A", 14000, 21000), ac("abc00c", 35.0, 127, 17000, false))).containsKey("abc00c");
@@ -172,6 +185,40 @@ class IntersectionEngineTest {
 
     @Test void predict_stalePosition_noPrediction() {
         assertThat(predict(sigmet("A", 14000, 21000), acSeen("abc023", 36, westOfBox(30), 17000, NOW.minusSeconds(61), "adsb_lol"))).isEmpty();
+    }
+
+    /** IM-07: 대상은 데이터 시각 ref 로 고르고(늦게 온 위치도 예측), 전진 · ETA 는 now 로 — eta_at = judged_at + eta_s 그대로. */
+    @Test void predict_targetsChosenOnDataTime_advanceAndEtaFromNow() {
+        SigmetRecord s = sigmet("A", 14000, 21000);
+        ZoneIndex idx = new ZoneIndex(List.of(s), NOW);
+        AircraftState late = acSeen("abc024", 36, westOfBox(30), 17000, NOW.minusSeconds(90), "adsb_lol");
+        assertThat(IntersectionEngine.predict(List.of(late), idx, NOW, Map.of(), Set.of())).isEmpty(); // 벽시계로는 오래됨
+        var p = IntersectionEngine.predict(List.of(late), idx, NOW, NOW.minusSeconds(89), Map.of(), Set.of());
+        assertThat(p).singleElement().satisfies(x -> {
+            assertThat(x.positionAgeS()).isEqualTo(90.0);                  // now 까지 전진한 시간
+            assertThat(x.etaAt()).isEqualTo(NOW.plusSeconds(x.etaS()));    // ETA 는 now 부터
+            assertThat(Math.abs(x.etaS() - (240 - 90))).isLessThanOrEqualTo(2);
+        });
+    }
+
+    /**
+     * IM-07: 진입은 데이터 시각부터 10분 안만 — 데이터가 멈춘 동안(항공기 피드 전체 장애) 마지막 위치를 벽시계까지 전진시켜 지평을 넓히지 않는다.
+     * 외삽 상한은 예전과 같이 관측 시각부터 '신선도 기준 + 10분'.
+     */
+    @Test void predict_entryBeyondTenMinutesOfDataTime_isNotPredicted() {
+        SigmetRecord s = sigmet("A", 14000, 21000);
+        ZoneIndex idx = new ZoneIndex(List.of(s), NOW);
+        Instant ref = NOW.minusSeconds(300);
+        // ref 에 관측, 서쪽 87.5 NM(450 kt 로 700 s) — now(ref+300 s) 기준으로는 400 s 뒤 진입이지만 ref 부터는 10분 밖
+        AircraftState a = acSeen("abc025", 36, westOfBox(87.5), 17000, ref, "opensky");
+        assertThat(IntersectionEngine.predict(List.of(a), idx, NOW, ref, Map.of(), Set.of())).isEmpty();
+        // 데이터 시각부터 400 s(서쪽 50 NM)면 예측된다
+        AircraftState near = acSeen("abc026", 36, westOfBox(50), 17000, ref, "opensky");
+        assertThat(IntersectionEngine.predict(List.of(near), idx, NOW, ref, Map.of(), Set.of())).singleElement()
+                .satisfies(x -> assertThat(x.etaAt()).isBeforeOrEqualTo(ref.plusSeconds(IntersectionEngine.PREDICT_HORIZON_S)));
+        // ref = now 이면(예전 호출) 지평은 now 부터 — 그대로
+        assertThat(IntersectionEngine.predict(List.of(a), idx, NOW, Map.of(), Set.of())).singleElement()
+                .satisfies(x -> assertThat(Math.abs(x.etaS() - 400)).isLessThanOrEqualTo(2));
     }
 
     // ---- 수직 진입(COR-11) ----

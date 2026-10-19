@@ -15,6 +15,7 @@ import org.springframework.core.annotation.Order;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
+import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayDeque;
@@ -32,6 +33,16 @@ import java.util.concurrent.atomic.AtomicReference;
  * 엔진 실행은 하나의 락으로 직렬화한다(스냅샷·SIGMET 이벤트가 겹쳐도 FSM 은 단일 스레드).
  * 판정 대상은 SnapshotStore 병합 뷰(600 s 넘은 global 기체 제외)이고, 관측·예측에는 '현재' 위치(opensky 300 s · 그 외 60 s)만 쓴다.
  * <ul>
+ *   <li>위치가 '현재' 인가(관측 · 예측 대상 · 선회 이력 · FSM)와 스코프 피드 끊김은 <b>데이터 시각</b>으로 잰다(IM-07, {@link #dataTime}):
+ *       ref = min(now, 판정 뷰의 스코프 fetched_at 최댓값). Redis 장애 뒤 수집기 로컬 큐가 원래 fetched_at 그대로 다시 보낸 스냅샷(또는 api
+ *       소비가 밀렸다 따라잡는 스냅샷)은 벽시계로는 오래됐어도 그 시각의 관측이다 — now 로 재면 다시 온 메시지마다 안에 있던 기체를 부재로 세어
+ *       거짓 LOST 로 닫고 새 id 로 다시 열었다. 한 피드만 멈추면 다른 피드가 ref 를 올리므로 예전처럼 부재를 세고, 모든 피드가 멈추면 ref 도
+ *       멈춰 부재를 세지 않는다(알림은 열린 채). 예측은 ref 부터 10분 안의 진입만 낸다(멈춘 위치를 벽시계까지 전진시켜 지평을 넓히지 않는다).
+ *       새로 여는 것(아직 셈이 없는 트랙의 첫 관측 · 새 예측)은 now 로도 신선한 위치로만 — 그동안 들어온 새 SIGMET · 공역 판이 멈춘 위치를 덮어도
+ *       그 위치로 진입 확정을 시작하거나 예측을 열지 않는다(R2, {@link AlertStateMachine}).
+ *       구역 유효시간 · 만료 · 철회, 사건 시각, 예측의 전진 · ETA 는 판정 시각 now 그대로다(피드 장애 중에도 만료 점검이 알림을 닫는다).
+ *       병합 뷰 자체(focus 60 s · hot 90 s · global 600 s 만료)는 화면 · REST 와 함께 쓰는 한 벌이라 now 로 만든다 — 장애가 그 만료보다 길면
+ *       focus · hot(또는 global)으로만 보이던 기체는 따라잡는 동안 뷰에서 빠져 부재로 셀 수 있다(region 은 나이로 빼지 않는다).</li>
  *   <li>한 주기의 예외(예: 잘못된 폴리곤의 JTS TopologyException)는 여기서 가둔다(API-CONC-2): 기록·wakeline_engine_errors_total 로 세고
  *       FSM 은 이전 상태를 유지한다. 예외가 이벤트 발행자(스트림 소비)로 새면 유효한 메시지가 DLQ 로 가고 뒤의 리스너(항적·WS)가 건너뛰어졌다.</li>
  *   <li>FSM 은 인덱스를 만든 바로 그 SIGMET 세트를 받아, 만료·철회된 경보의 알림을 SIGMET_ENDED 로 닫는다. 유효시간 만료 점검(30 s)도
@@ -86,6 +97,8 @@ public class EngineService {
     private ExtraIndex extraIndex;
     private String lastMode = ZoneSource.MODE_OFF;
     private final MeterRegistry meters;
+    /** 판정 시각(now)의 출처 — 운영은 시스템 시계, 시험은 움직이는 시계를 넣는다. */
+    private final Clock clock;
     public static final String END_JUDGING_OFF = "judging_off";
 
     public EngineService(SnapshotStore snapshots, SigmetStore sigmets, ApplicationEventPublisher events, MeterRegistry meters) {
@@ -99,6 +112,13 @@ public class EngineService {
     }
 
     public EngineService(SnapshotStore snapshots, SigmetStore sigmets, ApplicationEventPublisher events, MeterRegistry meters, ZoneSource extra) {
+        this(snapshots, sigmets, events, meters, extra, Clock.systemUTC());
+    }
+
+    /** 시계를 정하는 생성자(시험 — 장애 뒤 늦게 전달되는 스냅샷 재현). 다른 생성자는 시스템 시계를 쓴다. */
+    EngineService(SnapshotStore snapshots, SigmetStore sigmets, ApplicationEventPublisher events, MeterRegistry meters, ZoneSource extra,
+                  Clock clock) {
+        this.clock = clock;
         this.extra = extra;
         this.meters = meters;
         this.snapshots = snapshots;
@@ -113,7 +133,7 @@ public class EngineService {
 
     @EventListener
     public void onSigmets(WeatherEvents.SigmetsUpdated e) {
-        Instant now = Instant.now();
+        Instant now = clock.instant();
         synchronized (lock) {
             index.set(build(e.state(), now));
             activeSigmetIds = activeIds(e.state().byId().values(), now);
@@ -140,7 +160,7 @@ public class EngineService {
     @EventListener
     @Order(Ordered.HIGHEST_PRECEDENCE)
     public void onSnapshot(AircraftEvents.SnapshotUpdated e) {
-        run(Instant.now());
+        run(clock.instant());
     }
 
     /**
@@ -149,7 +169,7 @@ public class EngineService {
      */
     @Scheduled(fixedDelay = 30_000, initialDelay = 30_000)
     public void rebuildForExpiry() {
-        Instant now = Instant.now();
+        Instant now = clock.instant();
         SigmetStore.State published;
         Set<String> expired;
         synchronized (lock) {
@@ -181,17 +201,15 @@ public class EngineService {
             int n, inside, predicted;
             try {
                 SnapshotStore.View view = snapshots.view(now);
+                Instant ref = dataTime(view, now);
                 Map<String, AircraftState> all = view.states();
                 IndexState is = index.get();
-                Set<String> turning = updateTurning(all.values(), now);
+                Set<String> turning = updateTurning(all.values(), ref);
                 lastTurning = Set.copyOf(turning);
-                var hits = IntersectionEngine.observe(all.values(), is.index(), now);
-                var predictions = IntersectionEngine.predict(all.values(), is.index(), now, fsm.confirmedByHex(), turning);
-                var cycle = new AlertStateMachine.Cycle(view.region().version(), view.global().version(),
-                        view.region().stale(now, REGION_FEED_STALE_S), view.global().stale(now, GLOBAL_FEED_STALE_S),
-                        view.region().states().keySet(), is.set(), new ViewScopes(view, now));
-                evs = fsm.step(hits, predictions, all, now, cycle);
-                List<AlertStateMachine.Event> zoneEvs = runExtra(view, all, turning, now);
+                var hits = IntersectionEngine.observe(all.values(), is.index(), now, ref);
+                var predictions = IntersectionEngine.predict(all.values(), is.index(), now, ref, fsm.confirmedByHex(), turning);
+                evs = fsm.step(hits, predictions, all, now, ref, cycle(view, is.set(), now, ref));
+                List<AlertStateMachine.Event> zoneEvs = runExtra(view, all, turning, now, ref);
                 if (!zoneEvs.isEmpty()) {
                     evs = new java.util.ArrayList<>(evs);
                     evs.addAll(zoneEvs);
@@ -224,7 +242,8 @@ public class EngineService {
      * 공역 판정 한 주기(ADR-035). 예외는 여기서 가둔다(SIGMET 판정 · 사건은 그대로 나간다). 돌려주는 것은 on 일 때 발행할 사건뿐 —
      * shadow 의 사건은 세기만 한다. lock 안에서 부른다.
      */
-    private List<AlertStateMachine.Event> runExtra(SnapshotStore.View view, Map<String, AircraftState> all, Set<String> turning, Instant now) {
+    private List<AlertStateMachine.Event> runExtra(SnapshotStore.View view, Map<String, AircraftState> all, Set<String> turning, Instant now,
+                                                   Instant ref) {
         if (extra == null) return List.of();
         try {
             String mode = extra.mode();
@@ -236,12 +255,9 @@ public class EngineService {
             long v = extra.version();
             if (extraIndex == null || extraIndex.version() != v) extraIndex = new ExtraIndex(v, new ZoneIndex(extra.zones(), now), extra.set());
             AlertStateMachine m = ZoneSource.MODE_ON.equals(mode) ? zoneFsm : shadowFsm;
-            var hits = IntersectionEngine.observe(all.values(), extraIndex.index(), now);
-            var preds = IntersectionEngine.predict(all.values(), extraIndex.index(), now, m.confirmedByHex(), turning);
-            var cycle = new AlertStateMachine.Cycle(view.region().version(), view.global().version(),
-                    view.region().stale(now, REGION_FEED_STALE_S), view.global().stale(now, GLOBAL_FEED_STALE_S),
-                    view.region().states().keySet(), extraIndex.set(), new ViewScopes(view, now));
-            var evs = m.step(hits, preds, all, now, cycle);
+            var hits = IntersectionEngine.observe(all.values(), extraIndex.index(), now, ref);
+            var preds = IntersectionEngine.predict(all.values(), extraIndex.index(), now, ref, m.confirmedByHex(), turning);
+            var evs = m.step(hits, preds, all, now, ref, cycle(view, extraIndex.set(), now, ref));
             for (var e : evs)
                 meters.counter("wakeline_zone_events_total", "zone_type", extra.zoneType(), "mode", mode,
                         "level", e.alert().level() == null ? Zone.LEVEL_ALERT : e.alert().level(), "event", e.type().name()).increment();
@@ -254,8 +270,32 @@ public class EngineService {
         }
     }
 
-    /** 병합 뷰 → FSM 스코프 정보(신선도 우선 병합이라 '어느 스코프의 관측인가' 는 뷰가 안다, DH-2). */
-    record ViewScopes(SnapshotStore.View view, Instant now) implements AlertStateMachine.Scopes {
+    /**
+     * 데이터 시각(IM-07): 판정 뷰의 스코프(region · global · focus · hot) 마지막 메시지 fetched_at 가운데 가장 늦은 것, 단 now 를 넘지 않는다
+     * (수집기 시계가 앞선 메시지가 판정을 앞당기지 않게). 받은 메시지가 없으면(모두 EPOCH) now.
+     */
+    static Instant dataTime(SnapshotStore.View view, Instant now) {
+        Instant latest = null;
+        for (String scope : List.of(SnapshotStore.REGION, SnapshotStore.GLOBAL, SnapshotStore.FOCUS, SnapshotStore.HOT)) {
+            Instant at = view.scopeFetchedAt(scope);
+            if (at == null || Instant.EPOCH.equals(at)) continue;
+            if (latest == null || at.isAfter(latest)) latest = at;
+        }
+        return latest == null || latest.isAfter(now) ? now : latest;
+    }
+
+    /** 한 주기의 스냅샷 맥락 — 피드 끊김은 데이터 시각 ref 로, 수요 추적이 아직 조회 중인가(coverage)는 병합 뷰와 같은 now 로. */
+    private static AlertStateMachine.Cycle cycle(SnapshotStore.View view, AlertStateMachine.ZoneSet zones, Instant now, Instant ref) {
+        return new AlertStateMachine.Cycle(view.region().version(), view.global().version(),
+                view.region().stale(ref, REGION_FEED_STALE_S), view.global().stale(ref, GLOBAL_FEED_STALE_S),
+                view.region().states().keySet(), zones, new ViewScopes(view, now, ref));
+    }
+
+    /**
+     * 병합 뷰 → FSM 스코프 정보(신선도 우선 병합이라 '어느 스코프의 관측인가' 는 뷰가 안다, DH-2). 피드 끊김은 데이터 시각 ref 로 잰다 —
+     * 다른 스코프가 ref 를 올렸는데 이 스코프만 뒤처졌을 때 끊김이다. covering 은 병합 뷰의 hot 만료와 같은 now 로 본다.
+     */
+    record ViewScopes(SnapshotStore.View view, Instant now, Instant ref) implements AlertStateMachine.Scopes {
         @Override public String scopeOf(String hex) { return view.scopeOf(hex); }
         @Override public String sourceOf(String hex) { return view.sourceOf(hex); }
         @Override public long version(String scope) { return view.scopeVersion(scope); }
@@ -268,16 +308,19 @@ public class EngineService {
                 case SnapshotStore.FOCUS -> FOCUS_FEED_STALE_S;
                 default -> HOT_FEED_STALE_S;
             };
-            return now.toEpochMilli() - at.toEpochMilli() > thresholdS * 1000L;
+            return ref.toEpochMilli() - at.toEpochMilli() > thresholdS * 1000L;
         }
         @Override public boolean covering(String source, String hex) { return view.covering(source, hex, now.toEpochMilli()); }
     }
 
-    /** 최근 3회 관측의 트랙 변화가 15° 를 넘으면 선회 중으로 보고 예측을 보류한다. 오래된 위치는 이력에 넣지 않는다. */
-    private Set<String> updateTurning(Collection<AircraftState> all, Instant now) {
+    /**
+     * 최근 3회 관측의 트랙 변화가 15° 를 넘으면 선회 중으로 보고 예측을 보류한다. 오래된 위치는 이력에 넣지 않는다 — 예측 대상 선정과 같은
+     * 데이터 시각 ref 로 본다(다시 온 스냅샷의 선회 기체가 이력에서 빠져 예측이 나왔다 지워지지 않게).
+     */
+    private Set<String> updateTurning(Collection<AircraftState> all, Instant ref) {
         Set<String> turning = new HashSet<>();
         for (AircraftState a : all) {
-            if (a.trackDeg() == null || !a.fresh(now)) continue;
+            if (a.trackDeg() == null || !a.fresh(ref)) continue;
             Deque<Double> h = trackHistory.computeIfAbsent(a.hex(), x -> new ArrayDeque<>(3));
             if (h.isEmpty() || Math.abs(angleDiff(h.peekLast(), a.trackDeg())) > 0.01) {
                 h.addLast(a.trackDeg());
@@ -300,10 +343,11 @@ public class EngineService {
 
     /**
      * WS "selected" 용: 이 항공기에 진입 예측을 할 수 있는가(계약 §1). 엔진 predict() 와 같은 규칙,
-     * 선회 여부는 마지막 엔진 주기 기준. a 가 null 이면 (false, null).
+     * 선회 여부는 마지막 엔진 주기 기준. a 가 null 이면 (false, null). 신선도는 화면의 STALE 표시와 같은 판정 시각(벽시계)으로 잰다 —
+     * 데이터 시각으로 재는 엔진과는 장애 뒤 따라잡는 동안만 다를 수 있다.
      */
     public PredictionAvailability predictionAvailability(AircraftState a) {
-        return IntersectionEngine.availability(a, Instant.now(), a != null && lastTurning.contains(a.hex()));
+        return IntersectionEngine.availability(a, clock.instant(), a != null && lastTurning.contains(a.hex()));
     }
 
     /** hex 로 현재 병합 뷰에서 찾아 predictionAvailability(AircraftState). */

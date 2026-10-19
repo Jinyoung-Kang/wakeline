@@ -670,14 +670,30 @@ class WsSchemaContractTest {
         return c;
     }
 
+    /**
+     * WS 스키마 안의 "#/$defs/…" 참조를 그 정의로 바꾼다(곁의 키는 정의 위에 덮는다). sigmet_properties 의 시각은 $defs/date_time 을
+     * 참조하고 스트림 스키마는 같은 제약을 직접 적는다 — 풀지 않으면 같은 제약이 다르게 보이고, 곁의 제약을 버리면 차이를 놓친다.
+     */
+    static JsonNode resolveLocalRef(JsonNode prop, JsonNode defs) {
+        JsonNode ref = prop.get("$ref");
+        if (ref == null || !ref.asString().startsWith("#/$defs/")) return prop;
+        JsonNode target = defs.path(ref.asString().substring("#/$defs/".length()));
+        assertThat(target.isObject()).as(ref.asString()).isTrue();
+        ObjectNode c = ((ObjectNode) target).deepCopy();
+        for (Map.Entry<String, JsonNode> e : prop.properties()) if (!"$ref".equals(e.getKey())) c.set(e.getKey(), e.getValue());
+        return c;
+    }
+
     @Test
-    void aircraftAndShipFieldConstraintsMatchTheStreamSchemas() throws Exception {
+    void aircraftShipAndSigmetFieldConstraintsMatchTheStreamSchemas() throws Exception {
         JsonNode defs = json.readTree(Files.readString(SCHEMA_DIR.resolve("server.v1.json"))).path("$defs");
         Map<String, List<String>> pairs = new LinkedHashMap<>();
         pairs.put("aircraft", List.of("aircraft_state.v1.json"));
         pairs.put("ship_lite", List.of("ship_state.v1.json", "ship_static.v1.json"));
         pairs.put("ship_state", List.of("ship_state.v1.json"));
         pairs.put("ship_static", List.of("ship_static.v1.json"));
+        // 스트림 SIGMET → api → WS sigmets 피처 속성 → 웹 SIGMET_PROPS(웹 ↔ WS 는 웹 시험이 지킨다): 공급자 enum 하나만 어긋나도 웹이 경보를 버린다
+        pairs.put("sigmet_properties", List.of("sigmet.v1.json"));
         List<String> drift = new ArrayList<>();
         for (var e : pairs.entrySet()) {
             JsonNode ws = defs.path(e.getKey()).path("properties");
@@ -690,8 +706,9 @@ class WsSchemaContractTest {
                     if (s != null) { stream = s; break; }
                 }
                 if (stream == null) continue; // WS 전용 필드
-                if (!constraint(stream).equals(constraint(p.getValue())))
-                    drift.add(e.getKey() + "." + p.getKey() + ": ws " + constraint(p.getValue()) + " ≠ stream " + constraint(stream));
+                JsonNode wsProp = resolveLocalRef(p.getValue(), defs);
+                if (!constraint(stream).equals(constraint(wsProp)))
+                    drift.add(e.getKey() + "." + p.getKey() + ": ws " + constraint(wsProp) + " ≠ stream " + constraint(stream));
             }
         }
         assertThat(drift).as("WS field constraints drifted from the stream schemas").isEmpty();

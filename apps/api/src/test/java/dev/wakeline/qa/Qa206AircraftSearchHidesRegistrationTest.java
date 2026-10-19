@@ -41,7 +41,7 @@ class Qa206AircraftSearchHidesRegistrationTest {
         Instant now = Instant.now();
         AircraftState a = new AircraftState("780b7a", null, "B-9971", "A321", "A3", 36.9, 123.0, 30100, null, 287.0, null, false, null,
                 now.minusSeconds(3), "adsb_lol", now, 1, false);
-        snapshots.replaceIfNewer(new Snapshot(snapshots.nextVersion(), "region", "adsb_lol", now, now, "-", Map.of(a.hex(), a)));
+        snapshots.replaceIfNewer(new Snapshot(snapshots.nextVersion(), "region", "adsb_lol", now, now, "-", Map.of(a.hex(), a)), now.toEpochMilli());
         AircraftRepository noDb = new AircraftRepository(null, null) {
             @Override public List<Map<String, Object>> search(String prefix, int limit) { return List.of(); }
         };

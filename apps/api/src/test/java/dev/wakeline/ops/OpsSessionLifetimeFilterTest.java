@@ -1,15 +1,34 @@
 package dev.wakeline.ops;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
+import dev.wakeline.logs.LogEvents;
+import dev.wakeline.platform.support.LogMasker;
+import dev.wakeline.platform.web.ProblemAdvice;
+import dev.wakeline.platform.web.RequestIdFilter;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.slf4j.LoggerFactory;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
+import org.springframework.jdbc.BadSqlGrammarException;
+import org.springframework.jdbc.CannotGetJdbcConnectionException;
 import org.springframework.mock.web.MockFilterChain;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.mock.web.MockHttpSession;
 
+import java.sql.SQLException;
+import java.sql.SQLTransientConnectionException;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -30,6 +49,31 @@ class OpsSessionLifetimeFilterTest {
         MockHttpSession s = new MockHttpSession();
         s.setAttribute(OpsSessionLifetimeFilter.AUTH_AT, NOW.minus(ago).toEpochMilli());
         return s;
+    }
+
+    /** DB 장애 중 JdbcClient 가 던지는 것 — 풀 대기 초과(Hikari)를 Spring 이 감싼 예외. */
+    static CannotGetJdbcConnectionException poolTimeout() {
+        return new CannotGetJdbcConnectionException("Failed to obtain JDBC Connection",
+                new SQLTransientConnectionException("HikariPool-1 - Connection is not available, request timed out after 3000ms."));
+    }
+
+    /** 5분 전에 로그인한 운영자 uid 의 세션(id 를 정해 로그에 실리지 않는지 볼 수 있게). tag 가 null 이면 자격 표식이 없다. */
+    static MockHttpSession loggedIn(String sessionId, int uid, String tag) {
+        MockHttpSession s = new MockHttpSession(null, sessionId);
+        s.setAttribute(OpsSessionLifetimeFilter.AUTH_AT, NOW.minus(Duration.ofMinutes(5)).toEpochMilli());
+        s.setAttribute(OpsSessionLifetimeFilter.USER_ID, uid);
+        if (tag != null) s.setAttribute(OpsSessionLifetimeFilter.CREDENTIAL, tag);
+        return s;
+    }
+
+    static MockHttpServletRequest request(String uri, MockHttpSession session, String requestId) {
+        MockHttpServletRequest r = request(uri, session);
+        r.setAttribute(RequestIdFilter.ATTR, requestId);
+        return r;
+    }
+
+    static List<String> lines(CapturedOutput out, String... parts) {
+        return out.getAll().lines().filter(l -> java.util.Arrays.stream(parts).allMatch(l::contains)).toList();
     }
 
     @Test
@@ -102,7 +146,7 @@ class OpsSessionLifetimeFilterTest {
         assertThat(gone.isInvalid()).as("user deleted").isTrue();
 
         OpsSessionLifetimeFilter down = new OpsSessionLifetimeFilter(Duration.ofHours(8), Clock.fixed(NOW, ZoneOffset.UTC),
-                uid -> { throw new IllegalStateException("db down"); });
+                uid -> { throw poolTimeout(); });
         MockHttpSession kept = session.apply(7, "tag-new");
         MockHttpServletResponse res = new MockHttpServletResponse();
         MockFilterChain chain = new MockFilterChain();
@@ -128,7 +172,7 @@ class OpsSessionLifetimeFilterTest {
     @Test
     void logoutReachesTheControllerWhenTheCredentialLookupFails() throws Exception {
         OpsSessionLifetimeFilter down = new OpsSessionLifetimeFilter(Duration.ofHours(8), Clock.fixed(NOW, ZoneOffset.UTC),
-                uid -> { throw new IllegalStateException("db down"); });
+                uid -> { throw poolTimeout(); });
         MockHttpSession s = sessionLoggedInAgo(Duration.ofMinutes(5));
         s.setAttribute(OpsSessionLifetimeFilter.USER_ID, 7);
         s.setAttribute(OpsSessionLifetimeFilter.CREDENTIAL, "tag");
@@ -150,6 +194,142 @@ class OpsSessionLifetimeFilterTest {
         lateLogout.setMethod("DELETE");
         down.doFilter(lateLogout, new MockHttpServletResponse(), new MockFilterChain());
         assertThat(old.isInvalid()).isTrue();
+    }
+
+    /**
+     * IM-24(리뷰 #8): 자격 확인(DB)을 지금 못 하면 503 + 그 요청 id 가 든 WARN 한 줄(스택 없음) — 화면에 보인 요청 id 로 로그를 찾을 수 있다. 예전에는
+     * 아무것도 남기지 않았다. 줄은 저장소 장애 503 의 줄(ProblemAdvice)과 같은 모양이다: 원인 · request_id · path · 짧은 예외 요약.
+     */
+    @Test
+    @ExtendWith(OutputCaptureExtension.class)
+    void anOutageOfTheCredentialLookupIs503WithOneWarnLine(CapturedOutput output) throws Exception {
+        OpsSessionLifetimeFilter down = new OpsSessionLifetimeFilter(Duration.ofHours(8), Clock.fixed(NOW, ZoneOffset.UTC), uid -> { throw poolTimeout(); });
+        MockHttpSession s = loggedIn("sess-outage-0001", 7, "tag-outage");
+        MockHttpServletResponse res = new MockHttpServletResponse();
+        MockFilterChain chain = new MockFilterChain();
+        down.doFilter(request("/api/v1/ops/providers", s, "rid-im24-outage"), res, chain);
+        assertThat(res.getStatus()).isEqualTo(503);
+        assertThat(res.getHeader("Retry-After")).isEqualTo("10");
+        assertThat(chain.getRequest()).as("not passed on unverified").isNull();
+        assertThat(s.isInvalid()).as("unknown is not a logout").isFalse();
+        assertThat(lines(output, "rid-im24-outage")).singleElement().satisfies(l -> assertThat(l)
+                .contains("WARN", "could not get a DB connection", "path=\"/api/v1/ops/providers\"", "→ 503",
+                        "CannotGetJdbcConnectionException ← SQLTransientConnectionException: HikariPool-1")
+                .doesNotContain("sess-outage-0001", "tag-outage"));
+        assertThat(output.getAll()).as("an outage is not a bug — no stack").doesNotContain("\tat ");
+    }
+
+    /**
+     * IM-24(리뷰 #8): 장애가 아닌 예외(권한 42501 의 BadSqlGrammarException · 코드 결함)는 503 '잠시 뒤 재시도' 로 숨기지 않고 다시 던진다 — 컨테이너가
+     * 500 + ERROR(스택)로 남긴다(공개 경로의 ProblemAdvice 규칙과 같다). 예전에는 어떤 RuntimeException 이든 로그 없는 503 이었다.
+     */
+    @Test
+    @ExtendWith(OutputCaptureExtension.class)
+    void aDefectInTheCredentialLookupIsRethrownNotAnswered503(CapturedOutput output) {
+        RuntimeException[] defects = {
+                new BadSqlGrammarException("credential", "SELECT password_hash FROM ops_user WHERE id = :id",
+                        new SQLException("ERROR: permission denied for table ops_user", "42501")),
+                new IllegalStateException("bug in the lookup")};
+        for (RuntimeException defect : defects) {
+            OpsSessionLifetimeFilter f = new OpsSessionLifetimeFilter(Duration.ofHours(8), Clock.fixed(NOW, ZoneOffset.UTC), uid -> { throw defect; });
+            MockHttpSession s = loggedIn("sess-defect-0001", 7, "tag");
+            MockHttpServletResponse res = new MockHttpServletResponse();
+            MockFilterChain chain = new MockFilterChain();
+            assertThatThrownBy(() -> f.doFilter(request("/api/v1/ops/providers", s, "rid-im24-defect"), res, chain))
+                    .as(defect.getClass().getSimpleName()).isSameAs(defect);
+            assertThat(res.getStatus()).as("nothing written — the container answers 500").isEqualTo(200);
+            assertThat(res.getHeader("Retry-After")).isNull();
+            assertThat(chain.getRequest()).isNull();
+            assertThat(s.isInvalid()).isFalse();
+        }
+        assertThat(lines(output, "→ 503")).as("no 503 line for a defect").isEmpty();
+    }
+
+    /**
+     * IM-24(리뷰 #11): 자격 표식이 다르거나(비밀번호 교체) 없거나 사용자가 없어 세션을 끝내면 WARN 한 줄 — 사유 · user_id · request_id · path. 비밀번호를
+     * 바꾼 뒤 옛 쿠키가 쓰였는지 시스템 로그로 알 수 있다(예전에는 흔적이 없었다). 세션 id · 표식(비밀번호 해시에서 나온 값)은 싣지 않는다.
+     * 절대 수명 만료 · 같은 표식은 정상 경로라 남기지 않는다.
+     */
+    @Test
+    @ExtendWith(OutputCaptureExtension.class)
+    void endingASessionForItsCredentialLeavesOneWarnLineWithoutSecrets(CapturedOutput output) throws Exception {
+        Map<Integer, String> current = Map.of(7, "tag-now-7f3a");
+        OpsSessionLifetimeFilter f = new OpsSessionLifetimeFilter(Duration.ofHours(8), Clock.fixed(NOW, ZoneOffset.UTC),
+                uid -> Optional.ofNullable(current.get(uid)));
+        record Case(String rid, String sessionId, int uid, String tag, String reason) {}
+        List<Case> ended = List.of(
+                new Case("rid-im24-changed", "sess-changed-0001", 7, "tag-old-91c2", "credential changed since login"),
+                new Case("rid-im24-untagged", "sess-untagged-0001", 7, null, "session carries no credential"),
+                new Case("rid-im24-gone", "sess-gone-0001", 8, "tag-gone-55d0", "user no longer exists"));
+        for (Case c : ended) {
+            MockHttpSession s = loggedIn(c.sessionId(), c.uid(), c.tag());
+            MockFilterChain chain = new MockFilterChain();
+            f.doFilter(request("/api/v1/ops/providers", s, c.rid()), new MockHttpServletResponse(), chain);
+            assertThat(s.isInvalid()).as(c.reason()).isTrue();
+            assertThat(chain.getRequest()).as("continues anonymously (404)").isNotNull();
+            assertThat(lines(output, c.rid())).as(c.reason()).singleElement().satisfies(l -> assertThat(l)
+                    .contains("WARN", "ops session ended", c.reason(), "user_id=" + c.uid(), "path=\"/api/v1/ops/providers\"")
+                    .doesNotContain(c.sessionId(), "tag-now-7f3a", "tag-old-91c2", "tag-gone-55d0"));
+        }
+        // 같은 표식(그대로 지나감) · 절대 수명 만료(정상 경로)는 남기지 않는다
+        MockHttpSession same = loggedIn("sess-same-0001", 7, "tag-now-7f3a");
+        f.doFilter(request("/api/v1/ops/providers", same, "rid-im24-same"), new MockHttpServletResponse(), new MockFilterChain());
+        assertThat(same.isInvalid()).isFalse();
+        MockHttpSession old = loggedIn("sess-expired-0001", 7, "tag-old-91c2");
+        old.setAttribute(OpsSessionLifetimeFilter.AUTH_AT, NOW.minus(Duration.ofHours(9)).toEpochMilli());
+        f.doFilter(request("/api/v1/ops/providers", old, "rid-im24-expired"), new MockHttpServletResponse(), new MockFilterChain());
+        assertThat(old.isInvalid()).isTrue();
+        assertThat(lines(output, "rid-im24-same")).isEmpty();
+        assertThat(lines(output, "rid-im24-expired")).isEmpty();
+    }
+
+    /**
+     * IM-25(리뷰 #9): 이 필터의 WARN 줄(세션 저장소 장애 · 자격 확인 장애 · 자격으로 끝낸 세션)은 경로 원문을 따옴표 안에 싣는다(path="…") — 보안 필터
+     * 체인은 컨트롤러 매핑 전이라 경로 패턴이 없다. 로그 지문(LogEvents.template 이 따옴표 안을 '…' 로 바꾼다)이 운영 경로의 값(공급자 이름 · 동작 ·
+     * 설정 키)마다 갈리지 않는다 — 예전에는 원문 경로가 따옴표 밖이라 한 장애가 경로마다 다른 묶음이 됐다. 지문은 싱크가 구하는 그대로.
+     */
+    @Test
+    void theFiltersWarnLinesQuoteThePathSoOneCauseIsOneLogGroup() throws Exception {
+        String[] paths = {"/api/v1/ops/providers/opensky/pause", "/api/v1/ops/settings/region_radius_nm"};
+        String[] rids = {"0123456789abcdef0123456789abcdef", "fedcba9876543210fedcba9876543210"}; // 운영의 요청 id 모양(32자 16진)
+        ListAppender<ILoggingEvent> logs = new ListAppender<>();
+        logs.start();
+        Logger[] loggers = {(Logger) LoggerFactory.getLogger(OpsSessionLifetimeFilter.class), (Logger) LoggerFactory.getLogger(ProblemAdvice.class)};
+        for (Logger l : loggers) l.addAppender(logs);
+        try {
+            OpsSessionLifetimeFilter lookupDown = new OpsSessionLifetimeFilter(Duration.ofHours(8), Clock.fixed(NOW, ZoneOffset.UTC), uid -> { throw poolTimeout(); });
+            OpsSessionLifetimeFilter changed = new OpsSessionLifetimeFilter(Duration.ofHours(8), Clock.fixed(NOW, ZoneOffset.UTC), uid -> Optional.of("tag-now"));
+            for (int i = 0; i < paths.length; i++) {
+                String path = paths[i];
+                MockHttpServletRequest storeDown = new MockHttpServletRequest("POST", path) {
+                    @Override public jakarta.servlet.http.HttpSession getSession(boolean create) { throw new org.springframework.dao.QueryTimeoutException("Redis command timed out"); }
+                };
+                storeDown.setRequestURI(path);
+                storeDown.setAttribute(RequestIdFilter.ATTR, rids[i]);
+                FILTER.doFilter(storeDown, new MockHttpServletResponse(), new MockFilterChain());
+                lookupDown.doFilter(request(path, loggedIn("sess-im25-a" + i, 7, "tag"), rids[i]), new MockHttpServletResponse(), new MockFilterChain());
+                changed.doFilter(request(path, loggedIn("sess-im25-b" + i, 7, "tag-old"), rids[i]), new MockHttpServletResponse(), new MockFilterChain());
+            }
+            List<ILoggingEvent> warns = logs.list.stream().filter(e -> e.getLevel() == Level.WARN).toList();
+            assertThat(warns).hasSize(6);
+            for (int kind = 0; kind < 3; kind++) {
+                ILoggingEvent first = warns.get(kind), second = warns.get(kind + 3);
+                assertThat(sinkFingerprint(first)).as("%s / %s", first.getFormattedMessage(), second.getFormattedMessage()).isEqualTo(sinkFingerprint(second));
+                assertThat(first.getFormattedMessage()).contains("path=\"/api/v1/ops/providers/opensky/pause\"");
+                assertThat(second.getFormattedMessage()).contains("path=\"/api/v1/ops/settings/region_radius_nm\"");
+            }
+            assertThat(warns.get(0).getFormattedMessage()).startsWith("session store unavailable request_id=" + rids[0] + " path=\"");
+            assertThat(warns.get(1).getFormattedMessage()).startsWith("could not get a DB connection request_id=" + rids[0] + " path=\"").doesNotContain("uri=");
+            assertThat(warns.get(2).getFormattedMessage()).startsWith("ops session ended: credential changed since login user_id=7 request_id=" + rids[0] + " path=\"");
+        } finally {
+            for (Logger l : loggers) l.detachAppender(logs);
+        }
+    }
+
+    /** 서버 로그 싱크(LogSink.accept)가 구하는 지문 그대로: 서비스 api · 로거 이름 · 예외 종류(없으면 null) · 가린 메시지. */
+    static String sinkFingerprint(ILoggingEvent e) {
+        return LogEvents.fingerprint("api", e.getLoggerName(), e.getThrowableProxy() == null ? null : e.getThrowableProxy().getClassName(),
+                LogMasker.maskAll(e.getFormattedMessage()));
     }
 
     /** QA-102: 세션 저장소(Redis)를 읽지 못하면 운영 요청은 503 + Retry-After 10 — 넘기지 않는다(예전: 예외가 필터 밖으로 나가 500). */

@@ -511,8 +511,11 @@ class TrafficGridJob:
             self._count_sent(now)
             http_status = e.status if isinstance(e, ProviderHttpError) else None
             why = describe_error(e)
-            await self.ctx.status.failure(p.name, at=self._now(), error=why, http_status=http_status)
-            self.ctx.db.record_run(self.job_name, p.name, started, status="error", http_status=http_status, error_text=why)
+            at = self._now()  # 한 번 잰 실패 시각: last_error_at = 이 실행의 finished_at(IM-12)
+            await self.ctx.status.failure(p.name, at=at, error=why, http_status=http_status)
+            self.ctx.db.record_run(
+                self.job_name, p.name, started, status="error", http_status=http_status, error_text=why, finished_at=at
+            )
             self.schedule.on_failure(now)
             log.warning("traffic grid: komsa fetch failed — %s (next try %s)", why, iso_z(self.schedule.next_due or now))
             return
@@ -525,7 +528,8 @@ class TrafficGridJob:
                 f"(limit {PUBLISH_FUTURE_SKEW_S} s) — snapshot not used"
             )
             ref = await archive(self.ctx.raw, p.name, resp.body, resp.fetched_at)
-            await self.ctx.status.failure(p.name, at=self._now(), error=why, http_status=None)
+            at = self._now()  # 한 번 잰 실패 시각: last_error_at = 이 실행의 finished_at(IM-12)
+            await self.ctx.status.failure(p.name, at=at, error=why, http_status=None)
             self.ctx.db.record_run(
                 self.job_name,
                 p.name,
@@ -536,6 +540,7 @@ class TrafficGridJob:
                 error_text=why,
                 raw_ref=ref,
                 quality=[("traffic_grid_reg_dt_future", None, {"reg_dt": iso_z(snap.reg_dt), "ahead_s": round(ahead)})],
+                finished_at=at,
             )
             self.schedule.on_failure(now)
             log.warning("traffic grid: %s", why)

@@ -19,7 +19,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * 관심 지역(중심·반경) — collector 가 실제로 폴링하는 값과 같은 출처를 쓴다(COR-12, 계약 §2).
  * 읽는 순서: Redis 해시 wakeline:settings(← app_setting 미러, collector 가 읽는 바로 그 값) → Redis 오류면 app_setting →
  * 둘 다 실패하면 마지막으로 읽은 값 유지 → 한 번도 못 읽었으면 .env 기본값(collector 도 해시가 없으면 같은 .env 값을 쓴다).
- * 값 해석 규칙도 collector(runtime_settings.py)와 같다: 중심 "lat,lon" 해석 실패 → 기본값, 반경은 정수·[50, 500] 로 자른다.
+ * 값 해석 규칙도 collector(runtime_settings.py)와 같다: 중심 "lat,lon" 해석 실패 → 기본값, 반경은 정수·[{@link #MIN_RADIUS_NM}, {@link #MAX_RADIUS_NM}] 로 자른다.
  * 조회(상태·통계·요약)는 캐시만 읽는다 — I/O 는 백그라운드 갱신(30 s)과 설정 변경 직후 refreshNow() 에서만 한다.
  */
 @Component
@@ -28,6 +28,14 @@ public class RegionSettings {
     static final long TTL_MS = 30_000;
     static final String K_CENTER = "region_center";
     static final String K_RADIUS = "region_radius_nm";
+    /** 관심 지역 반경 범위(NM) — 저장 검증({@link SettingsService#validate})과 읽기 자르기가 같은 값을 쓴다. */
+    static final int MIN_RADIUS_NM = 50;
+    /**
+     * 공급자 상한: 관심 지역 조회(adsb.fi /dist · adsb.lol /point)는 반경 250 NM 까지다(adsb.fi 공식 문서 '최대 250 NM', ADR-013 — 핫 리전
+     * HotCell.MAX_RADIUS_NM 과 같은 값). 전에는 500 까지 받아 수집기가 /dist/400 을 그대로 불렀고, 수요 계산(DemandService)은 그 400 NM 원 안을
+     * '관심 지역이 덮음'으로 보아 핫 리전을 막았다 — 250 NM 밖 띠는 관심 지역 피드에도 핫 리전에도 없었다(IM-10). 범위가 넓던 때 저장한 값은 읽을 때 자른다.
+     */
+    static final int MAX_RADIUS_NM = 250;
 
     /** 관심 지역. center = [lat, lon]. */
     public record Region(double lat, double lon, int radiusNm) {
@@ -104,7 +112,7 @@ public class RegionSettings {
         return current;
     }
 
-    /** collector runtime_settings.region 과 같은 해석: 빈 값·해석 실패는 기본값, 반경은 [50, 500] 로 자른다. */
+    /** collector runtime_settings.region 과 같은 해석: 빈 값·해석 실패는 기본값, 반경은 [50, 250] 로 자른다. */
     static Region parse(String center, String radius, Region def) {
         double lat = def.lat(), lon = def.lon();
         if (center != null && !center.isBlank()) {
@@ -124,14 +132,16 @@ public class RegionSettings {
         if (radius != null && !radius.isBlank()) {
             try { r = Integer.parseInt(radius.trim()); } catch (NumberFormatException e) { r = def.radiusNm(); }
         }
-        return new Region(lat, lon, Math.max(50, Math.min(500, r)));
+        return new Region(lat, lon, clampRadius(r));
     }
 
     public static Region defaults(AppProperties props) {
         try {
-            return new Region(props.regionLat(), props.regionLon(), Math.max(50, Math.min(500, props.regionRadiusNm())));
+            return new Region(props.regionLat(), props.regionLon(), clampRadius(props.regionRadiusNm()));
         } catch (RuntimeException e) {
             return new Region(36.5, 127.8, 250); // collector config.py 의 기본값과 같다
         }
     }
+
+    private static int clampRadius(int r) { return Math.max(MIN_RADIUS_NM, Math.min(MAX_RADIUS_NM, r)); }
 }

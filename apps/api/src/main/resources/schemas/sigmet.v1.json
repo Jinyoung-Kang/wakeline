@@ -22,6 +22,7 @@
   "properties": {
     "id": {
       "type": "string",
+      "minLength": 1,
       "description": "fir_id:series_id:valid_from(unix) 자연키"
     },
     "fir_id": {

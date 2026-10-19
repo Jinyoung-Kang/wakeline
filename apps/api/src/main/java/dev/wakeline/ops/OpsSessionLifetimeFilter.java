@@ -2,6 +2,7 @@ package dev.wakeline.ops;
 
 import dev.wakeline.platform.web.ApiPaths;
 import dev.wakeline.platform.web.Problem;
+import dev.wakeline.platform.web.ProblemAdvice;
 import dev.wakeline.platform.web.ProblemJson;
 import dev.wakeline.platform.web.RequestIdFilter;
 import jakarta.servlet.FilterChain;
@@ -34,9 +35,15 @@ import java.util.function.IntFunction;
  * <p>
  * 자격 확인(R-95 후속): 세션은 로그인 때 확인한 비밀번호 해시의 표식({@link #CREDENTIAL})에 묶인다. 운영 요청마다 사용자의 지금 표식과 비교해
  * 다르거나(비밀번호 교체) 사용자가 없거나 표식이 없는 세션은 끝낸다. 교체 때의 세션 목록 삭제(OpsSessionRegistry.revokeAll)는 로그인과
- * 경합하면 방금 만든 세션을 놓칠 수 있다 — 이 비교는 순서와 무관하다. DB 를 읽지 못하면 세션은 두고 503(모름 — 끝내지도, 통과시키지도 않는다) +
+ * 경합하면 방금 만든 세션을 놓칠 수 있다 — 이 비교는 순서와 무관하다. 그렇게 끝낼 때는 WARN 한 줄(사유 · user_id · request_id · path — 세션 id ·
+ * 표식은 싣지 않는다)을 남긴다: 비밀번호를 바꾼 뒤 옛 쿠키가 쓰였는지 알 수 있게(IM-24). 절대 수명 만료는 정상 경로라 남기지 않는다.
+ * DB 를 읽지 못하면 세션은 두고 503(모름 — 끝내지도, 통과시키지도 않는다) +
  * Retry-After(QA-101 — 계약 §2 의 기본 10 s, 해결 목록 GET 은 §G14 가 약속한 30 s: 해결 기록 읽기의 다시 읽는 간격). Redis 만 읽는 로그 조회도 이 확인을
- * 먼저 지나므로 DB 장애 중에는 503 이다 — 실패-닫힘(ADR-017 §6 S3, ADR-024).
+ * 먼저 지나므로 DB 장애 중에는 503 이다 — 실패-닫힘(ADR-017 §6 S3, ADR-024). 이 필터는 컨트롤러 밖이라 ProblemAdvice 가 닿지 않으므로 그 규칙을 여기서
+ * 부른다(IM-24): 저장소 장애({@link ProblemAdvice#isUnavailable})면 저장소 장애 503 과 같은 WARN 한 줄(원인 · request_id · path · 짧은 예외 요약,
+ * 스택 없음), 그 밖의 예외(권한 · 문법 등의 결함)는 503 으로 숨기지 않고 다시 던진다 — 컨테이너가 500 + ERROR(스택)로 남긴다.
+ * 이 필터의 WARN 줄은 경로 원문을 따옴표 안에 싣는다({@link ProblemAdvice#loggedPath} — 보안 필터 체인은 컨트롤러 매핑 전이라 경로 패턴이 없다):
+ * 로그 지문이 운영 경로의 값(공급자 이름 · 설정 키)마다 갈리지 않게(IM-25).
  * 로그아웃(DELETE /api/v1/ops/session)은 자격 비교를 하지 않는다(리뷰 cto-2026-10 S3): 권한을 줄이는 요청이라 확인할 것이 없고, DB 장애 중에도 세션을
  * 끝낼 수 있어야 한다(예전에는 503 으로 막혀 세션이 최대 8 h 남았다). 절대 수명 검사는 로그아웃에도 그대로다.
  * <p>
@@ -81,7 +88,7 @@ public class OpsSessionLifetimeFilter extends OncePerRequestFilter {
         try {
             s = req.getSession(false);
         } catch (DataAccessException e) { // 세션 저장소를 읽지 못함(연결 없음 · 명령 시간 초과 · LOADING) — 저장소 장애라 스택 없이 한 줄
-            log.warn("session store unavailable request_id={} path={} → 503: {}: {}", RequestIdFilter.current(req), req.getRequestURI(),
+            log.warn("session store unavailable request_id={} {} → 503: {}: {}", RequestIdFilter.current(req), ProblemAdvice.loggedPath(req),
                     e.getClass().getSimpleName(), e.getMostSpecificCause().getMessage());
             unavailable(req, res, "ops session store temporarily unavailable; retry later", Problem.UNAVAILABLE_RETRY_AFTER_S);
             return;
@@ -92,13 +99,26 @@ public class OpsSessionLifetimeFilter extends OncePerRequestFilter {
             try {
                 now = currentCredential.apply(uid);
             } catch (RuntimeException e) {
+                ProblemAdvice.answeredUnavailable(e, req); // 장애면 WARN 한 줄(요청 id 로 찾게), 결함이면 여기서 던진다 → 500 + ERROR(IM-24)
                 unavailable(req, res, "ops temporarily unavailable",
                         RESOLUTIONS_LIST.matches(req) ? (int) ResolutionService.RETRY_S : Problem.UNAVAILABLE_RETRY_AFTER_S);
                 return;
             }
-            if (now.isEmpty() || !now.get().equals(s.getAttribute(CREDENTIAL))) s.invalidate();
+            String ended = staleCredential(now, s.getAttribute(CREDENTIAL));
+            if (ended != null) {
+                // 비밀번호 교체 뒤 옛 쿠키가 쓰였는지 알 수 있게(IM-24) — 세션 id · 표식(비밀번호 해시에서 나온 값)은 싣지 않는다
+                log.warn("ops session ended: {} user_id={} request_id={} {}", ended, uid, RequestIdFilter.current(req), ProblemAdvice.loggedPath(req));
+                s.invalidate();
+            }
         }
         chain.doFilter(req, res);
+    }
+
+    /** 세션을 끝낼 사유(로그용) — 지금 표식과 같으면 null. */
+    static String staleCredential(Optional<String> now, Object sessionTag) {
+        if (now.isEmpty()) return "user no longer exists";
+        if (sessionTag == null) return "session carries no credential";
+        return now.get().equals(sessionTag) ? null : "credential changed since login";
     }
 
     /** 503 + Retry-After(초 — 계약 §2 의 기본은 {@value Problem#UNAVAILABLE_RETRY_AFTER_S} s). */
