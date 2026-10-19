@@ -1884,7 +1884,11 @@ AWS 리뷰 D-2 · D-3 · D-4 · D-5 · D-6 · D-7 · D-8 · B-4 · C-2. 모두 �
   이미지 교체 11 · 수집기 실 PostgreSQL 11) · `make e2e` 52 · `make security` PASS. 인프라 정책 시험 OK.
 - **겪은 것**: (1) Playwright 1.64 는 Chromium 1248 이 필요했다(`npx playwright install chromium` — 공식 CDN). (2) Next 16.4.0 은 첫 화면 JS 를 3,413 B 줄였다(Turbopack 출력 —
   원인은 재지 않았다). maplibre 를 6.11.x 에 묶은 Q2 와 함께 여유가 3,689 B 로 늘었다. (3) `make e2e` · `infra-docker-test` 가 덮은 `:local` 은 `:mainsafe` 에서 되돌렸다(배포 이미지 그대로).
-- **남은 것**: 배포 전이다(main 병합 · push · 배포는 사용자 결정). #11 은 GitHub 에서 닫거나 Dependabot 이 다시 볼 때 닫힌다(설정 ignore). CI 는 결제를 푼 뒤 다시 돌린다.
+- **병합 · 배포**(사용자 승인 뒤): main `5b1a9a64` push — GitHub 이 #12 · #13 · #17 · #18 · #19 를 병합으로 표시했고 #11 은 Dependabot 이 ignore 를 보고 닫았다. CI 는 여전히 결제 문제로 시작되지 않았다.
+  로컬: api · db · edge `--no-cache` · web · collector 빌드 → `make security` PASS → `make up`(새 마이그레이션 없음 · db 는 새 postgres 18.6 이미지로 다시 만듦) — 모두 healthy,
+  `/healthz` · `/` · `/api/v1/status` 200, 직후 오류 0. 되돌리기 `wakeline-*:pre-deps`(= `4d84de9e` 이미지). AWS(SSM · ADR-039): `:rollback` = `4d84de9e` 이미지 → ff-only →
+  `build --no-cache api` · collector · web(179 s) → migrate(새 것 없음) → `up -d --wait` — healthy, `/healthz` · 상태 200, 5분 동안 api · collector · web 오류 0. AWS 는 RDS 라 #12 와 관계없다.
+- **남은 것**: CI 는 GitHub 결제를 푼 뒤 다시 돌린다(`gh run rerun 39206539498`).
 
 ## 자동 검사 현황(2026-10-02 15:5x KST, QA 2026-10 브랜치 `qa/2026-10` — #103 뒤, 깨끗한 `git archive` 내보내기 · 격리 스택)
 | 층 | 도구 | 수 |
