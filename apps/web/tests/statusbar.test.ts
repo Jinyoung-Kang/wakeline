@@ -231,6 +231,9 @@ describe("map-less connection (Q4 — the dashboard could not draw the map, so a
     expect(statusChips(i).find((c) => c.key === "aircraft")).toMatchObject({ value: "—", title: "지도 없음 — 항공기 위치를 받지 않음" });
     const rows = detailRows(i);
     expect(rows.find((r) => r.key === "conn")!.state).toBe("open · 지도 없음");
+    // 탭이 숨겨진 동안(일시정지)도 지도 없는 연결이라고 적는다(ADR-041 '남은 것' — 전에는 '일시정지(탭 숨김)' 만)
+    expect(detailRows(input({ mapless: true, aircraftCount: null, conn: "paused" })).find((r) => r.key === "conn")!.state).toBe("일시정지(탭 숨김) · 지도 없음");
+    expect(detailRows(input({ conn: "paused" })).find((r) => r.key === "conn")!.state).toBe("일시정지(탭 숨김)");
     expect(rows.find((r) => r.key === "aircraft")).toMatchObject({ value: "—", source: "지도 없음 — 항공기 위치를 받지 않음" });
     // 지도가 있으면 그대로
     expect(statusChips(input({ aircraftCount: null })).find((c) => c.key === "aircraft")!.title).toContain("항공기 수 모름");
