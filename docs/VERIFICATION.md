@@ -1869,6 +1869,23 @@ AWS 리뷰 D-2 · D-3 · D-4 · D-5 · D-6 · D-7 · D-8 · B-4 · C-2. 모두 �
 - **남은 것**: GitHub 결제를 푼 뒤 이 실행을 다시 돌리기(`gh run rerun 39197019445`) · Dependabot PR 6건(#11 python 3.14 주 버전 · #12 postgres 다이제스트 · #13 gradle wrapper ·
   #17 actions · #18 web · #19 collector) · AWS 시작 · 중지 일정(EventBridge 꺼짐 — 문서와 다름) · QA-1131(Caddy 2.11.8 대기).
 
+## #150 Dependabot PR 6건 정리(2026-10-19, 브랜치 `chore/deps-2026-10`)
+- **판단**: 넣음 5 · 미룸 1. CI 가 GitHub 결제 문제로 돌지 않아(#149) 모두 로컬에서 같은 명령으로 확인했다.
+  | PR | 내용 | 판단 · 근거 |
+  |---|---|---|
+  | #13 | gradle wrapper 9.8.0 → 9.8.1(패치) | 넣음 — wrapper jar · 배포본 sha256 이 services.gradle.org 공식 값과 같다 |
+  | #17 | 액션 3개(setup-uv 10.3.0 · upload-artifact 7.0.2 · setup-node 7.1.0) | 넣음 — 세 SHA 가 각 저장소 릴리스 태그의 커밋과 같다 · CI 정책 시험 통과 |
+  | #12 | postgres 18-trixie 새 다이제스트 | 넣음 — 같은 태그의 OS 갱신, db 이미지로 api DB 시험 · 버리는 컨테이너 시험 전부 |
+  | #19 | 수집기 6개(pydantic 2.14.1 · asyncpg 0.32.0 · shapely 2.2.0 · orjson 3.13.0 · numpy 2.5.4 · ruff 0.17.0) | 넣음 — ruff 새 지적 0 · mypy · 계약 · pytest · 실 PostgreSQL(asyncpg 0.32 — `_GuardedPool`) |
+  | #18 | 웹 5개(next · eslint-config-next 16.4.0 · @playwright/test 1.64.0 · vitest 5.0.3 · @types/node 24.19.2) | 넣음 — 웹 검사 전부 · E2E · 첫 화면 JS 549,724 → 546,311 B |
+  | #11 | collector python 3.13-slim → 3.14-slim | **미룸** — pyproject · `.python-version` · uv.lock · CI 가 3.13. Dependabot 이 python 이미지의 부 · 주 버전을 열지 않게 했다(같은 부 버전의 새 다이제스트는 온다) |
+- **확인**(합친 브랜치에서): `make test-api`(Gradle 9.8.1 · 새 db 이미지 — JUnit 1,351 · 커버리지 기준 · REST 계약 46) · 수집기 `uv sync --frozen` 뒤 ruff · ruff format · mypy(94) · 계약 · pytest 2,064 ·
+  웹 eslint · tsc · Vitest 1,933 · `npm run build` · `check:first-js --in-image` 546,311 B · `make infra-docker-test`(edge 44 · Redis ACL 301 · db 권한 36 · 백업 · 복원 48 · 비밀번호 교체 27 ·
+  이미지 교체 11 · 수집기 실 PostgreSQL 11) · `make e2e` 52 · `make security` PASS. 인프라 정책 시험 OK.
+- **겪은 것**: (1) Playwright 1.64 는 Chromium 1248 이 필요했다(`npx playwright install chromium` — 공식 CDN). (2) Next 16.4.0 은 첫 화면 JS 를 3,413 B 줄였다(Turbopack 출력 —
+  원인은 재지 않았다). maplibre 를 6.11.x 에 묶은 Q2 와 함께 여유가 3,689 B 로 늘었다. (3) `make e2e` · `infra-docker-test` 가 덮은 `:local` 은 `:mainsafe` 에서 되돌렸다(배포 이미지 그대로).
+- **남은 것**: 배포 전이다(main 병합 · push · 배포는 사용자 결정). #11 은 GitHub 에서 닫거나 Dependabot 이 다시 볼 때 닫힌다(설정 ignore). CI 는 결제를 푼 뒤 다시 돌린다.
+
 ## 자동 검사 현황(2026-10-02 15:5x KST, QA 2026-10 브랜치 `qa/2026-10` — #103 뒤, 깨끗한 `git archive` 내보내기 · 격리 스택)
 | 층 | 도구 | 수 |
 |---|---|---|
