@@ -48,8 +48,11 @@ updates:
     open-pull-requests-limit: 10
     cooldown: { default-days: 7 }
     # web 의 Node 주 버전(24 → 26)은 첫 화면 JS 예산(웹 이미지의 Node 로 잰다 — ADR-026) · 런타임을 함께 재는 계획된 작업으로. 같은 주 버전의 새 다이제스트는 그대로 온다
+    # collector 의 Python 부 버전(3.13 → 3.14)도 계획된 작업으로: pyproject · .python-version · uv.lock · CI 가 3.13 이고, 바꾸면 의존성 휠(numpy · shapely ·
+    # asyncpg)과 수집기 실 PostgreSQL · Redis 시험을 함께 본다(2026-10-19 — Dependabot #11 은 미룸). 같은 부 버전의 새 다이제스트는 그대로 온다
     ignore:
       - { dependency-name: "node", update-types: ["version-update:semver-major"] }
+      - { dependency-name: "python", update-types: ["version-update:semver-minor", "version-update:semver-major"] }
 
   # infra/compose.yml 의 제3자 이미지(태그@다이제스트 고정 — 같은 태그의 새 다이제스트도 PR 로 온다)
   - package-ecosystem: docker-compose
