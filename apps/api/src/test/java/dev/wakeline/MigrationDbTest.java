@@ -975,6 +975,71 @@ class MigrationDbTest {
     }
 
     /**
+     * V22(개선 작업 IM-01 · 사용자 결정 Q1 2026-10-19 · 계약 v5 §G57): V4 뒤 수집기가 `json` 으로 쌓은 지난 SIGMET 행 중 원문 "TOP ABV FLnnn" 과 같은 상한만
+     * `raw_text_lower_bound` 로 다시 분류한다(V4 와 같은 조건 — 값이 다르면 · "TOPS" · 이미 하한인 행은 그대로). 알림 기록은 바꾸지 않는다. 바꾼 행의 id 와 이전 값을
+     * 감사 기록 한 줄(시스템)에 남기고, 머리 주석의 되돌리기 SQL 이 그 값으로 정확히 돌린다(이력 행은 지우지 않아 다음 migrate 가 다시 적용하지 않는다).
+     * 바꿀 행이 없는 DB 에는 감사 기록을 남기지 않는다. 고치기 전(V22 없음)에는 ABV 행이 `json` 그대로라 이 시험이 실패했다.
+     */
+    @Test
+    void v22ReclassifiesPastAbvTopsSavedAsJsonAndKeepsTheOldValuesForRollback() throws Exception {
+        DbTestSupport.start();
+        String db = "wakeline_stage_twentytwo";
+        DbTestSupport.createDatabase(db);
+        String url = DbTestSupport.jdbcUrl(db);
+        migrateTo(url, "21");
+        JdbcClient stage = JdbcClient.create(new DriverManagerDataSource(url, "postgres", DbTestSupport.ROOT_PW));
+        stage.sql("""
+                INSERT INTO sigmet (id, fir_id, series_id, hazard, base_ft, top_ft, top_source, valid_from, valid_to, raw_text, provider, fetched_at) VALUES
+                  ('ABV_JSON', 'FIMM', 'A01', 'TS', 0, 39000, 'json', now() - interval '3 days', now() - interval '2 days', 'EMBD TS OBS WI AREA TOP ABV FL390 MOV E 05KT NC=', 'awc_isigmet', now() - interval '3 days'),
+                  ('ABV_RAW', 'OEJD', '02', 'TS', 0, 38000, 'raw_text', now() - interval '3 days', now() - interval '2 days', 'FRQ TS FCST TOP ABV' || chr(10) || 'FL380 STNR=', 'awc_isigmet', now() - interval '3 days'),
+                  ('TOP_EXACT', 'RKRR', '1', 'TS', 0, 38000, 'raw_text', now(), now() + interval '1 hour', 'EMBD TS TOP FL380 MOV NE=', 'awc_isigmet', now()),
+                  ('ABV_OTHER', 'MMEX', 'F3', 'TS', 0, 45000, 'json', now(), now() + interval '1 hour', 'TS TOP ABV FL390=', 'awc_isigmet', now()),
+                  ('TOPS', 'KZNY', '3', 'TS', 0, 45000, 'json', now(), now() + interval '1 hour', 'SEV TURB TOPS ABV FL450 CB=', 'awc_isigmet', now()),
+                  ('ALREADY', 'RJJJ', '4', 'TS', 0, 41000, 'raw_text_lower_bound', now(), now() + interval '1 hour', 'EMBD TS TOP ABV FL410=', 'awc_isigmet', now())""").update();
+        stage.sql("""
+                INSERT INTO alert_event (id, hex, sigmet_id, kind, entered_at, left_at, close_reason, evidence) VALUES
+                  (1, 'aaaaa1', 'ABV_JSON', 'OBSERVED', now() - interval '3 days', now() - interval '3 days' + interval '600 seconds', 'left', '{"top_source": "json", "top_ft": 39000}'::jsonb)""").update();
+
+        assertThat(WakelineApplication.migrate(DbTestSupport.env(db))).isZero();
+
+        Map<String, String> top = new HashMap<>();
+        for (var r : stage.sql("SELECT id, top_source FROM sigmet").query().listOfRows()) top.put((String) r.get("id"), (String) r.get("top_source"));
+        assertThat(top).containsEntry("ABV_JSON", "raw_text_lower_bound").containsEntry("ABV_RAW", "raw_text_lower_bound")
+                .containsEntry("TOP_EXACT", "raw_text")              // "TOP FL380" 은 발표된 상한
+                .containsEntry("ABV_OTHER", "json")                  // ABV 값(39000)과 상한(45000)이 다르다 — 단정하지 않는다
+                .containsEntry("TOPS", "json")                       // "TOPS" 는 수집기 규칙과 같게 일치하지 않는다
+                .containsEntry("ALREADY", "raw_text_lower_bound");
+        // 알림 기록(판정 당시의 근거)은 그대로
+        assertThat(stage.sql("SELECT evidence::text FROM alert_event WHERE id = 1").query(String.class).single())
+                .isEqualTo("{\"top_ft\": 39000, \"top_source\": \"json\"}");
+        var audit = stage.sql("SELECT user_id, action, target, before::text b, after::text a FROM audit_log WHERE action LIKE 'SIGMET%'").query().listOfRows();
+        assertThat(audit).hasSize(1);
+        assertThat(audit.get(0)).containsEntry("action", "SIGMET_TOP_SOURCE_V22").containsEntry("target", "sigmet.top_source")
+                .containsEntry("b", "{\"ABV_RAW\": \"raw_text\", \"ABV_JSON\": \"json\"}")
+                .containsEntry("a", "{\"rows\": 2, \"top_source\": \"raw_text_lower_bound\"}");
+        assertThat(audit.get(0).get("user_id")).isNull();
+
+        // 되돌리기(머리 주석): 바꾼 두 행만 이전 값으로, 이력 행은 그대로 → 다음 migrate 가 V22 를 다시 적용하지 않는다
+        runAsMigrator(url, rollbackSql("V22__sigmet_abv_top_backfill.sql"));
+        top.clear();
+        for (var r : stage.sql("SELECT id, top_source FROM sigmet").query().listOfRows()) top.put((String) r.get("id"), (String) r.get("top_source"));
+        assertThat(top).containsEntry("ABV_JSON", "json").containsEntry("ABV_RAW", "raw_text").containsEntry("ALREADY", "raw_text_lower_bound")
+                .containsEntry("TOP_EXACT", "raw_text").containsEntry("ABV_OTHER", "json").containsEntry("TOPS", "json");
+        assertThat(WakelineApplication.migrate(DbTestSupport.env(db))).isZero();
+        assertThat(stage.sql("SELECT top_source FROM sigmet WHERE id = 'ABV_JSON'").query(String.class).single())
+                .as("the rollback lasts across the next migrate").isEqualTo("json");
+        assertThat(stage.sql("SELECT action FROM audit_log WHERE action LIKE 'SIGMET%' ORDER BY id").query(String.class).list())
+                .containsExactly("SIGMET_TOP_SOURCE_V22", "SIGMET_TOP_SOURCE_V22_ROLLBACK");
+
+        // 바꿀 행이 없는 DB: 감사 기록 없음
+        String empty = "wakeline_stage_twentytwo_empty";
+        DbTestSupport.createDatabase(empty);
+        assertThat(WakelineApplication.migrate(DbTestSupport.env(empty))).isZero();
+        assertThat(JdbcClient.create(new DriverManagerDataSource(DbTestSupport.jdbcUrl(empty), "postgres", DbTestSupport.ROOT_PW))
+                .sql("SELECT count(*) FROM audit_log WHERE action LIKE 'SIGMET_TOP_SOURCE_V22%'").query(Long.class).single()).isZero();
+    }
+
+    /**
      * V4·V5 는 운영과 같은 --migrate 경로(wakeline_migrator — 슈퍼유저·역할/DB 생성 권한 없음)로 적용됐고, 스키마의 모든 객체는 migrator 소유다
      * (서비스 역할 소유 객체 없음). V5 파티션 함수는 SECURITY DEFINER 인데 PUBLIC 실행 권한이 없다.
      */

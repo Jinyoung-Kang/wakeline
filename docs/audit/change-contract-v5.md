@@ -1358,6 +1358,8 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
   - 스트림 `sigmet.top_source`: AWC JSON 상한이 원문 "TOP ABV FLnnn" 의 값과 같으면 `raw_text_lower_bound`(예전: `json` — 고정 상한으로 판정돼 그 고도 위 항공기가
     빠졌다, 실제 표본 131건 중 4건). 값이 다르면 `json` 그대로, "TOPS ABV" 도 `json`(정규식이 받지 않는다). V4 마이그레이션 · MigrationDbTest 의 규칙과 같다 — enum 은 그대로.
     이미 저장된 지난 행은 바꾸지 않았다(데이터 변경 — 사용자 결정 대기, PLAN §5 Q1). 살아 있는 SIGMET 은 다음 수신 때 upsert 가 고친다.
+    개정 2026-10-19(사용자 결정 Q1): **V22** 가 지난 행도 같은 조건으로 `raw_text_lower_bound` 로 다시 분류한다(알림 기록은 그대로). 바꾼 행의 id 와 이전 값은
+    감사 기록 `SIGMET_TOP_SOURCE_V22`(시스템) 한 줄에 남고, 머리 주석의 되돌리기 SQL 이 그 값으로 돌린다. 재생 · 이력 · 근거 화면의 지난 ABV 경보가 "FLnnn 이상" 으로 보인다.
     근거 카드의 판정 가정에 "상한은 그 값 이상 → 무제한으로 가정" 이 적힌다.
 - G58(운영 API) **운영 경로의 입력 · 장애 응답 · 신호**(IM-18 · IM-24 · IM-13)
   - `GET /api/v1/ops/logs` · `/ops/logs/groups` · `/ops/runs` 의 `fp` · `rid` · `service` · `level` · `stream` · `cursor` · `resolved`: 앞뒤의 **공백 글자만** 지운다 —
