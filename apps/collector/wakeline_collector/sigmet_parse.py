@@ -12,7 +12,14 @@
            "json" 그대로.
            JSON 이 null(또는 base 보다 낮은 잘못된 값)이면 원문이 "TOP FLnnn" / "TOP ABV FLnnn" 로 하나의 값을 명시할 때만 그 값 +
            top_source="raw_text"(ABV 는 "raw_text_lower_bound" — 발표된 값을 그대로 저장, 판정은 위쪽 무제한 가정).
-           그 밖에는 top_ft=None + top_source="unknown"(미발표, 판정은 무제한 가정).
+           그 밖에는 top_ft=None + top_source="unknown"(미발표, 판정은 무제한 가정). "TOP FLaaa/bbb"(상한이 aaa–bbb)는 bbb 쪽 큰 값이다
+           — 앞 값만 읽으면 그 사이 항공기를 뺀다(ABV 는 V4 · V22 SQL 과 같게 앞 값).
+   - 원문 고도대 "A/B"(A = SFC · FLnnn · nnnnFT · nnnnM, B = FLnnn · nnnnFT · nnnnM, A 가 FL 이면 FL 을 뺀 nnn 도)가 JSON 보다 높이 올라가면
+     상한을 원문 값 가운데 가장 높은 값으로 넓힌다 — top_source="raw_text", band_note="top_below_raw_band"(품질 기록). 실수신(VERIFICATION
+     #156): AWC 가 오류 없이 'SFC/10000FT' 를 top 100, 'TOP FL230/250' 을 23000, 구역 둘의 'SFC/FL070 … SFC/FL120' 을 7000 으로 줬다
+     (같은 'SFC/10000FT' 가 맞게 온 날도 있다). 넓히는 쪽만 바꾼다: JSON 이 원문보다 넓거나, 상한이 없거나(무제한 가정) 'ABV' 하한이면
+     그대로 두고, 원문 자체의 이상한 값(SKED 'SFC/190FT')은 고치지 않는다. 하한이 원문보다 높은 경우(역순 'FL400/280' 에 base=40000)는
+     아직 고치지 않는다 — 하한 출처 값이 계약에 없다(사용자 결정 대기).
 4. 자연키 fir_id:series_id:valid_from. 폴리곤을 만들 수 없는 경보는 geometry=None + excluded_reason.
 5. 유효 시간(validTimeFrom/To, 유닉스 초): 값이 빠졌으면 받지 않는다(다른 필수 필드와 같다). 값이 있는데 시각이 될 수 없으면(0 이하 ·
    끝 ≤ 시작 · MAX_VALIDITY_S 초과) InvalidValidity — 받지 않되 작업이 sigmet_parse_error 품질 기록에 남긴다. 실수신(NFFF SIGMET 15,
@@ -42,8 +49,14 @@ MAX_AREA_SQDEG = 40000.0  # 좌표 폭탄 방지: 위경도 면적 상한(대략
 # 넉넉히 하루. 넘으면 두 시각 중 하나가 틀린 것이다.
 MAX_VALIDITY_S = 24 * 3600
 
-# 원문 상한: "TOP FL380", "TOP ABV FL380"(공백·줄바꿈 변형 허용). "TOPS" 는 일치하지 않는다(\s+ 필요).
-_TOP_RE = re.compile(r"\bTOP\s+(ABV\s+)?FL(\d{3})\b")
+# 원문 상한: "TOP FL380", "TOP ABV FL380", "TOP FL320/370"(공백·줄바꿈 변형 허용). "TOPS" 는 일치하지 않는다(\s+ 필요).
+# 뒤에 다른 '/' 가 붙은 값(TOP FL320/10000FT 등)은 받지 않는다 — 앞 값만 읽지 않도록.
+_TOP_RE = re.compile(r"\bTOP\s+(ABV\s+)?FL(\d{3})(?:/(?:FL)?(\d{3}))?\b(?!/)")
+# 원문 고도대 "A/B"(모듈 설명 3). 앞뒤가 글자 · 숫자 · '/' 이면 고도대가 아니다(유효 시간 270800/271200 · 좌표 등).
+_BAND_RE = re.compile(
+    r"(?<![A-Z0-9/])(?P<lead>(?:TOP\s+)?(?:ABV\s+)?)(?P<a>SFC|FL\d{3}|\d{3,5}FT|\d{3,5}M)/(?P<b>FL\d{3}|\d{3,5}FT|\d{3,5}M|\d{3})(?![A-Z0-9/])"
+)
+_FT_PER_M = 3.28084
 
 
 class InvalidValidity(ValueError):
@@ -160,11 +173,47 @@ def _num(v: Any) -> float | None:
     return float(v) if isinstance(v, int | float) and not isinstance(v, bool) else None
 
 
+def _top_fl(m: re.Match[str]) -> int:
+    """_TOP_RE 일치의 FL 값. 'TOP FLaaa/bbb' 는 큰 값, ABV 는 앞 값(V4 · V22 SQL 의 첫 'TOP ABV' 값과 같게)."""
+    if m.group(1) or not m.group(3):
+        return int(m.group(2))
+    return max(int(m.group(2)), int(m.group(3)))
+
+
+def _level_ft(tok: str, *, upper: bool) -> int | None:
+    if tok == "SFC":
+        return 0
+    if tok.startswith("FL"):
+        return int(tok[2:]) * 100
+    if tok.endswith("FT"):
+        return int(tok[:-2])
+    if tok.endswith("M"):  # 넓히는 쪽으로 반올림(상한은 올림)
+        ft = int(tok[:-1]) * _FT_PER_M
+        return math.ceil(ft) if upper else math.floor(ft)
+    return None
+
+
+def raw_text_band_top(raw: str) -> int | None:
+    """원문 고도대 "A/B"(TOP 이 붙은 상한 범위 포함, ABV 는 뺀다) 값 가운데 가장 높은 값(ft). 고도대가 없으면 None."""
+    tops: list[int] = []
+    for m in _BAND_RE.finditer(raw or ""):
+        if "ABV" in m.group("lead"):
+            continue
+        a, b = m.group("a"), m.group("b")
+        if b.isdigit():  # FL 을 뺀 nnn 은 앞이 FL 일 때만(FL250/350)
+            if not a.startswith("FL"):
+                continue
+            b = f"FL{b}"
+        lv = [_level_ft(a, upper=True), _level_ft(b, upper=True)]
+        tops.append(max(v for v in lv if v is not None))
+    return max(tops) if tops else None
+
+
 def raw_text_top(raw: str) -> tuple[int, bool] | None:
     """원문이 상한을 하나의 값으로 명시하면 (ft, 하한인가). "TOP ABV FLnnn" 은 상한이 그 값 *이상*이라는 뜻이라
     lower_bound=True — 그 값을 상한으로 쓰면 더 높은 고도의 항공기를 경보 밖으로 잘못 뺀다(DH-4).
     값이 없거나 서로 다른 값이 여럿이면 None(추정하지 않는다)."""
-    found = [(int(m.group(2)), m.group(1) is not None) for m in _TOP_RE.finditer(raw or "")]
+    found = [(_top_fl(m), m.group(1) is not None) for m in _TOP_RE.finditer(raw or "")]
     levels = {fl for fl, _ in found}
     if len(levels) != 1:
         return None
@@ -196,19 +245,27 @@ def resolve_band(base: Any, top: Any, raw: str) -> tuple[int, BaseSource, int | 
     note = None
     t = _num(top)
     rt = raw_text_top(raw)
+    top_ft: int | None
+    top_source: TopSource
     if t is not None and t > 0 and int(t) >= base_ft:
         # 원문 "TOP ABV FLnnn" 값 가운데 하나와 같으면 AWC 가 하한을 top 으로 준 것 — 고정 상한으로 쓰면 위쪽 항공기를 빼게 된다
         # (IM-01). 원문에 TOP 값이 여럿이어도(관측분 · 예보분) 같다 — 여기서는 값을 고르지 않고 JSON 값의 성격만 보므로
         # raw_text_top 의 단일 값 조건을 쓰지 않는다(R8). 같은 ABV 값이 없으면 단정하지 않고 발표된 JSON 그대로(V4 의 ABV_OTHER).
         abv_tops = {int(m.group(2)) * 100 for m in _TOP_RE.finditer(raw or "") if m.group(1)}
-        if int(t) in abv_tops:
-            return base_ft, base_source, int(t), "raw_text_lower_bound", None
-        return base_ft, base_source, int(t), "json", None
-    if t is not None:
-        note = "invalid_top"  # 발표값이 있으나 base 이하/0 이하 — 쓰지 않는다(넓히거나 좁혀 추정하지 않음)
-    if rt is not None and rt[0] >= base_ft:
-        return base_ft, base_source, rt[0], ("raw_text_lower_bound" if rt[1] else "raw_text"), note
-    return base_ft, base_source, None, "unknown", note
+        top_ft, top_source = int(t), ("raw_text_lower_bound" if int(t) in abv_tops else "json")
+    else:
+        if t is not None:
+            note = "invalid_top"  # 발표값이 있으나 base 이하/0 이하 — 쓰지 않는다(넓히거나 좁혀 추정하지 않음)
+        if rt is not None and rt[0] >= base_ft:
+            top_ft, top_source = rt[0], ("raw_text_lower_bound" if rt[1] else "raw_text")
+        else:
+            top_ft, top_source = None, "unknown"
+    # 원문 고도대가 더 높이 올라가면 넓힌다(모듈 설명 3) — 고정 상한(json · raw_text)일 때만. 무제한 가정 · 'ABV' 하한은 이미 더 넓다.
+    band_top = raw_text_band_top(raw)
+    if top_ft is not None and top_source in ("json", "raw_text") and band_top is not None and band_top > top_ft:
+        top_ft, top_source = band_top, "raw_text"
+        note = f"{note};top_below_raw_band" if note else "top_below_raw_band"
+    return base_ft, base_source, top_ft, top_source, note
 
 
 def _ts(v: Any) -> datetime | None:
