@@ -253,6 +253,27 @@ class StatsAggregationDbTest {
         assertThat(jobs.backfillStats(today)).as("idempotent — every re-countable family is marked").isEmpty();
     }
 
+    /**
+     * VERIFICATION #155: AWC 가 validTimeFrom 0 을 준 경보 하나(NFFF:15:0, 2026-09-30 수신)가 valid_from 1970-01-01 로 저장되자, 원본이 있는 첫 날을
+     * min(valid_from) 으로 잡던 따라잡기가 3시간마다 92일씩 1970 까지 거꾸로 빈 날을 '집계' 했다(오류 없이 — 로컬 표식 6,234행). 첫 날은 공급자 시각만
+     * 믿지 않는다: 우리가 처음 받은 시각(first_seen)보다 하루 넘게 이른 valid_from 은 첫 날 계산에 쓰지 않는다(SIGMET 은 길어야 몇 시간 유효하다).
+     */
+    @Test
+    void aSigmetStoredWithAnEpochValidFromDoesNotSendTheBackfillBackTo1970() {
+        LocalDate today = LocalDate.now(MaintenanceJobs.DAY_ZONE);
+        LocalDate twenty = today.minusDays(20);
+        sigmet("S_20", "FT20", twenty.atTime(12, 0).atZone(MaintenanceJobs.DAY_ZONE).toInstant());
+        sigmet("NFFF:15:0", "NFFF", Instant.EPOCH, today.minusDays(19).atTime(8, 7).atZone(MaintenanceJobs.DAY_ZONE).toInstant());
+        MaintenanceJobs jobs = jobs(Clock.systemUTC());
+        List<LocalDate> done = jobs.backfillStats(today);
+        assertThat(done).as("from the day before the catch-up window back to the first real SIGMET day").last().isEqualTo(twenty);
+        assertThat(done).hasSize((int) java.time.temporal.ChronoUnit.DAYS.between(twenty, today.minusDays(MaintenanceJobs.CATCH_UP_DAYS + 1)) + 1);
+        assertThat(count(twenty, "sigmet_by_fir")).isEqualTo(1);
+        assertThat(admin.sql("SELECT count(*) FROM stats_daily WHERE metric = 'aggregated_at' AND day < :d").param("d", twenty).query(Long.class).single())
+                .as("no completion markers before the first real SIGMET day").isZero();
+        assertThat(jobs.backfillStats(today)).as("idempotent").isEmpty();
+    }
+
     long count(LocalDate d, String metric) {
         return admin.sql("SELECT coalesce(sum(value), 0)::bigint FROM stats_daily WHERE day = :d AND metric = :m").param("d", d).param("m", metric).query(Long.class).single();
     }
@@ -268,11 +289,16 @@ class StatsAggregationDbTest {
         admin.sql("DROP TABLE IF EXISTS track_point_" + utcDay.format(DateTimeFormatter.BASIC_ISO_DATE)).update();
     }
 
+    /** 유효 시작에 처음 받은 경보(first_seen = valid_from — 옛 날의 경보는 그날 받았다) */
     void sigmet(String id, String fir, Instant validFrom) {
+        sigmet(id, fir, validFrom, validFrom);
+    }
+
+    void sigmet(String id, String fir, Instant validFrom, Instant firstSeen) {
         admin.sql("""
-                INSERT INTO sigmet (id, fir_id, series_id, hazard, valid_from, valid_to, raw_text, provider, fetched_at)
-                VALUES (:id, :fir, '1', 'TS', :f, :f::timestamptz + interval '4 hours', 'r', 'awc', now())""")
-                .param("id", id).param("fir", fir).param("f", Sql.ts(validFrom)).update();
+                INSERT INTO sigmet (id, fir_id, series_id, hazard, valid_from, valid_to, raw_text, provider, fetched_at, first_seen)
+                VALUES (:id, :fir, '1', 'TS', :f, greatest(:f::timestamptz, :seen::timestamptz) + interval '4 hours', 'r', 'awc', :seen, :seen)""")
+                .param("id", id).param("fir", fir).param("f", Sql.ts(validFrom)).param("seen", Sql.ts(firstSeen)).update();
     }
 
     void alert(int id, String sigmetId, Instant entered) {

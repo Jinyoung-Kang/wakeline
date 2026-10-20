@@ -14,6 +14,11 @@
            top_source="raw_text"(ABV 는 "raw_text_lower_bound" — 발표된 값을 그대로 저장, 판정은 위쪽 무제한 가정).
            그 밖에는 top_ft=None + top_source="unknown"(미발표, 판정은 무제한 가정).
 4. 자연키 fir_id:series_id:valid_from. 폴리곤을 만들 수 없는 경보는 geometry=None + excluded_reason.
+5. 유효 시간(validTimeFrom/To, 유닉스 초): 값이 빠졌으면 받지 않는다(다른 필수 필드와 같다). 값이 있는데 시각이 될 수 없으면(0 이하 ·
+   끝 ≤ 시작 · MAX_VALIDITY_S 초과) InvalidValidity — 받지 않되 작업이 sigmet_parse_error 품질 기록에 남긴다. 실수신(NFFF SIGMET 15,
+   2026-09-30): 30일에 낸 원문이 9월에 없는 31일을 유효 시작으로 적자 AWC 가 validTimeFrom 0 을 줬고, 그것을 1970-01-01 로 저장해 api 일 통계
+   따라잡기가 1970 까지 거꾸로 셌다(VERIFICATION #155). 발표 시각 · 받은 시각으로 메우지 않는다 — 발표되지 않은 유효 시작이 되고(SIGMET 은 유효
+   시작보다 최대 몇 시간 먼저 낸다) 자연키도 그 값으로 만든다.
 """
 
 from __future__ import annotations
@@ -33,9 +38,16 @@ MAX_POINTS = 2000  # 링 하나의 점 상한 — 넘으면 자르지 않고 제
 MAX_RINGS = 50
 MAX_TOTAL_POINTS = 10000  # 링 전체 점 상한(make_valid·unary_union 시간 상한 역할)
 MAX_AREA_SQDEG = 40000.0  # 좌표 폭탄 방지: 위경도 면적 상한(대략 반구 수준)
+# 유효 기간 상한: ICAO Annex 3 SIGMET 4 h(화산재 · 열대저기압 6 h), 미국 AIRMET 6 h. 로컬 저장분 12,208건의 최대는 7 h 59 m(2026-10-20) —
+# 넉넉히 하루. 넘으면 두 시각 중 하나가 틀린 것이다.
+MAX_VALIDITY_S = 24 * 3600
 
 # 원문 상한: "TOP FL380", "TOP ABV FL380"(공백·줄바꿈 변형 허용). "TOPS" 는 일치하지 않는다(\s+ 필요).
 _TOP_RE = re.compile(r"\bTOP\s+(ABV\s+)?FL(\d{3})\b")
+
+
+class InvalidValidity(ValueError):
+    """유효 시간 값이 있으나 시각이 될 수 없다 — 그 경보는 받지 않고 품질 기록에 남긴다(모듈 설명 5)."""
 
 
 class _TooMany(Exception):
@@ -206,13 +218,34 @@ def _ts(v: Any) -> datetime | None:
         return None
 
 
+def _validity(item: dict[str, Any], who: str) -> tuple[datetime, datetime] | None:
+    """(valid_from, valid_to). 값이 빠졌으면 None(받지 않는다), 있는데 시각이 될 수 없으면 InvalidValidity(모듈 설명 5)."""
+    raw_from, raw_to = item.get("validTimeFrom"), item.get("validTimeTo")
+    if raw_from is None or raw_to is None:
+        return None
+    vf, vt = _ts(raw_from), _ts(raw_to)
+    shown = f"{who}: validTimeFrom={raw_from!r} validTimeTo={raw_to!r}"
+    if vf is None or vf.timestamp() <= 0:
+        raise InvalidValidity(f"{shown} — validTimeFrom is not a time")
+    if vt is None or vt.timestamp() <= 0:
+        raise InvalidValidity(f"{shown} — validTimeTo is not a time")
+    if vt <= vf:
+        raise InvalidValidity(f"{shown} — validTimeTo is not after validTimeFrom")
+    if (vt - vf).total_seconds() > MAX_VALIDITY_S:
+        raise InvalidValidity(f"{shown} — validity longer than {MAX_VALIDITY_S // 3600} h")
+    return vf, vt
+
+
 def parse_isigmet(item: dict[str, Any], fetched_at: datetime, provider: str = "awc_isigmet") -> Sigmet | None:
     fir = item.get("firId") or item.get("icaoId")
     series = item.get("seriesId")
-    vf, vt = _ts(item.get("validTimeFrom")), _ts(item.get("validTimeTo"))
     hazard = item.get("hazard")
-    if not fir or not series or vf is None or vt is None or not hazard or vt <= vf:
+    if not fir or not series or not hazard:
         return None
+    validity = _validity(item, f"{fir} {series}")
+    if validity is None:
+        return None
+    vf, vt = validity
     geometry, excluded = build_geometry(item)
     raw_text = str(item.get("rawSigmet") or "")
     base_ft, base_source, top_ft, top_source, note = resolve_band(item.get("base"), item.get("top"), raw_text)
@@ -247,10 +280,13 @@ def parse_airsigmet(item: dict[str, Any], fetched_at: datetime, provider: str = 
     """미국 SIGMET/AIRMET(FR-28). 좌표는 단일 링. 고도는 altitudeLow1/Hi1(ft)."""
     icao = item.get("icaoId")
     series = item.get("seriesId")
-    vf, vt = _ts(item.get("validTimeFrom")), _ts(item.get("validTimeTo"))
     hazard = item.get("hazard")
-    if not icao or not series or vf is None or vt is None or not hazard or vt <= vf:
+    if not icao or not series or not hazard:
         return None
+    validity = _validity(item, f"{icao} {series}")
+    if validity is None:
+        return None
+    vf, vt = validity
     pseudo = {"geom": "AREA", "coords": item.get("coords") or []}
     geometry, excluded = build_geometry(pseudo)
     hi = item.get("altitudeHi1")

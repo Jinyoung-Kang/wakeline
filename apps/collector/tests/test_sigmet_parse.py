@@ -1,6 +1,7 @@
 import json
 from datetime import UTC, datetime
 
+import pytest
 from shapely.geometry import Point, shape
 
 from wakeline_collector.sigmet_parse import build_geometry, parse_airsigmet, parse_isigmet
@@ -274,3 +275,87 @@ def test_top_abv_is_a_lower_bound_not_a_ceiling():
     assert (top, src) == (39000, "raw_text_lower_bound")
     _, _, top, src, _ = resolve_band(None, None, "SEV TURB TOP FL390")
     assert (top, src) == (39000, "raw_text")
+
+
+# 실수신 2026-09-30 23:07 UTC(awc_isigmet). 원천 JSON 은 72 h 보관이 지나 없어, 로컬 DB 에 저장된 행(id NFFF:15:0)에서 되살렸다 — id 끝의
+# 0 = int(valid_from.timestamp()) 이므로 AWC 가 validTimeFrom 을 0 으로 줬다. 원문은 30일에 내면서 9월에 없는 31일을 유효 시작으로 적었다.
+NFFF_RAW = (
+    "WSFJ03 NFFN 302100\n"
+    "NFFF SIGMET 15 VALID 312345/010345 NFFN-\n"
+    "NFFF NADI FIR SEV TURB FCST WI S1736 E16300 - S2106 E17154 - S2500\n"
+    "E17954 - S2500 E17124 - S2324 E16600 - S2036 E16300 - S1736 E16300\n"
+    "FL400/280 MOV E 15KT NC="
+)
+NFFF_FETCHED = datetime(2026, 9, 30, 23, 7, 38, tzinfo=UTC)
+
+
+def _nfff(**kw):
+    item = {
+        "icaoId": "NFFN",
+        "firId": "NFFF",
+        "firName": "NFFF NADI",
+        "validTimeFrom": 0,
+        "validTimeTo": 1790826300,  # 2026-10-01 03:45 UTC = 원문 010345
+        "seriesId": "15",
+        "hazard": "TURB",
+        "qualifier": "SEV",
+        "base": 40000,
+        "top": None,
+        "geom": "AREA",
+        "coords": [
+            {"lon": 163, "lat": -17.6},
+            {"lon": 171.9, "lat": -21.1},
+            {"lon": 179.9, "lat": -25},
+            {"lon": 171.4, "lat": -25},
+            {"lon": 166, "lat": -23.4},
+            {"lon": 163, "lat": -20.6},
+            {"lon": 163, "lat": -17.6},
+        ],
+        "dir": "E",
+        "spd": "15",
+        "chng": "NC",
+        "rawSigmet": NFFF_RAW,
+    }
+    item.update(kw)
+    return item
+
+
+def test_awc_zero_valid_from_is_rejected_not_stored_as_1970():
+    """validTimeFrom 0 은 '시각 없음'이지 1970-01-01 이 아니다. 1970 으로 받으면 api 일 통계 따라잡기가 그날까지 거꾸로 센다(VERIFICATION #155)."""
+    with pytest.raises(ValueError, match="validTimeFrom"):
+        parse_isigmet(_nfff(), NFFF_FETCHED)
+
+
+@pytest.mark.parametrize(
+    ("vf", "vt", "why"),
+    [
+        (-60, 1790826300, "validTimeFrom"),  # 음수 = 1970 이전
+        (1790826300, 0, "validTimeTo"),
+        (1790826300 - 25 * 3600, 1790826300, "longer than"),  # 유효 25 h — 가장 긴 SIGMET(VA · TC 6 h)보다 훨씬 길다
+        (1790826300, 1790826300, "not after"),
+    ],
+)
+def test_implausible_validity_is_rejected_with_reason(vf, vt, why):
+    with pytest.raises(ValueError, match=why):
+        parse_isigmet(_nfff(validTimeFrom=vf, validTimeTo=vt), NFFF_FETCHED)
+
+
+def test_validity_up_to_24h_and_missing_fields_keep_their_rules():
+    s = parse_isigmet(_nfff(validTimeFrom=1790826300 - 24 * 3600), NFFF_FETCHED)
+    assert s is not None and s.id == f"NFFF:15:{1790826300 - 24 * 3600}"
+    assert parse_isigmet(_nfff(validTimeFrom=None), NFFF_FETCHED) is None  # 빠진 값은 전처럼 받지 않는다(조용히)
+    assert parse_isigmet(_nfff(hazard=None), NFFF_FETCHED) is None
+
+
+def test_airsigmet_zero_valid_from_is_rejected():
+    item = {
+        "icaoId": "KKCI",
+        "seriesId": "12C",
+        "hazard": "CONVECTIVE",
+        "validTimeFrom": 0,
+        "validTimeTo": 1790826300,
+        "coords": [{"lon": -100, "lat": 35}, {"lon": -99, "lat": 35}, {"lon": -99, "lat": 36}],
+        "rawAirSigmet": "RAW",
+    }
+    with pytest.raises(ValueError, match="validTimeFrom"):
+        parse_airsigmet(item, NFFF_FETCHED)
