@@ -2009,6 +2009,15 @@ AWS 리뷰 D-2 · D-3 · D-4 · D-5 · D-6 · D-7 · D-8 · B-4 · C-2. 모두 �
   eslint 오류 0(경고 1 — 손대지 않은 `tests/ops-tabs.test.ts` 의 기존 경고, main 도 같다), 첫 화면 JS 546,662 B / 550,000 B(`--in-image --image wakeline-web:local`).
   `python3 -m unittest discover -s infra/tests` 195 통과. E2E(`make e2e`)는 돌리지 않았다(운영 이미지 태그를 덮는다 — 바뀐 화면은 드문 하한 글자뿐).
   `make test-api` 가 다시 만든 `wakeline-db:local` 은 `:mainsafe` 에서 되돌렸다(운영 이미지 그대로). 워크트리의 `apps/web/node_modules` 는 main 체크아웃 설치본(같은 잠금 파일)의 복제.
+- **배포(2026-10-21 00:51–01:10 KST, 사용자 "병합, 배포, 푸쉬해")**: `fix/sigmet-epoch-2026-10`(#155) · `fix/sigmet-band-2026-10` 을 병합 커밋 둘로 main `11006092` 에 넣고
+  push(CI 39452816976). 로컬: 되돌리기 `wakeline-*:pre-sigmet`(= `e539f5c2` 이미지) → api · db · edge `--no-cache` · web · collector 빌드 → `make security` PASS(gitleaks 0 ·
+  trivy 자체 5 · redis · npm audit · pip-audit) → `make up` — migrate 가 V23 을 0.60 s 에 적용, 감사 `SIGMET_BAND_V23` rows 11(기대 그대로), 재생 API 의 LPPO:U07 이
+  `25000 raw_text`. 5분 동안 api WARN 2(15:54:33 UTC Redis 명령 시간 초과 → 15:55:57 회복)와 15:59–16:00 UTC 의 수집기 이벤트 루프 7.6 s 멈춤 · 헬스체크 시간 초과
+  (멈춰 있던 동안의 따라잡기 — 곧 healthy) 말고는 오류 0. 로컬 스택은 사용자가 멈춰 두기로 한 상태(#154)라 확인 뒤 다시 멈췄다 — `tools/dc stop` 에서 db 가 기본 10 s 안에
+  종료 체크포인트를 끝내지 못해 SIGKILL(137)로 끝나, db 만 `docker start` 로 켜 복구(redo 4.1 s)를 끝내고 V23 값이 그대로인 것을 본 뒤 `docker stop -t 120` 으로 정상
+  종료(0)했다. AWS: SSM 으로 `:rollback`(= `e539f5c2` 이미지) → ff-only `e539f5c2..11006092` → api(`--no-cache`) · collector · web 빌드(184 s) → migrate(V23 0.73 s)
+  → `up -d --wait` — `/healthz` · `/api/v1/status` 200, 4분 동안 api · collector · ais · web · edge WARN/ERROR 0, 재생 API 의 UDDD:1 · SGFA:01 이 상한 37000 · 30000
+  `raw_text`(AWS DB 에도 같은 행이 있었다 — 바뀐 행 수는 세지 않았다).
 
 ## 자동 검사 현황(2026-10-02 15:5x KST, QA 2026-10 브랜치 `qa/2026-10` — #103 뒤, 깨끗한 `git archive` 내보내기 · 격리 스택)
 | 층 | 도구 | 수 |
