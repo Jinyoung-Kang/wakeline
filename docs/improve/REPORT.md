@@ -131,6 +131,7 @@
 - **역행 직후 체류**: 시계가 뒤로 간 직후 LEFT 가 나면 `left_at` 이 `entered_at` 보다 이를 수 있다(음수 체류가 통계에 섞일 수 있다 — ADR-040).
 - **같은 부류로 남긴 것**(제안): 웹이 항공기 검색 · `/watch` 의 `meta.db_unavailable` 을 읽지 않음, 운영 컨트롤러의 'redis unavailable' catch 가 원인을 남기지 않음, 교통량 발행 실패 WARN 이 틱마다, 알림 해결 메모 본문의 `strip()`, 웹 `topAboveFromRaw` 죽은 길(수집기가 같은 값 ABV 를 하한으로 내므로 실제 자료에서 쓰이지 않음), ErrorScreen · 청크 확인이 `/maplibre/` 경로를 보지 않음.
 - **다음 단계**: Q1 · Q2 · Q4 결정 → main 병합 · push(사용자) → 배포(로컬은 `make up` — 그 전에 api · db · edge 를 `--no-cache` 로 빌드, AWS 는 ADR-039 명령으로 api · collector · web 을 다시 빌드(api 는 `--no-cache` 권장) — 마이그레이션 변화 없음) → 이어지는 QA.
+- **2026-10-19 끝남**: 결정 셋(Q1 V22 · Q2 maplibre 6.11.x · Q4 ADR-041)을 승인대로 넣고 main 에 병합 · push · 로컬 · AWS 에 배포했다. 그 뒤의 의존성 갱신 · 남은 지적(R4 · R5 · R12)도 같은 날 넣었다(VERIFICATION #148–#153).
 
 ## 7. QA 인계
 - **변경이 몰린 곳**: api 판정 엔진(`weather/core` — EngineService · AlertStateMachine · IntersectionEngine), 수신 가드(`ingest/StreamConsumer` · `aircraft/core/SnapshotStore` · `platform/support/FetchedAtGuard`),

@@ -1930,6 +1930,21 @@ AWS 리뷰 D-2 · D-3 · D-4 · D-5 · D-6 · D-7 · D-8 · B-4 · C-2. 모두 �
 - **확인**(이 브랜치): `make test`(pytest 2,064 · JUnit 1,352 + 커버리지 기준 · REST 계약 46 · Vitest 1,941 · 인프라 정책 195) · `make e2e` 52 · `make security` PASS ·
   첫 화면 JS 546,651 B(여유 3,349 B). `make e2e` 가 덮은 `:local` 은 `:mainsafe` 에서 되돌렸다(운영 이미지 그대로).
 
+## #153 마지막 배포 · GitHub CI 다시 통과 · Dependabot #20(2026-10-19 – 10-20, main `e539f5c2` → 브랜치 `chore/deps-2026-10-20`)
+- **배포(10-19)**: main `e539f5c2`(#152)를 push 하고 배포했다. 로컬은 api · db · edge `--no-cache` · web · collector 빌드 → `make security` PASS → `make up`(새 마이그레이션 없음 —
+  바뀐 api · web · db · edge 만 다시 만들었다). db 를 다시 만드는 약 7초 동안 수집기가 asyncpg 풀 재연결 경고(`CannotConnectNowError: the database system is shutting down` →
+  `gaierror`)와 `ingest_run` 1건 대기를 남겼고 곧 다시 붙었다 — 설계대로(#111). AWS 는 SSM 으로 `:rollback`(= `5b1a9a64` 이미지) → ff-only → api(`--no-cache`) · collector · web
+  빌드(132 s) → migrate(없음) → `up -d --wait` — api · web 만 바뀌었고 `/healthz` · 상태 · 검색 200, 4분 동안 오류 0.
+- **GitHub CI**: 10-19 의 push 와 Dependabot PR 의 실행은 모두 작업이 시작되지 않았다("recent account payments have failed or your spending limit needs to be increased" — 저장소가
+  비공개라 Actions 시간이 과금된다). 10-20 05:24 · 05:25 UTC 에 다시 돌린 두 번도 같았고(사용자가 결제를 고쳤다고 한 직후 — 반영 전), 사용자가 다시 확인한 뒤 4번째 시도
+  (05:27–05:43 UTC)에서 8개 작업 모두 통과했다(web · api · infra · collector · security · 제3자 trivy 둘 · e2e). 실행 환경은 아직 Ubuntu 24.04(`ubuntu-latest` 는 10-19 부터 차례로 26 으로 옮긴다는 안내).
+  남은 경고는 예전부터 있던 것뿐이다: 웹 시험의 안 쓰는 변수(`tests/ops-tabs.test.ts:55`) · api 의 Tomcat 사용 중단 API 한 곳 · k6 이미지 CVE(보고만) · setup-uv 캐시 저장 경합.
+- **Dependabot #20**(vitest 5.0.3 → 5.0.4 — 개발 의존성만: `@vitest/*` · chai 6.3.0 · obug 3.0.0 · std-env · tinyexec 등): 브랜치에 받아 `npm ci` → eslint · tsc · Vitest 1,941 ·
+  `npm run build` · 첫 화면 JS 546,651 B(그대로) 통과. PR 의 CI 도 다시 돌렸다(결과는 아래).
+- **상태 확인(10-20)**: AWS 는 `e539f5c2` · 모든 컨테이너 healthy · 12시간 동안 api · collector 오류 0. 로컬 운영 스택은 10-19 23:17 KST 에 컨테이너 여덟이 함께 정상 종료 신호로
+  멈춰 있었다(재시작 정책 `unless-stopped` — 명시적으로 멈춘 것, 이 작업이 멈추지 않았다). 다시 켤지는 사용자가 정한다(켜기 전에 data.go.kr 공급자 셋이 꺼져 있는지 본다 — ADR-039 결정 6, 이 기록에서는 확인하지 않았다).
+- **PR #20 CI**: 다시 돌린 실행(39237505516, 2번째 시도)에서 8개 작업 모두 통과. 이 브랜치는 PR 의 커밋을 그대로 병합해 main 에 들어가면 GitHub 이 PR 을 병합으로 표시한다.
+
 ## 자동 검사 현황(2026-10-02 15:5x KST, QA 2026-10 브랜치 `qa/2026-10` — #103 뒤, 깨끗한 `git archive` 내보내기 · 격리 스택)
 | 층 | 도구 | 수 |
 |---|---|---|

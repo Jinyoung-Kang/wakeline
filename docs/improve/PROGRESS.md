@@ -68,4 +68,5 @@
 ## 다음에 할 일(사용자)
 - 결정: Q1(지난 SIGMET 행 재분류 V22) · Q2(maplibre 6.12) · Q4(WS 를 지도와 떼기) — REPORT §5.
 - main 병합 · push · 배포(REPORT §6 '다음 단계' — api · db · edge 는 `--no-cache` 빌드 권장).
+- → 2026-10-19 모두 끝남: Q1 · Q2 · Q4 승인 · 구현, main 병합 · push · 로컬 · AWS 배포(VERIFICATION #148–#153).
 - 끝낸 정리: `wakeline-*:local` 은 `:mainsafe`(main 판)로 되돌렸고 `:mainsafe` 태그 · 레인 worktree · 레인 브랜치(`lane/improve-*` · `lane/fix-*` — 커밋은 모두 이 브랜치에 cherry-pick 됨)는 지웠다.
