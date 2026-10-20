@@ -1,4 +1,4 @@
-"""collector 진입점 — 주기 작업 8종(region·global·sigmet·radar·metar·maintenance·radar_kr·traffic_grid)과 수요 기반 추적(focus·hot,
+"""collector 진입점 — 주기 작업 9종(region·global·sigmet·radar·metar·maintenance·radar_kr·kma_warning·traffic_grid)과 수요 기반 추적(focus·hot,
 ADR-013)·선택 항공기 노선 조회(계약 v4 §A)·한국 항만 입출항 색인(portcalls_index — ADR-022 개정)을 하나의 이벤트 루프에서 돌린다.
 traffic_grid = 연안 교통량(ADR-023). 입출항 색인 · 연안 교통량은 공공데이터포털 키 하나 · apis.data.go.kr 호스트 버킷 하나를 나눠 쓴다(키가 있을 때만).
 

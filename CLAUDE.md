@@ -8,7 +8,7 @@ Wakeline — 실시간 항공기 · 선박 · 위험기상 상황판(개인 포�
 ## 스택
 - `apps/api` Spring Boot 4.1 · Java 25 · Gradle(`./gradlew --offline`) · Flyway(`src/main/resources/db/migration`, V1–V23) · Testcontainers
 - `apps/collector` Python 3.13 asyncio · uv — 패키지 `wakeline_collector`(폴링 수집기)와 `ais`(aisstream.io WebSocket 수신, 같은 이미지 · 다른 컨테이너)
-- `apps/web` Next.js 16.3 · React 19.3 · MapLibre · zustand · Vitest · Playwright — **학습한 Next.js 와 다르다**: 코드를 쓰기 전에 `apps/web/AGENTS.md` 대로
+- `apps/web` Next.js 16.4 · React 19.3 · MapLibre · zustand · Vitest · Playwright — **학습한 Next.js 와 다르다**: 코드를 쓰기 전에 `apps/web/AGENTS.md` 대로
   `apps/web/node_modules/next/dist/docs/` 를 읽는다
 - `infra/` compose(PostgreSQL 18 + PostGIS 3.6 직접 빌드 · Redis 8 · nginx edge) · `tools/` 계약 검사 · `.env` 생성 · 보안 게이트 · `schemas/` 언어 사이 계약
 

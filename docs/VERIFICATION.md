@@ -2046,6 +2046,23 @@ AWS 리뷰 D-2 · D-3 · D-4 · D-5 · D-6 · D-7 · D-8 · B-4 · C-2. 모두 �
   `tools/dc stop db` 가 약 1 s 만에 Exited(0). 스택은 다시 모두 멈춘 상태. AWS 는 ff-only `11006092..d2d4cddc` 만 — db 가 기본 구성에 없어(`local-db` 프로필)
   `up -d --wait` 가 일회성 migrate(새 마이그레이션 없음) 말고 아무 컨테이너도 다시 만들지 않았다, `/healthz` 200.
 
+## #158 문서의 낡은 수치 셋 · #155 데이터 정리의 진행 · redis 종료 유예를 두는가(2026-10-21, 브랜치 `docs/stale-facts-2026-10`)
+- **낡은 수치**(웹 포트폴리오를 만들며 코드 · lockfile · 측정과 맞대어 찾음): ① README '성능(실측)'의 첫 화면 JS 547,116 B → 지금 main(`d0d5cdd6`) **546,662 B**(예산 550,000 B ·
+  여유 3,338 B — `npm run build && npm run check:first-js -- --in-image`, 웹 이미지의 Node 24.21.0. 지도 라이브러리 3개 304,573 B · 첫 화면 조각 12개 214,419 B · dynamic 2개
+  24,162 B · 보간 워커 3,508 B). PERF §15.7 의 547,116 B 는 그때의 기록이라 그대로 둔다. ② 수집기 `main.py` 설명의 '주기 작업 8종' — 목록에서 `kma_warning` 이 빠졌다. 실제로
+  `jobs` 사전이 등록하는 작업은 11개(주기 9 + 수요 추적 `demand` + 입출항 색인 `portcalls_index`) — '주기 작업 9종'으로 고침(동작 변화 없음). ③ CLAUDE.md 의 Next.js 16.3 →
+  `package-lock.json` 16.4.0(#150 에서 올림).
+- **#155 의 데이터 정리**: 로컬 DB 에서 지울 대상을 다시 셌다 — `sigmet` `NFFF:15:0` 1행(이 행을 가리키는 `alert_event` 0행 — FK `alert_event_sigmet_id_fkey`), `stats_daily` 의
+  `aggregated_at` 표식 중 `day < 2026-09-27` 이면서 값(집계 시각)이 2026-10-01 이후인 **6,277행**(2009-08-07–2026-09-22, 정상 7일 따라잡기가 만든 9행은 남는다, 값 행 0).
+  지우기 전에 두 대상을 CSV 로 백업했다(`backups/cleanup-155-sigmet-NFFF-15-0.csv` · `backups/cleanup-155-stats-bogus-markers.csv`, 0600, git 제외). 지우는 트랜잭션(지운 수가
+  1 · 6,277 이 아니면 예외로 되돌림)은 이 작업의 권한 검사가 막아 **실행하지 않았다** — 사용자가 직접 실행하거나 허용할 때까지 그대로 둔다. 남겨 둬도 해는 없다: 고친 따라잡기는
+  `first_seen` 보다 하루 넘게 이른 `valid_from` 을 쓰지 않아 더 거슬러 가지 않고, 표식은 조회 API 가 거르는 행이다.
+- **AWS DB**: 같은 행이 있는지 확인하지 못했다. 그 호스트에서 `GET /api/v1/sigmets/NFFF:15:0` 은 404 였지만, 이 조회는 메모리의 지금 경보 집합(`SigmetStore`)만 본다 — DB 에
+  있는지는 말해 주지 않는다. DB 를 직접 읽으려면 RDS 자격 증명이 필요해 하지 않았다. 고친 수집기 · 따라잡기는 AWS 에도 배포돼 있다(#156).
+- **redis 종료 유예(#157 의 남은 것)**: 바꾸지 않기로 했다. `infra/redis/redis.conf` 가 `save ""` · `appendonly yes` · `appendfsync everysec` 라 종료 때 RDB 를 쓰지 않고
+  AOF 를 한 번 비우는 일만 한다 — #157 사고 때도 종료 요청 0.1 s 뒤 0 으로 끝났다. web · edge 는 상태가 없다.
+- **확인**: `python3 -m unittest discover -s infra/tests`(README 수치 대조 포함) · 수집기 `ruff check` · `ruff format --check` · `mypy`(설명 글만 바뀜).
+
 ## 자동 검사 현황(2026-10-02 15:5x KST, QA 2026-10 브랜치 `qa/2026-10` — #103 뒤, 깨끗한 `git archive` 내보내기 · 격리 스택)
 | 층 | 도구 | 수 |
 |---|---|---|
