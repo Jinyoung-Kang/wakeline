@@ -1962,8 +1962,8 @@ AWS 리뷰 D-2 · D-3 · D-4 · D-5 · D-6 · D-7 · D-8 · B-4 · C-2. 모두 �
 - **본 것**: 웹 포트폴리오를 만들며 로컬 스택을 잠깐 켰을 때 api 로그의 따라잡기가 2009년 날짜를 집계하고 있었다. 오류 · WARN 은 없었다. 로컬 DB(읽기 전용 조회):
   `sigmet` 의 한 행 `NFFF:15:0`(awc_isigmet, first_seen 2026-09-30 23:07:38 UTC)의 `valid_from` 이 `1970-01-01 00:00:00+00`, `valid_to` 2026-10-01 03:45 UTC. 원문
   `WSFJ03 NFFN 302100` / `NFFF SIGMET 15 VALID 312345/010345` — 30일에 내면서 9월에 없는 31일을 유효 시작으로 적었다. 나머지 12,208행의 유효 기간은 모두 8 h 미만,
-  valid_from 이 first_seen 보다 이른 폭은 최대 6 h 3 m. `stats_daily` 에는 `aggregated_at` 표식만 있는 날이 2009-08-07–2026-08-31 에 6,234행(값 행은 0 — 그날 자료가
-  없다), 첫 표식이 2026-10-01 00:03 UTC 에 생겼다. 이 경보로 생긴 알림은 0건.
+  valid_from 이 first_seen 보다 이른 폭은 최대 6 h 3 m. `stats_daily` 에는 `aggregated_at` 표식만 있는 날이 2009-08-07–2026-09-26 에 6,277행(값 행은 0 — 그날 자료가
+  없다), 첫 표식이 2026-10-01 00:03 UTC 에 생겼다(그 앞 09-20–09-26 의 표식 9행은 10-01 전에 7일 따라잡기가 정상으로 만든 것). 이 경보로 생긴 알림은 0건.
 - **원인**: (1) 수집기 `sigmet_parse._ts` 가 `validTimeFrom` 0 을 그대로 `1970-01-01` 로 받았다 — 원천 JSON 은 72 h 보관이 지나 없지만, 자연키 끝 `:0` 이
   `int(valid_from.timestamp())` 이므로 AWC 가 0 을 줬다(AWC 가 원문의 31일을 읽지 못한 것으로 보이나 확인하지 않았다). (2) api `MaintenanceJobs.backfillStats` 가 원본이
   있는 첫 날을 `least(min(sigmet.valid_from), min(alert_event.entered_at))` 로 잡아, 따라잡기(3 h 마다)가 92일씩 1970 까지 빈 날을 집계했다 — 다 가려면 약 27일
@@ -1974,7 +1974,7 @@ AWS 리뷰 D-2 · D-3 · D-4 · D-5 · D-6 · D-7 · D-8 · B-4 · C-2. 모두 �
   `first_seen` 을 now() 로 두고 40일 전 경보를 넣던 것을 실제처럼 `first_seen = valid_from` 으로 바꿨다.
   고치기 전: `test_awc_zero_valid_from_is_rejected_not_stored_as_1970` 등 수집기 7건 실패(`DID NOT RAISE` · 발행 세트에 `NFFF:15:0`), api
   `aSigmetStoredWithAnEpochValidFromDoesNotSendTheBackfillBackTo1970` 실패(`expected: 2026-09-30 but was: 2026-07-13` — 92일 한도까지 내려갔다).
-- **남은 것**: 이미 저장된 행 `NFFF:15:0` 과 표식 6,234행은 데이터를 바꾸는 일이라 사용자 결정을 기다린다(정한 뒤 이 절에 적는다). 같은 경보의 고도대도 틀렸다 — 원문
+- **남은 것**: 이미 저장된 행 `NFFF:15:0` 과 표식 6,277행은 데이터를 바꾸는 일이라 사용자 결정을 기다린다(정한 뒤 이 절에 적는다). 같은 경보의 고도대도 틀렸다 — 원문
   `FL400/280` 을 AWC 가 base 40000 · top null 로 줘 base_ft 40000 · top_source unknown 으로 저장됐다(이번 범위 밖, 따로 본다). AWS DB 에 같은 행이 있는지는 보지 않았다.
 - **확인**(이 브랜치): `make test-collector` pytest 2,072 통과 · 28 건너뜀, ruff · ruff format · mypy 통과. `make test-api` JUnit 1,353 통과 · JaCoCo LINE 97.59 % ·
   BRANCH 87.48 % · REST 계약 46 통과. `make test-api` 가 다시 만든 `wakeline-db:local` 은 `:mainsafe` 에서 되돌렸다(운영 이미지 그대로).
