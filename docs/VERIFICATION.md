@@ -2063,6 +2063,19 @@ AWS 리뷰 D-2 · D-3 · D-4 · D-5 · D-6 · D-7 · D-8 · B-4 · C-2. 모두 �
   AOF 를 한 번 비우는 일만 한다 — #157 사고 때도 종료 요청 0.1 s 뒤 0 으로 끝났다. web · edge 는 상태가 없다.
 - **확인**: `python3 -m unittest discover -s infra/tests`(README 수치 대조 포함) · 수집기 `ruff check` · `ruff format --check` · `mypy`(설명 글만 바뀜).
 
+## #159 #155 데이터 정리 실행 · AWS DB 에는 같은 행이 없음(2026-10-21, 브랜치 `docs/cleanup-155-2026-10`)
+- **로컬 정리**(#158 에서 막혔던 것 — 사용자가 진행을 허용): db 컨테이너만 `docker start` 로 켜 대상을 다시 셌다 — 표식 6,277 · `NFFF:15:0` 1 · 그 행을 가리키는
+  `alert_event` 0(#158 과 같음). 백업(#158)을 확인하고, 지운 수가 1 · 6,277 이 아니면 예외로 되돌리는 트랜잭션(`backups/cleanup-155.sql`, git 제외)을 실행했다 —
+  `BEGIN · DO · COMMIT`. 뒤에 남은 대상 0, `min(sigmet.valid_from)` = 2026-09-27 02:25 UTC, 가장 이른 `aggregated_at` 표식 2026-09-23(정상 따라잡기가 만든 것).
+  db 는 `docker stop -t 120` 으로 다시 멈췄다(exit 0 — 로컬 스택은 멈춘 채로 둔다).
+- **AWS DB**: RDS 자격 증명 없이 확인했다 — SSM 으로 호스트의 web 컨테이너에서 내부 망의 api 를 읽기 전용으로 불렀다(`wget http://api:8000/…`).
+  ① `GET /api/v1/stats/{sigmet,alerts}?from=…&to=…` 의 `days[].aggregated`(그날 `aggregated_at` 표식이 있는가): 2009-08-01–10-31 · 2026-06-20–09-19 는 0일,
+  2026-09-20–10-20 은 10-03–10-20 의 18일 — 1970 쪽으로 거슬러 간 표식이 없다. ② `GET /api/v1/replay?at=2026-09-25T00:00:00Z&bbox=160,-25,180,-10`(그 경보 도형이 있는
+  피지 부근 — `valid_from ≤ at < valid_to` 를 DB 에서 읽는다): SIGMET 0. `valid_from` 이 1970 인 행이 있었다면 나왔을 시각이다. ③ api 로그(72 h)의 따라잡기 줄은
+  `backfilled 0 older days` 하나. 그 경보는 2026-10-01 03:45 UTC 에 끝났고 AWS 의 집계는 10-03 부터라 AWS 수집기는 그 경보를 받은 적이 없는 것으로 보인다(추정 —
+  수집 실행 기록은 보지 않았다). AWS 에는 정리할 것이 없다.
+- **확인**: 위 조회 결과 · `python3 -m unittest discover -s infra/tests`(문서만 바뀜).
+
 ## 자동 검사 현황(2026-10-02 15:5x KST, QA 2026-10 브랜치 `qa/2026-10` — #103 뒤, 깨끗한 `git archive` 내보내기 · 격리 스택)
 | 층 | 도구 | 수 |
 |---|---|---|
