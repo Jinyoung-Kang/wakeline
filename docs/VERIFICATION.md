@@ -2041,6 +2041,10 @@ AWS 리뷰 D-2 · D-3 · D-4 · D-5 · D-6 · D-7 · D-8 · B-4 · C-2. 모두 �
 - **남은 것**: 유예를 명시하지 않은 redis · web · edge 도 이 호스트에서는 3 s 다(사고 때 redis 는 요청 0.1 s 뒤 0 으로 끝났다). api · collector · ais 주석의 '기본 10 s' 도 이
   호스트에서는 3 s 지만 값을 명시해 동작은 같다. 이번에 바꾸지 않았다.
 - **확인**: `python3 -m unittest discover -s infra/tests` 196 통과(+1) · `make test-infra` 196 통과. 운영 스택에는 적용하지 않았다.
+- **배포(2026-10-21 01:2x KST, 사용자 "병합 · push · 배포해")**: main `d2d4cddc` 로 병합 · push(병합 뒤 infra 시험 196 통과). 로컬은 스택을 멈춰 둔 채(#154)라 db 만
+  `tools/dc up -d --no-deps db` 로 새 설정으로 다시 만들었다(볼륨 그대로 — 옛 컨테이너는 이미 멈춰 있어 3 s 정지가 없었다) — `StopTimeout=120`, 스키마 V23, 켠 뒤
+  `tools/dc stop db` 가 약 1 s 만에 Exited(0). 스택은 다시 모두 멈춘 상태. AWS 는 ff-only `11006092..d2d4cddc` 만 — db 가 기본 구성에 없어(`local-db` 프로필)
+  `up -d --wait` 가 일회성 migrate(새 마이그레이션 없음) 말고 아무 컨테이너도 다시 만들지 않았다, `/healthz` 200.
 
 ## 자동 검사 현황(2026-10-02 15:5x KST, QA 2026-10 브랜치 `qa/2026-10` — #103 뒤, 깨끗한 `git archive` 내보내기 · 격리 스택)
 | 층 | 도구 | 수 |
