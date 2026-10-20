@@ -1945,6 +1945,19 @@ AWS 리뷰 D-2 · D-3 · D-4 · D-5 · D-6 · D-7 · D-8 · B-4 · C-2. 모두 �
   멈춰 있었다(재시작 정책 `unless-stopped` — 명시적으로 멈춘 것, 이 작업이 멈추지 않았다). 다시 켤지는 사용자가 정한다(켜기 전에 data.go.kr 공급자 셋이 꺼져 있는지 본다 — ADR-039 결정 6, 이 기록에서는 확인하지 않았다).
 - **PR #20 CI**: 다시 돌린 실행(39237505516, 2번째 시도)에서 8개 작업 모두 통과. 이 브랜치는 PR 의 커밋을 그대로 병합해 main 에 들어가면 GitHub 이 PR 을 병합으로 표시한다.
 
+## #154 로컬 스택 — compose start 가 스택 전체를 켰다 · data.go.kr 공급자 셋을 껐다(2026-10-20)
+- **상황**: 로컬 운영 스택이 10-19 23:17 KST 에 명시적으로 멈춰 있었다(#153). 사용자가 다시 켜기로 해, 먼저 data.go.kr 공급자 셋(`portmis` · `mof_grid4` · `komsa_traffic` —
+  ADR-039 결정 6 · #141: AWS 와 키를 함께 쓰면 로컬은 끈다)이 꺼져 있는지 보려고 `tools/dc start db redis` 를 했다.
+- **겪은 것**: Docker Compose 5.6.0 에서 그 명령이 스택 전체를 켰다(06:06:37 UTC db · redis → 06:06:58 migrate → 06:07:09 api · 수집기 · web · edge · ais). 스위치는 셋 다
+  켜져 있었다(마지막 변경 09-29) — 로컬 수집기가 약 20분 동안 그 셋을 불렀다(교통량 격자 06:21 · 06:25 UTC). 전날 두 스택이 함께 돌던 11–14 UTC 에도 양쪽 수집기에
+  포털 Throttled · 429 가 각 21줄 있었다(#141 과 같은 원인 — 하루 한도를 함께 쓴다). AWS 교통량 레이어는 이날 06:25 UTC 에 3,636칸으로 채워져 있었다.
+- **조치**: 사용자 결정으로 로컬 수집기만 멈췄다(06:37 UTC 에 나머지도 멈췄다 — 이 작업이 멈춘 것은 아니다). 사용자 요청으로 셋을 직접 껐다:
+  db 컨테이너만 `docker start` → 한 트랜잭션에서 `provider_switch` disabled = true · version + 1 · updated_by NULL 과 `PROVIDER_DISABLE` 감사 행 셋(api 의 ProviderSwitchService 와
+  같은 before/after — `{"disabled": false, "version": 1}` → `{"disabled": true, "version": 2}`, 사용자 id 없음: 운영자 로그인이 아니다) → redis · api 만 켜서 기동 미러가 Redis 를
+  맞춤(`restored from the database: [komsa_traffic, mof_grid4, portmis]`, api 오류 0) → 다시 멈춤. 스택은 멈춘 채로 두었다.
+- **교훈**: 멈춘 스택의 DB 만 볼 때는 compose start 대신 `docker start wakeline-db-1` 을 쓴다(compose 는 의존 그래프를 함께 켤 수 있다 — 이번 판에서 그랬다). 로컬을 켜기 전에 셋의
+  스위치를 본다. 다시 켜는 것은 로컬이 따로 키를 쓰거나 AWS 를 끈 뒤에 /ops 에서.
+
 ## 자동 검사 현황(2026-10-02 15:5x KST, QA 2026-10 브랜치 `qa/2026-10` — #103 뒤, 깨끗한 `git archive` 내보내기 · 격리 스택)
 | 층 | 도구 | 수 |
 |---|---|---|
