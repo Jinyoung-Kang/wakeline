@@ -2019,6 +2019,29 @@ AWS 리뷰 D-2 · D-3 · D-4 · D-5 · D-6 · D-7 · D-8 · B-4 · C-2. 모두 �
   → `up -d --wait` — `/healthz` · `/api/v1/status` 200, 4분 동안 api · collector · ais · web · edge WARN/ERROR 0, 재생 API 의 UDDD:1 · SGFA:01 이 상한 37000 · 30000
   `raw_text`(AWS DB 에도 같은 행이 있었다 — 바뀐 행 수는 세지 않았다).
 
+## #157 db 가 분산 체크포인트 중에 멈춰져 SIGKILL(137)로 끝났다 — db 에 종료 유예가 없었다(2026-10-21, 브랜치 `fix/db-stop-grace-2026-10`)
+- **본 것**(#156 배포 뒤 `tools/dc stop`, db 로그): 16:07:03 UTC `checkpoint starting: time`(15분 주기의 분산 체크포인트) → 16:09:37.050 `received fast shutdown request`
+  → autovacuum · logical replication launcher 종료(16:09:37.152) 뒤 `checkpoint complete` · 종료 체크포인트 줄 없이 Exited(137). 다음 기동은 `last known up at 15:52:03`
+  → `not properly shut down` → redo 4.11 s(WAL 약 124 MB) → end-of-recovery 체크포인트 13,736 버퍼 1.33 s. db 서비스에 `stop_grace_period` 가 없어 컨테이너
+  `StopTimeout` 이 null 이었다(api 30 s · collector 30 s · ais 20 s 는 명시).
+- **잰 것**(버리는 컨테이너 · compose 프로젝트 — 운영 스택 · 볼륨은 건드리지 않음): ① 이 Mac(Docker Desktop, Engine 29.8.2)에서 `StopTimeout` 이 없는 컨테이너는
+  정지 신호 **3.03 s** 뒤 SIGKILL 을 받는다(`docker events` 의 kill 2 → kill 9 — `docker stop` · `docker compose stop` · compose 다시 만들기 모두 같다). 그러니 #156 과
+  compose.yml 주석의 '기본 10 s' 는 이 호스트에서 틀렸다 — 3 s 를 정하는 설정은 찾지 못했다(`~/.docker/daemon.json` 에 없음). 사고 때의 kill 시각은 daemon 이벤트
+  버퍼가 다른 프로젝트의 헬스체크로 덮여 볼 수 없다(3 s 뒤로 추정). ② PostgreSQL 18.6(`wakeline-db:local`, checkpoint_timeout 만 60s 로 줄이고 나머지는 운영 값)은 fast
+  shutdown 때 도는 분산 체크포인트를 일정대로 늦추지 않고 바로 다 쓴다: 공유 버퍼 32,454/32,768 이 더러운 채 'time' 체크포인트 8 s 뒤 `docker stop -t 900` → 그 체크포인트 끝
+  1.53 s → 종료 체크포인트(9,260 버퍼) 0.75 s → 내려감까지 2.46 s(docker stop 3.0 s). 한가한 VM 에서도 3 s 기본값과 거의 같고, 운영 DB(일 파티션 파일이 많고 같은 VM 의
+  다른 컨테이너가 함께 멈추는 때)에서는 넘었다.
+- **고친 것**: `infra/compose.yml` db 에 `stop_grace_period: 120s`(왜인지 주석). 종료 요청 뒤에는 새로 더럽혀지는 버퍼가 없어 쓸 양의 상한이 공유 버퍼 256 MB 다 —
+  디스크가 2 MB/s 로 느려도 끝나는 값이고, #156 에서 정상 종료한 `docker stop -t 120` 과 같다. 끝나면 바로 내려가므로 평소 정지 시간은 그대로. 버리는 compose 프로젝트로
+  compose 가 이 값을 컨테이너 `StopTimeout` 으로 넣고 `docker stop`(‑t 없이 — `tools/qa/*` 가 쓴다) · `compose stop` 이 그 값을 기다리는 것을 봤다(40 s 로 — 40.3 s · 40.7 s).
+  AWS(`compose.aws.yml`)는 db 가 `profiles: ["local-db"]` 라 기본 구성에서 빠진다(두 파일을 합친 config 로 확인) — 영향 없음. 정책 시험
+  `test_db_has_shutdown_grace_for_its_checkpoint`(개발 · 격리 스택, 하한 120 s) — 고치기 전 `AssertionError: unexpectedly None : 없으면 docker 기본 유예(이 Mac 에서 3 s)` 2건.
+- **배포 때 볼 것**: 값이 바뀌어 다음 `make up` 이 db 컨테이너를 다시 만든다(볼륨 그대로). 다시 만들 때 compose 는 **옛 컨테이너를 옛 유예(3 s)로** 멈춘다(버리는 프로젝트에서
+  SIGINT → 3 s 뒤 SIGKILL 확인) — 스택이 도는 중이면 그 한 번에 같은 일이 날 수 있으니 먼저 `tools/dc stop -t 120` 으로 멈추고 `make up`. 지금처럼 멈춰 둔 스택이면 그대로 된다.
+- **남은 것**: 유예를 명시하지 않은 redis · web · edge 도 이 호스트에서는 3 s 다(사고 때 redis 는 요청 0.1 s 뒤 0 으로 끝났다). api · collector · ais 주석의 '기본 10 s' 도 이
+  호스트에서는 3 s 지만 값을 명시해 동작은 같다. 이번에 바꾸지 않았다.
+- **확인**: `python3 -m unittest discover -s infra/tests` 196 통과(+1) · `make test-infra` 196 통과. 운영 스택에는 적용하지 않았다.
+
 ## 자동 검사 현황(2026-10-02 15:5x KST, QA 2026-10 브랜치 `qa/2026-10` — #103 뒤, 깨끗한 `git archive` 내보내기 · 격리 스택)
 | 층 | 도구 | 수 |
 |---|---|---|

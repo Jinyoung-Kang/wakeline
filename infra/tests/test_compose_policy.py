@@ -47,6 +47,8 @@ SERVICE_NETWORKS = {
 }
 # R-24 · ADR-017 §4: db 서버 설정(체크포인트 간격·WAL 상한·WAL 압축·공유 버퍼) — infra/tests/db_hardening_test.sh 가 실제 SHOW 값도 본다
 DB_SETTINGS = {"checkpoint_timeout": "15min", "max_wal_size": "2GB", "wal_compression": "on", "shared_buffers": "256MB"}
+# VERIFICATION #157: db 종료 유예 하한(초) — 분산 체크포인트 중 fast shutdown 이 docker 기본 유예(이 Mac 에서 3 s)를 넘어 SIGKILL 로 끝났다
+DB_STOP_GRACE_MIN_S = 120
 AIS_ENV_ALLOWED = {
     "TZ", "REDIS_HOST", "REDIS_USERNAME", "REDIS_PASSWORD", "AISSTREAM_API_KEY", "AIS_BBOXES",
     "HTTP_USER_AGENT", "FIXTURES_DIR", "SCHEMAS_DIR", "WAKELINE_FIXTURE_MODE",
@@ -57,6 +59,14 @@ def _docker_compose_available() -> bool:
     if not shutil.which("docker"):
         return False
     return subprocess.run(["docker", "compose", "version"], capture_output=True).returncode == 0
+
+
+def _duration_s(value: str) -> int:
+    """compose 기간 글자("120s" · "2m" · "1m30s")를 초로."""
+    m = re.fullmatch(r"(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?", value)
+    assert m and value, f"모르는 기간 형식: {value!r}"
+    h, mi, s = (int(g or 0) for g in m.groups())
+    return h * 3600 + mi * 60 + s
 
 
 def iso_env() -> dict[str, str]:
@@ -401,6 +411,15 @@ class ComposePolicyTest(unittest.TestCase):
 
     def test_api_has_shutdown_grace(self):
         self.assertIn("stop_grace_period", self.svc("api"))
+
+    def test_db_has_shutdown_grace_for_its_checkpoint(self):
+        """VERIFICATION #157: db 의 fast shutdown(이미지 STOPSIGNAL SIGINT)은 진행 중인 체크포인트와 종료 체크포인트를 끝내야 끝난다.
+        유예가 없으면 `tools/dc stop` · `make down` 이 docker 기본값(이 Mac 에서 3 s) 뒤 SIGKILL(137)로 끊어 다음 기동이 충돌 복구(redo)를 한다."""
+        for cfg in (self.dev, self.iso):
+            with self.subTest(project=cfg["name"]):
+                grace = self.svc("db", cfg).get("stop_grace_period")
+                self.assertIsNotNone(grace, "없으면 docker 기본 유예(이 Mac 에서 3 s)")
+                self.assertGreaterEqual(_duration_s(grace), DB_STOP_GRACE_MIN_S)
 
     # --- 계약 v2 §B1 · §C: ais 서비스 ---
     def test_ais_service(self):

@@ -308,6 +308,9 @@ services:
     # R-24(ADR-017 §4): 기본값(체크포인트 5분·WAL 1GB·압축 없음)이면 WAL 의 약 86 % 가 전체 페이지 이미지였다(약 16 GB/일).
     # 체크포인트 15분·WAL 상한 2GB·WAL 압축(pglz)·공유 버퍼 256MB(메모리 한도 1g). 대가: 비정상 종료 뒤 복구 재생이 최대 15분 분량. 되돌리기: 이 줄 삭제
     command: ["postgres", "-c", "checkpoint_timeout=15min", "-c", "max_wal_size=2GB", "-c", "wal_compression=on", "-c", "shared_buffers=256MB"]
+    # 종료(STOPSIGNAL SIGINT = fast shutdown)는 도는 체크포인트 + 종료 체크포인트(더러운 공유 버퍼 최대 256MB 쓰기 · fsync)를 끝내야 끝난다 —
+    # 유예가 없으면 docker 기본값(이 Mac 의 Docker Desktop 에서 잰 3 s) 뒤 SIGKILL(137) → 다음 기동이 충돌 복구(VERIFICATION #157). 끝나면 바로 내려가 평소 비용은 없다
+    stop_grace_period: 120s
     # 이미지가 처음부터 postgres(999)로 돈다(USER — 엔트리포인트의 root → gosu 경로 없음) — 추가 권한이 필요 없다(이전: CHOWN · DAC_OVERRIDE · FOWNER · SETGID · SETUID)
     cap_drop: ["ALL"]
     security_opt: ["no-new-privileges:true"]
