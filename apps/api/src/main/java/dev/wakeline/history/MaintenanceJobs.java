@@ -61,6 +61,11 @@ public class MaintenanceJobs {
     static final int RESUMMARIZE_HOURS = 6;
     /** 따라잡기 창 밖의 날을 한 번의 따라잡기에 채우는 최대 일수(backfillStats) — /stats 범위 상한(92일)과 같다 */
     static final int BACKFILL_MAX_DAYS = 92;
+    /**
+     * SIGMET 의 유효 시작이 우리가 처음 받은 시각보다 이를 수 있는 최대 폭(backfillStats 의 시작) — SIGMET 은 길어야 몇 시간 유효하고(ICAO 4 h, 화산재 ·
+     * 열대저기압 6 h — 로컬 12,208건의 최대 6 h 3 m, 2026-10-20) 수집기는 24 h 넘는 유효 기간을 받지 않는다. 이보다 이르면 공급자 시각이 틀린 것이다.
+     */
+    static final String SIGMET_VALID_BEFORE_SEEN_MAX = "1 day";
     /** 선박 위치 보존(계약 v2 §B3). 함수가 24 h ~ 30일 밖의 값을 거절한다(V5). */
     static final int SHIP_RETENTION_HOURS = 72;
     /** 체류 통계에 넣는 '확인된 이탈' 조건(V4 마이그레이션의 재계산과 같은 식 — 바꾸면 둘 다 바꾼다). */
@@ -515,12 +520,15 @@ public class MaintenanceJobs {
      * V16 이 KST 날짜 표를 새로 연 뒤 이 날들은 다시 셀 수 있는데 7일 밖이라 '집계되지 않음' 으로 남았다(리뷰 2026-09-30 — /stats 는 92일 범위를 받는다).
      * 교통량의 옛 날은 V16 이 옛 UTC 시 행에서 옮겨 실었다(KST = UTC + 9 정시 — 시 하나가 옛 행 하나, 두 UTC 날이 완료 · 같은 지역인 날만).
      * 범위의 시작 = 원본이 있는 가장 이른 KST 날짜(SIGMET 발표 · 알림 진입). 멱등 — 다 채운 뒤에는 최솟값 한 번 · 표식 한 번 읽고 끝난다. @return 집계한 날
+     * SIGMET 의 valid_from 은 공급자 값이라, 우리가 처음 받은 시각(first_seen)보다 {@value #SIGMET_VALID_BEFORE_SEEN_MAX} 넘게 이른 것은 시작에 쓰지 않는다:
+     * AWC 가 validTimeFrom 0 을 준 경보 하나(1970-01-01 로 저장)가 시작을 1970 으로 끌어 3시간마다 92일씩 빈 날을 집계했다(VERIFICATION #155).
      */
     List<LocalDate> backfillStats(LocalDate today) {
         LocalDate last = today.minusDays(CATCH_UP_DAYS + 1);
         LocalDate first = db.sql("""
-                SELECT (least((SELECT min(valid_from) FROM sigmet), (SELECT min(entered_at) FROM alert_event)) AT TIME ZONE :zone)::date""")
-                .param("zone", DAY_ZONE_ID).query(LocalDate.class).optional().orElse(null);
+                SELECT (least((SELECT min(valid_from) FROM sigmet WHERE valid_from >= first_seen - CAST(:lead AS interval)),
+                              (SELECT min(entered_at) FROM alert_event)) AT TIME ZONE :zone)::date""")
+                .param("lead", SIGMET_VALID_BEFORE_SEEN_MAX).param("zone", DAY_ZONE_ID).query(LocalDate.class).optional().orElse(null);
         if (first == null || first.isAfter(last)) return List.of();
         Map<LocalDate, List<String>> marked = new java.util.HashMap<>();
         db.sql("SELECT day, dim FROM stats_daily WHERE metric = :m AND day BETWEEN :a AND :b").param("m", MARKER).param("a", first).param("b", last)

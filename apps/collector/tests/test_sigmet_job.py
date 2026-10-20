@@ -120,3 +120,27 @@ async def test_payload_carries_band_sources(fixtures_dir):
     for s in _published(r)[-1]:
         assert s["base_source"] in ("json", "assumed_surface") and s["top_source"] in ("json", "raw_text", "unknown")
         assert (s["top_ft"] is None) == (s["top_source"] == "unknown")
+
+
+async def test_record_with_epoch_valid_from_is_not_published_and_is_recorded(fixtures_dir):
+    """AWC 가 validTimeFrom 0 을 준 경보(실수신 NFFF SIGMET 15, 2026-09-30)는 1970 으로 싣지 않는다 — 나머지는 그대로 싣고, 그 경보는
+    품질 기록(sigmet_parse_error)에 남겨 조용히 사라지지 않게 한다."""
+    r = FakeRedis()
+    ctx = make_ctx(r)
+    awc = FakeAwc(fixtures_dir)
+    bad = dict(awc.intl_items[0], firId="NFFF", seriesId="15", validTimeFrom=0)
+    awc.intl_items.append(bad)
+    runs = []
+    record_run = ctx.db.record_run
+
+    def spy(*a, **kw):
+        runs.append(kw)
+        return record_run(*a, **kw)
+
+    ctx.db.record_run = spy  # type: ignore[method-assign]
+    await SigmetJob(awc, ctx).run_once()
+    published = _published(r)[-1]
+    assert published and all(not s["valid_from"].startswith("1970") for s in published)
+    assert not any(s["id"].startswith("NFFF:15:") for s in published)
+    errors = [d for rule, _hex, d in runs[-1]["quality"] if rule == "sigmet_parse_error"]
+    assert len(errors) == 1 and "NFFF 15" in errors[0]["error"] and "validTimeFrom" in errors[0]["error"]
