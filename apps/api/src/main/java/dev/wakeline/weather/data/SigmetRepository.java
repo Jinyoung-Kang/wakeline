@@ -20,7 +20,6 @@ import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
@@ -48,6 +47,8 @@ public class SigmetRepository {
     private static final Logger log = LoggerFactory.getLogger(SigmetRepository.class);
     /** 이 기간보다 오래전에 끝난 경보는 '마지막으로 쓴 내용' 캐시에서 뺀다. */
     static final long FORGET_AFTER_S = 24 * 3600;
+    /** API 로 내보내는 하한 출처(계약 값). DB 전용 'unknown'(출처를 모르는 이전 형식)은 null 로 낸다. */
+    static final Set<String> PUBLIC_BASE_SOURCES = Set.of(SigmetRecord.BASE_JSON, SigmetRecord.BASE_ASSUMED_SURFACE, SigmetRecord.BASE_RAW_TEXT);
     private final JdbcClient db;
     private final ObjectMapper json;
     private final OrderedWriter writer;
@@ -120,7 +121,7 @@ public class SigmetRepository {
     }
 
     /**
-     * DB 에 저장하는 하한 출처. 새 수집기는 항상 보낸다(json | assumed_surface). 출처 필드가 없던 이전 형식 메시지는:
+     * DB 에 저장하는 하한 출처. 새 수집기는 항상 보낸다(json | assumed_surface | raw_text). 출처 필드가 없던 이전 형식 메시지는:
      * base_ft > 0 이면 JSON 값뿐이다(이전 수집기의 대체값은 0 뿐) → json, 0 이면 JSON 0 인지 null 인지 알 수 없다 → unknown(DB 전용 값).
      */
     static String dbBaseSource(SigmetRecord s) {
@@ -221,8 +222,7 @@ public class SigmetRepository {
                     var m = new LinkedHashMap<>(r);
                     Object g = m.get("geometry");
                     m.put("geometry", g == null ? null : json.readTree(g.toString()));
-                    if (!Objects.equals(m.get("base_source"), SigmetRecord.BASE_JSON) && !Objects.equals(m.get("base_source"), SigmetRecord.BASE_ASSUMED_SURFACE))
-                        m.put("base_source", null);
+                    if (!PUBLIC_BASE_SOURCES.contains(String.valueOf(m.get("base_source")))) m.put("base_source", null);
                     for (String k : List.of("valid_from", "valid_to", "withdrawn_at")) m.put(k, Sql.toInstant(m.get(k)));
                     return (Map<String, Object>) m;
                 }).toList();

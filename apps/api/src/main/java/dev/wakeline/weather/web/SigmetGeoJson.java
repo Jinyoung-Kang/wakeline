@@ -40,7 +40,8 @@ public final class SigmetGeoJson {
         props.put("qualifier", s.qualifier());
         props.put("base_ft", s.baseFt());
         props.put("top_ft", s.topFt());
-        // 고도대 출처(계약 §1·§2): base json | assumed_surface(하한 미발표 — 판정은 SFC 가정), top json | raw_text | unknown(미발표 — 무제한 가정).
+        // 고도대 출처(계약 §1·§2 · v5 §G59): base json | assumed_surface(하한 미발표 — 판정은 SFC 가정) | raw_text(원문 고도대 값),
+        // top json | raw_text | unknown(미발표 — 무제한 가정).
         // 이전 형식 메시지는 출처를 모른다 → null(추정해 채우지 않는다).
         props.put("base_source", s.baseSource());
         props.put("top_source", s.topSource());

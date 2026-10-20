@@ -456,6 +456,18 @@ class WeatherPersistDbTest {
         assertThat(replayed.get("base_source")).isNull(); // DB 전용 'unknown' 은 API 에서 null
     }
 
+    /** 계약 v5 §G59: 원문 고도대에서 읽은 하한(base_source raw_text)은 DB 에 그대로 저장되고 재생 조회도 그 출처를 낸다(DB 전용 값처럼 null 로 바꾸지 않는다). */
+    @Test
+    void aBaseReadFromTheRawTextIsStoredAndReplayedWithItsSource() {
+        Instant from = T0.minusSeconds(600), to = T0.plusSeconds(3600);
+        var s = new SigmetRecord("RAWBASE", "NFFF", null, null, "15", "TURB", "SEV", 28000, null, from, to, box(1, 1, 2, 2), null, null, null, null,
+                "NFFF SIGMET 15 ... SEV TURB FCST FL400/280 MOV E 15KT NC=", "awc_isigmet", T0, "raw_text", SigmetRecord.TOP_UNKNOWN);
+        sigmets.upsert(s);
+        assertThat(sigmetRow("RAWBASE")).containsEntry("base_source", "raw_text").containsEntry("top_source", "unknown");
+        Map<String, Object> replayed = sigmets.validAt(T0).stream().filter(m -> "RAWBASE".equals(m.get("id"))).findFirst().orElseThrow();
+        assertThat(replayed).containsEntry("base_ft", 28000).containsEntry("base_source", "raw_text");
+    }
+
     // ---------- 리뷰 수정(2026-09-28) ----------
 
     /** API-CONC-4·DH-6: 경보 종료는 close_reason sigmet_ended, API-CONC-5: 예측 갱신은 진입 고도 열도 바꾼다. */

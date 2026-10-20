@@ -43,8 +43,9 @@ class Sigmet(BaseModel):
     hazard: str
     qualifier: str | None = None
     base_ft: int = 0
-    # 고도대 출처(계약 §4). assumed_surface = 하한 미발표(판정은 SFC 가정), unknown = 상한 미발표(판정은 무제한 가정)
-    base_source: Literal["json", "assumed_surface"] = "json"
+    # 고도대 출처(계약 §4). assumed_surface = 하한 미발표(판정은 SFC 가정), unknown = 상한 미발표(판정은 무제한 가정),
+    # raw_text = 원문 고도대 값(JSON 보다 넓었다 — 계약 v5 §G59)
+    base_source: Literal["json", "assumed_surface", "raw_text"] = "json"
     top_ft: int | None = None
     top_source: Literal["json", "raw_text", "raw_text_lower_bound", "unknown"] = "unknown"
     valid_from: datetime

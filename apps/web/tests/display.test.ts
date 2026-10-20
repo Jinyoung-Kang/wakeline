@@ -24,6 +24,12 @@ describe("SIGMET band display (contract §1: never show unpublished values as pu
     expect(band(0, 38000, { base_source: "json", top_source: "json" })).toBe("SFC – FL380");
     expect(band(10000, 30000, { base_source: "json", top_source: "json" })).toBe("10,000 ft – FL300");
   });
+  it("a base read from the raw text band is a published value marked as raw text, not an assumption (contract v5 §G59)", () => {
+    // 실수신 NFFF SIGMET 15: 원문 'FL400/280' 에 AWC 가 base 40000 · top null — 수집기가 하한을 원문 FL280 으로(base_source raw_text)
+    expect(band(28000, null, { base_source: "raw_text", top_source: "unknown" })).toBe(`FL280 (원문) – ${TOP_UNKNOWN_LABEL}`);
+    expect(band(0, 30000, { base_source: "raw_text", top_source: "raw_text" })).toBe("SFC (원문) – FL300 (원문)");
+    expect(band(25000, 35000, { base_source: "raw_text", top_source: "json" }, { metric: true })).toBe("FL250 (7,620 m) (원문) – FL350 (10,668 m)");
+  });
   it("top read from raw text is marked; 'TOP ABV' is a lower bound", () => {
     expect(band(0, 30000, { base_source: "json", top_source: "raw_text" })).toBe("SFC – FL300 (원문)");
     expect(band(0, 38000, { base_source: "json", top_source: "raw_text", top_above: true })).toBe("SFC – FL380 이상 (원문)");

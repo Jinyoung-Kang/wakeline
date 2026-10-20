@@ -177,7 +177,7 @@ export function fmtBool(v: boolean | null | undefined, yes = "yes", no = "no") {
 }
 
 export interface BandSource {
-  /** "assumed_surface" = 하한 미발표 → 판정은 SFC 가정 */
+  /** "assumed_surface" = 하한 미발표 → 판정은 SFC 가정. "raw_text" = 원문 고도대에서 읽은 값(계약 v5 §G59) */
   base_source?: string | null;
   /** "unknown" = 상한 미발표 → 판정은 무제한 가정. "raw_text" = 원문에서 읽은 값 */
   top_source?: string | null;
@@ -190,7 +190,7 @@ export const TOP_UNKNOWN_LABEL = "상한 미발표(무제한 가정)";
 
 /**
  * SIGMET 고도대 표시(계약서 §1). 발표되지 않은 값을 "SFC"·"∞" 같은 발표값처럼 보이게 하지 않는다.
- * - 하한: base_source=assumed_surface → "하한 미발표(SFC 가정)", 0 → "SFC", 없음 → "—"
+ * - 하한: base_source=assumed_surface → "하한 미발표(SFC 가정)", raw_text → "FL280 (원문)"(§G59), 0 → "SFC", 없음 → "—"
  * - 상한: null → "상한 미발표(무제한 가정)"(판정이 무제한으로 가정하므로), raw_text → "FL380 (원문)" / ABV → "FL380 이상 (원문)"
  * - 하한 출처를 모르는 0(구 알림 근거 등)은 "SFC(출처 미확인)" 로 가정일 수 있음을 드러낸다.
  * - opts.metric(계약 v5 §A3): 카드에서만 숫자 경계에 m 를 괄호로 덧붙인다("FL380 (11,582 m)"). 고도대는 항공기 고도가 아니므로 툴팁·목록은 그대로.
@@ -200,6 +200,7 @@ export function band(base: number | null | undefined, top: number | null | undef
   let lo: string;
   if (src?.base_source === "assumed_surface") lo = BASE_ASSUMED_LABEL;
   else if (base == null) lo = "—";
+  else if (src?.base_source === "raw_text") lo = `${base === 0 ? "SFC" : alt(base)} (원문)`;
   else if (base === 0) lo = src?.base_source === "json" ? "SFC" : "SFC(출처 미확인)";
   else lo = alt(base);
   let hi: string;

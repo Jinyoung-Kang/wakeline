@@ -1371,3 +1371,20 @@ ADR-018(시스템 로그 경로) · ADR-019(공급자 스위치 원본 · 실행
   - `GET /api/v1/ops/pipeline` 의 collector `heartbeat_age_s` 와 공개 `/status` 의 `demand.adsb_fi_rps_1m` 판단: '가장 최근 보고 시각'에서 이름이 `*_resume_at` 인 필드
     (다음에 움직일 때 — 미래)를 빼고, 지금보다 60 s 넘게 미래인 값은 그 필드만 건너뛴다. 예전: 교통량 채우기가 쉬는 동안(`traffic_grid_fill_resume_at` 이 다음 UTC 정시 ·
     날) collector 손실 지표가 모두 `null` 이 되고, 멈춘 수집기의 호출률이 '지금' 값으로 실렸다. 응답 모양은 그대로다.
+
+## G. 35차 개정(2026-10-20 · SIGMET 고도대 `fix/sigmet-band-2026-10` — 실수신 결함 수정, 사용자 위임 "권장안대로 진행", [VERIFICATION #156](../VERIFICATION.md))
+- G59(§4 SIGMET 고도대 · §G57) **원문 고도대보다 좁은 JSON 고도대는 원문 값으로 넓힌다**(하한 출처 `raw_text` 추가 · V23)
+  - 스트림 · WS(`sigmets`) · REST(`/sigmets` · 재생 · 알림 사본) `sigmet.base_source`: 값 `raw_text` 를 더한다 — 원문 고도대 "A/B"(SFC · FLnnn · nnnFT · nnnM,
+    앞이 FL 이면 FL 을 뺀 nnn 도. 'ABV' 가 붙은 것은 빼고, "TOP FLaaa/bbb" 의 aaa 는 하한이 아니다)의 가장 낮은 값이 발표된 JSON 하한보다 낮을 때의 그 값이다.
+    판정은 그 하한으로 한다(가정이 아니라 원문에 적힌 값 — 근거의 `base_assumed_surface` 는 없다). 화면은 "FL280 (원문)". 예전: 원문 'FL400/280'(역순)에 AWC 가
+    base 40000 · top null 을 주면 그대로 받아 FL280–400 항공기가 경보 밖이었다(로컬 12,209행 중 3건).
+  - `sigmet.top_source = raw_text` 의 뜻이 넓어진다(enum 그대로): 원문 "TOP FLnnn" 외에, 원문 고도대의 가장 높은 값이 고정 상한(json · raw_text)보다 높을 때의
+    그 값. "TOP FLaaa/bbb" 는 bbb 쪽 큰 값(예전: 수집기가 aaa 만 읽었다). 예전: 'SFC/10000FT' 에 AWC top 100, 'TOP FL230/250' 에 23000, 구역 둘의 'SFC/FL070 …
+    SFC/FL120' 에 7000 을 그대로 받았다(8건).
+  - 넓히는 쪽만 바꾼다: JSON 이 원문보다 넓거나, 상한이 없거나(무제한 가정), 'ABV' 하한이거나, 하한이 SFC 가정이면 그대로다. 원문 자체의 값은 고치지 않는다.
+    바꾼 경보는 수집기 품질 기록 `sigmet_invalid_band`(note `top_below_raw_band` · `base_above_raw_band`)에 남는다. m 는 1 ft = 0.3048 m 로 넓히는 쪽(상한 올림 · 하한 내림).
+  - **V23**: DB CHECK 가 `raw_text` 를 받고, 지난 행을 같은 규칙으로 한 번 고친다(알림 기록은 그대로). 바꾼 행의 id 와 이전 값은 감사 기록 `SIGMET_BAND_V23`(시스템)
+    한 줄에 남고, 머리 주석의 되돌리기 SQL 이 그 값으로 돌린다.
+  - 배포: api(새 스키마 사본)와 수집기를 함께 — 옛 api 는 `raw_text` 하한이 든 SIGMET 세트를 스키마 위반으로 DLQ 에 보낸다. `make up` 은 migrate 뒤 api · 수집기를
+    함께 다시 만든다(수집기는 api 건강에 묶지 않는다 — R-78). 그 짧은 틈에 그런 세트가 오면(드물다 — 3주에 3건) 다음 수신(수 분)이 채운다.
+    새 api 를 받은 채 다시 읽지 않은 옛 웹 화면은 그 SIGMET 한 건을 형식 오류로 버리고 센다(새로 고치면 보인다).

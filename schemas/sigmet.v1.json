@@ -60,9 +60,10 @@
     "base_source": {
       "enum": [
         "json",
-        "assumed_surface"
+        "assumed_surface",
+        "raw_text"
       ],
-      "description": "json = 발표값, assumed_surface = 하한 미발표(판정은 SFC 가정)"
+      "description": "json = 발표값, assumed_surface = 하한 미발표(판정은 SFC 가정), raw_text = 원문 고도대(A/B)의 가장 낮은 값(JSON 하한이 그보다 높았다 — 계약 v5 §G59)"
     },
     "top_ft": {
       "type": [
@@ -78,7 +79,7 @@
         "raw_text_lower_bound",
         "unknown"
       ],
-      "description": "json = 발표값, raw_text = 원문 TOP FLnnn, raw_text_lower_bound = 원문 TOP ABV FLnnn(상한이 그 값 이상 — 판정은 위쪽 무제한 가정), unknown = 미발표(판정은 무제한 가정)"
+      "description": "json = 발표값, raw_text = 원문 TOP FLnnn 또는 원문 고도대(A/B)의 가장 높은 값(JSON 상한이 그보다 낮았다 — §G59), raw_text_lower_bound = 원문 TOP ABV FLnnn(상한이 그 값 이상 — 판정은 위쪽 무제한 가정), unknown = 미발표(판정은 무제한 가정)"
     },
     "valid_from": {
       "type": "string",

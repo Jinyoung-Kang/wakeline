@@ -150,8 +150,8 @@ export interface SigmetProps {
   qualifier?: string | null;
   base_ft?: number | null;
   top_ft?: number | null;
-  /** "assumed_surface" = AWC 하한 null → 판정은 SFC 가정 */
-  base_source?: "json" | "assumed_surface" | null;
+  /** "assumed_surface" = AWC 하한 null → 판정은 SFC 가정. "raw_text" = 원문 고도대의 가장 낮은 값(JSON 하한이 그보다 높았다 — 계약 v5 §G59) */
+  base_source?: "json" | "assumed_surface" | "raw_text" | null;
   /** "unknown" = 상한 미발표(top_ft null) → 판정은 무제한 가정. "raw_text" = 원문(TOP FLxxx)에서 결정적으로 읽음 */
   top_source?: "json" | "raw_text" | "raw_text_lower_bound" | "unknown" | null;
   valid_from: string;

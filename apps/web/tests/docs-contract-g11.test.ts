@@ -214,6 +214,9 @@ describe("contract v5 amendment numbers are unique", () => {
     expect(amendment(56)).toContain("열린 알림의 근거는 DB 가 없어도 메모리 값으로 답한다");
     expect(amendment(57)).toContain("원문 'TOP ABV FLnnn' 과 같은 값의 JSON 상한은 상한의 하한이다");
     expect(amendment(58)).toContain("운영 경로의 입력 · 장애 응답 · 신호");
-    expect(amendment(59)).toBe("");
+    // SIGMET 고도대(2026-10-20 · fix/sigmet-band-2026-10 — VERIFICATION #156): 35차 · §G59
+    expect(heading(59)).toMatch(/^## G\. 35차 개정\(2026-10-20 · SIGMET 고도대 /);
+    expect(amendment(59)).toContain("원문 고도대보다 좁은 JSON 고도대는 원문 값으로 넓힌다");
+    expect(amendment(60)).toBe("");
   });
 });

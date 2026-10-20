@@ -360,7 +360,8 @@ SIGMET_PROPS: Schema = {  # 계약 §1·§2 SIGMET feature properties
         "qualifier": STR,
         "base_ft": {"type": "integer", "minimum": 0},
         "top_ft": INT,
-        "base_source": {"enum": ["json", "assumed_surface"]},  # 없으면 옛 형식(출처 모름) — 추정해 채우지 않는다
+        # 없으면 옛 형식(출처 모름) — 추정해 채우지 않는다. raw_text(§G59): 원문 고도대의 가장 낮은 값(JSON 하한이 그보다 높았다)
+        "base_source": {"enum": ["json", "assumed_surface", "raw_text"]},
         # raw_text_lower_bound(DH-4): 'TOP ABV FLnnn' — top_ft 는 하한(판정은 상한 무제한 가정, 증거에 표시)
         "top_source": {"enum": ["json", "raw_text", "raw_text_lower_bound", "unknown"]},
         "valid_from": TS,

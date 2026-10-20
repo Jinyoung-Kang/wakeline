@@ -1979,6 +1979,37 @@ AWS 리뷰 D-2 · D-3 · D-4 · D-5 · D-6 · D-7 · D-8 · B-4 · C-2. 모두 �
 - **확인**(이 브랜치): `make test-collector` pytest 2,072 통과 · 28 건너뜀, ruff · ruff format · mypy 통과. `make test-api` JUnit 1,353 통과 · JaCoCo LINE 97.59 % ·
   BRANCH 87.48 % · REST 계약 46 통과. `make test-api` 가 다시 만든 `wakeline-db:local` 은 `:mainsafe` 에서 되돌렸다(운영 이미지 그대로).
 
+## #156 원문 고도대보다 좁은 SIGMET 고도대가 오류 없이 저장돼 그 사이 항공기가 경보 밖이었다(2026-10-20, 브랜치 `fix/sigmet-band-2026-10` — `fix/sigmet-epoch-2026-10` 위)
+- **본 것**: #155 의 `NFFF:15:0` 원문 끝 줄이 `FL400/280`(상한/하한 역순)인데 base_ft 40000 · top_source unknown — 판정은 FL400 이상만. 같은 모양을 로컬 DB(읽기 전용,
+  끝나고 `docker stop`)에서 셌다: 원문에 고도대 `A/B`(SFC · FLnnn · nnnnFT · nnnnM)가 있는 awc_isigmet 3,654행 중 **11행이 원문보다 좁다**(airsigmet 의 `BTN … AND …`
+  14건 · `fixtures/awc_isigmet.json` 의 고도대 50건은 모두 일치). 모양 넷 — 역순 `FL400/280` · `FL450/250` · `FL360/300` 에 JSON base=첫 값 · top=null(3) ·
+  `SFC/10000FT` · `17000FT` · `18000FT` 에 JSON top 100 · 170 · 180 ft(3 — 둘은 화산재, 같은 `SFC/10000FT` 가 10000 으로 맞게 온 날도 있다) · `TOP FL230/250` 에 JSON
+  top 23000(1) · 우리 `_TOP_RE` 가 `TOP FL320/370` · `TOP FL240/300` 의 앞 값만 읽음(2 — 수집기 자체 결함) · 구역 둘의 `SFC/FL070 … SFC/FL120` 에 JSON top 7000(2).
+  오류 · 품질 기록은 없었다. 원천 JSON 은 72 h 보관이 지나 없어 저장된 행(출처 json 인 값)으로 되살렸다.
+- **고친 것**(상한 쪽): 원문 고도대가 JSON 고정 상한(json · raw_text)보다 높이 올라가면 원문 값 가운데 가장 높은 값으로 넓힌다 — `top_source=raw_text`, 품질 기록
+  `sigmet_invalid_band`(note `top_below_raw_band`). `TOP FLaaa/bbb` 는 큰 값(ABV 는 V4 · V22 SQL 과 같게 앞 값). 넓히는 쪽만: JSON 이 더 넓거나 · 상한이 없거나(무제한
+  가정) · ABV 하한이면 그대로, 원문 자체의 이상한 값(`SKED:4` 의 `SFC/190FT`)은 고치지 않는다. 저장분 다시 돌리기: 출처를 아는 행 중 바뀌는 것은 위 상한 8행뿐.
+  고치기 전: `test_json_top_below_raw_band_is_widened_to_the_raw_value` 4건 · `test_raw_top_range_is_not_read_as_its_first_value` 2건 실패(`(100, 'json', None)` ·
+  `(24000, False) == (30000, False)` 등).
+- **고친 것**(하한 쪽 · 지난 행 — 사용자 위임 2026-10-20 "권장안대로", 계약 v5 §G59): `base_source` 에 `raw_text` 를 더했다 — 원문 고도대의 가장 낮은 값이
+  발표된 JSON 하한보다 낮으면 그 값(note `base_above_raw_band`, `TOP FLaaa/bbb` 의 aaa 는 하한이 아니다). 스키마 두 사본 · WS 스키마 · api 재생 조회(DB 전용 값처럼
+  null 로 바꾸지 않게) · 웹 표시("FL280 (원문)") · WS 검증 · REST 계약을 함께 고쳤다. 다른 안(0 + assumed_surface)은 화면에 '하한 미발표'로 틀리게 나오고 SFC 까지
+  넓혀 쓰지 않았다. **V23** 이 DB CHECK 를 넓히고 지난 행을 같은 규칙으로 한 번 고친다(알림 기록 그대로, 감사 `SIGMET_BAND_V23` 에 이전 값 · 머리 주석에 되돌리기
+  SQL). m 는 1 ft = 0.3048 m 의 정수 계산(상한 올림 · 하한 내림)이라 수집기와 SQL 이 같은 값이다. 수집기 규칙으로 저장분을 다시 돌리면 정확히 11행이 바뀐다
+  (V23 시험은 그 11행의 원문으로 같은 기대값을 고정한다). 고치기 전: 수집기 `test_reversed_raw_band_lowers_the_json_base_to_the_raw_value` 3건 ·
+  `test_raw_base_is_only_used_to_widen` 실패(`40000 != 28000` 등), api `MigrationDbTest.v23…`(`"NFFF"="40000 json - unknown"`) · `SchemaContractTest.sigmetBaseReadFromRawText…`
+  (스키마 거부) · `WeatherPersistDbTest.aBaseReadFromTheRawText…`(`violates check constraint "sigmet_base_source_check"`), 웹 `ws-schema-sweep-v5`(`base_source enum
+  "raw_text" → dropped 1`) · `display.test`(`FL280 – …`) · `docs-contract-g11`(§G59 없음).
+- **배포 때 볼 것**: migrate 가 V23 을 적용한다(로컬 기대 11행 · 감사 한 줄 — `NFFF:15:0` 은 #155 의 정리 제안과 겹친다, 지우면 그 행은 상관없다). 옛 api 가 남은 짧은
+  틈에 `raw_text` 하한이 든 세트가 오면 DLQ(§G59 '배포'). AWS DB 는 보지 않았다 — 거기서는 V23 이 그 DB 의 행을 같은 규칙으로 고친다(수는 배포 로그 · 감사 기록으로).
+- **남은 것**: 원문 단일 `TOP FLnnn` 이 JSON 상한보다 높은 경우는 기존 시험이 'JSON 그대로'로 정해 두었다 — 이번에 바꾸지 않았다(저장분 실례 0건). JSON 상한이 없을 때
+  원문 고도대 상한으로 채우지 않는다(판정을 좁히는 쪽) — 그래서 역순 3건의 화면은 "FL280 (원문) – 상한 미발표(무제한 가정)" 이다.
+- **확인**(이 브랜치): `make test-collector` pytest 2,084 통과 · 28 건너뜀, ruff · ruff format · mypy · contract_check 통과. `make test-api` JUnit 1,356 통과 ·
+  JaCoCo LINE 97.59 % · BRANCH 87.49 % · REST 계약 46 통과. `make test-collector-db` 11 통과(V23 까지 적용). 웹 vitest 1,942 통과 · 3 건너뜀 · tsc · `npm run build` 통과,
+  eslint 오류 0(경고 1 — 손대지 않은 `tests/ops-tabs.test.ts` 의 기존 경고, main 도 같다), 첫 화면 JS 546,662 B / 550,000 B(`--in-image --image wakeline-web:local`).
+  `python3 -m unittest discover -s infra/tests` 195 통과. E2E(`make e2e`)는 돌리지 않았다(운영 이미지 태그를 덮는다 — 바뀐 화면은 드문 하한 글자뿐).
+  `make test-api` 가 다시 만든 `wakeline-db:local` 은 `:mainsafe` 에서 되돌렸다(운영 이미지 그대로). 워크트리의 `apps/web/node_modules` 는 main 체크아웃 설치본(같은 잠금 파일)의 복제.
+
 ## 자동 검사 현황(2026-10-02 15:5x KST, QA 2026-10 브랜치 `qa/2026-10` — #103 뒤, 깨끗한 `git archive` 내보내기 · 격리 스택)
 | 층 | 도구 | 수 |
 |---|---|---|
