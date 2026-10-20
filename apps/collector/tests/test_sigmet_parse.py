@@ -442,16 +442,48 @@ def test_raw_band_never_narrows_or_guesses():
     assert (s.top_ft, s.top_source, s.band_note) == (21000, "json", None)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="하한 출처 값이 정해지지 않음 — base_source 'raw_text' 추가(계약 변경) 또는 0 + assumed_surface, 사용자 결정 대기(VERIFICATION #156)",
-)
 @pytest.mark.parametrize(
-    ("base", "raw", "lo", "hi"),
-    [(40000, NFFF_RAW, 28000, 40000), (45000, LPPO_RAW, 25000, 45000), (36000, SCEZ_RAW, 30000, 36000)],
+    ("base", "raw", "lo"),
+    [(40000, NFFF_RAW, 28000), (45000, LPPO_RAW, 25000), (36000, SCEZ_RAW, 30000)],
 )
-def test_reversed_raw_band_does_not_drop_aircraft_below_the_json_base(base, raw, lo, hi):
-    """원문 'FL400/280'(상한/하한 역순) 에 AWC 가 base=40000 · top=null 을 줬다 — 판정이 FL400 이상만이라 FL280–400 항공기를 경보 밖으로 뺐다.
-    어느 하한 출처로 고치든 원문 고도대 전체가 판정 안에 들어야 한다."""
+def test_reversed_raw_band_lowers_the_json_base_to_the_raw_value(base, raw, lo):
+    """원문 'FL400/280'(상한/하한 역순)에 AWC 가 base=40000 · top=null 을 줬다 — 판정이 FL400 이상만이라 FL280–400 항공기를 경보 밖으로 뺐다.
+    원문 고도대의 가장 낮은 값이 JSON 하한보다 낮으면 그 값으로 낮춘다(base_source raw_text — 계약 v5 §G59). 상한은 JSON 그대로(null = 무제한 가정)."""
     s = parse_isigmet(_item(base=base, top=None, rawSigmet=raw), NOW)
-    assert s.base_ft <= lo and (s.top_ft is None or s.top_ft >= hi) and s.band_note is not None
+    band = (s.base_ft, s.base_source, s.top_ft, s.top_source, s.band_note)
+    assert band == (lo, "raw_text", None, "unknown", "base_above_raw_band")
+    assert s.model_dump(mode="json")["base_source"] == "raw_text"
+
+
+def test_raw_base_is_only_used_to_widen():
+    # 하한이 발표되지 않았으면(SFC 가정) 더 낮출 것이 없다
+    s = parse_isigmet(_item(base=None, top=40000, rawSigmet="SEV TURB FCST FL400/280 MOV E 15KT NC="), NOW)
+    assert (s.base_ft, s.base_source, s.band_note) == (0, "assumed_surface", None)
+    # 원문 하한이 JSON 하한보다 높으면 그대로(올리지 않는다)
+    s = parse_isigmet(_item(base=20000, top=35000, rawSigmet="SEV TURB FCST FL250/350 STNR NC="), NOW)
+    assert (s.base_ft, s.base_source, s.band_note) == (20000, "json", None)
+    # 'TOP FLaaa/bbb' 의 aaa 는 하한이 아니다(상한의 범위)
+    s = parse_isigmet(_item(base=30000, top=None, rawSigmet=UDDD_RAW), NOW)
+    assert (s.base_ft, s.base_source, s.top_ft, s.top_source) == (30000, "json", 37000, "raw_text")
+    # 하한과 상한이 함께 좁으면 둘 다 넓히고 둘 다 적는다
+    s = parse_isigmet(_item(base=30000, top=34000, rawSigmet="SEV TURB FCST FL250/350 STNR NC="), NOW)
+    assert (s.base_ft, s.base_source, s.top_ft, s.top_source, s.band_note) == (
+        25000,
+        "raw_text",
+        35000,
+        "raw_text",
+        "top_below_raw_band;base_above_raw_band",
+    )
+
+
+def test_raw_band_levels_and_order():
+    from wakeline_collector.sigmet_parse import raw_text_band
+
+    assert raw_text_band(NFFF_RAW) == (28000, 40000)  # 역순도 범위는 같다
+    assert raw_text_band(UDDD_RAW) == (None, 37000)  # 'TOP FLaaa/bbb' 는 상한에만
+    assert raw_text_band(UAAA_RAW) == (0, 10000)
+    assert raw_text_band("SEV ICE FCST 3000FT/FL210 STNR=") == (3000, 21000)
+    # m 는 1 ft = 0.3048 m 로 넓히는 쪽(하한 내림 · 상한 올림) — V23 SQL 과 같은 정수 계산
+    assert raw_text_band("SEV ICE FCST 1500M/3000M STNR=") == (4921, 9843)
+    # 고도대가 아닌 '/' · ABV · 앞이 FL 이 아닌 FL 생략 값은 고도대가 아니다
+    assert raw_text_band("VALID 270800/271200 RKSI- N3045/E12000 TOP ABV FL300/350 SFC/100 MOV E=") == (None, None)

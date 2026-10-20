@@ -1040,6 +1040,102 @@ class MigrationDbTest {
     }
 
     /**
+     * V23(VERIFICATION #156 · 계약 v5 §G59 · 사용자 위임 2026-10-20): 하한 출처 'raw_text' 를 받고, 지난 SIGMET 행 중 원문 고도대 "A/B" 보다 좁은 고도대를
+     * 수집기(sigmet_parse 모듈 설명 3)와 같은 규칙으로 넓힌다 — 상한은 원문 최고값(고정 상한 json · raw_text 일 때만), 하한은 원문 최저값(발표된 json 하한일 때만,
+     * 'TOP FLaaa/bbb' 의 aaa 는 하한이 아니다). 실수신 원문(로컬 DB 12,209행 중 11행 — 수집기 시험 test_sigmet_parse 와 같은 원문 · 같은 기대값)과 바꾸지 않을 행.
+     * 알림 기록은 그대로, 바꾼 행의 이전 값은 감사 기록 한 줄, 머리 주석의 되돌리기 SQL 이 그 값으로 돌린다. 고치기 전(V23 없음)에는 그대로라 이 시험이 실패했다.
+     */
+    @Test
+    void v23WidensPastSigmetBandsNarrowerThanTheRawTextAndKeepsTheOldValuesForRollback() throws Exception {
+        DbTestSupport.start();
+        String db = "wakeline_stage_twentythree";
+        DbTestSupport.createDatabase(db);
+        String url = DbTestSupport.jdbcUrl(db);
+        migrateTo(url, "22");
+        JdbcClient stage = JdbcClient.create(new DriverManagerDataSource(url, "postgres", DbTestSupport.ROOT_PW));
+        String[][] rows = {
+                // id, base_ft, base_source, top_ft, top_source, raw_text
+                {"NFFF", "40000", "json", null, "unknown", "NFFF NADI FIR SEV TURB FCST WI S1736 E16300 - S2106 E17154 - S2500\nE17954 - S2036 E16300 - S1736 E16300\nFL400/280 MOV E 15KT NC="},
+                {"LPPO", "45000", "json", null, "unknown", "LPPO SANTA MARIA OCEANIC FIR SEV TURB FCST WI N3832 W01930 - N3938 W01556 - N3832 W01930\nFL450/250 MOV ENE 20KT WKN="},
+                {"SCEZ", "36000", "json", null, "unknown", "SCEZ SANTIAGO FIR SEV TURB OBS AT 0314Z E OF LINE S3430 W07040 -\nS3545 W07045 FL360/300 STNR NC="},
+                {"UAAA", "0", "json", "100", "json", "UAAA SIGMET 1 VALID 291524/291630 UAAA-\nUAAA ALMATY FIR SEV TURB OBS S OF N44 SFC/10000FT MOV NE 40KMH NC="},
+                {"SKED", "0", "json", "170", "json", "SKED BOGOTA FIR VA MT VOLCAN PURACE PSN N0219 W07624 POSS VA CLD OBS\n- N0219 W07641 SFC/17000FT MOV W 10KT="},
+                {"SPIM", "0", "assumed_surface", "23000", "json", "SPIM LIMA FIR SEV ICE FCST S OF LINE S1801 W07258 -\nS1457 W07411 - S1419 W06923\nTOP FL230/250 STNR NC="},
+                {"WAAF", "0", "json", "7000", "json", "VA CLD OBS AT 2220Z WI N0135\nE12752 - N0135 E12752 SFC/FL070 MOV NE 05KT NC AND OBS AT 2220Z WI N0144\nE12755 - N0144 E12755\nSFC/FL120 MOV W 10KT NC="},
+                {"UDDD", "0", "assumed_surface", "32000", "raw_text", "UDDD YEREVAN FIR SEV TURB FCST N OF N3945 TOP FL320/370\nSTNR NC="},
+                {"SGFA", "0", "assumed_surface", "24000", "raw_text", "SGFA ASUNCION FIR SEV TURB FCST AT 1200Z S OF S2522 TOP FL240/300 MOV\n E 05KT NC="},
+                {"METERS", "6000", "json", "9000", "json", "SEV ICE FCST 1500M/3000M STNR NC="},              // 1 ft = 0.3048 m — 하한 내림 · 상한 올림
+                {"LEGACY", "0", "unknown", "30000", "json", "SEV TURB FCST FL250/350 STNR NC="},              // DB 전용 하한 'unknown' 은 그대로, 상한은 넓힌다
+                // 바꾸지 않는다
+                {"SKED4", "0", "json", "190", "json", "VA CLD OBS AT 2020Z WI N0216 W07623 SFC/190FT MOV WNW 15KT="}, // 원문 그대로(짐작하지 않는다)
+                {"WIDER", "20000", "json", "45000", "json", "SEV TURB FCST FL250/350 STNR NC="},               // JSON 이 더 넓다
+                {"NOTOP", "25000", "json", null, "unknown", "SEV TURB FCST FL250/350 STNR NC="},              // 상한 없음(무제한 가정)은 채우지 않는다
+                {"ABV", "0", "json", "39000", "raw_text_lower_bound", "EMBD TS SFC/FL300 TOP ABV FL390="},  // ABV 하한은 이미 무제한
+                {"TOPRANGE", "30000", "json", "37000", "raw_text", "SEV TURB FCST TOP FL320/370 STNR NC="},  // TOP 의 aaa 는 하한이 아니다
+                {"NOBAND", "14000", "json", "21000", "json", "RKRR SIGMET F02 VALID 270800/271200 RKSI- N3045/E12000 TOP ABV FL300/350 SFC/100 MOV E="},
+        };
+        for (String[] r : rows) {
+            stage.sql("""
+                    INSERT INTO sigmet (id, fir_id, series_id, hazard, base_ft, base_source, top_ft, top_source, valid_from, valid_to, raw_text, provider, fetched_at)
+                    VALUES (:id, 'XXXX', '1', 'TURB', CAST(:base AS integer), :bs, CAST(:top AS integer), :ts, now() - interval '3 days', now() - interval '2 days',
+                            :raw, 'awc_isigmet', now() - interval '3 days')""")
+                    .param("id", r[0]).param("base", r[1]).param("bs", r[2]).param("top", r[3]).param("ts", r[4]).param("raw", r[5]).update();
+        }
+        stage.sql("""
+                INSERT INTO alert_event (id, hex, sigmet_id, kind, entered_at, left_at, close_reason, evidence) VALUES
+                  (1, 'aaaaa1', 'NFFF', 'OBSERVED', now() - interval '3 days', now() - interval '3 days' + interval '600 seconds', 'left', '{"band_ft": [40000, null]}'::jsonb)""").update();
+
+        assertThat(WakelineApplication.migrate(DbTestSupport.env(db))).isZero();
+
+        Map<String, String> band = new HashMap<>();
+        for (var r : stage.sql("SELECT id, base_ft || ' ' || base_source || ' ' || coalesce(top_ft::text, '-') || ' ' || top_source AS b FROM sigmet").query().listOfRows())
+            band.put((String) r.get("id"), (String) r.get("b"));
+        assertThat(band).containsEntry("NFFF", "28000 raw_text - unknown").containsEntry("LPPO", "25000 raw_text - unknown")
+                .containsEntry("SCEZ", "30000 raw_text - unknown").containsEntry("UAAA", "0 json 10000 raw_text").containsEntry("SKED", "0 json 17000 raw_text")
+                .containsEntry("SPIM", "0 assumed_surface 25000 raw_text").containsEntry("WAAF", "0 json 12000 raw_text")
+                .containsEntry("UDDD", "0 assumed_surface 37000 raw_text").containsEntry("SGFA", "0 assumed_surface 30000 raw_text")
+                .containsEntry("METERS", "4921 raw_text 9843 raw_text").containsEntry("LEGACY", "0 unknown 35000 raw_text")
+                .containsEntry("SKED4", "0 json 190 json").containsEntry("WIDER", "20000 json 45000 json").containsEntry("NOTOP", "25000 json - unknown")
+                .containsEntry("ABV", "0 json 39000 raw_text_lower_bound").containsEntry("TOPRANGE", "30000 json 37000 raw_text")
+                .containsEntry("NOBAND", "14000 json 21000 json");
+        // 알림 기록(판정 당시의 근거)은 그대로
+        assertThat(stage.sql("SELECT evidence::text FROM alert_event WHERE id = 1").query(String.class).single()).isEqualTo("{\"band_ft\": [40000, null]}");
+        var audit = stage.sql("SELECT user_id, action, target, before::text b, after::text a FROM audit_log WHERE action LIKE 'SIGMET%'").query().listOfRows();
+        assertThat(audit).hasSize(1);
+        assertThat(audit.get(0)).containsEntry("action", "SIGMET_BAND_V23").containsEntry("target", "sigmet.base_ft,top_ft");
+        assertThat(audit.get(0).get("user_id")).isNull();
+        var before = DbTestSupport.JSON.readTree(audit.get(0).get("b").toString());
+        var after = DbTestSupport.JSON.readTree(audit.get(0).get("a").toString());
+        assertThat(before.propertyNames()).containsExactlyInAnyOrder("NFFF", "LPPO", "SCEZ", "UAAA", "SKED", "SPIM", "WAAF", "UDDD", "SGFA", "METERS", "LEGACY");
+        assertThat(before.path("NFFF").toString()).isEqualTo("{\"top_ft\":null,\"base_ft\":40000,\"top_source\":\"unknown\",\"base_source\":\"json\"}");
+        assertThat(after.path("rows").asInt()).isEqualTo(11);
+        assertThat(after.path("sigmets").path("UAAA").path("top_ft").asInt()).isEqualTo(10000);
+        // 새 하한 출처를 받는다(수집기가 앞으로 보내는 값)
+        stage.sql("UPDATE sigmet SET base_source = 'raw_text' WHERE id = 'WIDER'").update();
+        stage.sql("UPDATE sigmet SET base_source = 'json' WHERE id = 'WIDER'").update();
+
+        // 되돌리기(머리 주석): 바꾼 행만 이전 값으로, 이력 행은 그대로 → 다음 migrate 가 V23 을 다시 적용하지 않는다
+        runAsMigrator(url, rollbackSql("V23__sigmet_raw_band_widen.sql"));
+        band.clear();
+        for (var r : stage.sql("SELECT id, base_ft || ' ' || base_source || ' ' || coalesce(top_ft::text, '-') || ' ' || top_source AS b FROM sigmet").query().listOfRows())
+            band.put((String) r.get("id"), (String) r.get("b"));
+        for (String[] r : rows)
+            assertThat(band).as(r[0]).containsEntry(r[0], r[1] + " " + r[2] + " " + (r[3] == null ? "-" : r[3]) + " " + r[4]);
+        assertThat(WakelineApplication.migrate(DbTestSupport.env(db))).isZero();
+        assertThat(stage.sql("SELECT base_ft FROM sigmet WHERE id = 'NFFF'").query(Integer.class).single())
+                .as("the rollback lasts across the next migrate").isEqualTo(40000);
+        assertThat(stage.sql("SELECT action FROM audit_log WHERE action LIKE 'SIGMET_BAND%' ORDER BY id").query(String.class).list())
+                .containsExactly("SIGMET_BAND_V23", "SIGMET_BAND_V23_ROLLBACK");
+
+        // 바꿀 행이 없는 DB: 감사 기록 없음
+        String empty = "wakeline_stage_twentythree_empty";
+        DbTestSupport.createDatabase(empty);
+        assertThat(WakelineApplication.migrate(DbTestSupport.env(empty))).isZero();
+        assertThat(JdbcClient.create(new DriverManagerDataSource(DbTestSupport.jdbcUrl(empty), "postgres", DbTestSupport.ROOT_PW))
+                .sql("SELECT count(*) FROM audit_log WHERE action LIKE 'SIGMET_BAND_V23%'").query(Long.class).single()).isZero();
+    }
+
+    /**
      * V4·V5 는 운영과 같은 --migrate 경로(wakeline_migrator — 슈퍼유저·역할/DB 생성 권한 없음)로 적용됐고, 스키마의 모든 객체는 migrator 소유다
      * (서비스 역할 소유 객체 없음). V5 파티션 함수는 SECURITY DEFINER 인데 PUBLIC 실행 권한이 없다.
      */

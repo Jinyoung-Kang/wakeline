@@ -8,8 +8,9 @@ import java.util.Map;
 
 /**
  * 구조화된 SIGMET(schemas/sigmet.v1.json). geometry 가 null 이면 판정 제외(excludedReason).
- * baseSource: json | assumed_surface(AWC 하한 null → 판정은 SFC 가정). null = 출처 정보 없음(이전 형식 메시지).
- * topSource: json | raw_text | raw_text_lower_bound | unknown(상한 미발표 → topFt null, 판정은 무제한 가정).
+ * baseSource: json | assumed_surface(AWC 하한 null → 판정은 SFC 가정) | raw_text(원문 고도대의 가장 낮은 값 — JSON 하한이 그보다 높았다, 계약 v5 §G59).
+ * null = 출처 정보 없음(이전 형식 메시지).
+ * topSource: json | raw_text(원문 TOP FLnnn 또는 원문 고도대의 가장 높은 값) | raw_text_lower_bound | unknown(상한 미발표 → topFt null, 판정은 무제한 가정).
  * raw_text_lower_bound(DH-4): 원문이 "TOP ABV FLnnn" — topFt 는 발표된 값이지만 상한이 아니라 '상한의 하한'(FLnnn 이상)이다.
  * 판정은 상한을 무제한으로 가정한다(그 값을 상한으로 쓰면 FLnnn 위의 항공기를 조용히 빠뜨린다). 가정은 근거에 남긴다.
  */
@@ -22,6 +23,7 @@ public record SigmetRecord(
 
     public static final String BASE_JSON = "json";
     public static final String BASE_ASSUMED_SURFACE = "assumed_surface";
+    public static final String BASE_RAW_TEXT = "raw_text";
     public static final String TOP_JSON = "json";
     public static final String TOP_RAW_TEXT = "raw_text";
     public static final String TOP_RAW_TEXT_LOWER_BOUND = "raw_text_lower_bound";

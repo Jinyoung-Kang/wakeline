@@ -390,7 +390,7 @@
         "qualifier": { "type": "string" },
         "base_ft": { "type": "integer", "minimum": 0 },
         "top_ft": { "type": "integer" },
-        "base_source": { "enum": ["json", "assumed_surface"] },
+        "base_source": { "enum": ["json", "assumed_surface", "raw_text"] },
         "top_source": { "enum": ["json", "raw_text", "raw_text_lower_bound", "unknown"] },
         "valid_from": { "$ref": "#/$defs/date_time" },
         "valid_to": { "$ref": "#/$defs/date_time" },

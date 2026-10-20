@@ -232,7 +232,7 @@ const POSITION = tuple(LON, LAT);
 const MULTIPOLYGON = shape({ type: oneOf("MultiPolygon"), coordinates: arrOf(arrOf(arrOf(POSITION, 4), 1), 1) }, ["type", "coordinates"]);
 const SIGMET_PROPS = shape({
   id: str(1), fir_id: str(), fir_name: str(), issuer: str(), series_id: str(), hazard: str(), qualifier: str(), base_ft: int(0), top_ft: int(),
-  base_source: oneOf("json", "assumed_surface"), top_source: oneOf("json", "raw_text", "raw_text_lower_bound", "unknown"), valid_from: TIME, valid_to: TIME,
+  base_source: oneOf("json", "assumed_surface", "raw_text"), top_source: oneOf("json", "raw_text", "raw_text_lower_bound", "unknown"), valid_from: TIME, valid_to: TIME,
   active: isBool, expiring_soon: isBool, move_dir: str(), move_spd: str(), chng: str(), excluded_reason: str(), raw_text: str(),
   provider: oneOf("awc_isigmet", "awc_airsigmet", "fixture"), fetched_at: TIME,
 }, ["id", "fir_id", "hazard", "valid_from", "valid_to", "raw_text"]);

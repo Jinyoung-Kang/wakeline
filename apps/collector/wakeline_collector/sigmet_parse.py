@@ -5,6 +5,7 @@
 2. 닫히지 않은 링은 닫고, 자기교차는 make_valid 로 정리. 경도 ±180 을 걸치면(점프든 180 을 넘는 이어진 경도든) [-180, 180] 조각으로 분할.
 3. 고도대(ft)와 그 출처(계약 §4):
    - base: JSON 값이 있으면 base_source="json". null 이면 base_ft=0 + base_source="assumed_surface"(발표 없음, 판정은 SFC 가정).
+           원문 고도대(아래)의 가장 낮은 값이 JSON 하한보다 낮으면 그 값 + base_source="raw_text"(계약 v5 §G59).
    - top : JSON 값이 있으면 그 값 + top_source="json". 다만 원문의 "TOP ABV FLnnn" 값 가운데 어느 하나가 바로 그 값이면(AWC 가
            ABV 값을 top 으로 준 경우 — 원문에 TOP 값이 여럿이어도) top_source="raw_text_lower_bound" — 상한이 아니라 상한의 하한이다
            (IM-01 · R8). V4 SQL 보정은 원문의 첫 "TOP ABV" 값만 보므로 이 규칙이 하한 쪽으로만 조금 넓다(알림을 빼는 쪽으로는
@@ -14,12 +15,13 @@
            top_source="raw_text"(ABV 는 "raw_text_lower_bound" — 발표된 값을 그대로 저장, 판정은 위쪽 무제한 가정).
            그 밖에는 top_ft=None + top_source="unknown"(미발표, 판정은 무제한 가정). "TOP FLaaa/bbb"(상한이 aaa–bbb)는 bbb 쪽 큰 값이다
            — 앞 값만 읽으면 그 사이 항공기를 뺀다(ABV 는 V4 · V22 SQL 과 같게 앞 값).
-   - 원문 고도대 "A/B"(A = SFC · FLnnn · nnnnFT · nnnnM, B = FLnnn · nnnnFT · nnnnM, A 가 FL 이면 FL 을 뺀 nnn 도)가 JSON 보다 높이 올라가면
-     상한을 원문 값 가운데 가장 높은 값으로 넓힌다 — top_source="raw_text", band_note="top_below_raw_band"(품질 기록). 실수신(VERIFICATION
-     #156): AWC 가 오류 없이 'SFC/10000FT' 를 top 100, 'TOP FL230/250' 을 23000, 구역 둘의 'SFC/FL070 … SFC/FL120' 을 7000 으로 줬다
-     (같은 'SFC/10000FT' 가 맞게 온 날도 있다). 넓히는 쪽만 바꾼다: JSON 이 원문보다 넓거나, 상한이 없거나(무제한 가정) 'ABV' 하한이면
-     그대로 두고, 원문 자체의 이상한 값(SKED 'SFC/190FT')은 고치지 않는다. 하한이 원문보다 높은 경우(역순 'FL400/280' 에 base=40000)는
-     아직 고치지 않는다 — 하한 출처 값이 계약에 없다(사용자 결정 대기).
+   - 원문 고도대 "A/B"(A = SFC · FLnnn · nnnFT · nnnM, B = FLnnn · nnnFT · nnnM — 숫자 3–5자리, A 가 FL 이면 FL 을 뺀 nnn 도)가 JSON 보다 넓으면
+     넓은 쪽만 원문 값으로 바꾼다 — 상한은 원문 값 가운데 가장 높은 값(top_source="raw_text", band_note "top_below_raw_band"), 하한은 가장
+     낮은 값(base_source="raw_text", band_note "base_above_raw_band" — "TOP FLaaa/bbb" 의 aaa 는 하한이 아니다). 품질 기록 sigmet_invalid_band.
+     실수신(VERIFICATION #156): AWC 가 오류 없이 'SFC/10000FT' 를 top 100, 'TOP FL230/250' 을 23000, 구역 둘의 'SFC/FL070 … SFC/FL120' 을
+     7000, 역순 'FL400/280' 을 base 40000 · top null 로 줬다(같은 'SFC/10000FT' 가 맞게 온 날도 있다). 넓히는 쪽만 바꾼다: JSON 이 원문보다
+     넓거나, 상한이 없거나(무제한 가정) 'ABV' 하한이거나, 하한이 SFC 가정이면 그대로 두고, 원문 자체의 이상한 값(SKED 'SFC/190FT')은 고치지
+     않는다. 이미 저장된 행은 V23 이 같은 규칙으로 고쳤다.
 4. 자연키 fir_id:series_id:valid_from. 폴리곤을 만들 수 없는 경보는 geometry=None + excluded_reason.
 5. 유효 시간(validTimeFrom/To, 유닉스 초): 값이 빠졌으면 받지 않는다(다른 필수 필드와 같다). 값이 있는데 시각이 될 수 없으면(0 이하 ·
    끝 ≤ 시작 · MAX_VALIDITY_S 초과) InvalidValidity — 받지 않되 작업이 sigmet_parse_error 품질 기록에 남긴다. 실수신(NFFF SIGMET 15,
@@ -56,7 +58,6 @@ _TOP_RE = re.compile(r"\bTOP\s+(ABV\s+)?FL(\d{3})(?:/(?:FL)?(\d{3}))?\b(?!/)")
 _BAND_RE = re.compile(
     r"(?<![A-Z0-9/])(?P<lead>(?:TOP\s+)?(?:ABV\s+)?)(?P<a>SFC|FL\d{3}|\d{3,5}FT|\d{3,5}M)/(?P<b>FL\d{3}|\d{3,5}FT|\d{3,5}M|\d{3})(?![A-Z0-9/])"
 )
-_FT_PER_M = 3.28084
 
 
 class InvalidValidity(ValueError):
@@ -187,26 +188,30 @@ def _level_ft(tok: str, *, upper: bool) -> int | None:
         return int(tok[2:]) * 100
     if tok.endswith("FT"):
         return int(tok[:-2])
-    if tok.endswith("M"):  # 넓히는 쪽으로 반올림(상한은 올림)
-        ft = int(tok[:-1]) * _FT_PER_M
-        return math.ceil(ft) if upper else math.floor(ft)
+    if tok.endswith("M"):  # 1 ft = 0.3048 m(정확) — 넓히는 쪽으로(상한은 올림 · 하한은 내림). 정수로 셈해 V23 SQL 과 같은 값
+        n = int(tok[:-1]) * 10000
+        return -(-n // 3048) if upper else n // 3048
     return None
 
 
-def raw_text_band_top(raw: str) -> int | None:
-    """원문 고도대 "A/B"(TOP 이 붙은 상한 범위 포함, ABV 는 뺀다) 값 가운데 가장 높은 값(ft). 고도대가 없으면 None."""
+def raw_text_band(raw: str) -> tuple[int | None, int | None]:
+    """원문 고도대 "A/B" 의 (가장 낮은 하한, 가장 높은 상한) ft. ABV 가 붙은 것은 빼고, "TOP FLaaa/bbb" 는 상한에만 든다(aaa 는 하한이 아니다).
+    순서는 보지 않는다(역순 'FL400/280' 도 FL280–400). 고도대가 없으면 (None, None)."""
+    lows: list[int] = []
     tops: list[int] = []
     for m in _BAND_RE.finditer(raw or ""):
-        if "ABV" in m.group("lead"):
+        lead = m.group("lead")
+        if "ABV" in lead:
             continue
         a, b = m.group("a"), m.group("b")
         if b.isdigit():  # FL 을 뺀 nnn 은 앞이 FL 일 때만(FL250/350)
             if not a.startswith("FL"):
                 continue
             b = f"FL{b}"
-        lv = [_level_ft(a, upper=True), _level_ft(b, upper=True)]
-        tops.append(max(v for v in lv if v is not None))
-    return max(tops) if tops else None
+        tops.append(max(v for v in (_level_ft(a, upper=True), _level_ft(b, upper=True)) if v is not None))
+        if not lead.startswith("TOP"):
+            lows.append(min(v for v in (_level_ft(a, upper=False), _level_ft(b, upper=False)) if v is not None))
+    return (min(lows) if lows else None), (max(tops) if tops else None)
 
 
 def raw_text_top(raw: str) -> tuple[int, bool] | None:
@@ -229,7 +234,7 @@ def raw_text_top_ft(raw: str) -> int | None:
     return r[0] if r else None
 
 
-BaseSource = Literal["json", "assumed_surface"]
+BaseSource = Literal["json", "assumed_surface", "raw_text"]
 TopSource = Literal["json", "raw_text", "raw_text_lower_bound", "unknown"]
 
 
@@ -260,11 +265,15 @@ def resolve_band(base: Any, top: Any, raw: str) -> tuple[int, BaseSource, int | 
             top_ft, top_source = rt[0], ("raw_text_lower_bound" if rt[1] else "raw_text")
         else:
             top_ft, top_source = None, "unknown"
-    # 원문 고도대가 더 높이 올라가면 넓힌다(모듈 설명 3) — 고정 상한(json · raw_text)일 때만. 무제한 가정 · 'ABV' 하한은 이미 더 넓다.
-    band_top = raw_text_band_top(raw)
+    # 원문 고도대가 더 넓으면 넓힌다(모듈 설명 3) — 상한은 고정 상한(json · raw_text)일 때만(무제한 가정 · 'ABV' 하한은 이미 더 넓다),
+    # 하한은 발표된 JSON 하한일 때만(SFC 가정은 더 낮출 것이 없다). 위의 상한 결정은 JSON 하한으로 한다 — 예전과 같은 값을 고르고 넓히기만 더한다.
+    band_low, band_top = raw_text_band(raw)
     if top_ft is not None and top_source in ("json", "raw_text") and band_top is not None and band_top > top_ft:
         top_ft, top_source = band_top, "raw_text"
         note = f"{note};top_below_raw_band" if note else "top_below_raw_band"
+    if base_source == "json" and band_low is not None and band_low < base_ft:
+        base_ft, base_source = band_low, "raw_text"
+        note = f"{note};base_above_raw_band" if note else "base_above_raw_band"
     return base_ft, base_source, top_ft, top_source, note
 
 

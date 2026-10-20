@@ -102,6 +102,24 @@ class SchemaContractTest {
         assertThat(b.topAssumedUnbounded()).isFalse();
     }
 
+    /**
+     * 계약 v5 §G59: 하한을 원문 고도대에서 읽은 SIGMET(base_source raw_text — 실수신 NFFF SIGMET 15 의 역순 'FL400/280' 에 AWC 가 base 40000 을 줬다)이
+     * 스키마를 통과하고, 판정은 그 하한으로 한다(FL300 은 안). 가정이 아니라 발표된 원문 값이라 SFC 가정 표시는 없다.
+     */
+    @Test void sigmetBaseReadFromRawText_validatesAndJudgesFromTheRawBase() throws Exception {
+        String payload = """
+                {"sigmets":[{"id":"NFFF:15:1790811900","fir_id":"NFFF","series_id":"15","hazard":"TURB","qualifier":"SEV","base_ft":28000,"base_source":"raw_text",
+                 "top_ft":null,"top_source":"unknown","valid_from":"2026-09-30T23:45:00Z","valid_to":"2026-10-01T03:45:00Z","geometry":null,
+                 "excluded_reason":"no_coordinates","raw_text":"NFFF SIGMET 15 VALID 312345/010345 NFFN- SEV TURB FCST FL400/280 MOV E 15KT NC=",
+                 "provider":"awc_isigmet","fetched_at":"2026-09-30T23:07:38Z"}]}""";
+        assertThat(V.validatePayload("sigmet", payload)).isNull();
+        var s = Codec.sigmet(M.readTree(payload).path("sigmets").get(0));
+        assertThat(s.baseSource()).isEqualTo("raw_text");
+        assertThat(s.baseAssumedSurface()).isFalse();
+        assertThat(s.bandContains(30000)).isTrue();
+        assertThat(s.bandContains(27000)).isFalse();
+    }
+
     @Test void sigmetSourceFields_badEnum_isRejected() {
         String payload = """
                 {"sigmets":[{"id":"X:1:1","fir_id":"X","series_id":"1","hazard":"TS","base_ft":0,"base_source":"guessed","top_ft":null,"top_source":"unknown",
